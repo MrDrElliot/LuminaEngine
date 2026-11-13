@@ -28,4 +28,12 @@ namespace Lumina::AnimPose
             DecomposeTRS(Skeleton->GetBone(BoneIndex).LocalTransform, OutT, OutR, OutS);
         }
     }
+
+    // A bone's bind-pose global matrix, from the SoA cache or by inverting its inverse-bind matrix.
+    FORCEINLINE FMatrix4 GetBindGlobalMatrix(const FSkeletonResource* Skeleton, int32 BoneIndex)
+    {
+        return Skeleton->HasBindGlobalMatrices()
+            ? Skeleton->BindGlobalMatrices[BoneIndex]
+            : Math::Inverse(Skeleton->GetBone(BoneIndex).InvBindMatrix);
+    }
 }

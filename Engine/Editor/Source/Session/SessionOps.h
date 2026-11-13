@@ -28,11 +28,14 @@ namespace Lumina
  * other UI class and is not broken by the editor rearranging them. An agent endpoint was reaching through
  * GEditorEngine and casting to the concrete UI in six different files before this existed.
  */
+namespace Lumina::Global
+{
+    // What every SessionOps entry point reports when no world editor is open.
+    EDITOR_API extern const char* const GNoSceneEditor;
+}
+
 namespace Lumina::SessionOps
 {
-    // What every entry point here reports when no world editor is open.
-    EDITOR_API extern const char* const GNoSceneEditor;
-
     // What AssetOps takes to route an asset operation through the open editor. Null when there is no UI.
     NODISCARD EDITOR_API IEditorToolContext* GetToolContext();
 

@@ -42,7 +42,6 @@ public static class RunMode
 
     internal sealed record LaunchCommand(string Executable, string WorkingDirectory, List<string> Arguments);
 
-    // What running a built target means, read from its rules and checked to exist.
     internal static LaunchCommand ResolveLaunch(
         RulesAssembly Assembly,
         BuildDirectories Directories,
@@ -58,6 +57,12 @@ public static class RunMode
         TargetInfo Info = new(TargetName, TypeValue, PlatformValue, ConfigurationValue, Directories, Options);
         BuildTarget Target = new TargetAssembler(Assembly, Directories, PlatformSupport).Assemble(TargetName, Info);
 
+        return ResolveLaunch(Target);
+    }
+
+    // What running a built target means, read from its rules and checked to exist.
+    internal static LaunchCommand ResolveLaunch(BuildTarget Target)
+    {
         // The same fields the IDE's Run button reads, so a game target's rules point Run at the editor with --Project.
         string Executable = Target.Rules.DebuggerCommand.Length > 0
             ? Target.Rules.DebuggerCommand
@@ -73,7 +78,7 @@ public static class RunMode
         {
             throw new BuildException(
                 $"'{Executable}' does not exist. Build it first:{Environment.NewLine}"
-                + $"  {HostScriptName("LuminaBuild")} Build {TargetName} -TargetType={TypeValue} -Configuration={ConfigurationValue}");
+                + $"  {HostScriptName("LuminaBuild")} Build {Target.Name} -TargetType={Target.Info.Type} -Configuration={Target.Info.Configuration}");
         }
 
         List<string> LaunchArguments = Target.Rules.DebuggerArguments.Length > 0

@@ -11,6 +11,7 @@
 #include "NvidiaAftermath/GFSDK_Aftermath_GpuCrashDumpDecoding.h"
 #include <NvidiaAftermath/GFSDK_Aftermath_GpuCrashDump.h>
 #endif
+#include "Core/CommandLine/CommandLine.h"
 #include "Log/Log.h"
 #include "Paths/Paths.h"
 #include "Renderer/RHI.h"   // turns a fault address into the allocation that owned it
@@ -499,8 +500,17 @@ namespace Lumina::RHI
         DiagnosticsConfig.sType = VK_STRUCTURE_TYPE_DEVICE_DIAGNOSTICS_CONFIG_CREATE_INFO_NV;
         DiagnosticsConfig.flags = VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV
                                 | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_RESOURCE_TRACKING_BIT_NV
-                                | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV
                                 | VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_ERROR_REPORTING_BIT_NV;
+
+        // The driver charges about 0.85 us of CPU per draw and dispatch for these, and the breadcrumbs already name the pass.
+        if (Global::GCommandLine != nullptr && Global::GCommandLine->Has("aftermathcheckpoints"))
+        {
+            DiagnosticsConfig.flags |= VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_AUTOMATIC_CHECKPOINTS_BIT_NV;
+        }
+        else
+        {
+            LOG_INFO("Aftermath automatic checkpoints are off; pass -aftermathcheckpoints to attribute a GPU crash dump to the exact draw or dispatch.");
+        }
 
         return &DiagnosticsConfig;
         #else

@@ -479,11 +479,11 @@ namespace Lumina::RHI
         }
     }
 
-    void FlushUploads()
+    uint64 FlushUploads()
     {
         if (!GUpload.bInitialized || GUpload.QueuedOps.load(std::memory_order_relaxed) == 0)
         {
-            return;
+            return 0;
         }
 
         TVector<FGPUAllocation> OwnedStaging;
@@ -493,7 +493,7 @@ namespace Lumina::RHI
         if (!Upload::Flush(CL, OwnedStaging, &Batch))
         {
             ResetCommandList(CL);
-            return;
+            return 0;
         }
 
         const uint64 Value = Submit(EQueueType::Graphics, TSpan<const FCmdListH>{&CL, 1});
@@ -504,6 +504,7 @@ namespace Lumina::RHI
         {
             Retire(Staging);
         }
+        return Value;
     }
 
     namespace Upload

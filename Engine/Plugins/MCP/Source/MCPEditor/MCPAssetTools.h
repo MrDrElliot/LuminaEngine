@@ -341,6 +341,6 @@ namespace Lumina
 
     namespace MCP
     {
-        void RegisterAssetTools(FStringView Owner);
+        MCPEDITOR_API void RegisterAssetTools(FStringView Owner);
     }
 }

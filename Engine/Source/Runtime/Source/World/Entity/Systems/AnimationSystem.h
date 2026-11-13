@@ -23,9 +23,6 @@ namespace Lumina
 
         void Configure() override;
 
-        // Only the animators, since the mesh, follower and lookup queries match far more than ever animates.
-        bool HasWork(const SSystemContext& Context) override;
-
         void OnUpdate(const SSystemContext& Context) override;
 
     private:

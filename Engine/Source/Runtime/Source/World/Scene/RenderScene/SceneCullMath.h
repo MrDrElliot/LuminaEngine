@@ -68,4 +68,16 @@ namespace Lumina::SceneCull
         const float ScaleSq = Math::Max(Math::Max(Math::Dot(X, X), Math::Dot(Y, Y)), Math::Dot(Z, Z));
         return FVector4(Center, LocalRadius * Math::Sqrt(ScaleSq));
     }
+
+    // A jump in position or a sharp turn between two frames of one view, either of which leaves its history showing another view.
+    inline bool IsCameraCut(const FCullView& Previous, const FCullView& Current)
+    {
+        constexpr float CutDistance = 10.0f;
+        // cos 60 degrees, twice the per-frame turn of a 1800 degree per second flick at 60 Hz.
+        constexpr float CutMinFacingDot = 0.5f;
+        const FVector3 PreviousFacing(Previous.FrustumPlanes[FFrustum::FRONT]);
+        const FVector3 CurrentFacing(Current.FrustumPlanes[FFrustum::FRONT]);
+        return Math::Length(FVector3(Current.ViewOriginAndFlags) - FVector3(Previous.ViewOriginAndFlags)) > CutDistance
+            || Math::Dot(CurrentFacing, PreviousFacing) < CutMinFacingDot;
+    }
 }

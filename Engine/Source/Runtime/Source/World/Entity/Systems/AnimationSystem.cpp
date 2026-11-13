@@ -132,6 +132,9 @@ namespace Lumina
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
         RunsAfter<CKinematicsSystem>();
+
+        // Only the animators, since the mesh, follower and lookup queries match far more than ever animates.
+        ExcludeFromHasWork(Meshes, Followers, PoseLinks, LeaderMeshes);
     }
 
     // Diagnostic cross-check of the deferred executor against direct single-clip sampling.
@@ -444,6 +447,8 @@ namespace Lumina
 
             const float Duration = Anim.Animation->GetDuration();
 
+            int32 WholeLoops = 0;
+
             if (Anim.bPlaying)
             {
                 // Record the pre-advance time so the notify pass can find crossings.
@@ -454,6 +459,7 @@ namespace Lumina
                 {
                     if (Anim.bLooping)
                     {
+                        WholeLoops = RootMotion::WholeLoopsIn((StepTime * Anim.PlaybackSpeed) / Duration);
                         Anim.CurrentTime = fmodf(Anim.CurrentTime, Duration);
                     }
                     else
@@ -480,7 +486,7 @@ namespace Lumina
                 if (Anim.bAdvancedThisFrame)
                 {
                     AnimEvents::CollectTriggeredNotifies(Asset, Anim.PreviousTime, Anim.CurrentTime,
-                                                         Anim.bLooping, 1.0f, Anim.NotifyEvents);
+                                                         Anim.bLooping, 1.0f, Anim.NotifyEvents, WholeLoops);
                 }
 
                 const TVector<FAnimationNotifyState>& States = Asset->GetNotifyStates();
@@ -594,7 +600,7 @@ namespace Lumina
                 {
                     // Skipped on seek and stop frames so scrubbing does not teleport the entity.
                     Anim.PendingRootMotion = RootMotion::ExtractRootDelta(
-                        Asset, Skeleton, RootIdx, Anim.PreviousTime, Anim.CurrentTime, Anim.bLooping, Duration);
+                        Asset, Skeleton, RootIdx, Anim.PreviousTime, Anim.CurrentTime, Anim.bLooping, Duration, WholeLoops);
                     Tasks.bLockRoot     = true;
                     Tasks.RootBoneIndex = RootIdx;
                 }
@@ -897,12 +903,6 @@ namespace Lumina
                 Mesh.PoseHash         = PoseHash;
             }
         }
-    }
-
-
-    bool CAnimationSystem::HasWork(const SSystemContext& Context)
-    {
-        return AnyQueryHasRows(SimpleAnimators, GraphAnimators);
     }
 
     void CAnimationSystem::OnUpdate(const SSystemContext& Context)

@@ -35,6 +35,7 @@ namespace Lumina
         EPropertyChangeOp DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args) override;
         void UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property) override;
         void HandleExternalUpdate(const TSharedPtr<FPropertyHandle>& Property) override;
+        bool ApplySearch(const TSharedPtr<FPropertyHandle>& Property, FStringView Text) override;
 
     private:
 
@@ -54,7 +55,11 @@ namespace Lumina
 
             // Resolved with the rest of the binding, since it walks the script directories off disk.
             FString SourceFile;
+
+            bool bPassesSearch = true;
         };
+
+        void BindView(FSlotView& View, CEntityScript* Script);
 
         // What the nested tables reported this frame, translated into this customization's own return value so
         // an edit to a script property reaches the scene's transaction/dirty pipeline like any other property.

@@ -132,9 +132,6 @@ namespace Lumina
         // A managed handler lives in the script load context, so a reload drops them before it unloads.
         void RemoveManagedListeners();
 
-        // Drops the listeners of entities that no longer exist.
-        void PruneDeadOwners();
-
         // Delivers now on a thread that may, or copies the payload and delivers at the next command bus flush.
         void Send(EGameplayMessageRoute Route, ECS::FEntity Entity, uint32 Channel, const FGameplayMessagePayloadRef& Payload, bool bIncludeSelf = true);
 

@@ -55,12 +55,12 @@ namespace Lumina::Benchmark
         // Compared against the context's own MapPath, since Travel reports a failure and carries on.
         bool IsRequestedMapLoaded()
         {
-            if (GWorldManager == nullptr)
+            if (Global::GWorldManager == nullptr)
             {
                 return false;
             }
 
-            for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
+            for (const TUniquePtr<FWorldContext>& Context : Global::GWorldManager->GetContexts())
             {
                 if (Context && Context->MapPath == GState.Map)
                 {
@@ -160,9 +160,9 @@ namespace Lumina::Benchmark
 
         GState.bStarted = true;
 
-        if (GEngine != nullptr)
+        if (Global::GEngine != nullptr)
         {
-            GEngine->SetFrameRateCapOverride(GState.FrameRateCap);
+            Global::GEngine->SetFrameRateCapOverride(GState.FrameRateCap);
             LOG_DISPLAY("Benchmark: frame rate cap set to {}{}", GState.FrameRateCap,
                 GState.FrameRateCap == 0 ? FString(" (uncapped)") : FString());
         }
@@ -171,13 +171,13 @@ namespace Lumina::Benchmark
             LOG_WARN("Benchmark: no engine to set the frame rate cap on, so the run measures the saved cap.");
         }
 
-        if (GState.Map.IsEmpty() || GEngine == nullptr)
+        if (GState.Map.IsEmpty() || Global::GEngine == nullptr)
         {
             return;
         }
 
         LOG_DISPLAY("Benchmark: opening {}", GState.Map);
-        GEngine->OpenLevel(FURL::Parse(FStringView(*GState.Map, GState.Map.Len())));
+        Global::GEngine->OpenLevel(FURL::Parse(FStringView(*GState.Map, GState.Map.Len())));
     }
 
     bool Tick(double DeltaSeconds)

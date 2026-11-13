@@ -154,6 +154,12 @@ namespace Lumina::Net
                 State->PendingAttach[ChildKey] = ParentGuid; // the parent is not spawned yet, so retry on its spawn
             }
         }
+
+        uint32 GetReplicatedParentGuid(ECS::FRegistry& Registry, ECS::FEntity Entity)
+        {
+            const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity);
+            return ParentReplicates(Registry, Parent) ? Registry.Get<ECS::Read<SNetworkComponent>>(Parent).NetGUID.Value : 0;
+        }
     }
 
     void DrainPendingAttach(ECS::FRegistry& Registry, FNetWorldState& State, uint32 NewGuid, ECS::FEntity NewEntity)
@@ -189,7 +195,7 @@ namespace Lumina::Net
     uint32 GetProtocolHash(const FReplTypeTable& Types)
     {
         // Bump on any hand-rolled wire-format change (message layout, codec) that reflection won't catch.
-        constexpr uint32 NetProtocolVersion = 4;
+        constexpr uint32 NetProtocolVersion = 5;
 
         // The same build gives the same table order, so a differing component set flips the hash.
         uint32 H = 2166136261u;
@@ -224,17 +230,40 @@ namespace Lumina::Net
         // Elements are reused so each block keeps its capacity instead of being freed and remade.
         int32 Emitted = 0;
 
-        // Parked per thread; every buffer below is rebuilt from scratch on each call.
-        static thread_local TVector<uint8>  HookScratch;
-        static thread_local TVector<uint8>  CurBytes;
-        static thread_local TVector<uint32> CurOffsets;
-        static thread_local TVector<uint8>  Mask;
+        FNetReplicationScratch& Scratch = State.ReplicationScratch;
+        TVector<uint8>&  CurBytes   = Scratch.FieldBytes;
+        TVector<uint32>& CurOffsets = Scratch.FieldOffsets;
+        TVector<uint8>&  Mask       = Scratch.Mask;
 
-        HookScratch.Reset();
+        Scratch.HookBytes.Reset();
 
         // BindWriters sets the hooks so refs mint into the outgoing maps exactly as a live write would.
-        FNetArchive HookSrc(HookScratch);
+        FNetArchive HookSrc(Scratch.HookBytes);
         Net::BindWriters(HookSrc, State);
+
+        auto NextOut = [&]() -> FComponentRepOut&
+        {
+            FComponentRepOut& C = (Emitted < Out.Num()) ? Out[Emitted] : Out.EmplaceGetRef();
+            ++Emitted;
+            C.Block.Reset();
+            return C;
+        };
+
+        // A baseline reaches one client, so a removal waits for the next diff, which every client receives.
+        if (DiffState != nullptr && !bBaseline)
+        {
+            DiffState->LastSent.RemoveAll([&](const auto& Pair)
+            {
+                if (FindComponentPtr(Registry, Entity, State.ReplTypes.ByIndex[Pair.Key].Struct) != nullptr)
+                {
+                    return false;
+                }
+                FComponentRepOut& C = NextOut();
+                C.WireIndex = Pair.Key;
+                C.bRemoved = true;
+                return true;
+            });
+        }
 
         ForEachReplicatedComponent(Registry, State.ReplTypes, Entity, [&](uint32 WireIndex, CStruct* St, void* Ptr)
         {
@@ -285,11 +314,9 @@ namespace Lumina::Net
                 return;
             }
 
-            FComponentRepOut& C = (Emitted < Out.Num()) ? Out[Emitted] : Out.EmplaceGetRef();
-            ++Emitted;
-
+            FComponentRepOut& C = NextOut();
             C.WireIndex = WireIndex;
-            C.Block.Reset();
+            C.bRemoved = false;
             C.Block.Append(Mask);
             for (uint32 i = 0; i < N; ++i)
             {
@@ -314,7 +341,7 @@ namespace Lumina::Net
         {
             for (const FComponentRepOut& C : *Components)
             {
-                WriteVarUInt(Ar, C.WireIndex);
+                WriteVarUInt(Ar, (C.WireIndex << 1) | (C.bRemoved ? 1u : 0u));
                 if (!C.Block.IsEmpty())
                 {
                     Ar.Serialize(const_cast<uint8*>(C.Block.GetData()), static_cast<int64>(C.Block.Num()));
@@ -322,16 +349,10 @@ namespace Lumina::Net
             }
         }
 
-        uint32 ParentGuid = 0;
-        if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity);
-            Parent != ECS::NullEntity && ParentReplicates(Registry, Parent))
-        {
-            ParentGuid = Registry.Get<ECS::Read<SNetworkComponent>>(Parent).NetGUID.Value;
-        }
-        WriteNetGuid(Ar, ParentGuid);
+        WriteNetGuid(Ar, GetReplicatedParentGuid(Registry, Entity));
     }
 
-    void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, const FNetWorldState& State, ECS::FEntity Entity)
+    void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, FNetWorldState& State, ECS::FEntity Entity)
     {
         LUMINA_PROFILE_SCOPE();
         uint16 Count = 0;
@@ -341,9 +362,11 @@ namespace Lumina::Net
         TVector<CStruct*> Applied;
 
         const FReplTypeTable& Types = State.ReplTypes;
+        TVector<uint8>& Mask = State.ReplicationScratch.Mask;
         for (uint16 i = 0; i < Count; ++i)
         {
-            const uint32 Index = ReadVarUInt(Ar);
+            const uint32 Encoded = ReadVarUInt(Ar);
+            const uint32 Index = Encoded >> 1;
             if (Ar.HasError())
             {
                 return;
@@ -358,11 +381,17 @@ namespace Lumina::Net
             }
 
             CStruct* St = Types.ByIndex[Index].Struct;
+            if (Encoded & 1u)
+            {
+                St->GetComponentOps()->Remove(Registry, Entity);
+                continue;
+            }
 
             // The bitmask width is the struct's replicated-field count, the same on both peers.
             const uint32 N = St->GetNetReplicatedPropertyCount();
             const uint32 MaskBytes = (N + 7) / 8;
-            TVector<uint8> Mask(MaskBytes, 0);
+            Mask.Reset();
+            Mask.SetNum(MaskBytes, 0);
             if (MaskBytes > 0)
             {
                 Ar.Serialize(Mask.GetData(), static_cast<int64>(MaskBytes));
@@ -456,18 +485,28 @@ namespace Lumina::Net
             return false;
         }
 
-        static thread_local TVector<uint8>      HookScratch;
-        static thread_local TVector<uint8>      CurBytes;
-        static thread_local TVector<uint32>     CurOffsets;
-        static thread_local TVector<FProperty*> Fields;
-        static thread_local TVector<uint8>      Held;
-        static thread_local TVector<uint8>      Merged;
-        static thread_local TVector<uint32>     MergedOffsets;
+        if (DiffState != nullptr)
+        {
+            auto IsLiveScript = [Component](const FObjectHandle& Handle)
+            {
+                return Algo::Contains(Component->Scripts, Handle, [](const TStrongObjectPtr<CEntityScript>& S) { return FObjectHandle(S.Get()); });
+            };
+            DiffState->ScriptLastSent.RemoveAll([&IsLiveScript](const auto& Pair) { return !IsLiveScript(Pair.Key); });
+            DiffState->ScriptFieldSentTime.RemoveAll([&IsLiveScript](const auto& Pair) { return !IsLiveScript(Pair.Key); });
+        }
+
+        FNetReplicationScratch& Scratch = State.ReplicationScratch;
+        TVector<uint8>&      CurBytes      = Scratch.FieldBytes;
+        TVector<uint32>&     CurOffsets    = Scratch.FieldOffsets;
+        TVector<FProperty*>& Fields        = Scratch.Fields;
+        TVector<uint8>&      Held          = Scratch.Held;
+        TVector<uint8>&      Merged        = Scratch.Merged;
+        TVector<uint32>&     MergedOffsets = Scratch.MergedOffsets;
         bool bAnyHeld = false;
         const double Now = PlatformTime::Seconds();
 
-        HookScratch.Reset();
-        FNetArchive HookSrc(HookScratch);
+        Scratch.HookBytes.Reset();
+        FNetArchive HookSrc(Scratch.HookBytes);
         Net::BindWriters(HookSrc, State);
 
         for (int32 Index = 0; Index < Component->Scripts.Num(); ++Index)
@@ -486,7 +525,8 @@ namespace Lumina::Net
             Class->NetSerializeReplicatedFlat(HookSrc, Script, CurBytes, CurOffsets);
             const uint32 N = CurOffsets.IsEmpty() ? 0u : (uint32)CurOffsets.Num() - 1u;
 
-            FRepFieldSnapshot* Base = DiffState != nullptr ? &DiffState->ScriptLastSent[Index] : nullptr;
+            const FObjectHandle ScriptHandle(Script);
+            FRepFieldSnapshot* Base = DiffState != nullptr ? &DiffState->ScriptLastSent[ScriptHandle] : nullptr;
             const bool bBaseUsable = Base != nullptr && Base->Num() == N;
 
             FScriptRepOut Rep;
@@ -520,7 +560,7 @@ namespace Lumina::Net
                     const double Interval = i < static_cast<uint32>(Fields.Num()) ? MinSendInterval(Fields[i]) : 0.0;
                     if (Interval > 0.0)
                     {
-                        TVector<double>& SentTimes = DiffState->ScriptFieldSentTime[Index];
+                        TVector<double>& SentTimes = DiffState->ScriptFieldSentTime[ScriptHandle];
                         SentTimes.SetNum(N, -1.0e9);
                         if (Now - SentTimes[i] < Interval)
                         {
@@ -631,9 +671,10 @@ namespace Lumina::Net
         LUMINA_PROFILE_SCOPE();
         const uint32 Count = ReadVarUInt(Ar);
 
-        static thread_local TVector<FProperty*> Props;
-        static thread_local TVector<uint8>      Mask;
-        static thread_local TVector<char>       Names;
+        FNetReplicationScratch& Scratch = Registry.Ctx().Find<FNetWorldState>()->ReplicationScratch;
+        TVector<FProperty*>& Props = Scratch.Fields;
+        TVector<uint8>&      Mask  = Scratch.Mask;
+        TVector<char>&       Names = Scratch.Names;
 
         for (uint32 i = 0; i < Count; ++i)
         {
@@ -717,8 +758,7 @@ namespace Lumina::Net
     void AppendScriptRpc(TVector<uint8>& Batch, uint32 Guid, uint32 ScriptIndex, uint32 RpcId, ERpcTarget Target,
                          uint8 Flags, uint32 Caller, const uint8* Payload, uint32 PayloadSize)
     {
-        static thread_local TVector<uint8> Message;
-        Message.Reset();
+        TVector<uint8> Message;
         FNetArchive Writer(Message);
         uint8 Type = static_cast<uint8>(ENetMessage::ScriptRpc);
         uint8 TargetByte = static_cast<uint8>(Target);
@@ -775,13 +815,7 @@ namespace Lumina::Net
             }
         }
 
-        uint32 ParentGuid = 0;
-        if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity);
-            Parent != ECS::NullEntity && ParentReplicates(Registry, Parent))
-        {
-            ParentGuid = Registry.Get<ECS::Read<SNetworkComponent>>(Parent).NetGUID.Value;
-        }
-        WriteNetGuid(Ar, ParentGuid);
+        WriteNetGuid(Ar, GetReplicatedParentGuid(Registry, Entity));
     }
 
     void ReadSpawnComponents(FNetArchive& Ar, ECS::FRegistry& Registry, const FNetWorldState& State, ECS::FEntity Entity)
@@ -922,8 +956,8 @@ namespace Lumina::Net
 
     void SendFramed(INetworkTransport& Transport, FConnectionHandle Connection, const uint8* Msg, SIZE_T MsgSize, uint8 Channel, ESendMode Mode)
     {
-        static thread_local TVector<uint8> Framed;
-        Framed.Reset();
+        TVector<uint8> Framed;
+        Framed.Reserve(IntCastChecked<int32>(MsgSize + 2));
         AppendFramedMessage(Framed, Msg, MsgSize);
         Transport.Send(Connection, Framed.GetData(), static_cast<SIZE_T>(Framed.Num()), Channel, Mode);
     }
@@ -946,6 +980,23 @@ namespace Lumina::Net
 
     namespace
     {
+        // A peer refuses indices at or past MaxIncomingNetIndex, so minting one further is never deliverable.
+        template <typename TMap>
+        bool TryMintOutgoingIndex(TMap& Map, const char* Kind, uint32& OutIndex)
+        {
+            if (Map.NextIndex >= MaxIncomingNetIndex)
+            {
+                if (!Map.bLoggedRefusal)
+                {
+                    LOG_WARN("[Net] Outgoing {} index space is exhausted at {}, peers will drop any further export.", Kind, MaxIncomingNetIndex);
+                    Map.bLoggedRefusal = true;
+                }
+                return false;
+            }
+            OutIndex = Map.NextIndex++;
+            return true;
+        }
+
         // Get-or-assign a stable index for an object, queuing an export of its GUID the first time.
         uint32 NetObj_GetOrAssign(FNetObjectMap& Map, CObject* Obj)
         {
@@ -953,7 +1004,8 @@ namespace Lumina::Net
             if (!Guid.IsValid()) { return 0; }
             auto It = Map.GuidToIndex.Find(Guid);
             if (It != nullptr) { return (*It); }
-            const uint32 Index = Map.NextIndex++;
+            uint32 Index = 0;
+            if (!TryMintOutgoingIndex(Map, "object", Index)) { return 0; }
             Map.GuidToIndex[Guid]  = Index;
             Map.IndexToGuid[Index] = Guid;
             Map.PendingExports.Add(Index);
@@ -1015,7 +1067,8 @@ namespace Lumina::Net
             const FString& Key = !Ref.Guid.IsEmpty() ? Ref.Guid : Ref.Path;
             auto It = Map.KeyToIndex.Find(Key);
             if (It != nullptr) { return (*It); }
-            const uint32 Index = Map.NextIndex++;
+            uint32 Index = 0;
+            if (!TryMintOutgoingIndex(Map, "asset", Index)) { return 0; }
             Map.KeyToIndex[Key]   = Index;
             Map.IndexToRef[Index] = Ref;
             Map.PendingExports.Add(Index);
@@ -1035,7 +1088,8 @@ namespace Lumina::Net
             if (Name.IsNone()) { return 0; }
             auto It = Map.KeyToIndex.Find(Name);
             if (It != nullptr) { return (*It); }
-            const uint32 Index = Map.NextIndex++;
+            uint32 Index = 0;
+            if (!TryMintOutgoingIndex(Map, "name", Index)) { return 0; }
             Map.KeyToIndex[Name]   = Index;
             Map.IndexToName[Index] = Name;
             Map.PendingExports.Add(Index);
@@ -1047,6 +1101,20 @@ namespace Lumina::Net
             if (Index == 0) { return FName(); }
             auto It = Map.IndexToName.Find(Index);
             return It != nullptr ? (*It) : FName();
+        }
+
+        bool AcceptIncomingIndex(uint32 Index, bool& bLoggedRefusal, const char* Kind)
+        {
+            if (Index < MaxIncomingNetIndex)
+            {
+                return true;
+            }
+            if (!bLoggedRefusal)
+            {
+                LOG_WARN("[Net] Dropped a {} export with index {}, a peer may use at most {} indices.", Kind, Index, MaxIncomingNetIndex);
+                bLoggedRefusal = true;
+            }
+            return false;
         }
 
         uint32 EntityToNetGuid(const FNetWorldState& State, uint32 Raw)
@@ -1133,6 +1201,7 @@ namespace Lumina::Net
             Reader << Index;
             Reader << Guid;
             if (Reader.HasError()) { break; }
+            if (!AcceptIncomingIndex(Index, Map.bLoggedRefusal, "object")) { continue; }
             Map.IndexToGuid[Index] = Guid;
             Map.IndexToObject.Remove(Index); // re-resolve lazily against the latest GUID
             Map.FailedIndices.Remove(Index);
@@ -1170,6 +1239,7 @@ namespace Lumina::Net
             Reader << Path;
             Reader << Guid;
             if (Reader.HasError()) { break; }
+            if (!AcceptIncomingIndex(Index, Map.bLoggedRefusal, "asset")) { continue; }
             SUIDocumentRef Ref;
             Ref.Path = Path;
             Ref.Guid = Guid;
@@ -1205,6 +1275,7 @@ namespace Lumina::Net
             Reader << Index;
             Reader << Str;
             if (Reader.HasError()) { break; }
+            if (!AcceptIncomingIndex(Index, Map.bLoggedRefusal, "name")) { continue; }
             Map.IndexToName[Index] = FName(Str); // interns the string in this peer's name table
         }
     }

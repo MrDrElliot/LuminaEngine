@@ -60,6 +60,8 @@ namespace Lumina::EditorToolInternal
     // Under ImGui's 15px tap threshold, so a gesture can never both arm the camera and read as a tap.
     constexpr float RightLookArmThresholdPixels = 4.0f;
 
+    constexpr float FlyLookDegreesPerCount = 0.1f;
+
     // How far along Normal a mesh's origin sits when its bounds just touch a surface facing Normal.
     float RestingOffset(const SAABB& Bounds, const FVector3& Normal)
     {
@@ -108,6 +110,21 @@ namespace Lumina
     void FEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const
     {
         ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
+    }
+
+    void FEditorTool::SplitDockingLayoutLeftRight(ImGuiID InDockspaceID, float InRightFraction, ImGuiID& OutLeftDockID, ImGuiID& OutRightDockID)
+    {
+        ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
+        ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, InRightFraction, &OutRightDockID, &OutLeftDockID);
+    }
+
+    void FEditorTool::SplitDockingLayoutLeftRight(ImGuiID InDockspaceID, const char* InLeftWindowName, const char* InRightWindowName, float InRightFraction)
+    {
+        ImGuiID LeftDockID = 0, RightDockID = 0;
+        SplitDockingLayoutLeftRight(InDockspaceID, InRightFraction, LeftDockID, RightDockID);
+
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(InLeftWindowName, InDockspaceID), LeftDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(InRightWindowName, InDockspaceID), RightDockID);
     }
 
     void FEditorTool::GenerateThumbnail(CPackage* Package)
@@ -160,9 +177,9 @@ namespace Lumina
         if (HasWorld())
         {
             // Use world context as "is initialized", editor worlds don't have a physics scene.
-            if (GWorldManager->FindContext(World.Get()) == nullptr)
+            if (Global::GWorldManager->FindContext(World.Get()) == nullptr)
             {
-                GWorldManager->CreateWorldContext(World.Get(), EWorldType::Editor);
+                Global::GWorldManager->CreateWorldContext(World.Get(), EWorldType::Editor);
             }
 
             SetupWorldForTool();
@@ -213,7 +230,7 @@ namespace Lumina
         if (HasWorld())
         {
             // Not force destroyed, since this TStrongObjectPtr still holds the world and would then dangle.
-            GWorldManager->DestroyWorldContext(World.Get());
+            Global::GWorldManager->DestroyWorldContext(World.Get());
             World.Reset();
         }
     }
@@ -509,16 +526,16 @@ namespace Lumina
         if (World.IsValid())
         {
             // Released after the teardown rather than force-freed while still held, which would dangle.
-            GWorldManager->DestroyWorldContext(World.Get());
+            Global::GWorldManager->DestroyWorldContext(World.Get());
             World.Reset();
         }
 
         World = InWorld;
 
         // Keyed on the world context, since editor worlds intentionally have no physics scene.
-        if (GWorldManager->FindContext(World.Get()) == nullptr)
+        if (Global::GWorldManager->FindContext(World.Get()) == nullptr)
         {
-            GWorldManager->CreateWorldContext(World.Get(), EWorldType::Editor);
+            Global::GWorldManager->CreateWorldContext(World.Get(), EWorldType::Editor);
         }
 
         if (InputViewport)
@@ -1809,6 +1826,10 @@ namespace Lumina
             }
         }
 
+        // Fly look turns by plain yaw and pitch, the one motion the renderer can run ahead with.
+        const bool bFlyLook = CameraState.Mode == EEditorCameraMode::Free && bWantLook && !CameraState.bFocusInterp;
+        World->GetComponent<SCameraComponent>(EditorEntity).MouseLookDegreesPerCount = bFlyLook ? EditorToolInternal::FlyLookDegreesPerCount : 0.0f;
+
         if (CameraState.Mode == EEditorCameraMode::Free)
         {
             if (!bAllowInput || CameraState.bFocusInterp)
@@ -1932,15 +1953,8 @@ namespace Lumina
 
             if (bWantLook)
             {
-                Transform.AddYaw(static_cast<float>(Raw.GetMouseDeltaX() * 0.1));
-
-                // Clamps accumulated pitch rather than the delta, so the camera cannot flip past vertical.
-                const FVector3 Forward2 = Transform.GetForward();
-                const float Elevation   = Math::Degrees(Math::Asin(Math::Clamp(Forward2.y, -1.0f, 1.0f)));
-                constexpr float PitchLimit = 89.0f;
-                float PitchDelta = static_cast<float>(Raw.GetMouseDeltaY() * 0.1);
-                PitchDelta = Math::Clamp(PitchDelta, Elevation - PitchLimit, Elevation + PitchLimit);
-                Transform.AddPitch(PitchDelta);
+                const FVector2 MouseDelta((float)Raw.GetMouseDeltaX(), (float)Raw.GetMouseDeltaY());
+                Transform.SetLocalRotation(AddMouseLook(Transform.GetLocalRotation(), MouseDelta * EditorToolInternal::FlyLookDegreesPerCount));
 
                 // In ortho the wheel is already spoken for as zoom, above.
                 if (!CameraState.bOrthographic)
@@ -2704,7 +2718,7 @@ namespace Lumina
 
     CObject* FEditorTool::LoadDroppedAsset(FStringView VirtualPath) const
     {
-        FAssetData* AssetData = FAssetRegistry::Get().GetAssetByPath(VirtualPath);
+        FAssetDataPtr AssetData = FAssetRegistry::Get().GetAssetByPath(VirtualPath);
         if (AssetData == nullptr)
         {
             LOG_WARN("Asset drop: no registry entry for '{}'", *FString(VirtualPath.GetData(), VirtualPath.Len()));

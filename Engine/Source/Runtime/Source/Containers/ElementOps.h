@@ -228,7 +228,7 @@ namespace Lumina::ElementOps
     {
         if constexpr (TIsBitwiseComparable_V<T>)
         {
-            return Count == 0 || std::memcmp(A, B, Count * sizeof(T)) == 0;
+            return Count == 0 || Memory::Memcmp(A, B, Count * sizeof(T)) == 0;
         }
         else
         {

@@ -255,6 +255,7 @@ namespace Lumina
             {
                 if (static_cast<uint32>(Out.Impacts.Num()) >= kWeatherImpactSplashCapacity / 4u)
                 {
+                    LOG_WARN_ONCE("ExtractWeatherInteraction: more than {} weather impacts in one frame, the rest are dropped, have fewer weather interactors land in water or puddles at once to avoid this.",kWeatherImpactSplashCapacity / 4u);
                     break;
                 }
                 if (!InsideWindow(Impact.Position, 0.0f))
@@ -336,6 +337,7 @@ namespace Lumina
         {
             if (static_cast<uint32>(Out.WaterBodies.Num()) >= kMaxWeatherWaterBodies)
             {
+                LOG_WARN_ONCE("ExtractWeatherInteraction: more than {} water bodies in the scene, the rest are dropped and will not ripple or foam, reduce the number of water volumes to avoid this.", kMaxWeatherWaterBodies);
                 return;
             }
             const STransformComponent& Transform = Transforms.Get(Entity);

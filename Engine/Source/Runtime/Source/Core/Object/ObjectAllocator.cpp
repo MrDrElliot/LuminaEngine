@@ -9,7 +9,7 @@
 namespace Lumina
 {
     /** Global CObject allocator */
-    RUNTIME_API FCObjectAllocator GCObjectAllocator;
+    RUNTIME_API FCObjectAllocator Global::GCObjectAllocator;
 
     FCObjectAllocator::FCounterShard& FCObjectAllocator::ThreadCounters()
     {

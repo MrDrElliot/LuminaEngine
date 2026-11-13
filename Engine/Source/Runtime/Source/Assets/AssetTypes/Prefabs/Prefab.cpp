@@ -1268,13 +1268,13 @@ namespace Lumina
 
     void CPrefab::RefreshInstancesInLoadedWorlds()
     {
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             return;
         }
 
         // A world with no instance does no work, and the prefab editor's preview holds tags, not instances.
-        for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
+        for (const TUniquePtr<FWorldContext>& Context : Global::GWorldManager->GetContexts())
         {
             CWorld* World = Context ? Context->World.Get() : nullptr;
             if (World == nullptr)
@@ -1341,12 +1341,12 @@ namespace Lumina
 
     void CPrefab::DestroyAllInstancesInLoadedWorlds()
     {
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             return;
         }
 
-        for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
+        for (const TUniquePtr<FWorldContext>& Context : Global::GWorldManager->GetContexts())
         {
             CWorld* World = Context ? Context->World.Get() : nullptr;
             if (World == nullptr)

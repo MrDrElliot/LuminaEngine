@@ -23,12 +23,18 @@ namespace Lumina::ImGuiX::Font
         NumFonts,
         Default = Medium,
     };
-    
-    RUNTIME_API extern ImFont* GFonts[static_cast<int32>(EFont::NumFonts)];
+}
 
+namespace Lumina::Global
+{
+    RUNTIME_API extern ImFont* GFonts[static_cast<int32>(ImGuiX::Font::EFont::NumFonts)];
+}
+
+namespace Lumina::ImGuiX::Font
+{
     RUNTIME_API FORCEINLINE void PushFont(EFont font) 
     {
-        ImFont* Font = GFonts[static_cast<int8>(font)];
+        ImFont* Font = Global::GFonts[static_cast<int8>(font)];
         ImGui::PushFont(Font); 
     }
 

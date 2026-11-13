@@ -30,7 +30,6 @@ namespace Lumina::MCP
     namespace MCPSceneToolsInternal
     {
         constexpr const char* GSceneNoWorldEditor = "No world editor is open, so there is no scene to work on.";
-        constexpr const char* GSceneStopPlayFirst      = "Stop play-in-editor first.";
 
         FString SceneEntityName(const ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
@@ -38,10 +37,9 @@ namespace Lumina::MCP
             return Name != nullptr ? FString(*Name->Name.ToString()) : FString("Entity");
         }
 
-        bool ResolveSceneEntity(const FString& Token, ECS::FRegistry*& OutRegistry, ECS::FEntity& OutEntity, FString& OutError)
+        bool ResolveSceneEntity(ECS::FRegistry* Registry, const FString& Token, ECS::FEntity& OutEntity, FString& OutError)
         {
-            OutRegistry = SessionOps::GetSceneRegistry(OutError);
-            return OutRegistry != nullptr && Agent::FEntityTokens::Resolve(*OutRegistry, FStringView(Token), OutEntity, OutError);
+            return Registry != nullptr && Agent::FEntityTokens::Resolve(*Registry, FStringView(Token), OutEntity, OutError);
         }
 
         TVector<ECS::FEntity> ResolveSceneEntities(ECS::FRegistry& Registry, const TVector<FString>& Tokens, TVector<FString>& OutSkipped)
@@ -448,7 +446,7 @@ namespace Lumina::MCP
         Agent::FToolResult SceneCreateEntity(const SCreateEntityParams& In, SCreateEntityResult& Out)
         {
             FString SceneError;
-            ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+            ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(SceneError);
             if (ScenePtr == nullptr)
             {
                 return Agent::FToolResult::Error(SceneError);
@@ -603,10 +601,10 @@ namespace Lumina::MCP
 
         Agent::FToolResult EntityDescribe(const SDescribeEntityParams& In, SDescribeEntityResult& Out)
         {
-            ECS::FRegistry* ScenePtr = nullptr;
-            ECS::FEntity Entity = ECS::NullEntity;
             FString Error;
-            if (!ResolveSceneEntity(In.Entity, ScenePtr, Entity, Error))
+            ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(Error);
+            ECS::FEntity Entity = ECS::NullEntity;
+            if (!ResolveSceneEntity(ScenePtr, In.Entity, Entity, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -637,10 +635,10 @@ namespace Lumina::MCP
 
         Agent::FToolResult EntityAddComponent(const SEntityComponentParams& In, SEntityComponentResult& Out)
         {
-            ECS::FRegistry* ScenePtr = nullptr;
-            ECS::FEntity Entity = ECS::NullEntity;
             FString Error;
-            if (!ResolveSceneEntity(In.Entity, ScenePtr, Entity, Error))
+            ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(Error);
+            ECS::FEntity Entity = ECS::NullEntity;
+            if (!ResolveSceneEntity(ScenePtr, In.Entity, Entity, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -692,25 +690,14 @@ namespace Lumina::MCP
         Agent::FToolResult EntityRemoveComponent(const SEntityComponentParams& In, SEntityComponentResult& Out)
         {
             FString SceneError;
-            ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
-            if (ScenePtr == nullptr)
+            ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(SceneError);
+            ECS::FEntity Entity = ECS::NullEntity;
+            if (!ResolveSceneEntity(ScenePtr, In.Entity, Entity, SceneError))
             {
                 return Agent::FToolResult::Error(SceneError);
             }
 
-            if (SessionOps::IsSceneTargetSimulating())
-            {
-                return Agent::FToolResult::Error(GSceneStopPlayFirst);
-            }
-
             ECS::FRegistry& Registry = *ScenePtr;
-
-            ECS::FEntity Entity = ECS::NullEntity;
-            FString Error;
-            if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Entity, Error))
-            {
-                return Agent::FToolResult::Error(Error);
-            }
 
             CStruct* Type = SceneOps::ResolveComponentType(FStringView(In.Component));
             if (Type == nullptr || !ECS::Utils::HasComponent(Registry, Entity, Type))
@@ -792,10 +779,10 @@ namespace Lumina::MCP
 
         Agent::FToolResult EntityEditScript(const SEntityScriptParams& In, SEntityScriptResult& Out)
         {
-            ECS::FRegistry* ScenePtr = nullptr;
-            ECS::FEntity Entity = ECS::NullEntity;
             FString Error;
-            if (!ResolveSceneEntity(In.Entity, ScenePtr, Entity, Error))
+            ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(Error);
+            ECS::FEntity Entity = ECS::NullEntity;
+            if (!ResolveSceneEntity(ScenePtr, In.Entity, Entity, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -827,14 +814,10 @@ namespace Lumina::MCP
             const bool bAdd = In.Action == EEntityTagAction::Add;
 
             FString SceneError;
-            ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+            ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(SceneError);
             if (ScenePtr == nullptr)
             {
                 return Agent::FToolResult::Error(SceneError);
-            }
-            if (SessionOps::IsSceneTargetSimulating())
-            {
-                return Agent::FToolResult::Error(GSceneStopPlayFirst);
             }
             if (In.Tag.IsEmpty())
             {
@@ -886,10 +869,10 @@ namespace Lumina::MCP
 
         Agent::FToolResult EntitySetProperty(const SSetPropertyParams& In, SSetPropertyResult& Out)
         {
-            ECS::FRegistry* ScenePtr = nullptr;
-            ECS::FEntity Entity = ECS::NullEntity;
             FString Error;
-            if (!ResolveSceneEntity(In.Entity, ScenePtr, Entity, Error))
+            ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(Error);
+            ECS::FEntity Entity = ECS::NullEntity;
+            if (!ResolveSceneEntity(ScenePtr, In.Entity, Entity, Error))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -1007,25 +990,14 @@ namespace Lumina::MCP
         Agent::FToolResult EntityDuplicate(const SDuplicateEntityParams& In, SDuplicateEntityResult& Out)
         {
             FString SceneError;
-            ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
-            CWorld* World = SessionOps::GetSceneWorld(SceneError);
-            if (ScenePtr == nullptr || World == nullptr)
+            ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(SceneError);
+            ECS::FEntity Source = ECS::NullEntity;
+            if (!ResolveSceneEntity(ScenePtr, In.Entity, Source, SceneError))
             {
                 return Agent::FToolResult::Error(SceneError);
             }
 
-            if (SessionOps::IsSceneTargetSimulating())
-            {
-                return Agent::FToolResult::Error(GSceneStopPlayFirst);
-            }
-
             ECS::FRegistry& Registry = *ScenePtr;
-            ECS::FEntity Source = ECS::NullEntity;
-            FString Error;
-            if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Source, Error))
-            {
-                return Agent::FToolResult::Error(Error);
-            }
 
             // The editor refuses the same, since a copy of one member would sit half inside the instance.
             if (const SPrefabInstanceComponent* Instance = Registry.TryGet<SPrefabInstanceComponent>(Source);
@@ -1064,28 +1036,13 @@ namespace Lumina::MCP
         Agent::FToolResult EntitySetParent(const SSetParentParams& In, SSetParentResult& Out)
         {
             FString SceneError;
-            ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
-            if (ScenePtr == nullptr)
-            {
-                return Agent::FToolResult::Error(SceneError);
-            }
-
-            if (SessionOps::IsSceneTargetSimulating())
-            {
-                return Agent::FToolResult::Error(GSceneStopPlayFirst);
-            }
-
-            ECS::FRegistry& Registry = *ScenePtr;
+            ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(SceneError);
             ECS::FEntity Child  = ECS::NullEntity;
             ECS::FEntity Parent = ECS::NullEntity;
-            FString Error;
-            if (!Agent::FEntityTokens::Resolve(Registry, FStringView(In.Entity), Child, Error))
+            if (!ResolveSceneEntity(ScenePtr, In.Entity, Child, SceneError)
+                || (!In.Parent.IsEmpty() && !ResolveSceneEntity(ScenePtr, In.Parent, Parent, SceneError)))
             {
-                return Agent::FToolResult::Error(Error);
-            }
-            if (!In.Parent.IsEmpty() && !Agent::FEntityTokens::Resolve(Registry, FStringView(In.Parent), Parent, Error))
-            {
-                return Agent::FToolResult::Error(Error);
+                return Agent::FToolResult::Error(SceneError);
             }
 
             // The outliner's own reparent, so a scene's rules, such as a prefab's single root, apply here too.
@@ -1112,15 +1069,10 @@ namespace Lumina::MCP
         Agent::FToolResult EntityDestroy(const SDestroyEntitiesParams& In, SDestroyEntitiesResult& Out)
         {
             FString SceneError;
-            ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+            ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(SceneError);
             if (ScenePtr == nullptr)
             {
                 return Agent::FToolResult::Error(SceneError);
-            }
-
-            if (SessionOps::IsSceneTargetSimulating())
-            {
-                return Agent::FToolResult::Error(GSceneStopPlayFirst);
             }
 
             ECS::FRegistry& Registry = *ScenePtr;
@@ -1162,14 +1114,25 @@ namespace Lumina::MCP
 
     using namespace MCPSceneToolsInternal;
 
+    ECS::FRegistry* GetEditableSceneRegistry(FString& OutError)
+    {
+        ECS::FRegistry* Registry = SessionOps::GetSceneRegistry(OutError);
+        if (Registry != nullptr && SessionOps::IsSceneTargetSimulating())
+        {
+            OutError = "Stop play-in-editor first.";
+            return nullptr;
+        }
+        return Registry;
+    }
+
     CWorld* FindGameWorld()
     {
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             return nullptr;
         }
 
-        for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
+        for (const TUniquePtr<FWorldContext>& Context : Global::GWorldManager->GetContexts())
         {
             if (Context && Context->World.IsValid() && (Context->Type == EWorldType::Game || Context->Type == EWorldType::Simulation))
             {

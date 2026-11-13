@@ -121,19 +121,13 @@ namespace Lumina
             });
         }
 
-        struct FOwnerRecord
-        {
-            uint32 Guid  = 0;
-            uint32 Owner = 0;
-        };
-
         // One message per client, since each only learns owners of entities it holds plus the ones it owns.
-        void AppendOwnership(const FNetWorldState& State, uint32 Connection, const TVector<FOwnerRecord>& Changes,
-                             const TVector<FOwnerRecord>* JoinerTable, TVector<uint8>& Reliable)
+        void AppendOwnership(const FNetWorldState& State, uint32 Thread, uint32 Connection, const TVector<FNetOwnerRecord>& Changes,
+                             const TVector<FNetOwnerRecord>* JoinerTable, TVector<uint8>& Reliable)
         {
-            static thread_local TVector<FOwnerRecord> Picked;
+            TVector<FNetOwnerRecord>& Picked = State.OwnershipPickedScratch[Thread];
             Picked.Reset();
-            for (const FOwnerRecord& Record : Changes)
+            for (const FNetOwnerRecord& Record : Changes)
             {
                 if (Record.Owner == Connection || State.HoldsEntity(Connection, Record.Guid))
                 {
@@ -145,7 +139,7 @@ namespace Lumina
                 Picked.Append(JoinerTable->begin(), JoinerTable->end());
             }
 
-            Net::AppendCountedMessages(Reliable, ENetMessage::OwnershipUpdate, Picked.Num(), [](FNetArchive& Writer, int32 Index)
+            Net::AppendCountedMessages(Reliable, ENetMessage::OwnershipUpdate, Picked.Num(), [&Picked](FNetArchive& Writer, int32 Index)
             {
                 Net::WriteNetGuid(Writer, Picked[Index].Guid);
                 WriteVarUInt(Writer, Picked[Index].Owner);
@@ -185,8 +179,8 @@ namespace Lumina
         void CollectBaseline(ECS::FRegistry& Registry, FNetWorldState& State, ECS::FEntity Entity, uint32 Guid,
             FComponentRepState* DiffState, TVector<uint8>* OutMsg)
         {
-            static thread_local TVector<Net::FComponentRepOut> Comps;
-            static thread_local TVector<Net::FScriptRepOut>    Scripts;
+            TVector<Net::FComponentRepOut>& Comps   = State.ReplicationScratch.Comps;
+            TVector<Net::FScriptRepOut>&    Scripts = State.ReplicationScratch.Scripts;
             Net::CollectComponentFieldsInto(Registry, Entity, State, /*bBaseline*/true, DiffState, Comps);
             Net::CollectScriptFieldsInto(Registry, Entity, State, /*bBaseline*/true, DiffState, Scripts);
             if (OutMsg == nullptr)
@@ -303,8 +297,8 @@ namespace Lumina
         {
             LUMINA_PROFILE_SCOPE();
             const CNetworkSettings* Settings = GetDefault<CNetworkSettings>();
-            const int32 BudgetBytes = Settings ? Settings->MaxReliablePropertyBytesPerTick : 0;
-            const int32 PauseBytes  = Settings ? Settings->ReliableBacklogPauseBytes : 0;
+            const int32 BudgetBytes = Settings ? Settings->MaxReliablePropertyBytesPerTick : CNetworkSettings::kDefaultMaxReliablePropertyBytesPerTick;
+            const int32 PauseBytes  = Settings ? Settings->ReliableBacklogPauseBytes : CNetworkSettings::kDefaultReliableBacklogPauseBytes;
 
             // Every dirty entity stays flagged, so nothing is lost when a saturated link pauses updates.
             if (PauseBytes > 0 && State.Transport != nullptr)
@@ -360,9 +354,9 @@ namespace Lumina
                 FComponentRepState& CompDiff = Registry.GetOrEmplace<FComponentRepState>(Entity);
 
                 // Parked across entities so a tick's worth of updates reuses one set of buffers.
-                static thread_local TVector<Net::FComponentRepOut> Comps;
-                static thread_local TVector<Net::FScriptRepOut>    Scripts;
-                static thread_local TVector<uint8>                 Buffer;
+                TVector<Net::FComponentRepOut>& Comps   = State.ReplicationScratch.Comps;
+                TVector<Net::FScriptRepOut>&    Scripts = State.ReplicationScratch.Scripts;
+                TVector<uint8>&                 Buffer  = State.ReplicationScratch.Buffer;
                 Net::CollectComponentFieldsInto(Registry, Entity, State, /*bBaseline*/false, &CompDiff, Comps);
                 const bool bHeldBack = Net::CollectScriptFieldsInto(Registry, Entity, State, /*bBaseline*/false, &CompDiff, Scripts);
                 // Waiting on a rate-limited field with nothing else to say, so this tick sends nothing at all.
@@ -415,29 +409,34 @@ namespace Lumina
             Net::BindReaders(Reader, State, SenderConn);
             const ECS::FEntity Entity = Registry.Create();
             Net::ReadSpawnComponents(Reader, Registry, State, Entity);
-            const uint32 ScriptCount = Net::ReadScriptManifest(Reader, Registry, Entity);
-            Net::ReadScriptStates(Reader, Registry, Entity, ScriptCount);
-
-            // Spawn pose
-            NetQuantize::FQuantizedVector QPos;   
-            QPos.Read(Reader);
-            NetQuantize::FQuantizedQuat   QRot;   
-            QRot.Read(Reader);
-            NetQuantize::FQuantizedVector QScale; 
-            QScale.Read(Reader);
-            
             if (!Reader.HasError())
             {
-                if (STransformComponent* T = Registry.TryGet<ECS::Write<STransformComponent>>(Entity))
-                {
-                    T->SetRaw(QPos.ToVector(), QRot.ToQuat(), QScale.ToVector(NetQuantize::ScaleQuantum));
-                }
+                const uint32 ScriptCount = Net::ReadScriptManifest(Reader, Registry, Entity);
+                Net::ReadScriptStates(Reader, Registry, Entity, ScriptCount);
             }
+
+            // Spawn pose
+            NetQuantize::FQuantizedVector QPos;
+            QPos.Read(Reader);
+            NetQuantize::FQuantizedQuat   QRot;
+            QRot.Read(Reader);
+            NetQuantize::FQuantizedVector QScale;
+            QScale.Read(Reader);
 
             // A script's OnAttach ran while the states were read, and it may have destroyed what it was attached to.
             if (!Registry.IsValid(Entity))
             {
                 return;
+            }
+            if (Reader.HasError())
+            {
+                ECS::Utils::DestroyEntity(Registry, Entity);
+                return;
+            }
+
+            if (STransformComponent* T = Registry.TryGet<ECS::Write<STransformComponent>>(Entity))
+            {
+                T->SetRaw(QPos.ToVector(), QRot.ToQuat(), QScale.ToVector(NetQuantize::ScaleQuantum));
             }
 
             // A spawned tag arrives as the component alone, and lookups read the per-tag storage it belongs in.
@@ -758,9 +757,6 @@ namespace Lumina
 
             uint32 RelevantSum = 0, RelevantMax = 0, SpawnsSum = 0, DespawnsSum = 0;
 
-            // Copied from the grid's cell-ordered arrays so the diff reads hot fields contiguously.
-            struct FGathered { uint32 Rec; uint32 Guid; uint8 Flags; ENetLODTier Tier; float Score = 0.0f; };
-
             // Message building mints shared export indices, so the parallel pass only records what each client is owed.
             enum class EClientOp : uint8 { Spawn, MapBaseline, Despawn };
             struct FClientOp { EClientOp Op; uint32 Guid; uint32 Rec; };
@@ -776,8 +772,8 @@ namespace Lumina
 
             const CNetworkSettings* NetSettings = GetDefault<CNetworkSettings>();
             const float  SendRate     = NetSettings != nullptr ? NetSettings->ServerSendRate : 30.0f;
-            static const TOptional<int> MaxRelevantArg = GCommandLine->GetInt("maxrelevant");
-            static const TOptional<int> SnapshotBytesArg = GCommandLine->GetInt("snapshotbudget");
+            static const TOptional<int> MaxRelevantArg = Global::GCommandLine->GetInt("maxrelevant");
+            static const TOptional<int> SnapshotBytesArg = Global::GCommandLine->GetInt("snapshotbudget");
             const int32 SnapshotBytesPerSecond = SnapshotBytesArg.Get(NetSettings != nullptr ? NetSettings->MaxSnapshotBytesPerClient : 0);
 
             // A record runs about ten bytes once anchored and yaw-packed, which turns a byte budget into a record count.
@@ -811,8 +807,13 @@ namespace Lumina
             }
 
             PhaseMark(ENetPhase::Schedule);
+            // One scratch slot per worker, sized before the parallel pass so no two clients ever share a buffer.
+            const uint32 NumThreadSlots = Jobs::GetNumThreadSlots();
+            if (static_cast<uint32>(State.GatheredScratch.Num()) < NumThreadSlots) { State.GatheredScratch.SetNum(NumThreadSlots); }
+            if (static_cast<uint32>(State.DueScratch.Num())      < NumThreadSlots) { State.DueScratch.SetNum(NumThreadSlots); }
+
             // Phase A, the per-client gather, relevancy diff and transform records, run across workers.
-            Jobs::ParallelFor(NumClients, [&](uint32 ci)
+            Jobs::ParallelFor(NumClients, [&](uint32 ci, uint32 Thread)
             {
                 const uint32 ConnId = State.ConnectedClientIds[ci];
                 FNetClientView& CV  = *Views[ci];
@@ -823,7 +824,7 @@ namespace Lumina
                 }
                 const float SinceServiced = ClientDelta[ci];
                 TVector<FClientOp>& Ops = ClientOps[ci];
-                static thread_local TVector<FGathered> Gathered;
+                TVector<FNetGatheredRecord>& Gathered = State.GatheredScratch[Thread];
 
                 // A client without a pawn yet still receives everything that is relevant everywhere.
                 const auto VpIt = State.OwnerToRecord.Find(ConnId);
@@ -890,7 +891,7 @@ namespace Lumina
                 if (MaxRelevant > 0 && Gathered.Num() > MaxRelevant)
                 {
                     const uint32 OwnRecord = bHasViewpoint ? (*VpIt) : Constants::kIndexNoneU32;
-                    auto ScoreOf = [&](const FGathered& G)
+                    auto ScoreOf = [&](const FNetGatheredRecord& G)
                     {
                         if ((G.Flags & NETREC_AlwaysRelevant) || G.Rec == OwnRecord)
                         {
@@ -906,24 +907,23 @@ namespace Lumina
                         }
                         return Held->TimeHeld < MinResidencySeconds ? 0.0f : DistanceSq * 0.36f;
                     };
-                    for (FGathered& G : Gathered)
+                    for (FNetGatheredRecord& G : Gathered)
                     {
                         G.Score = ScoreOf(G);
                     }
                     Algo::NthElement(Gathered.begin(), Gathered.begin() + MaxRelevant, Gathered.end(),
-                        [](const FGathered& A, const FGathered& B) { return A.Score < B.Score; });
+                        [](const FNetGatheredRecord& A, const FNetGatheredRecord& B) { return A.Score < B.Score; });
                     Gathered.SetNum(MaxRelevant);
                 }
 
                 // An entry is "relevant this tick" iff its RelevantTick == State.RelevancyTick.
                 TVector<FTransformSendRecord>& Records  = ClientRecords[ci];
 
-                struct FDueRecord { FTransformSendRecord Record; float Priority; };
-                static thread_local TVector<FDueRecord> Due;
+                TVector<FNetDueRecord>& Due = State.DueScratch[Thread];
                 Due.Reset();
 
                 // A single pass doing the relevancy diff on enter and the transform-record build.
-                for (const FGathered& G : Gathered)
+                for (const FNetGatheredRecord& G : Gathered)
                 {
                     const uint32 Rec   = G.Rec;
                     const uint32 Guid  = G.Guid;
@@ -953,6 +953,7 @@ namespace Lumina
                             {
                                 Ops.Emplace(EClientOp::Spawn, Guid, Rec);
                                 E.bBaselinePending = true; // spawn carried the pose; hold the transform one tick
+                                E.SentSeq          = Ex.Seq[Rec];
                             }
                         }
                         else
@@ -982,27 +983,16 @@ namespace Lumina
                         }
                         else
                         {
-                            const bool bChanged  = (Flags & NETREC_Changed) != 0;
-                            const bool bScaleChg = (Flags & NETREC_ScaleChanged) != 0;
-                            const bool bBaseline = CV.bForceBaseline || E.bNeedsBaseline;
-
-                            // A pose not sent for a whole keyframe interval goes again, which heals a lost final update.
-                            const bool bRefresh = Settings.TransformKeyframeInterval > 0.0f && E.TimeSinceSent >= Settings.TransformKeyframeInterval;
-
-                            // Near sends every changed tick, Mid and Far throttle to tier rate, and a baseline bypasses.
-                            float Period = 0.0f;
-                            if (E.Tier == ENetLODTier::Mid)      { Period = (Settings.TierMidRate > 0.0f) ? 1.0f / Settings.TierMidRate : 0.0f; }
-                            else if (E.Tier == ENetLODTier::Far) { Period = (Settings.TierFarRate > 0.0f) ? 1.0f / Settings.TierFarRate : 0.0f; }
-                            const bool bCadence = (Period <= 0.0f) || (E.TimeSinceSent >= Period);
-
-                            if (bBaseline || bRefresh || (bChanged && bCadence))
+                            bool bScale = false;
+                            if (NetGraph::IsTransformDue(E, Ex.Seq[Rec], CV.bForceBaseline, Settings, bScale))
                             {
+                                const bool bBaseline = CV.bForceBaseline || E.bNeedsBaseline;
                                 FTransformSendRecord R;
                                 R.Guid   = Guid;
                                 R.Tier   = E.Tier;
                                 R.Pos    = Ex.Pos[Rec];
                                 R.Rot    = Ex.Rot[Rec].ToQuat();
-                                R.bScale = bScaleChg || bBaseline || bRefresh;
+                                R.bScale = bScale;
                                 R.Scale  = Ex.Scale[Rec].ToVector(NetQuantize::ScaleQuantum);
                                 R.bPitch = (Ex.Flags[Rec] & NETREC_HasPitch) != 0;
                                 R.Pitch  = Ex.Pitch[Rec];
@@ -1011,7 +1001,7 @@ namespace Lumina
                                 const FVector3& P = Ex.WorldPos[Rec];
                                 const float Distance = std::sqrt((P.x - VP.x) * (P.x - VP.x) + (P.z - VP.z) * (P.z - VP.z));
                                 const float Priority = bBaseline ? 1.0e9f : E.TimeSinceSent / (1.0f + Distance / 15.0f);
-                                Due.Emplace(R, Priority);
+                                Due.Emplace(R, Priority, Ex.Seq[Rec]);
                             }
                         }
                     }
@@ -1020,16 +1010,17 @@ namespace Lumina
                 if (MaxRecordsPerSend > 0 && static_cast<size_t>(Due.Num()) > MaxRecordsPerSend)
                 {
                     Algo::NthElement(Due.begin(), Due.begin() + MaxRecordsPerSend, Due.end(),
-                        [](const FDueRecord& A, const FDueRecord& B) { return A.Priority > B.Priority; });
+                        [](const FNetDueRecord& A, const FNetDueRecord& B) { return A.Priority > B.Priority; });
                     Due.SetNum(IntCastChecked<int32>(MaxRecordsPerSend));
                 }
-                for (const FDueRecord& D : Due)
+                for (const FNetDueRecord& D : Due)
                 {
                     const auto It = CV.Relevant.Find(D.Record.Guid);
                     if (It != nullptr)
                     {
                         It->bNeedsBaseline = false;
                         It->TimeSinceSent  = 0.0f;
+                        It->SentSeq        = D.Seq;
                     }
                     Records.Add(D.Record);
                 }
@@ -1144,7 +1135,7 @@ namespace Lumina
 
             PhaseMark(ENetPhase::Exports);
             // Ownership changes resolve to GUIDs here, after this tick's spawns have minted theirs.
-            TVector<FOwnerRecord> OwnerChanges;
+            TVector<FNetOwnerRecord> OwnerChanges;
             for (ECS::FEntity Entity : State.OwnershipChanged)
             {
                 const SNetworkComponent* Net = Registry.IsValid(Entity) ? Registry.TryGet<ECS::Read<SNetworkComponent>>(Entity) : nullptr;
@@ -1155,7 +1146,7 @@ namespace Lumina
             }
             State.OwnershipChanged.Reset();
 
-            TVector<FOwnerRecord> JoinerTable;
+            TVector<FNetOwnerRecord> JoinerTable;
             if (!State.OwnershipJoiners.IsEmpty())
             {
                 for (auto [Entity, Net] : Registry.View<ECS::Read<SNetworkComponent>>().Each())
@@ -1173,7 +1164,8 @@ namespace Lumina
             TVector<uint32>         ClientLargest;    ClientLargest.SetNum(NumClients);
             TVector<uint32>         ClientBytes;      ClientBytes.SetNum(NumClients);
             TVector<uint32>         ClientChunks;     ClientChunks.SetNum(NumClients);
-            Jobs::ParallelFor(NumClients, [&](uint32 ci)
+            if (static_cast<uint32>(State.OwnershipPickedScratch.Num()) < NumThreadSlots) { State.OwnershipPickedScratch.SetNum(NumThreadSlots); }
+            Jobs::ParallelFor(NumClients, [&](uint32 ci, uint32 Thread)
             {
                 const uint32 ConnId = State.ConnectedClientIds[ci];
                 TVector<uint8>& Pending = Views[ci]->PendingReliable;
@@ -1181,7 +1173,7 @@ namespace Lumina
                 const bool bJoiner = Algo::Find(State.OwnershipJoiners, ConnId) != State.OwnershipJoiners.end();
                 if (!OwnerChanges.IsEmpty() || bJoiner)
                 {
-                    AppendOwnership(State, ConnId, OwnerChanges, bJoiner ? &JoinerTable : nullptr, Pending);
+                    AppendOwnership(State, Thread, ConnId, OwnerChanges, bJoiner ? &JoinerTable : nullptr, Pending);
                 }
                 for (const FNetWorldState::FPendingProperty& Property : State.PendingProperties)
                 {
@@ -1552,7 +1544,7 @@ namespace Lumina
 
         void LogStats(FNetWorldState& State, float DeltaTime)
         {
-            static const float Interval = (float)GCommandLine->GetInt("netstats").Get(0);
+            static const float Interval = (float)Global::GCommandLine->GetInt("netstats").Get(0);
             if (Interval <= 0.0f || State.Transport == nullptr)
             {
                 return;
@@ -1666,8 +1658,8 @@ namespace Lumina
             {
                 Dirty.Add(Entity);
             }
-            static thread_local TVector<Net::FComponentRepOut> Comps;
-            static thread_local TVector<Net::FScriptRepOut>    Scripts;
+            TVector<Net::FComponentRepOut>& Comps   = State.ReplicationScratch.Comps;
+            TVector<Net::FScriptRepOut>&    Scripts = State.ReplicationScratch.Scripts;
             for (ECS::FEntity Entity : Dirty)
             {
                 if (Registry.HasAll<SNetworkComponent>(Entity))
@@ -1684,12 +1676,12 @@ namespace Lumina
         }
 
         // A C++ script's Sync fields have no setter to catch a write, so each is compared once a frame before anything is sent.
-        void PollNativeSyncFields(ECS::FRegistry& Registry)
+        void PollNativeSyncFields(ECS::FRegistry& Registry, FNetWorldState& State)
         {
             LUMINA_PROFILE_SCOPE();
-            static THashMap<const CClass*, bool> HasSyncFields;
-            static TVector<FProperty*> Fields;
-            static TVector<ECS::FEntity> Entities;
+            THashMap<const CClass*, bool>& HasSyncFields = State.SyncFieldClassCache;
+            TVector<FProperty*>&           Fields        = State.SyncFieldScratch;
+            TVector<ECS::FEntity>&         Entities      = State.SyncEntityScratch;
 
             // PollSync runs script callbacks that may add components, so the walk runs over a snapshot.
             Entities.Reset();
@@ -1878,14 +1870,18 @@ namespace Lumina
 
             if (Physics::IPhysicsScene* Scene = World->GetPhysicsScene())
             {
-                Scene->SetCharacterStepHook([World](float FixedDt, bool bAfter)
+                Scene->SetCharacterStepHook([World](float, bool bAfter)
                 {
-                    NetPrediction::OnCharacterStep(World, FixedDt, bAfter);
+                    Physics::IPhysicsScene* StepScene = World->GetPhysicsScene();
+                    if (World->GetNetMode() == ENetMode::Client && StepScene != nullptr)
+                    {
+                        NetPrediction::OnCharacterStep(World->GetEntityRegistry(), *StepScene, bAfter);
+                    }
                 });
             }
 
             // Data-driven from FWorldContext, defaulting to loopback on port 7777.
-            FWorldContext* WorldCtx = GWorldManager ? GWorldManager->FindContext(World) : nullptr;
+            FWorldContext* WorldCtx = Global::GWorldManager ? Global::GWorldManager->FindContext(World) : nullptr;
             const FString  Host = WorldCtx ? WorldCtx->NetHost : FString("127.0.0.1");
             const uint16   Port = WorldCtx ? WorldCtx->NetPort : NetDefaultPort;
 
@@ -1894,7 +1890,7 @@ namespace Lumina
             if (bServer)
             {
                 State->Transport.reset(Network::CreateTransport());
-                if (GCommandLine->GetInt("netstats").Get(0) > 0 && State->Transport != nullptr)
+                if (Global::GCommandLine->GetInt("netstats").Get(0) > 0 && State->Transport != nullptr)
                 {
                     TUniquePtr<FNetCountingTransport> Counting = MakeUnique<FNetCountingTransport>(Move(State->Transport));
                     State->CountingTransport = Counting.get();
@@ -1905,7 +1901,7 @@ namespace Lumina
                 Params.Port           = Port;
                 const CNetworkSettings* NetSettings = GetDefault<CNetworkSettings>();
                 Params.MaxConnections = NetSettings ? (uint32)Math::Max(NetSettings->MaxClients, 1) : 64u;
-                if (TOptional<int> MaxClients = GCommandLine->GetInt("maxclients"))
+                if (TOptional<int> MaxClients = Global::GCommandLine->GetInt("maxclients"))
                 {
                     Params.MaxConnections = (uint32)Math::Clamp(MaxClients.GetValue(), 1, 4095);
                 }
@@ -1920,12 +1916,12 @@ namespace Lumina
                     LOG_ERROR("[Net] Failed to start listen server on port {}", Port);
                 }
             }
-            else if (GEngine != nullptr && GEngine->HasCarriedConnection())
+            else if (Global::GEngine != nullptr && Global::GEngine->HasCarriedConnection())
             {
                 // Welcome-driven travel handed us the already-connected transport from the previous world.
                 FConnectionHandle Conn;
                 uint32 PeerId = ServerPeerId;
-                State->Transport        = GEngine->TakeCarriedConnection(Conn, PeerId);
+                State->Transport        = Global::GEngine->TakeCarriedConnection(Conn, PeerId);
                 State->ServerConnection = Conn;
                 State->LocalPeerId      = PeerId;
                 State->bClientConnected = true;
@@ -1958,7 +1954,7 @@ namespace Lumina
 
         if (Context.GetUpdateStage() == EUpdateStage::FrameEnd)
         {
-            PollNativeSyncFields(Registry);
+            PollNativeSyncFields(Registry, *State);
             const double SendStart = PlatformTime::Seconds();
             SendFrame(World, Registry, *State, Context, bServer);
             const float SendMs = static_cast<float>((PlatformTime::Seconds() - SendStart) * 1000.0);
@@ -1970,7 +1966,7 @@ namespace Lumina
         State->StatsTickStart = PlatformTime::Seconds();
         if (bServer)
         {
-            NetPrediction::TickBudgets(World, Registry, Context.GetDeltaTime());
+            NetPrediction::TickBudgets(Registry, NetPrediction::FixedStepOf(World), Context.GetDeltaTime());
         }
 
         // Reuse the events buffer across ticks; Service appends, so clear it first.
@@ -2003,7 +1999,7 @@ namespace Lumina
                     Net::SendFramed(*State->Transport, Event.Connection, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()), 0, ESendMode::Reliable);
 
                     // Welcome, tell the client which map we're running so it can load the same level.
-                    if (FWorldContext* SrvCtx = GWorldManager ? GWorldManager->FindContext(World) : nullptr)
+                    if (FWorldContext* SrvCtx = Global::GWorldManager ? Global::GWorldManager->FindContext(World) : nullptr)
                     {
                         const FString& MapPath = SrvCtx->MapPath;
                         TVector<uint8> WelcomeBuf;
@@ -2185,12 +2181,12 @@ namespace Lumina
                             // The live connection is carried across the travel, and PIE clients share the server's map.
                             if (!MapPath.IsEmpty())
                             {
-                                FWorldContext* CliCtx = GWorldManager ? GWorldManager->FindContext(World) : nullptr;
+                                FWorldContext* CliCtx = Global::GWorldManager ? Global::GWorldManager->FindContext(World) : nullptr;
                                 const FString Current = CliCtx ? CliCtx->MapPath : FString();
-                                if (Current != MapPath && GEngine != nullptr)
+                                if (Current != MapPath && Global::GEngine != nullptr)
                                 {
                                     LOG_DISPLAY("[Net][Client] Welcome -> loading server map '{}'", *MapPath);
-                                    GEngine->Travel(FStringView(*MapPath, MapPath.Len()), World);
+                                    Global::GEngine->Travel(FStringView(*MapPath, MapPath.Len()), World);
                                 }
                                 else
                                 {
@@ -2305,15 +2301,15 @@ namespace Lumina
                         ReceiveScriptRpc(Registry, *State, bServer, Event.Connection.Value, Msg, MsgSize);
                         break;
                     case ENetMessage::MoveCommands:
-                        if (bServer)
+                        if (Physics::IPhysicsScene* Scene = World->GetPhysicsScene(); bServer && Scene != nullptr)
                         {
-                            NetPrediction::ReceiveCommands(World, Registry, Event.Connection.Value, Msg, MsgSize);
+                            NetPrediction::ReceiveCommands(Registry, *Scene, NetPrediction::FixedStepOf(World), Event.Connection.Value, Msg, MsgSize);
                         }
                         break;
                     case ENetMessage::MoveAck:
-                        if (!bServer)
+                        if (Physics::IPhysicsScene* Scene = World->GetPhysicsScene(); !bServer && Scene != nullptr)
                         {
-                            NetPrediction::ReceiveAck(World, Registry, *State, Msg, MsgSize);
+                            NetPrediction::ReceiveAck(Registry, *State, *Scene, NetPrediction::FixedStepOf(World), Msg, MsgSize);
                         }
                         break;
 

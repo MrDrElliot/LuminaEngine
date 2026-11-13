@@ -8,7 +8,7 @@ namespace Lumina
     {
     public:
 
-        const char* GetTypeName() override { return "Object"; }
+        const char* GetTypeName() const override { return "Object"; }
         EReflectedLink GetLink() const override { return EReflectedLink::Class; }
 
         // The pointee may be an intrinsic class such as CObject, which the database does not hold.

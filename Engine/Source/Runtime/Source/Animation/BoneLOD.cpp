@@ -1,4 +1,5 @@
 #include "RuntimePCH.h"
+#include "Animation/BindPose.h"
 #include "BoneLOD.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/MeshQuantization.h"
@@ -33,10 +34,7 @@ namespace Lumina::BoneLOD
 
         FVector3 JointPosition(const FSkeletonResource& Skeleton, int32 Bone)
         {
-            const FMatrix4 Global = Skeleton.HasBindGlobalMatrices()
-                ? Skeleton.BindGlobalMatrices[Bone]
-                : Math::Inverse(Skeleton.GetBone(Bone).InvBindMatrix);
-            return FVector3(Global[3]);
+            return FVector3(AnimPose::GetBindGlobalMatrix(&Skeleton, Bone)[3]);
         }
 
         // Freezing a bone moves every vertex its subtree carries, by that subtree's share of the vertex.

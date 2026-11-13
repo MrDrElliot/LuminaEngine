@@ -55,21 +55,6 @@ struct FMemoryHeapWire
 
 namespace
 {
-    // A two-pass string return, sizing with a null buffer then filling, returning the byte length.
-    int32 RHICopyOut(const FString& Value, char* Buffer, int32 Capacity)
-    {
-        const int32 Len = Value.Len();
-        if (Buffer != nullptr && Capacity > 0)
-        {
-            const int32 N = Len < Capacity ? Len : Capacity;
-            for (int32 i = 0; i < N; ++i)
-            {
-                Buffer[i] = Value[i];
-            }
-        }
-        return Len;
-    }
-
     FName RHIName(const char* P, int32 Len)
     {
         char Buf[256];
@@ -237,12 +222,12 @@ LUMINA_DOTNET_EXPORT(uint64, RHI_SubmitLists)(int32 Queue,
 
 LUMINA_DOTNET_EXPORT(int32, RHI_GetDeviceName)(char* Buffer, int32 Capacity)
 {
-    return RHICopyOut(RHI::GetDeviceInfo().Name, Buffer, Capacity);
+    return DotNet::CopyOut(RHI::GetDeviceInfo().Name, Buffer, Capacity);
 }
 
 LUMINA_DOTNET_EXPORT(int32, RHI_GetDeviceAPIName)(char* Buffer, int32 Capacity)
 {
-    return RHICopyOut(RHI::GetDeviceInfo().APIName, Buffer, Capacity);
+    return DotNet::CopyOut(RHI::GetDeviceInfo().APIName, Buffer, Capacity);
 }
 
 LUMINA_DOTNET_EXPORT(uint8, RHI_GetDeviceIsDiscrete)()

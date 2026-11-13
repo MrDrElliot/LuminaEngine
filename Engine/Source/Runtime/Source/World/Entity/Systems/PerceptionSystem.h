@@ -26,8 +26,6 @@ namespace Lumina
 
         void Configure() override;
 
-        // Sources alone would only drain stimuli no perceiver can hear, so the perceivers decide.
-        bool HasWork(const SSystemContext& Context) override;
         void OnUpdate(const SSystemContext& Context) override;
 
     private:

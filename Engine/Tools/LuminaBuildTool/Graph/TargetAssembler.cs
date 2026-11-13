@@ -79,6 +79,11 @@ public sealed class TargetAssembler
 
         ResolvePlugins(Target);
 
+        if (!TargetRules.bHostsReflectionGenerators)
+        {
+            CollectReflectionGenerators(Target);
+        }
+
         foreach (string ModuleName in EnumerateSeedModules(Target))
         {
             ResolveModule(ModuleName, new List<string>());
@@ -121,8 +126,9 @@ public sealed class TargetAssembler
 
     private void ResolvePlugins(BuildTarget Target)
     {
-        // Standalone tools do not host engine plugins.
-        if (TargetRules.Type == TargetType.Program)
+        // Standalone tools do not host engine plugins, except the Reflector's target, which builds their Reflection modules.
+        bool bHostsGenerators = TargetRules.bHostsReflectionGenerators;
+        if (TargetRules.Type == TargetType.Program && !bHostsGenerators)
         {
             return;
         }
@@ -143,8 +149,10 @@ public sealed class TargetAssembler
             // An explicit ask outranks the descriptor, which is what makes an opt-in plugin buildable.
             bool? Override = Info.Options.GetPluginOverride(Plugin.Name);
 
+            // The Reflector cannot see which target will load a generator, so it builds every one nothing turned off by name.
             bool bEnabled = Override
-                ?? (Plugin.EnabledByDefault
+                ?? (bHostsGenerators
+                    || Plugin.EnabledByDefault
                     || TargetRules.EnabledPlugins.Contains(Plugin.Name, StringComparer.OrdinalIgnoreCase));
 
             if (!bEnabled)
@@ -168,7 +176,7 @@ public sealed class TargetAssembler
                 continue;
             }
 
-            if (Plugin.EditorOnly && Info.Type != TargetType.Editor)
+            if (Plugin.EditorOnly && Info.Type != TargetType.Editor && !bHostsGenerators)
             {
                 Log.Verbose("Plugin '{0}' is editor only, skipping for {1} target", Plugin.Name, Info.Type);
                 continue;
@@ -232,12 +240,57 @@ public sealed class TargetAssembler
                         + $"but no {Entry.Name}.Build.cs was found under '{Plugin.RootDirectory}'.");
                 }
 
-                if (Entry.GetHostType().IsAvailableIn(Info.Type) && Entry.SupportsPlatform(Info.Platform))
+                if (IsSeeded(Entry))
                 {
                     yield return Entry.Name;
                 }
             }
         }
+
+        foreach (PluginModuleEntry Entry in EnumerateProjectModules().Where(IsSeeded))
+        {
+            yield return Entry.Name;
+        }
+    }
+
+    // The Reflector's target builds only Reflection modules, which no other target builds.
+    private bool IsSeeded(PluginModuleEntry Entry)
+    {
+        ModuleHostType Host = Entry.GetHostType();
+        bool bWanted = Host == ModuleHostType.Reflection
+            ? TargetRules.bHostsReflectionGenerators
+            : !TargetRules.bHostsReflectionGenerators && Host.IsAvailableIn(Info.Type);
+
+        return bWanted && Entry.SupportsPlatform(Info.Platform);
+    }
+
+    // An engine build inside a project session must not pick up the project's modules.
+    private IEnumerable<PluginModuleEntry> EnumerateProjectModules()
+    {
+        return Directories.ProjectRoot is null ? Enumerable.Empty<PluginModuleEntry>() : Info.Options.ProjectModules;
+    }
+
+    private void CollectReflectionGenerators(BuildTarget Target)
+    {
+        IEnumerable<PluginModuleEntry> Entries = Target.EnabledPlugins.SelectMany(Plugin => Plugin.Modules).Concat(EnumerateProjectModules());
+
+        foreach (PluginModuleEntry Entry in Entries.Where(Entry => Entry.GetHostType() == ModuleHostType.Reflection && Entry.SupportsPlatform(Info.Platform)))
+        {
+            ModuleRules Rules = Assembly.CreateModuleRules(Entry.Name, Info);
+            Target.ReflectionGenerators.Add(new ReflectionGenerator(GetReflectionLibraryPath(Rules), Rules));
+        }
+    }
+
+    // The same from the Reflector's target that builds the library and from every target whose reflection step loads it.
+    private string GetReflectionLibraryPath(ModuleRules Rules)
+    {
+        string Root = FindPluginRoot(Rules.ModuleDirectory) ?? Directories.GetOutputRootFor(Rules.ModuleDirectory);
+
+        return Path.Combine(
+            Root,
+            "Binaries",
+            Info.PlatformName,
+            PlatformSupport.SharedLibraryPrefix + Rules.Name + PlatformSupport.SharedLibraryExtension);
     }
 
     // Otherwise a plugin or game archive is missing from the image, and its DLL loads a second copy of the runtime.
@@ -289,6 +342,14 @@ public sealed class TargetAssembler
                 $"Module '{ModuleName}' is not available in a {Info.Type} target "
                 + $"(host type {Rules.HostType}). Guard the dependency with a Target.Type check in the referencing Build.cs."
                 + (ResolutionStack.Count > 0 ? $" Referenced from: {string.Join(" -> ", ResolutionStack)}" : string.Empty));
+        }
+
+        // The Reflector loads a Reflection module as a library linking the generator API its launch module exports.
+        if (Rules.HostType == ModuleHostType.Reflection)
+        {
+            Rules.BinaryType = ModuleBinaryType.SharedLibrary;
+            Rules.bEnableReflection = false;
+            Rules.PrivateDependencyModuleNames.Add(TargetRules.LaunchModuleName);
         }
 
         // Resolved before scanning, since being its own loadable image decides which sources compile.
@@ -509,18 +570,12 @@ public sealed class TargetAssembler
                 break;
 
             case ModuleBinaryType.SharedLibrary:
-                Module.OutputDirectory = ResolveBinariesDirectory(Target, Module);
-                Module.OutputFile = Path.Combine(
-                    Module.OutputDirectory,
-                    PlatformSupport.SharedLibraryPrefix + Module.Name + Suffix + PlatformSupport.SharedLibraryExtension);
-
-                if (PlatformSupport.ImportLibraryExtension is not null)
-                {
-                    Module.ImportLibraryFile = Path.Combine(
-                        Module.IntermediateDirectory,
-                        Module.Name + Suffix + PlatformSupport.ImportLibraryExtension);
-                }
-
+                Module.OutputFile = Module.Rules.HostType == ModuleHostType.Reflection
+                    ? GetReflectionLibraryPath(Module.Rules)
+                    : Path.Combine(
+                        ResolveBinariesDirectory(Target, Module),
+                        PlatformSupport.SharedLibraryPrefix + Module.Name + Suffix + PlatformSupport.SharedLibraryExtension);
+                Module.OutputDirectory = Path.GetDirectoryName(Module.OutputFile)!;
                 break;
 
             case ModuleBinaryType.ConsoleApplication:
@@ -530,6 +585,14 @@ public sealed class TargetAssembler
                     Module.OutputDirectory,
                     Module.Name + Suffix + PlatformSupport.ExecutableExtension);
                 break;
+        }
+
+        // An executable gets one too, which holds whatever it exports, as the Reflector does its generator API.
+        if (Module.BinaryType.IsLoadableImage() && PlatformSupport.ImportLibraryExtension is not null)
+        {
+            Module.ImportLibraryFile = Path.Combine(
+                Module.IntermediateDirectory,
+                Module.Name + Suffix + PlatformSupport.ImportLibraryExtension);
         }
     }
 
@@ -819,7 +882,7 @@ public sealed class TargetAssembler
                 ? Module.ImportLibraryFile
                 : (Module.OutputFile.Length > 0 ? Module.OutputFile : null),
             ModuleBinaryType.StaticLibrary => Module.OutputFile.Length > 0 ? Module.OutputFile : null,
-            _ => null,
+            _ => Module.ImportLibraryFile.Length > 0 ? Module.ImportLibraryFile : null,
         };
     }
 

@@ -39,6 +39,9 @@ public sealed class ReflectionProjectEntry
     public bool ReferenceOnly { get; set; }
 }
 
+// A Reflection module's library the Reflector loads, with the hash that reruns the step when it is rebuilt.
+public sealed record ReflectionGeneratorEntry(string Library, string Fingerprint, string RulesFile, IReadOnlyDictionary<string, string> Options);
+
 public sealed class ReflectionInputDocument
 {
     public int CodeGenerationVersion { get; set; }
@@ -51,6 +54,8 @@ public sealed class ReflectionInputDocument
 
     /// <summary>Root the Reflector writes Intermediates/Reflection and CSharpBindings under.</summary>
     public string WorkspacePath { get; set; } = string.Empty;
+
+    public List<ReflectionGeneratorEntry> Generators { get; set; } = new();
 
     public List<ReflectionProjectEntry> Projects { get; set; } = new();
 }
@@ -66,7 +71,7 @@ public static class ReflectionStep
 {
     private const int CodeGenerationVersion = 3;
 
-    /// <summary>Must match kUnityShardCount in Reflector/CodeGeneration/CodeGenerator.cpp.</summary>
+    /// <summary>Must match kUnityShardCount in Reflector/CodeGeneration/CppReflectionGenerator.cpp.</summary>
     public const int UnityShardCount = 8;
 
     public static string GetUnityShardPath(string GeneratedCodeDirectory, int Shard)
@@ -109,6 +114,11 @@ public static class ReflectionStep
             CoreReflectionFingerprint = ComputeCoreReflectionFingerprint(Target),
             WorkspaceName = Target.Name,
             WorkspacePath = Target.Directories.OutputRoot,
+            Generators = Target.ReflectionGenerators.Select(Generator => new ReflectionGeneratorEntry(
+                Generator.LibraryPath,
+                ContentHash.OfFileContents(RequireGeneratorLibrary(Generator)),
+                Generator.Rules.RulesFile,
+                Generator.Rules.ReflectionGeneratorOptions)).ToList(),
         };
 
         foreach (BuildModule Module in Reflected)
@@ -208,8 +218,8 @@ public static class ReflectionStep
         return new ReflectionActions { Generate = Action, Inputs = InputActions };
     }
 
-    // Must match MakeLayoutStampPath in Reflector/CodeGeneration/CodeGenerator.cpp.
-    private static string GetLayoutStampPath(BuildTarget Target, BuildModule Module)
+    // Must match GeneratedFiles::LayoutStampPath in Reflector/CodeGeneration/GeneratedFiles.h.
+    internal static string GetLayoutStampPath(BuildTarget Target, BuildModule Module)
     {
         string Directory = Module.Rules.bRouteCSharpTypeBindings && !string.IsNullOrEmpty(Module.Rules.CSharpBindingsDirectory)
             ? Module.Rules.CSharpBindingsDirectory
@@ -218,7 +228,7 @@ public static class ReflectionStep
     }
 
     /// <summary>An .inl/.ipp is an include fragment, so parsing it as its own file misreads X-macro bodies.</summary>
-    private static bool IsParseableHeader(FileItem Header)
+    internal static bool IsParseableHeader(FileItem Header)
     {
         string Extension = Path.GetExtension(Header.Location);
 
@@ -246,6 +256,19 @@ public static class ReflectionStep
         return ContentHash.OfStrings(Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories)
             .OrderBy(FilePath => FilePath, StringComparer.OrdinalIgnoreCase)
             .Select(FilePath => Path.GetRelativePath(Root, FilePath) + ContentHash.OfFileContents(FilePath)));
+    }
+
+    // Built by the Reflector's target, which runs before this one, so a missing library means that build did not include it.
+    private static string RequireGeneratorLibrary(ReflectionGenerator Generator)
+    {
+        if (!File.Exists(Generator.LibraryPath))
+        {
+            throw new BuildException(
+                $"Reflection module '{Generator.Rules.Name}' has no library at '{Generator.LibraryPath}'. "
+                + "The Reflector target builds it, so build that target first, and check the module is not turned off by name.");
+        }
+
+        return Generator.LibraryPath;
     }
 
     private static string ResolveReflectorPath(BuildTarget Target)
@@ -303,7 +326,7 @@ public static class ReflectionStep
     }
 
     /// <summary>Where the engine publishes its reflected module set, always under the engine tree.</summary>
-    private static string EngineManifestPath(BuildTarget Target)
+    internal static string EngineManifestPath(BuildTarget Target)
     {
         return Path.Combine(
             Target.Directories.EngineRoot,
@@ -315,7 +338,7 @@ public static class ReflectionStep
     }
 
     /// <summary>Adds engine reflected modules this target does not build, so project types can derive from them.</summary>
-    private static void AppendEngineReferenceProjects(BuildTarget Target, ReflectionInputDocument Document)
+    internal static void AppendEngineReferenceProjects(BuildTarget Target, ReflectionInputDocument Document)
     {
         string ManifestPath = EngineManifestPath(Target);
         EngineReflectionManifest? Manifest = JsonStore.Load<EngineReflectionManifest>(ManifestPath);

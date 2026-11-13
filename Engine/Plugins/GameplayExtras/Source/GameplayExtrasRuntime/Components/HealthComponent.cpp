@@ -16,6 +16,20 @@ namespace Lumina
             Event.MaxHealth = Health.MaxHealth;
             return Event;
         }
+
+        // Latches bDead before broadcasting so a re-entrant call cannot fire OnDied twice.
+        float BroadcastHealthChange(SHealthComponent& Health, float Before, bool bDied, ECS::FEntity Instigator)
+        {
+            Health.RegenCooldown = Health.RegenDelay;
+            Health.bDead = bDied;
+
+            const SHealthChangedEvent Event = MakeHealthEvent(Health, Health.Health - Before, Instigator);
+            if (Health.OnHealthChanged.Broadcast(Event) && bDied)
+            {
+                Health.OnDied.Broadcast(Event);
+            }
+            return Event.Health;
+        }
     }
 
     float SHealthComponent::ApplyDamage(float Damage, ECS::FEntity Instigator)
@@ -27,19 +41,7 @@ namespace Lumina
 
         const float Before = Health;
         Health = Math::Max(0.0f, Health - Damage);
-        RegenCooldown = RegenDelay;
-
-        // Latched before any broadcast so a listener that damages again cannot fire OnDied a second time.
-        const bool bDied = Health <= 0.0f;
-        bDead = bDied;
-
-        // A listener may destroy the entity, and swap-removal then puts another entity's component at this.
-        const SHealthChangedEvent Event = MakeHealthEvent(*this, Health - Before, Instigator);
-        if (OnHealthChanged.Broadcast(Event) && bDied)
-        {
-            OnDied.Broadcast(Event);
-        }
-        return Event.Health;
+        return BroadcastHealthChange(*this, Before, Health <= 0.0f, Instigator);
     }
 
     float SHealthComponent::Heal(float Amount, ECS::FEntity Instigator)
@@ -68,14 +70,7 @@ namespace Lumina
 
         const float Before = Health;
         Health = 0.0f;
-        bDead = true;
-        RegenCooldown = RegenDelay;
-
-        const SHealthChangedEvent Event = MakeHealthEvent(*this, -Before, Instigator);
-        if (OnHealthChanged.Broadcast(Event))
-        {
-            OnDied.Broadcast(Event);
-        }
+        BroadcastHealthChange(*this, Before, true, Instigator);
     }
 
     void SHealthComponent::Revive(float NewHealth)

@@ -178,7 +178,7 @@ namespace Lumina
         // Importing over an existing asset replaces it in place, so its GUID and every reference to it survive.
         CAnimation* FindAnimationToOverwrite(const FFixedString& Path)
         {
-            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path);
+            const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Path);
             return Data != nullptr ? Cast<CAnimation>(LoadObject<CObject>(Data->AssetGUID)) : nullptr;
         }
 
@@ -512,7 +512,7 @@ namespace Lumina
 
         CMesh* FindMeshToOverwrite(const FFixedString& Path, bool bSkinned)
         {
-            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path);
+            const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Path);
             CMesh* Mesh = Data != nullptr ? Cast<CMesh>(LoadObject<CObject>(Data->AssetGUID)) : nullptr;
             return Mesh != nullptr && Mesh->IsSkinned() == bSkinned ? Mesh : nullptr;
         }

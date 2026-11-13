@@ -71,6 +71,9 @@ namespace Lumina
         if (ImGui::MenuItem(LE_ICON_DELETE " Clear"))
         {
             Server->GetLog().Clear();
+            Select(nullptr);
+            TextFilter.Clear();
+            MethodFilter.Reset();
         }
     }
 

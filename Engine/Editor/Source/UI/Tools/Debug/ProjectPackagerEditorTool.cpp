@@ -12,15 +12,19 @@
 #include "Core/Plugin/PluginManager.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Containers/StringFormat.h"
+#include "Log/Log.h"
 
 namespace Lumina
 {
     FProjectPackagerEditorTool::~FProjectPackagerEditorTool()
     {
-        if (Worker.joinable())
+        if (Session && !Session->bDone.load(std::memory_order_acquire))
         {
-            Worker.detach();
+            LOG_WARN("Package Project: stopping the build because the tool is closing.");
         }
+
+        Worker.RequestStop();
+        Worker.Join();
     }
 
     void FProjectPackagerEditorTool::OnInitialize()
@@ -147,13 +151,13 @@ namespace Lumina
 
     FString FProjectPackagerEditorTool::PackageName() const
     {
-        return FProjectPackager::GetPackageName(GEngine->GetProjectName(), bServer);
+        return FProjectPackager::GetPackageName(Global::GEngine->GetProjectName(), bServer);
     }
 
     FString FProjectPackagerEditorTool::DefaultOutputDir(bool bForServer) const
     {
-        return FString(GEngine->GetProjectPath().GetData(), GEngine->GetProjectPath().Len()) + "/Build/"
-            + FProjectPackager::GetPackageName(GEngine->GetProjectName(), bForServer);
+        return FString(Global::GEngine->GetProjectPath().GetData(), Global::GEngine->GetProjectPath().Len()) + "/Build/"
+            + FProjectPackager::GetPackageName(Global::GEngine->GetProjectName(), bForServer);
     }
 
     void FProjectPackagerEditorTool::RunCookOnly()
@@ -162,7 +166,7 @@ namespace Lumina
         {
             return;
         }
-        if (GEngine == nullptr || GEngine->GetProjectName().IsEmpty())
+        if (Global::GEngine == nullptr || Global::GEngine->GetProjectName().IsEmpty())
         {
             AppendLog("[error] No project loaded.");
             return;
@@ -222,24 +226,17 @@ namespace Lumina
         {
             return;
         }
-        if (GEngine == nullptr || GEngine->GetProjectName().IsEmpty())
+        if (Global::GEngine == nullptr || Global::GEngine->GetProjectName().IsEmpty())
         {
             AppendLog("[error] No project loaded.");
             return;
         }
-        if (Worker.joinable())
-        {
-            // Previous worker still alive (e.g. user closed and reopened during a build).
-            AppendLog("[error] A previous build is still running; wait for it to finish.");
-            return;
-        }
-
         ClearLog();
 
         // Touches engine state, but is fast, typically sub-second for a small project.
         Stage = EStage::Cooking;
 
-        const FString ProjectName(GEngine->GetProjectName().GetData(), GEngine->GetProjectName().Len());
+        const FString ProjectName(Global::GEngine->GetProjectName().GetData(), Global::GEngine->GetProjectName().Len());
         const FString Package = PackageName();
 
         FString PakDir = OutputDir.IsEmpty() ? DefaultOutputDir(bServer) : OutputDir;
@@ -289,10 +286,11 @@ namespace Lumina
 
         FPackageBuildOptions Opts;
         Opts.OutputDirectory                = PakDir;
-        Opts.ProjectDirectory               = FString(GEngine->GetProjectPath().GetData(), GEngine->GetProjectPath().Len());
+        Opts.ProjectDirectory               = FString(Global::GEngine->GetProjectPath().GetData(), Global::GEngine->GetProjectPath().Len());
         Opts.bBuildExecutable               = true;
         Opts.bExtractScriptsAsLooseFiles    = bExtractScriptsLoose;
         Opts.bServer                        = bServer;
+        Opts.Platform                       = static_cast<EPackagePlatform>(PlatformIndex);
         Opts.ExtraFiles                     = ExtraFiles;
         Opts.ExtraDirectories               = ExtraDirectories;
         Opts.BuildConfiguration             = (ConfigIndex == 0) ? FString("Shipping")
@@ -301,7 +299,7 @@ namespace Lumina
 
         TSharedPtr<FBuildSession> WorkerSession = Session;
 
-        Worker = FThread([WorkerSession, Opts, ProjectName, PakPath]()
+        Worker = FThread([WorkerSession, Opts, ProjectName, PakPath](const FThreadStop& Stop)
         {
             // Pushes into the mutex-protected pending buffer, drained each frame by the UI thread.
             auto LogFunc = [WorkerSession](FStringView Line)
@@ -314,7 +312,8 @@ namespace Lumina
                 Opts,
                 FStringView(*ProjectName, ProjectName.Len()),
                 FStringView(*PakPath, PakPath.Len()),
-                LogFunc);
+                LogFunc,
+                &Stop);
 
             WorkerSession->bSuccess.store(Result.bSuccess, std::memory_order_release);
             WorkerSession->ErrorMessage = Result.ErrorMessage;
@@ -327,7 +326,7 @@ namespace Lumina
 
     void FProjectPackagerEditorTool::DrawWindow(bool bIsFocused)
     {
-        if (GEngine == nullptr || GEngine->GetProjectName().IsEmpty())
+        if (Global::GEngine == nullptr || Global::GEngine->GetProjectName().IsEmpty())
         {
             ImGui::TextDisabled("No project loaded.");
             return;
@@ -346,9 +345,9 @@ namespace Lumina
         ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), LE_ICON_PACKAGE_VARIANT " Package Project");
         ImGui::Separator();
 
-        ImGui::Text("Project:    %.*s", GEngine->GetProjectName().Len(), GEngine->GetProjectName().GetData());
+        ImGui::Text("Project:    %.*s", Global::GEngine->GetProjectName().Len(), Global::GEngine->GetProjectName().GetData());
 
-        const TVector<FCookRoot> Roots = GEngine->GetCookRoots();
+        const TVector<FCookRoot> Roots = Global::GEngine->GetCookRoots();
         if (Roots.IsEmpty())
         {
             ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.4f, 1.0f),
@@ -398,6 +397,11 @@ namespace Lumina
         ImGui::SetNextItemWidth(220.0f);
         ImGui::Combo("##cfg", &ConfigIndex, Configs, IM_ARRAYSIZE(Configs));
 
+        ImGui::Text("Target Platform");
+        const char* Platforms[] = { "Windows64", "Linux64" };
+        ImGui::SetNextItemWidth(220.0f);
+        ImGui::Combo("##platform", &PlatformIndex, Platforms, IM_ARRAYSIZE(Platforms));
+
         ImGui::Spacing();
 
         const bool bWasServer = bServer;
@@ -407,8 +411,9 @@ namespace Lumina
         }
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("Builds the Server target as %s.exe, a headless host that\n"
-                              "loads the startup map and listens without -server.", *PackageName());
+            const FString ServerName = FPackagePlatformRules::For(static_cast<EPackagePlatform>(PlatformIndex)).ExecutableFileName(*PackageName());
+            ImGui::SetTooltip("Builds the Server target as %s, a headless host that\n"
+                              "loads the startup map and listens without -server.", *ServerName);
         }
 
         ImGui::Spacing();
@@ -556,7 +561,7 @@ namespace Lumina
 
     void FProjectPackagerEditorTool::DrawExtrasSection()
     {
-        const FString ProjectPath(GEngine->GetProjectPath().GetData(), GEngine->GetProjectPath().Len());
+        const FString ProjectPath(Global::GEngine->GetProjectPath().GetData(), Global::GEngine->GetProjectPath().Len());
 
         ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.55f, 1.0f), LE_ICON_PACKAGE_VARIANT_CLOSED " Extras (manually included in PAK)");
         ImGui::Spacing();

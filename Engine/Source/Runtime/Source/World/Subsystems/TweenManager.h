@@ -177,7 +177,6 @@ namespace Lumina
 
         void Kill(FTweenHandle Handle);
         void Complete(FTweenHandle Handle);
-        void KillTweensForEntity(ECS::FEntity Owner);
         void Clear();
 
         NODISCARD bool IsRunning(FTweenHandle Handle) const;

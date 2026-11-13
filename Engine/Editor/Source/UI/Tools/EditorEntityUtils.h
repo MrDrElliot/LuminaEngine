@@ -31,6 +31,9 @@ namespace Lumina::EditorEntityUtils
      *  so duplicates don't carry the source's selection / clipboard / dirty flags. */
     EDITOR_API bool DefaultDuplicateFilter(const ECS::FComponentTypeInfo& Type);
 
+    // Drops each entity with an ancestor also in Entities, since duplicating or saving that ancestor already carries it.
+    TVector<ECS::FEntity> GatherHierarchyRoots(const ECS::FHierarchy& Hierarchy, TSpan<const ECS::FEntity> Entities);
+
     /** Translate → Rotate → Scale → Translate. */
     void CycleGizmoOp(ImGuizmo::OPERATION& InOutOp);
 

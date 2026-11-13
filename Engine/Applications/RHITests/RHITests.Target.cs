@@ -1,5 +1,6 @@
 using LuminaBuildTool.Configuration;
 
+[TestTarget]
 public class RHITestsTarget : LuminaTargetRules
 {
     public RHITestsTarget(TargetInfo Target)

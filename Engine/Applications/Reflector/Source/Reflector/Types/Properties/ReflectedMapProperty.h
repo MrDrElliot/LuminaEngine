@@ -9,7 +9,7 @@ namespace Lumina
     {
     public:
 
-        const char* GetTypeName() override { return nullptr; }
+        const char* GetTypeName() const override { return nullptr; }
 
         std::string KeyTypeName;
         std::string ValueTypeName;

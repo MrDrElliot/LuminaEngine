@@ -40,32 +40,6 @@ namespace Lumina
             return Entity;
         }
 
-        // A component value a parallel C# system fills now and the flush copies into the pool, freed either way.
-        struct FStagedComponent
-        {
-            const FComponentOps* Ops;
-            void* Value;
-
-            explicit FStagedComponent(const FComponentOps* InOps) : Ops(InOps), Value(InOps->New()) {}
-            FStagedComponent(FStagedComponent&& Other) noexcept : Ops(Other.Ops), Value(Other.Value) { Other.Value = nullptr; }
-            ~FStagedComponent() { if (Value != nullptr) { Ops->Delete(Value); } }
-
-            FStagedComponent(const FStagedComponent&) = delete;
-            FStagedComponent& operator=(const FStagedComponent&) = delete;
-            FStagedComponent& operator=(FStagedComponent&&) = delete;
-        };
-
-        void EnqueueStaged(ECS::FCommandBus& Commands, ECS::FEntity Entity, FStagedComponent&& Staged)
-        {
-            Commands.Enqueue([Entity, Staged = Move(Staged)](ECS::FRegistry& InRegistry)
-            {
-                if (InRegistry.IsValid(Entity))
-                {
-                    Staged.Ops->EmplaceCopy(InRegistry, Entity, Staged.Value);
-                }
-            });
-        }
-
         // Owns a one-shot C# callback until it runs, so a discarded command still frees its handle.
         struct FDeferredScriptCallback
         {
@@ -204,17 +178,13 @@ namespace Lumina
             return nullptr;
         }
 
-        const bool bTag = ECS::FComponentTypeRegistry::Get().GetInfo(Component->GetTypeID()).bEmpty;
         if (ECS::FCommandBus::ShouldDefer())
         {
-            SystemContextInternal::FStagedComponent Staged(Component);
-            void* Value = Staged.Value;
-            SystemContextInternal::EnqueueStaged(*CommandBus, Entity, Move(Staged));
-            return bTag ? nullptr : Value;
+            return Component->StageEmplace(*CommandBus, Entity);
         }
 
         void* Value = Component->EmplaceDefault(*Registry, Entity);
-        if (bTag)
+        if (ECS::FComponentTypeRegistry::Get().GetInfo(Component->GetTypeID()).bEmpty)
         {
             return nullptr;
         }
@@ -230,19 +200,19 @@ namespace Lumina
             return;
         }
 
-        SystemContextInternal::FStagedComponent Staged(Component);
+        const bool bDefer = ECS::FCommandBus::ShouldDefer();
+        void* Value = bDefer ? Component->StageEmplace(*CommandBus, Entity) : Component->New();
         const ECS::FComponentTypeInfo& Info = ECS::FComponentTypeRegistry::Get().GetInfo(Component->GetTypeID());
         if (CStruct* Struct = Info.GetBoundStruct(); Struct != nullptr && !Info.bEmpty)
         {
-            Struct->CopyStruct(Staged.Value, Source);
+            Struct->CopyStruct(Value, Source);
         }
 
-        if (ECS::FCommandBus::ShouldDefer())
+        if (!bDefer)
         {
-            SystemContextInternal::EnqueueStaged(*CommandBus, Entity, Move(Staged));
-            return;
+            Component->EmplaceCopy(*Registry, Entity, Value);
+            Component->Delete(Value);
         }
-        Component->EmplaceCopy(*Registry, Entity, Staged.Value);
     }
 
     void SSystemContext::ScriptRemove(ECS::FEntity Entity, void* Ops) const

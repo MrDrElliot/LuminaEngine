@@ -4,33 +4,19 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include "Reflector/Types/PropertyFlags.h"
+#include "Reflector/Public/PropertyFlags.h"
 #include "Reflector/Types/StructReflectItem.h"
 #include "Reflector/Utils/MetadataUtils.h"
 
-namespace Lumina::Reflection
-{
-    class FCodeWriter;
-}
-
 namespace Lumina
 {
-    // Which reflected type a property names, so the generated file declares its accessor before the trait reaches for it.
-    enum class EReflectedLink : uint8_t
-    {
-        None,
-        Struct,
-        Class,
-        Enum,
-    };
-
     class FReflectedProperty : public IStructReflectable
     {
     public:
 
         virtual ~FReflectedProperty() = default;
 
-        virtual const char* GetTypeName() = 0;
+        virtual const char* GetTypeName() const = 0;
 
         virtual EReflectedLink GetLink() const { return EReflectedLink::None; }
 
@@ -46,9 +32,6 @@ namespace Lumina
         void ApplyDefaultVisibility();
 
         bool HasSpecifier(std::string_view Key) const;
-
-        // One FPropertyDesc row, whose type the runtime's trait derives from the member itself.
-        void EmitDescriptor(Reflection::FCodeWriter& Writer) const;
 
         std::vector<FMetadataPair>    Metadata;
         EPropertyFlags                PropertyFlags;
@@ -70,5 +53,7 @@ namespace Lumina
 
         // Byte offset inside the owning type as clang lays it out, or -1 for an inner or an unknown layout.
         int64_t                       NativeOffset = -1;
+
+        uint32_t                      LineNumber = 0;
     };
 }

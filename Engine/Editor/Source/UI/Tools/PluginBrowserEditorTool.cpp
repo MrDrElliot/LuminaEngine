@@ -61,10 +61,41 @@ namespace Lumina
     }
 
 
-    bool FPluginBrowserEditorTool::IsEffectivelyEnabled(const FPlugin* Plugin) const
+    bool FPluginBrowserEditorTool::IsEffectivelyEnabled(const FPlugin* Plugin, const THashMap<FName, bool>& Pending)
     {
-        auto It = PendingChanges.Find(FName(Plugin->GetName()));
+        auto It = Pending.Find(FName(Plugin->GetName()));
         return It != nullptr ? (*It) : Plugin->IsEnabled();
+    }
+
+    TVector<FString> FPluginBrowserEditorTool::FindBrokenDependencies(const TVector<const FPlugin*>& Plugins, const THashMap<FName, bool>& Pending)
+    {
+        TVector<FString> Broken;
+        for (const FPlugin* Plugin : Plugins)
+        {
+            if (!IsEffectivelyEnabled(Plugin, Pending))
+            {
+                continue;
+            }
+            const bool bStagedOn = Pending.Contains(FName(Plugin->GetName()));
+            for (const FPluginDependency& Dep : Plugin->GetDescriptor().Dependencies)
+            {
+                // Breaks the toggles did not cause are left to the loader, so they never block an unrelated apply.
+                if (Dep.bOptional || (!bStagedOn && !Pending.Contains(FName(Dep.Name))))
+                {
+                    continue;
+                }
+                auto DepIt = Algo::FindIf(Plugins, [&Dep](const FPlugin* P) { return P->GetName() == Dep.Name.View(); });
+                if (DepIt == Plugins.end())
+                {
+                    Broken.Add(Format("'{}' requires '{}', which is missing", Plugin->GetName(), Dep.Name));
+                }
+                else if (!IsEffectivelyEnabled(*DepIt, Pending))
+                {
+                    Broken.Add(Format("'{}' requires '{}', which would be disabled", Plugin->GetName(), Dep.Name));
+                }
+            }
+        }
+        return Broken;
     }
 
     void FPluginBrowserEditorTool::SetPendingEnabled(FName PluginName, bool bEnabled)
@@ -167,7 +198,7 @@ namespace Lumina
         ImGui::Checkbox("Project", &bShowProject);
 
         ImGui::SameLine();
-        const bool bHasProject = GEngine && !GEngine->GetProjectName().IsEmpty();
+        const bool bHasProject = Global::GEngine && !Global::GEngine->GetProjectName().IsEmpty();
         const bool bCanCreate = bHasProject && !Paths::IsInstalledBuild();
         if (!bCanCreate) ImGui::BeginDisabled();
         if (ImGui::Button(LE_ICON_PUZZLE_PLUS " New Plugin"))
@@ -184,7 +215,7 @@ namespace Lumina
         }
 
         // Right-aligned scope hint.
-        const char* ScopeHint = GEngine && !GEngine->GetProjectName().IsEmpty()
+        const char* ScopeHint = Global::GEngine && !Global::GEngine->GetProjectName().IsEmpty()
             ? "Scope: project (per-.lproject)"
             : "Scope: read-only (no project loaded)";
         const float ScopeWidth = ImGui::CalcTextSize(ScopeHint).x;
@@ -201,7 +232,7 @@ namespace Lumina
             return;
         }
 
-        const bool bCanToggle = GEngine && !GEngine->GetProjectName().IsEmpty();
+        const bool bCanToggle = Global::GEngine && !Global::GEngine->GetProjectName().IsEmpty();
 
         if (!ImGui::BeginTable("##Plugins", 5,
                 ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg |
@@ -225,7 +256,7 @@ namespace Lumina
 
             // Enabled checkbox.
             ImGui::TableSetColumnIndex(0);
-            bool bEffective = IsEffectivelyEnabled(Plugin);
+            bool bEffective = IsEffectivelyEnabled(Plugin, PendingChanges);
             if (!bCanToggle) ImGui::BeginDisabled();
             if (ImGui::Checkbox("##en", &bEffective))
             {
@@ -373,9 +404,25 @@ namespace Lumina
     void FPluginBrowserEditorTool::DrawFooter()
     {
         const int32 NumPending = PendingChanges.Num();
-        const bool bCanApply   = NumPending > 0 && GEngine && !GEngine->GetProjectName().IsEmpty();
+        const TVector<FString> Broken = NumPending > 0 ? FindBrokenDependencies(FPluginManager::Get().GetAllPlugins(), PendingChanges) : TVector<FString>();
+        const bool bCanApply   = NumPending > 0 && Broken.IsEmpty() && Global::GEngine && !Global::GEngine->GetProjectName().IsEmpty();
 
-        if (bChangesSavedBanner)
+        if (!Broken.IsEmpty())
+        {
+            ImGui::TextColored(ImVec4(0.96f, 0.36f, 0.38f, 1.0f),
+                LE_ICON_ALERT " %d broken dependenc%s", Broken.Num(), Broken.Num() == 1 ? "y" : "ies");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                for (const FString& Message : Broken)
+                {
+                    ImGui::TextUnformatted(*Message);
+                }
+                ImGui::EndTooltip();
+            }
+            ImGui::SameLine();
+        }
+        else if (bChangesSavedBanner)
         {
             ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f),
                 LE_ICON_CHECK " Changes saved. Restart the editor to apply.");
@@ -417,15 +464,22 @@ namespace Lumina
 
     bool FPluginBrowserEditorTool::ApplyAndPersist(FString& OutError)
     {
-        if (!GEngine || GEngine->GetProjectName().IsEmpty())
+        if (!Global::GEngine || Global::GEngine->GetProjectName().IsEmpty())
         {
             OutError = "No project loaded; nowhere to write plugin overrides.";
             return false;
         }
 
+        const TVector<FString> Broken = FindBrokenDependencies(FPluginManager::Get().GetAllPlugins(), PendingChanges);
+        if (!Broken.IsEmpty())
+        {
+            OutError = Broken[0];
+            return false;
+        }
+
         // Compose <ProjectPath>/<ProjectName>.lproject.
-        const FStringView PathView = GEngine->GetProjectPath();
-        const FStringView NameView = GEngine->GetProjectName();
+        const FStringView PathView = Global::GEngine->GetProjectPath();
+        const FStringView NameView = Global::GEngine->GetProjectName();
 
         FFixedString Composed = Paths::Combine(PathView, NameView);
         Composed.Append(".lproject");
@@ -589,12 +643,12 @@ namespace Lumina
                 {
                     FFixedString OutDir;
                     FString Error;
-                    if (GEditorEngine->CreatePlugin(NewPluginNameBuf, NewPluginDescBuf, OutDir, Error))
+                    if (Global::GEditorEngine->CreatePlugin(NewPluginNameBuf, NewPluginDescBuf, OutDir, Error))
                     {
                         LOG_INFO("[PluginBrowser] Created plugin at {}", *OutDir);
 
                         // Regenerates so the new modules join the project, then prompts a rebuild and restart.
-                        GEditorEngine->GenerateProjectFiles(GEngine->GetProjectPath());
+                        Global::GEditorEngine->GenerateProjectFiles(Global::GEngine->GetProjectPath());
 
                         CreatePluginResult = "Created plugin '";
                         CreatePluginResult += NewPluginNameBuf;

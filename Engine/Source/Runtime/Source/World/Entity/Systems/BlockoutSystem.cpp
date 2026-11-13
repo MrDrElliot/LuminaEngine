@@ -60,12 +60,17 @@ namespace Lumina
         return Mesh.Commit();
     }
 
-    void CBlockoutSystem::OnUpdate(const SSystemContext& Context)
+    void CBlockoutSystem::GatherDirty()
     {
-        using namespace BlockoutSystemInternal;
-
         DirtyScratch.Reset();
         MaterialScratch.Reset();
+        DirtyLookup.BeginPass(ChangedShapes.View(), NewColliders.View());
+
+        const auto MarkDirty = [&](ECS::FEntity Entity)
+        {
+            DirtyScratch.Add(Entity);
+            DirtyLookup.ByEntityIndex[Entity.GetIndex()] = { Entity, DirtyLookup.Stamp };
+        };
 
         ChangedShapes.ForEach([&](ECS::FEntity Entity, const SBlockoutComponent& Shape, const SDynamicMeshComponent& Mesh)
         {
@@ -74,7 +79,7 @@ namespace Lumina
 
             if (!Shape.bBuilt || bColliderStarved || Shape.BuiltHash != BlockoutMesh::HashParameters(Shape))
             {
-                DirtyScratch.Add(Entity);
+                MarkDirty(Entity);
             }
             else if (Shape.BuiltMaterial != Shape.Material.Get())
             {
@@ -84,11 +89,18 @@ namespace Lumina
 
         NewColliders.ForEach([&](ECS::FEntity Entity, const SBlockoutComponent&, const SDynamicMeshComponent& Mesh)
         {
-            if (!Mesh.bKeepCPUMeshletData && !DirtyScratch.Contains(Entity))
+            if (!Mesh.bKeepCPUMeshletData && DirtyLookup.Find(Entity) == nullptr)
             {
-                DirtyScratch.Add(Entity);
+                MarkDirty(Entity);
             }
         });
+    }
+
+    void CBlockoutSystem::OnUpdate(const SSystemContext& Context)
+    {
+        using namespace BlockoutSystemInternal;
+
+        GatherDirty();
 
         for (ECS::FEntity Entity : MaterialScratch)
         {

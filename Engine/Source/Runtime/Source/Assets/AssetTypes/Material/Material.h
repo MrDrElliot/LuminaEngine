@@ -6,6 +6,7 @@
 #include "Containers/HashTable.h"
 #include "Containers/Span.h"
 #include "Containers/Vector.h"
+#include "Core/Threading/Mutex.h"
 #include "Core/Threading/Thread.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -147,6 +148,9 @@ namespace Lumina
 
         // Whether a resolved slot binds ChangedTexture. Never resolves to answer, since it runs for every material on a reimport.
         NODISCARD bool ReferencesTexture(const CTexture* ChangedTexture) const;
+
+        // Logs a missing Kind parameter named Name once per name on this material, since a script setting one every frame would flood the log.
+        void WarnMissingParameterOnce(const char* Kind, const FName& Name);
 
         static CMaterial* GetDefaultMaterial();
         static CMaterial* GetErrorMaterial();
@@ -295,6 +299,9 @@ namespace Lumina
         std::atomic_bool bCompileFailed { false };
 
         THashMap<FName, SMaterialParameter> ParameterLookup;
+
+        // Parameter names already warned about missing, locked because scripts can set parameters off the game thread.
+        TMutex<THashSet<FName>> ReportedMissingParameters;
     };
 
     // Re-uploads the texture bindings of every material that references ChangedTexture, or all of them when it is null, and returns how many changed.

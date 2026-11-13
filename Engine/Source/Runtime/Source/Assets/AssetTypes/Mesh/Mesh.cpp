@@ -11,6 +11,8 @@
 #include "Core/Object/Package/Package.h"
 #include "Memory/MemoryTracking.h"
 #include "Renderer/MeshletHeaderSlab.h"
+#include "Renderer/RenderManager.h"
+#include "Renderer/RHIUpload.h"
 #include "Renderer/Vertex.h"
 #include "Tools/Import/ImportHelpers.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
@@ -61,7 +63,8 @@ namespace Lumina
             MeshResources = MakeUnique<FMeshResource>();
         }
 
-        Ar << *MeshResources;
+        // A save that lands before the staged resource publishes still writes the newest geometry.
+        Ar << (Ar.IsWriting() && PendingMeshResources ? *PendingMeshResources : *MeshResources);
     }
 
     void CMesh::PostLoad()
@@ -119,16 +122,24 @@ namespace Lumina
 
     void CMesh::SetMeshResource(TUniquePtr<FMeshResource>&& NewResource)
     {
-        MeshResources = Move(NewResource);
-        GenerateBoundingBox();
-
         // ThumbnailManager's primitive meshes arrive without baked meshlets.
-        if (MeshResources && MeshResources->MeshletData.IsEmpty() && !MeshResources->Indices.IsEmpty())
+        if (NewResource && NewResource->MeshletData.IsEmpty() && !NewResource->Indices.IsEmpty())
         {
-            Import::Mesh::GenerateMeshlets(*MeshResources);
+            Import::Mesh::GenerateMeshlets(*NewResource);
         }
 
-        GenerateGPUBuffers();
+        StageMeshResource(Move(NewResource));
+
+        // With no renderer nothing is drawing the current resource, so the staged one publishes at once.
+        FRenderManager* RenderManager = TryRender();
+        if (RenderManager != nullptr && PendingMeshResources != nullptr)
+        {
+            RenderManager->WatchMeshPublish(this);
+        }
+        else
+        {
+            PublishPendingMeshResource();
+        }
     }
 
     void CMesh::SetMeshResourceBatched(TUniquePtr<FMeshResource>&& NewResource)
@@ -139,7 +150,7 @@ namespace Lumina
             return;
         }
 
-        MeshResources = Move(NewResource);
+        ReplaceMeshResources(Move(NewResource));
         GenerateBoundingBox();
         FMeshBuildBatchScope::DeferMeshlets(this);
     }
@@ -245,6 +256,56 @@ namespace Lumina
     void CMesh::GenerateBoundingBox()
     {
         BoundingBox = MeshResources ? ComputeMeshLocalBounds(*MeshResources) : SAABB();
+    }
+
+    void CMesh::StageMeshResource(TUniquePtr<FMeshResource>&& NewResource)
+    {
+        PendingMeshResources = Move(NewResource);
+        if (PendingMeshResources)
+        {
+            // Measured while the raw positions are still around, since the upload drops them.
+            PendingMeshResources->LocalBounds = ComputeMeshLocalBounds(*PendingMeshResources);
+            if (!Global::GIsHeadless)
+            {
+                UploadGeometry(*PendingMeshResources);
+            }
+        }
+
+        // Nothing is drawing the current resource, so there is no previous geometry to keep live.
+        if (MeshResources == nullptr || Global::GIsHeadless)
+        {
+            PublishPendingMeshResource();
+        }
+    }
+
+    void CMesh::ReplaceMeshResources(TUniquePtr<FMeshResource>&& NewResource)
+    {
+        // The first geometry a mesh gets replaces nothing, so it keeps the version anything built from a loaded mesh saw.
+        if (MeshResources != nullptr)
+        {
+            ++GeometryVersion;
+        }
+        MeshResources = Move(NewResource);
+    }
+
+    bool CMesh::PublishPendingMeshResource()
+    {
+        if (PendingMeshResources == nullptr)
+        {
+            return true;
+        }
+        if (!RHI::Upload::IsBatchComplete(PendingMeshResources->MeshBuffers.UploadBatch))
+        {
+            return false;
+        }
+
+        // The replaced resource's destructor retires its block and slot behind the frames still recording them.
+        ReplaceMeshResources(Move(PendingMeshResources));
+        BoundingBox   = MeshResources->LocalBounds;
+
+        // The surfaces' LOD tables and header slot changed, which every instance of this mesh reads through its resolve entry.
+        FMeshResolveCache::InvalidateDependency(this);
+        return true;
     }
 
     namespace
@@ -501,19 +562,20 @@ namespace Lumina
 
         RHI::SetDebugName(Block.Gpu, bSkinned ? "Mesh.SkinnedGeometry" : "Mesh.Geometry");
 
-        RHI::UploadBuffer(Block, MData.Meshlets.GetData(),         MeshletBytes,  MeshletOffset);
-        RHI::UploadBuffer(Block, MData.MeshletSpheres.GetData(),   SphereBytes,   SphereOffset);
-        RHI::UploadBuffer(Block, MData.MeshletCones.GetData(),     ConeBytes,     ConeOffset);
-        RHI::UploadBuffer(Block, VertSrc,                       VertexBytes,   VertexOffset);
-        RHI::UploadBuffer(Block, MData.MeshletTriangles.GetData(), TriangleBytes, TriangleOffset);
-
-        auto UploadIfPresent = [&Block](const void* Source, uint64 Bytes, uint64 Offset)
+        // A stream the staging ring could not take leaves raw Malloc bytes behind the header, so none may be skipped.
+        bool bQueued = true;
+        auto UploadIfPresent = [&Block, &bQueued](const void* Source, uint64 Bytes, uint64 Offset)
         {
             if (Bytes != 0)
             {
-                RHI::UploadBuffer(Block, Source, Bytes, Offset);
+                bQueued &= RHI::UploadBuffer(Block, Source, Bytes, Offset);
             }
         };
+        UploadIfPresent(MData.Meshlets.GetData(),          MeshletBytes,  MeshletOffset);
+        UploadIfPresent(MData.MeshletSpheres.GetData(),    SphereBytes,   SphereOffset);
+        UploadIfPresent(MData.MeshletCones.GetData(),      ConeBytes,     ConeOffset);
+        UploadIfPresent(VertSrc,                           VertexBytes,   VertexOffset);
+        UploadIfPresent(MData.MeshletTriangles.GetData(),  TriangleBytes, TriangleOffset);
         UploadIfPresent(MData.VertexPositions.GetData(),   PositionBytes, PositionOffset);
         UploadIfPresent(MData.MeshletVertexRefs.GetData(), RefBytes,      RefOffset);
         UploadIfPresent(MData.VertexUV1s.GetData(),        UV1Bytes,      UV1Offset);
@@ -522,8 +584,16 @@ namespace Lumina
 
         if (PaletteBytes != 0 && BoneIdxBytes != 0)
         {
-            RHI::UploadBuffer(Block, MData.MeshletBonePalettes.GetData(), PaletteBytes, PaletteOffset);
-            RHI::UploadBuffer(Block, MData.MeshletBoneIndices.GetData(),  BoneIdxBytes, BoneIdxOffset);
+            UploadIfPresent(MData.MeshletBonePalettes.GetData(), PaletteBytes, PaletteOffset);
+            UploadIfPresent(MData.MeshletBoneIndices.GetData(),  BoneIdxBytes, BoneIdxOffset);
+        }
+
+        if (!bQueued)
+        {
+            LOG_ERROR("Mesh rebuild failed: a geometry upload of {} meshlets was dropped. Previous geometry kept.",
+                      MData.Meshlets.Num());
+            RHI::Retire(Block);
+            return;
         }
 
         MB.ReleaseGeometryBuffers();
@@ -555,6 +625,9 @@ namespace Lumina
             MB.MeshletHeaderSlot = MeshletHeaderSlab::Acquire();
         }
         MeshletHeaderSlab::Write(MB.MeshletHeaderSlot, MakeMeshletHeader(Resource));
+
+        // Read after the header write is queued, so it names that write's batch or a later one.
+        MB.UploadBatch = RHI::Upload::BatchForQueuedOps();
     }
 
     bool CMesh::HasDistanceField() const
@@ -569,14 +642,24 @@ namespace Lumina
 
     namespace
     {
-        // The finest slot of every surface holds the source geometry, so the build streams can be read back out of it.
-        bool RestoreSourceStreamsFromMeshlets(FMeshResource& Resource)
+        // The finest slot of every surface holds the source geometry, so the build streams can be read back out of it into Resource.
+        bool RestoreSourceStreamsFromMeshlets(const FMeshResource& Source, FMeshResource& Resource)
         {
-            const FMeshletData& MD = Resource.MeshletData;
-            if (Resource.bSkinnedMesh || MD.IsEmpty() || MD.VertexPositions.IsEmpty())
+            const FMeshletData& MD = Source.MeshletData;
+            if (Source.bSkinnedMesh || MD.IsEmpty() || MD.VertexPositions.IsEmpty())
             {
                 return false;
             }
+
+            // Surfaces and the field carry over, and the build inputs the importer set keep steering the rebuild.
+            Resource.Name                = Source.Name;
+            Resource.GeometrySurfaces    = Source.GeometrySurfaces;
+            Resource.DistanceField       = Source.DistanceField;
+            Resource.MaxLODs             = Source.MaxLODs;
+            Resource.bMeshletConeCulling = Source.bMeshletConeCulling;
+            Resource.bOptimizeMeshlets   = Source.bOptimizeMeshlets;
+            Resource.bFastMeshletBuild   = Source.bFastMeshletBuild;
+            Resource.bDestructiveLODs    = Source.bDestructiveLODs;
 
             const int32 NumVertices = MD.VertexPositions.Num();
             if (MD.VertexAttributes.Num() != NumVertices)
@@ -618,7 +701,6 @@ namespace Lumina
                 Surface.IndexCount = (uint32)Indices.Num() - Surface.StartIndex;
             }
 
-            Resource.ClearVertices();
             Resource.ResizeVertices(Used);
             Resource.Indices = Move(Indices);
 
@@ -738,30 +820,20 @@ namespace Lumina
 
         LUMINA_MEMORY_SCOPE("Meshes");
 
-        // A loaded mesh has dropped its build streams, so the finest baked level stands in for the source.
-        const bool bRestored = MeshResources->Indices.IsEmpty() || MeshResources->Positions.IsEmpty();
-        if (bRestored && !RestoreSourceStreamsFromMeshlets(*MeshResources))
+        // Built beside the live resource from its finest baked level, so instances keep drawing it until the rebuild has uploaded.
+        TUniquePtr<FMeshResource> Rebuilt = MakeUnique<FMeshResource>();
+        if (!RestoreSourceStreamsFromMeshlets(*MeshResources, *Rebuilt))
         {
             LOG_WARN("Virtual geometry rebuild skipped for '{}', it has no finest level to rebuild from.", GetName().ToString());
             return false;
         }
 
         // Normals and UVs survived the bake, and MikkTSpace rebuilds tangents from those.
-        MeshResources->bGenerateTangents = true;
-        Import::Mesh::ApplyVirtualGeometrySettings(*MeshResources, VirtualGeometrySettings);
-        Import::Mesh::GenerateMeshlets(*MeshResources);
+        Rebuilt->bGenerateTangents = true;
+        Import::Mesh::ApplyVirtualGeometrySettings(*Rebuilt, VirtualGeometrySettings);
+        Import::Mesh::GenerateMeshlets(*Rebuilt);
 
-        if (bRestored)
-        {
-            MeshResources->ClearVertices();
-            MeshResources->Indices.Reset();
-            MeshResources->Indices.Shrink();
-        }
-
-        GenerateGPUBuffers();
-
-        // The surfaces' LOD tables changed, which every instance of this mesh reads through its resolve entry.
-        FMeshResolveCache::InvalidateDependency(this);
+        SetMeshResource(Move(Rebuilt));
         return true;
     }
 
@@ -791,10 +863,20 @@ namespace Lumina
         FMeshResolveCache::InvalidateDependency(this);
     }
 
+    void CMesh::UploadGeometry(FMeshResource& Resource)
+    {
+        MeshBuffers::CreateForResource(Resource);
+
+        // Drop import-time scratch.
+        Resource.ClearVertices();
+        Resource.Indices.Reset();
+        Resource.Indices.Shrink();
+    }
+
     void CMesh::GenerateGPUBuffers()
     {
         // A headless process has no RHI, and it keeps the CPU streams a mesh collider still reads.
-        if (GIsHeadless)
+        if (Global::GIsHeadless)
         {
             return;
         }
@@ -802,14 +884,10 @@ namespace Lumina
         // The box is already computed by PostLoad, and the header publishes it for the LocalBounds node.
         MeshResources->LocalBounds = BoundingBox;
 
-        MeshBuffers::CreateForResource(*MeshResources);
+        // Same meshlet layout as before, and the header rides the same upload batch as the block it names.
+        UploadGeometry(*MeshResources);
 
         // Bumping the global epoch here made loading one mesh re-resolve every component in the world.
         FMeshResolveCache::InvalidateDependency(this);
-
-        // Drop import-time scratch.
-        MeshResources->ClearVertices();
-        MeshResources->Indices.Reset();
-        MeshResources->Indices.Shrink();
     }
 }

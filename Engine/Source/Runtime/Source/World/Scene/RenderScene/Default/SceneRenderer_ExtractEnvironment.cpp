@@ -157,6 +157,7 @@ namespace Lumina
     // Reads neither the sun nor the weather, so it runs beside the other emitters; the weather's cloud override applies after the wait.
     void FDefaultSceneRenderer::ScheduleFogExtract(ECS::FRegistry& Registry, FFrameData& Frame)
     {
+        LUMINA_PROFILE_SCOPE();
         auto Transforms    = Registry.GetStorage<STransformComponent>();
         auto CloudView     = Registry.View<ECS::Read<SCloudComponent>, ECS::Without<SDisabledTag>>();
         auto FogView       = Registry.View<ECS::Read<SExponentialHeightFogComponent>, ECS::Without<SDisabledTag>>();
@@ -250,8 +251,14 @@ namespace Lumina
 
         FogVolumeView.ForEach([&](ECS::FEntity Entity, const SLocalFogVolumeComponent& Volume)
         {
-            if (!Volume.bEnabled || static_cast<uint32>(Frame.Volumetrics.FogVolumes.Num()) >= GFogMaxVolumes)
+            if (!Volume.bEnabled)
             {
+                return;
+            }
+
+            if (static_cast<uint32>(Frame.Volumetrics.FogVolumes.Num()) >= GFogMaxVolumes)
+            {
+                LOG_WARN_ONCE("[Rendering] More than {} local fog volumes reach the view (entity {} is dropped), so raise GFogMaxVolumes or disable the extra volumes.", GFogMaxVolumes, Entity.GetPacked());
                 return;
             }
 

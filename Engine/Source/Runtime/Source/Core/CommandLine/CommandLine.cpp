@@ -5,7 +5,7 @@
 namespace Lumina
 {
     
-    RUNTIME_API FCommandLine* GCommandLine = nullptr;
+    RUNTIME_API FCommandLine* Global::GCommandLine = nullptr;
     
     namespace Detail
     {

@@ -93,14 +93,13 @@ FVisProxy ResolveVisProxy(uint VisRaw)
     return Out;
 }
 
-// Widened across the ground exactly as the cull widens a thinned instance's meshlets, so the drawn quad and its shading agree.
+// Widened and faded exactly as the cull scales a thinned instance's meshlets, so the drawn quad and its shading agree.
 float3 ProxyWidenedCenter(float4x4 Model, FInstanceProxy Proxy, out float3 GroundWiden)
 {
     const float3 Center = mul(Model, float4(Proxy.LocalCenter, 1.0)).xyz;
-    const float3 Pivot  = mul(Model, float4(0.0, 0.0, 0.0, 1.0)).xyz;
+    const float3 Pivot  = float3(Model[0].w, Model[1].w, Model[2].w);
     const float3 ToCam  = Center - GetCullCameraPosition();
-    const float  Widen  = rsqrt(ThinningKeep(dot(ToCam, ToCam), Proxy.ThinningStartDistance));
-    GroundWiden = float3(Widen, 1.0, Widen);
+    GroundWiden = ThinningScale(ThinningKeep(dot(ToCam, ToCam), Proxy.ThinningStartDistance), Pivot);
     return Pivot + (Center - Pivot) * GroundWiden;
 }
 
@@ -173,24 +172,27 @@ uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, GPUSpan<uint> SlotB
 // Every index is clamped because a speculated BDA load off a stale draw-list gap faults the device.
 FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
 {
-    FVisTriangle Out;
-    Out.Tri      = uint3(0u, 0u, 0u);
-    Out.TriIndex = 0u;
-    Out.bValid   = false;
+    FVisTriangle Out = {};
 
     const uint InstCount   = Scene().CullData.InstanceNum;
     const uint VisID       = VisRaw - 1u;
     const uint MeshletSlot = VisID >> VISBUFFER_TRI_BITS;
     const uint TriId       = VisID & VISBUFFER_TRI_MASK;
 
-    bool bValid         = (VisRaw != 0u) && (DrawListCount != 0u) && !IsVisProxy(VisRaw) && (MeshletSlot < DrawListCount);
-    const uint SafeSlot = bValid ? MeshletSlot : 0u;
+    // A proxy pixel or an empty draw list has no meshlet draw array to index, so bail before any BDA load touches it.
+    if (VisRaw == 0u || DrawListCount == 0u || IsVisProxy(VisRaw) || MeshletSlot >= DrawListCount)
+    {
+        return Out;
+    }
 
-    const FMeshletDraw Draw = MeshletDrawList().Get(SafeSlot);
-    bValid = bValid && Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) && (Draw.InstanceID < InstCount);
+    const FMeshletDraw Draw = MeshletDrawList().Get(MeshletSlot);
+    if (!Draw.IsFromFrame(Scene().CullData.MeshletDrawTag) || Draw.InstanceID >= InstCount)
+    {
+        return Out;
+    }
 
     FMeshletRef Ref;
-    Ref.InstanceID        = (Draw.InstanceID < InstCount) ? Draw.InstanceID : 0u;
+    Ref.InstanceID        = Draw.InstanceID;
     Ref.SkinnedVertexBase = Ref.Inst.SkinnedVertexBase;   // camera-side only; shadows never reach here
     // Clamping by both counts sends a stale instance on the null header to slot 0 rather than into a live mesh's array.
     const uint MeshletCount = max(min(Ref.Inst.MeshletTotalCount, Ref.Header.MeshletCount), 1u);
@@ -200,7 +202,7 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
     Out.Ref      = Ref;
     Out.TriIndex = min(TriId, max(Ref.M.TriangleCount, 1u) - 1u);
     Out.Tri      = UnpackMeshletTriangle(Ref, Out.TriIndex);
-    Out.bValid   = bValid;
+    Out.bValid   = true;
     return Out;
 }
 

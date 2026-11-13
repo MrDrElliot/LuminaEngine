@@ -4,6 +4,7 @@
 #include "Audio/AudioDevice.h"
 #include "Core/Math/Scalar.h"
 #include "Core/Threading/Atomic.h"
+#include "Core/Threading/Mutex.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 
@@ -80,8 +81,9 @@ namespace Lumina
 			IAudioClient*        Client       = nullptr;
 			IAudioRenderClient*  RenderClient = nullptr;
 
-			HANDLE BufferEvent = nullptr;
-			HANDLE ReadyEvent  = nullptr;
+			// Stop() signals this from the pump thread while the audio thread may be closing it in CloseEndpoint().
+			TMutex<HANDLE> BufferEvent{ nullptr };
+			HANDLE ReadyEvent = nullptr;
 
 			FThread Thread;
 
@@ -135,10 +137,13 @@ namespace Lumina
 
 			Thread.RequestStop();
 
-			if (BufferEvent != nullptr)
+			BufferEvent.WithLock([](HANDLE Event)
 			{
-				SetEvent(BufferEvent);
-			}
+				if (Event != nullptr)
+				{
+					SetEvent(Event);
+				}
+			});
 
 			Thread.Join();
 			bRunning.store(false, Atomic::MemoryOrderRelease);
@@ -249,14 +254,15 @@ namespace Lumina
 				return false;
 			}
 
-			BufferEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-			if (BufferEvent == nullptr)
+			const HANDLE WakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+			*BufferEvent.Lock() = WakeEvent;
+			if (WakeEvent == nullptr)
 			{
 				LOG_ERROR("[Audio] failed to create the render event");
 				return false;
 			}
 
-			Result = Client->SetEventHandle(BufferEvent);
+			Result = Client->SetEventHandle(WakeEvent);
 			if (FAILED(Result))
 			{
 				LOG_ERROR("[Audio] SetEventHandle failed (0x{0:X})", (uint32)Result);
@@ -301,11 +307,14 @@ namespace Lumina
 			SafeRelease(Endpoint);
 			SafeRelease(Enumerator);
 
-			if (BufferEvent != nullptr)
+			BufferEvent.WithLock([](HANDLE& Event)
 			{
-				CloseHandle(BufferEvent);
-				BufferEvent = nullptr;
-			}
+				if (Event != nullptr)
+				{
+					CloseHandle(Event);
+					Event = nullptr;
+				}
+			});
 		}
 
 		void FWindowsAudioDevice::RenderLoop(const FThreadStop& Stop)
@@ -313,10 +322,11 @@ namespace Lumina
 			constexpr DWORD  kWakeTimeoutMs   = 2000;
 			constexpr uint32 kStalledWakeLimit = 2;
 
+			const HANDLE WakeEvent = *BufferEvent.Lock();
 			uint32 MissedWakes = 0;
 			while (!Stop.ShouldStop())
 			{
-				if (WaitForSingleObject(BufferEvent, kWakeTimeoutMs) != WAIT_OBJECT_0)
+				if (WaitForSingleObject(WakeEvent, kWakeTimeoutMs) != WAIT_OBJECT_0)
 				{
 					// An endpoint that stops asking for audio without reporting an error is as gone as an invalidated one.
 					if (++MissedWakes >= kStalledWakeLimit)

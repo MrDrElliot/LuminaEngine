@@ -46,10 +46,10 @@ struct FPushConstants
     uint         OffsetX;
     uint         OffsetY;
 
-    uint         FrameIndex;   // turns the march jitter every frame, so the resolve integrates it
     FTexture2D   Weather;
     uint         _Pad1;
     uint         _Pad2;
+    uint         _Pad3;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -95,12 +95,6 @@ static const uint  kMaxStepScale  = 4u;
 static const float kEmptyStepScale = 3.0;
 static const float kMaxEmptyStride = 300.0;
 static const uint  kEntryFineSteps = 3u;
-
-// Turned by the golden ratio each frame, since one fixed offset per pixel samples a cloud at the same slices forever and the resolve sees them as slats.
-float Cloud_MarchJitter(float2 PixelPos, uint FrameIndex)
-{
-    return frac(InterleavedGradientNoise(PixelPos) + float(FrameIndex & 1023u) * 0.61803399);
-}
 
 // Light that scattered more than once, approximated by octaves each weaker, softer and more forward, so dense cores glow instead of going flat.
 static const uint  kScatterOctaves     = 3u;
@@ -162,8 +156,8 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     // Clear air between clouds is cheap, so stride through it in whole fine steps, which keeps every sample on one jittered lattice.
     float EmptyStep = BaseStep * clamp(floor(kMaxEmptyStride / BaseStep), 1.0, kEmptyStepScale);
 
-    // Within one fine step, since the empty strides are whole fine steps and a wider jitter lets a stride skip a small puff on some frames only.
-    float T        = Start + Cloud_MarchJitter(float2(P), Pass().FrameIndex) * BaseStep;
+    // One fixed fine-step offset per texel, spread like blue noise so the composite's tent averages it, with no frame history to integrate it.
+    float T        = Start + InterleavedGradientNoise(float2(P)) * BaseStep;
     bool  bStrode  = false;
     uint  FineLeft = 0u;
 

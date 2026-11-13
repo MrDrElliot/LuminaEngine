@@ -235,6 +235,6 @@ namespace Lumina
 
     namespace MCP
     {
-        void RegisterDataTableTools(FStringView Owner);
+        MCPEDITOR_API void RegisterDataTableTools(FStringView Owner);
     }
 }

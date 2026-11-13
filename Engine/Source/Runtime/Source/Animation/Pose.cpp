@@ -757,17 +757,11 @@ namespace Lumina
     namespace Detail
     {
         // Uses Pose's current TRS so chained BoneTransform nodes compose correctly in component space.
-        static FMatrix4 ComputeParentGlobal(const FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIndex)
+        static FMatrix4 ComputeBoneGlobalLocal(const FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIndex)
         {
-            const int32 ParentIndex = Skeleton->GetBone(BoneIndex).ParentIndex;
-            if (ParentIndex < 0)
-            {
-                return FMatrix4(1.0f);
-            }
-
             int32 Chain[64];
             int32 ChainLen = 0;
-            int32 Cursor = ParentIndex;
+            int32 Cursor = BoneIndex;
             while (Cursor >= 0 && ChainLen < (int32)(sizeof(Chain) / sizeof(Chain[0])))
             {
                 Chain[ChainLen++] = Cursor;
@@ -781,6 +775,11 @@ namespace Lumina
                 Global = Global * Detail::ComposeLocal(Pose, b);
             }
             return Global;
+        }
+
+        static FMatrix4 ComputeParentGlobal(const FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIndex)
+        {
+            return ComputeBoneGlobalLocal(Pose, Skeleton, Skeleton->GetBone(BoneIndex).ParentIndex);
         }
     }
 
@@ -910,26 +909,6 @@ namespace Lumina
             const FVector3 Axis = Math::Cross(A, B);
             const float S = Math::Sqrt((1.0f + d) * 2.0f);
             return Math::Normalize(FQuat(S * 0.5f, Axis.x / S, Axis.y / S, Axis.z / S));
-        }
-
-        static FMatrix4 ComputeBoneGlobalLocal(const FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIndex)
-        {
-            int32 Chain[64];
-            int32 ChainLen = 0;
-            int32 Cursor = BoneIndex;
-            while (Cursor >= 0 && ChainLen < (int32)(sizeof(Chain) / sizeof(Chain[0])))
-            {
-                Chain[ChainLen++] = Cursor;
-                Cursor = Skeleton->GetBone(Cursor).ParentIndex;
-            }
-
-            FMatrix4 Global(1.0f);
-            for (int32 i = ChainLen - 1; i >= 0; --i)
-            {
-                const int32 b = Chain[i];
-                Global = Global * Detail::ComposeLocal(Pose, b);
-            }
-            return Global;
         }
     }
 

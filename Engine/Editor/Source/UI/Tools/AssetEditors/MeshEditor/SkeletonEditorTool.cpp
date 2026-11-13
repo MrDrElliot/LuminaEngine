@@ -15,6 +15,7 @@
 #include "Renderer/SkeletonResource.h"
 #include "Containers/Algorithm.h"
 #include "Containers/StringFormat.h"
+#include "Log/Log.h"
 
 
 namespace Lumina
@@ -58,33 +59,22 @@ namespace Lumina
             ImGui::SeparatorText("Statistics");
             ImGuiX::Font::PopFont();
             
-            int32 NumRootBones = 0;
-            int32 MaxDepth = 0;
-            int32 TotalDepth = 0;
-            
-            for (const auto& Bone : SkeletonResource->Bones)
+            FBoneDepthStatistics Stats = ComputeBoneDepthStatistics(*SkeletonResource);
+
+            ImGui::Text("Root Bones: %i", Stats.NumRootBones);
+            ImGui::Text("Maximum Hierarchy Depth: %i", Stats.MaxDepth);
+            ImGui::Text("Average Bone Depth: %.2f", Stats.AverageDepth);
+
+            if (!Stats.bConsistentHierarchy)
             {
-                if (Bone.ParentIndex == -1)
+                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Broken hierarchy: a bone's ParentIndex is cyclic, self-parented or out of range");
+
+                if (!bLoggedInconsistentHierarchy)
                 {
-                    NumRootBones++;
+                    LOG_WARN("Skeleton '{}' has a broken ParentIndex chain (cycle, self-parent, or out-of-range parent); depth statistics are unavailable", SkeletonResource->Name);
+                    bLoggedInconsistentHierarchy = true;
                 }
-                
-                int32 Depth = 0;
-                int32 CurrentIndex = (int32)(&Bone - SkeletonResource->Bones.GetData());
-                while (SkeletonResource->Bones[CurrentIndex].ParentIndex != -1)
-                {
-                    CurrentIndex = SkeletonResource->Bones[CurrentIndex].ParentIndex;
-                    Depth++;
-                }
-                MaxDepth = Math::Max(MaxDepth, Depth);
-                TotalDepth += Depth;
             }
-            
-            float AvgDepth = SkeletonResource->GetNumBones() > 0 ? (float)TotalDepth / SkeletonResource->GetNumBones() : 0.0f;
-            
-            ImGui::Text("Root Bones: %i", NumRootBones);
-            ImGui::Text("Maximum Hierarchy Depth: %i", MaxDepth);
-            ImGui::Text("Average Bone Depth: %.2f", AvgDepth);
             
             ImGui::Spacing();
             PropertyTable.DrawTree();
@@ -299,5 +289,40 @@ namespace Lumina
         {
             DrawBoneHierarchy(DrawWorld, SkeletonResource, WorldTransforms, ChildIndex);
         }
+    }
+
+    FSkeletonEditorTool::FBoneDepthStatistics FSkeletonEditorTool::ComputeBoneDepthStatistics(const FSkeletonResource& SkeletonResource)
+    {
+        FBoneDepthStatistics Stats;
+        Stats.bConsistentHierarchy = SkeletonResource.HasConsistentHierarchy();
+
+        for (int32 BoneIndex = 0; BoneIndex < SkeletonResource.GetNumBones(); ++BoneIndex)
+        {
+            if (SkeletonResource.Bones[BoneIndex].ParentIndex == Constants::kIndexNone)
+            {
+                Stats.NumRootBones++;
+            }
+        }
+
+        if (!Stats.bConsistentHierarchy)
+        {
+            return Stats;
+        }
+
+        // Safe as a single forward pass only because HasConsistentHierarchy just proved ParentIndex < BoneIndex for every bone.
+        TVector<int32> Depths;
+        Depths.SetNum(SkeletonResource.GetNumBones());
+        int32 TotalDepth = 0;
+
+        for (int32 BoneIndex = 0; BoneIndex < SkeletonResource.GetNumBones(); ++BoneIndex)
+        {
+            const int32 ParentIndex = SkeletonResource.Bones[BoneIndex].ParentIndex;
+            Depths[BoneIndex] = ParentIndex == Constants::kIndexNone ? 0 : Depths[ParentIndex] + 1;
+            Stats.MaxDepth = Math::Max(Stats.MaxDepth, Depths[BoneIndex]);
+            TotalDepth += Depths[BoneIndex];
+        }
+
+        Stats.AverageDepth = SkeletonResource.GetNumBones() > 0 ? (float)TotalDepth / SkeletonResource.GetNumBones() : 0.0f;
+        return Stats;
     }
 }

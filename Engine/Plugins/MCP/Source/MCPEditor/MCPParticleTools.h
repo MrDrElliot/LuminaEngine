@@ -619,6 +619,6 @@ namespace Lumina
 
     namespace MCP
     {
-        void RegisterParticleTools(FStringView Owner);
+        MCPEDITOR_API void RegisterParticleTools(FStringView Owner);
     }
 }

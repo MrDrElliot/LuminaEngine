@@ -165,14 +165,13 @@ TEST(GameplayMessageBus, ADeferredSendCarriesItsOwnCopyToTheFlush)
     EXPECT_EQ(Heard, 1);
 }
 
-TEST(GameplayMessageBus, PruneDropsTheListenersOfDestroyedEntities)
+TEST(GameplayMessageBus, DestroyingTheOwnerDropsItsListenersImmediately)
 {
     FBusFixture F;
     const ECS::FEntity Owner = F.Registry.Create();
     F.Bus.Subscribe<SHierarchicalTag>(Owner, Tag("BusTest.Prune"), [](const SHierarchicalTag&) {});
-    F.Registry.Destroy(Owner);
 
-    F.Bus.PruneDeadOwners();
+    F.Registry.Destroy(Owner);
 
     EXPECT_EQ(F.Bus.NumListeners(), 0u);
 }

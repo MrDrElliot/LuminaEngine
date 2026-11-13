@@ -4,6 +4,8 @@
 #include "Containers/HashTable.h"
 #include "Containers/Span.h"
 #include "Core/Object/Class.h"
+#include "UI/RmlUiBridge.h"
+#include "World/Entity/Components/SingletonEntityComponent.h"
 #include "World/Entity/Systems/EntitySystem.h"
 #include "World/World.h"
 
@@ -16,8 +18,21 @@ namespace Lumina
         static void RebuildSystemSchedule(CWorld& World) { World.RebuildSystemSchedule(); }
         static void TickFixedUpdate(CWorld& World, double FrameDeltaSeconds) { World.TickFixedUpdate(FrameDeltaSeconds); }
 
+        // A loaded world holds its entities here until InitializeWorld, which a test process cannot run.
+        static ECS::FRegistry& PendingRegistry(CWorld& World) { return World.RegistryPending; }
+
         // InitializeWorld is what sets the type, and it creates a renderer a test process cannot.
         static void SetWorldType(CWorld& World, EWorldType Type) { World.WorldType = Type; }
+
+        // InitializeWorld also makes the singleton entity that holds world-wide tables such as the scene folders.
+        static void CreateSingletonEntity(CWorld& World)
+        {
+            World.SingletonEntity = World.EntityRegistry.Create();
+            World.EntityRegistry.Emplace<FSingletonEntityTag>(World.SingletonEntity);
+        }
+
+        // Registers the world with the UI bridge the way InitializeWorld does, without an Rml context when RmlUi is not running.
+        static void CreateUIContext(CWorld& World) { World.UIContext = RmlUi::CreateWorldUI(&World); }
 
         static void TickStage(CWorld& World, EUpdateStage Stage, double DeltaSeconds)
         {

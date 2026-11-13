@@ -254,6 +254,36 @@ namespace Lumina
             FVector3          AABBMax = FVector3(-FLT_MAX);
         };
 
+        void BuildBoxCorners(const FVector3& HalfExtent, FVector3 Out[8])
+        {
+            const FVector3& H = HalfExtent;
+            Out[0] = {-H.x,-H.y,-H.z}; Out[1] = { H.x,-H.y,-H.z};
+            Out[2] = { H.x,-H.y, H.z}; Out[3] = {-H.x,-H.y, H.z};
+            Out[4] = {-H.x, H.y,-H.z}; Out[5] = { H.x, H.y,-H.z};
+            Out[6] = { H.x, H.y, H.z}; Out[7] = {-H.x, H.y, H.z};
+        }
+
+        void TransformCorners(const FMatrix4& W, const FVector3 In[8], FVector3 Out[8])
+        {
+            for (int32 i = 0; i < 8; ++i)
+            {
+                Out[i] = FVector3(W * FVector4(In[i], 1.0f));
+            }
+        }
+
+        // Change detector and cache rebuild must agree byte for byte, so every caller shares this walk.
+        void CornersAABB(const FMatrix4& W, const FVector3* Local, int32 N, FVector3& Mn, FVector3& Mx)
+        {
+            Mn = FVector3( FLT_MAX);
+            Mx = FVector3(-FLT_MAX);
+            for (int32 i = 0; i < N; ++i)
+            {
+                const FVector3 Pt = FVector3(W * FVector4(Local[i], 1.0f));
+                Mn = Math::Min(Mn, Pt);
+                Mx = Math::Max(Mx, Pt);
+            }
+        }
+
         // 8-bit local indices packed 3 per uint32; vertex indices local to Meshlet.VertexOffset.
         FORCEINLINE void UnpackTri(uint32 Packed, uint32& A, uint32& B, uint32& C)
         {
@@ -337,18 +367,10 @@ namespace Lumina
 
         void EmitBoxGeometry(const FMatrix4& W, const FVector3& HalfExtent, const FVector3& BakeMin, const FVector3& BakeMax, FGatherAccumulator& Acc)
         {
-            const FVector3 H = HalfExtent;
-            const FVector3 LocalCorners[8] = {
-                {-H.x,-H.y,-H.z}, { H.x,-H.y,-H.z},
-                { H.x,-H.y, H.z}, {-H.x,-H.y, H.z},
-                {-H.x, H.y,-H.z}, { H.x, H.y,-H.z},
-                { H.x, H.y, H.z}, {-H.x, H.y, H.z},
-            };
+            FVector3 LocalCorners[8];
+            BuildBoxCorners(HalfExtent, LocalCorners);
             FVector3 V[8];
-            for (int i = 0; i < 8; ++i)
-            {
-                V[i] = FVector3(W * FVector4(LocalCorners[i], 1.0f));
-            }
+            TransformCorners(W, LocalCorners, V);
             // Outward-wound for Recast's slope test (top face = walkable).
             EmitTri(Acc, BakeMin, BakeMax, V[0], V[1], V[2]); EmitTri(Acc, BakeMin, BakeMax, V[0], V[2], V[3]);
             EmitTri(Acc, BakeMin, BakeMax, V[4], V[6], V[5]); EmitTri(Acc, BakeMin, BakeMax, V[4], V[7], V[6]);
@@ -587,21 +609,12 @@ namespace Lumina
             Patch->Stride = T.TileWorldSize / float(Res - 1);
             Patch->Half = T.TileWorldSize * 0.5f;
 
-            const FMatrix4 ToLocal = Math::Inverse(W);
-            FVector3 LocalMin( FLT_MAX);
-            FVector3 LocalMax(-FLT_MAX);
-            const FVector3 Corners[8] = {
-                {BakeMin.x, BakeMin.y, BakeMin.z}, {BakeMax.x, BakeMin.y, BakeMin.z},
-                {BakeMin.x, BakeMax.y, BakeMin.z}, {BakeMax.x, BakeMax.y, BakeMin.z},
-                {BakeMin.x, BakeMin.y, BakeMax.z}, {BakeMax.x, BakeMin.y, BakeMax.z},
-                {BakeMin.x, BakeMax.y, BakeMax.z}, {BakeMax.x, BakeMax.y, BakeMax.z},
-            };
-            for (const FVector3& Corner : Corners)
-            {
-                const FVector3 L = FVector3(ToLocal * FVector4(Corner, 1.0f));
-                LocalMin = Math::Min(LocalMin, L);
-                LocalMax = Math::Max(LocalMax, L);
-            }
+            const FVector3 BakeCenter = (BakeMin + BakeMax) * 0.5f;
+            const FMatrix4 ToLocal = Math::Inverse(W) * Math::Translate(FMatrix4(1.0f), BakeCenter);
+            FVector3 LocalCorners[8];
+            BuildBoxCorners((BakeMax - BakeMin) * 0.5f, LocalCorners);
+            FVector3 LocalMin, LocalMax;
+            CornersAABB(ToLocal, LocalCorners, 8, LocalMin, LocalMax);
 
             // One quad of slack each way, so the clipped edge still shares vertices with its neighbor.
             Patch->ColBegin = Math::Clamp((int32)std::floor((LocalMin.x + Patch->Half) / Patch->Stride) - 1, 0, Res - 2);
@@ -842,25 +855,21 @@ namespace Lumina
             }
         }
 
-        // Change detector and cache rebuild MUST agree byte for byte, so all four share this walk.
-        void CornersAABB(const FMatrix4& W, const FVector3* Local, int32 N, FVector3& Mn, FVector3& Mx)
-        {
-            Mn = FVector3( FLT_MAX);
-            Mx = FVector3(-FLT_MAX);
-            for (int32 i = 0; i < N; ++i)
-            {
-                const FVector3 Pt = FVector3(W * FVector4(Local[i], 1.0f));
-                Mn = Math::Min(Mn, Pt);
-                Mx = Math::Max(Mx, Pt);
-            }
-        }
-
         float ScaledRadius(const FMatrix4& W, float Radius)
         {
             const float Sx = Math::Length(FVector3(W[0]));
             const float Sy = Math::Length(FVector3(W[1]));
             const float Sz = Math::Length(FVector3(W[2]));
             return Radius * Math::Max(Sx, Math::Max(Sy, Sz));
+        }
+
+        void CapsuleAABB(const FMatrix4& W, float Radius, float HalfHeight, FVector3& OutMin, FVector3& OutMax)
+        {
+            const FVector3 Top = FVector3(W * FVector4(0.0f,  HalfHeight, 0.0f, 1.0f));
+            const FVector3 Bot = FVector3(W * FVector4(0.0f, -HalfHeight, 0.0f, 1.0f));
+            const float R = ScaledRadius(W, Radius);
+            OutMin = Math::Min(Top, Bot) - FVector3(R);
+            OutMax = Math::Max(Top, Bot) + FVector3(R);
         }
 
         // One source per collision piece, so nav sees the same decomposed shape physics does. Emit takes the key type and sub-index.
@@ -902,11 +911,8 @@ namespace Lumina
                         Entry.Prim.Type = ENavColliderType::Box;
                         Entry.Prim.Shape = Primitive.HalfExtent;
 
-                        const FVector3 H = Primitive.HalfExtent;
-                        const FVector3 Corners[8] = {
-                            {-H.x,-H.y,-H.z}, { H.x,-H.y,-H.z}, { H.x,-H.y, H.z}, {-H.x,-H.y, H.z},
-                            {-H.x, H.y,-H.z}, { H.x, H.y,-H.z}, { H.x, H.y, H.z}, {-H.x, H.y, H.z},
-                        };
+                        FVector3 Corners[8];
+                        BuildBoxCorners(Primitive.HalfExtent, Corners);
                         CornersAABB(Entry.Prim.World, Corners, 8, Entry.AABBMin, Entry.AABBMax);
                     }
                     break;
@@ -1111,8 +1117,8 @@ namespace Lumina
         }
 
         // Visits every source of one type, or only Only's; a null cache leaves foliage out for the change scan that diffs it per entity.
-        template<typename TComponent, typename FnEmit>
-        void ForEachNavSource(CNavMeshSystem::FSourceQueries::TSource<TComponent>& Query, const ECS::FEntity* Only, FnEmit&& Emit)
+        template<typename TComponent, typename... TBeside, typename FnEmit>
+        void ForEachNavSource(CNavMeshSystem::FSourceQueries::TSource<TComponent, TBeside...>& Query, const ECS::FEntity* Only, FnEmit&& Emit)
         {
             if (Only != nullptr)
             {
@@ -1120,14 +1126,14 @@ namespace Lumina
                 const STransformComponent* Transform = Component != nullptr ? Query.template TryGet<STransformComponent>(*Only) : nullptr;
                 if (Transform != nullptr)
                 {
-                    Emit(*Only, *Component, *Transform);
+                    Emit(*Only, *Component, *Transform, Query.template TryGet<TBeside>(*Only)...);
                 }
                 return;
             }
 
-            Query.ForEach([&](ECS::FEntity E, const TComponent& Component, const STransformComponent& Transform)
+            Query.ForEach([&](ECS::FEntity E, const TComponent& Component, const STransformComponent& Transform, const TBeside*... Beside)
             {
-                Emit(E, Component, Transform);
+                Emit(E, Component, Transform, Beside...);
             });
         }
 
@@ -1166,11 +1172,8 @@ namespace Lumina
                 Entry.Prim.Type = ENavColliderType::Box;
                 Entry.Prim.World = ColliderToWorld(X, Box.TranslationOffset, Box.RotationOffset);
                 Entry.Prim.Shape = Box.HalfExtent;
-                const FVector3 H = Box.HalfExtent;
-                const FVector3 Corners[8] = {
-                    {-H.x,-H.y,-H.z}, { H.x,-H.y,-H.z}, { H.x,-H.y, H.z}, {-H.x,-H.y, H.z},
-                    {-H.x, H.y,-H.z}, { H.x, H.y,-H.z}, { H.x, H.y, H.z}, {-H.x, H.y, H.z},
-                };
+                FVector3 Corners[8];
+                BuildBoxCorners(Box.HalfExtent, Corners);
                 CornersAABB(Entry.Prim.World, Corners, 8, Entry.AABBMin, Entry.AABBMax);
                 Out.Add(Move(Entry));
             });
@@ -1221,10 +1224,9 @@ namespace Lumina
                 });
             }
 
-            ForEachNavSource<SMeshColliderComponent>(Queries.MeshColliders, Only, [&](ECS::FEntity E, const SMeshColliderComponent& MC, const STransformComponent& X)
+            ForEachNavSource(Queries.MeshColliders, Only, [&](ECS::FEntity E, const SMeshColliderComponent& MC, const STransformComponent& X, const SStaticMeshComponent* Fallback)
             {
                 if (!MC.bAffectsNavigation) return;
-                const SStaticMeshComponent* Fallback = Queries.StaticMeshes.TryGet<SStaticMeshComponent>(E);
                 CStaticMesh* Mesh = ResolveMeshColliderAsset(MC, Fallback);
                 if (!Mesh || Mesh->GetMeshResource().bSkinnedMesh) return;
                 if (IsSimulated(E) && !Physics::CollisionGen::IsConcaveMeshCollider(*Mesh, MC.bConvex)) return;
@@ -1262,11 +1264,9 @@ namespace Lumina
             });
 
             // Fingerprinted on the render-data version so a re-commit with unchanged bounds still dirties the tile.
-            ForEachNavSource<SDynamicMeshColliderComponent>(Queries.DynamicMeshColliders, Only, [&](ECS::FEntity E, const SDynamicMeshColliderComponent& DMC, const STransformComponent& X)
+            ForEachNavSource(Queries.DynamicMeshColliders, Only, [&](ECS::FEntity E, const SDynamicMeshColliderComponent& DMC, const STransformComponent& X, const SDynamicMeshComponent* DMFound)
             {
-                if (!DMC.bAffectsNavigation || (DMC.bConvex && IsSimulated(E))) return;
-                const SDynamicMeshComponent* DMFound = Queries.DynamicMeshes.TryGet<SDynamicMeshComponent>(E);
-                if (DMFound == nullptr) return;
+                if (!DMC.bAffectsNavigation || (DMC.bConvex && IsSimulated(E)) || DMFound == nullptr) return;
                 const SDynamicMeshComponent& DM = *DMFound;
                 TSharedPtr<FDynamicMeshRenderData> MeshData = DM.LoadRenderData();
                 if (!MeshData || MeshData->Resource.MeshletData.IsEmpty()) return;
@@ -1294,11 +1294,7 @@ namespace Lumina
                 Entry.Prim.Type = ENavColliderType::Capsule;
                 Entry.Prim.World = ColliderToWorld(X, Cap.TranslationOffset, Cap.RotationOffset);
                 Entry.Prim.Shape = FVector3(Cap.Radius, Cap.HalfHeight, 0.0f);
-                const FVector3 Top = FVector3(Entry.Prim.World * FVector4(0.0f,  Cap.HalfHeight, 0.0f, 1.0f));
-                const FVector3 Bot = FVector3(Entry.Prim.World * FVector4(0.0f, -Cap.HalfHeight, 0.0f, 1.0f));
-                const float R = ScaledRadius(Entry.Prim.World, Cap.Radius);
-                Entry.AABBMin = Math::Min(Top, Bot) - FVector3(R);
-                Entry.AABBMax = Math::Max(Top, Bot) + FVector3(R);
+                CapsuleAABB(Entry.Prim.World, Cap.Radius, Cap.HalfHeight, Entry.AABBMin, Entry.AABBMax);
                 Out.Add(Move(Entry));
             });
 
@@ -1310,11 +1306,7 @@ namespace Lumina
                 Entry.Prim.Type = ENavColliderType::Cylinder;
                 Entry.Prim.World = ColliderToWorld(X, Cyl.TranslationOffset, Cyl.RotationOffset);
                 Entry.Prim.Shape = FVector3(Cyl.Radius, Cyl.HalfHeight, 0.0f);
-                const FVector3 Top = FVector3(Entry.Prim.World * FVector4(0.0f,  Cyl.HalfHeight, 0.0f, 1.0f));
-                const FVector3 Bot = FVector3(Entry.Prim.World * FVector4(0.0f, -Cyl.HalfHeight, 0.0f, 1.0f));
-                const float R = ScaledRadius(Entry.Prim.World, Cyl.Radius);
-                Entry.AABBMin = Math::Min(Top, Bot) - FVector3(R);
-                Entry.AABBMax = Math::Max(Top, Bot) + FVector3(R);
+                CapsuleAABB(Entry.Prim.World, Cyl.Radius, Cyl.HalfHeight, Entry.AABBMin, Entry.AABBMax);
                 Out.Add(Move(Entry));
             });
 
@@ -1329,11 +1321,7 @@ namespace Lumina
                 CapsuleWorld[3] = CapsuleWorld * FVector4(Cap.TranslationOffset.x, Cap.TranslationOffset.y, Cap.TranslationOffset.z, 1.0f);
                 Entry.Prim.World = CapsuleWorld;
                 Entry.Prim.Shape = FVector3(Cap.Radius, Cap.HalfHeight, 0.0f);
-                const FVector3 Top = FVector3(Entry.Prim.World * FVector4(0.0f,  Cap.HalfHeight, 0.0f, 1.0f));
-                const FVector3 Bot = FVector3(Entry.Prim.World * FVector4(0.0f, -Cap.HalfHeight, 0.0f, 1.0f));
-                const float R = ScaledRadius(Entry.Prim.World, Cap.Radius);
-                Entry.AABBMin = Math::Min(Top, Bot) - FVector3(R);
-                Entry.AABBMax = Math::Max(Top, Bot) + FVector3(R);
+                CapsuleAABB(Entry.Prim.World, Cap.Radius, Cap.HalfHeight, Entry.AABBMin, Entry.AABBMax);
                 Out.Add(Move(Entry));
             });
 
@@ -1373,12 +1361,7 @@ namespace Lumina
                             Entry.Key = PackSourceKey(E, bCapsule ? ENavColliderType::Capsule : ENavColliderType::Cylinder, SubIndex);
                             Entry.Prim.Type = bCapsule ? ENavColliderType::Capsule : ENavColliderType::Cylinder;
                             Entry.Prim.Shape = FVector3(Child.Radius, Child.HalfHeight, 0.0f);
-
-                            const FVector3 Top = FVector3(Entry.Prim.World * FVector4(0.0f,  Child.HalfHeight, 0.0f, 1.0f));
-                            const FVector3 Bot = FVector3(Entry.Prim.World * FVector4(0.0f, -Child.HalfHeight, 0.0f, 1.0f));
-                            const float R = ScaledRadius(Entry.Prim.World, Child.Radius);
-                            Entry.AABBMin = Math::Min(Top, Bot) - FVector3(R);
-                            Entry.AABBMax = Math::Max(Top, Bot) + FVector3(R);
+                            CapsuleAABB(Entry.Prim.World, Child.Radius, Child.HalfHeight, Entry.AABBMin, Entry.AABBMax);
                         }
                         break;
 
@@ -1388,11 +1371,8 @@ namespace Lumina
                             Entry.Prim.Type = ENavColliderType::Box;
                             Entry.Prim.Shape = Child.HalfExtent;
 
-                            const FVector3 H = Child.HalfExtent;
-                            const FVector3 Corners[8] = {
-                                {-H.x,-H.y,-H.z}, { H.x,-H.y,-H.z}, { H.x,-H.y, H.z}, {-H.x,-H.y, H.z},
-                                {-H.x, H.y,-H.z}, { H.x, H.y,-H.z}, { H.x, H.y, H.z}, {-H.x, H.y, H.z},
-                            };
+                            FVector3 Corners[8];
+                            BuildBoxCorners(Child.HalfExtent, Corners);
                             CornersAABB(Entry.Prim.World, Corners, 8, Entry.AABBMin, Entry.AABBMax);
                         }
                         break;
@@ -1413,15 +1393,12 @@ namespace Lumina
                 Entry.Prim.Type = ENavColliderType::AreaVolume;
                 Entry.Prim.World = X.GetWorldMatrix() * Math::Translate(FMatrix4(1.0f), Modifier.Offset);
 
-                const FVector3 H = Modifier.Extents;
-                const FVector3 LocalCorners[8] = {
-                    {-H.x,-H.y,-H.z}, { H.x,-H.y,-H.z}, { H.x,-H.y, H.z}, {-H.x,-H.y, H.z},
-                    {-H.x, H.y,-H.z}, { H.x, H.y,-H.z}, { H.x, H.y, H.z}, {-H.x, H.y, H.z},
-                };
+                FVector3 LocalCorners[8];
+                BuildBoxCorners(Modifier.Extents, LocalCorners);
                 FVector3 WorldCorners[8];
+                TransformCorners(Entry.Prim.World, LocalCorners, WorldCorners);
                 for (int32 i = 0; i < 8; ++i)
                 {
-                    WorldCorners[i] = FVector3(Entry.Prim.World * FVector4(LocalCorners[i], 1.0f));
                     Entry.AABBMin = Math::Min(Entry.AABBMin, WorldCorners[i]);
                     Entry.AABBMax = Math::Max(Entry.AABBMax, WorldCorners[i]);
                 }
@@ -1462,10 +1439,9 @@ namespace Lumina
             });
 
             // Terrain heightfield needs both the collider and the source component.
-            ForEachNavSource<STerrainColliderComponent>(Queries.TerrainColliders, Only, [&](ECS::FEntity E, const STerrainColliderComponent& TC, const STransformComponent& X)
+            ForEachNavSource(Queries.TerrainColliders, Only, [&](ECS::FEntity E, const STerrainColliderComponent& TC, const STransformComponent& X, const STerrainComponent* Terrain)
             {
                 if (!TC.bAffectsNavigation) return;
-                const STerrainComponent* Terrain = Queries.Terrains.TryGet<STerrainComponent>(E);
                 if (!Terrain || Terrain->Heightmap.IsEmpty()) return;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Terrain);

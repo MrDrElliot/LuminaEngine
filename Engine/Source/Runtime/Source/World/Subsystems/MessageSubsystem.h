@@ -58,7 +58,6 @@ namespace Lumina
         uint32 NumUnreadEvents(uint32 TypeId, uint64 Cursor);
 
         void OnInitialize() override;
-        void OnUpdate(float DeltaTime) override;
         void OnTeardown() override;
 
         // The native bus, for typed C++ sends and subscriptions.

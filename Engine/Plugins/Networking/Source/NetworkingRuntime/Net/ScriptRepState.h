@@ -3,6 +3,7 @@
 #include "Platform/GenericPlatform.h"
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
+#include "Core/Object/ObjectHandle.h"
 
 namespace Lumina
 {
@@ -25,11 +26,11 @@ namespace Lumina
     {
         THashMap<uint32, FRepFieldSnapshot> LastSent;
 
-        // Keyed by the script's index on the entity, which both peers share.
-        THashMap<uint32, FRepFieldSnapshot> ScriptLastSent;
+        // Keyed by script handle rather than index, since removing a script shifts the ones after it.
+        THashMap<FObjectHandle, FRepFieldSnapshot> ScriptLastSent;
 
         // When each script field last went out, only kept for scripts with a rate-limited field.
-        THashMap<uint32, TVector<double>> ScriptFieldSentTime;
+        THashMap<FObjectHandle, TVector<double>> ScriptFieldSentTime;
 
         // Server game-clock time (seconds) of the last PropertyUpdate sent for this entity. Drives
         // oldest-first scheduling in ReplicateDirtyProperties so a per-tick byte budget never starves an entity.

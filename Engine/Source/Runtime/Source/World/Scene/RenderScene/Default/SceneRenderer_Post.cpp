@@ -204,7 +204,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Bloom Pass", tracy::Color::Yellow3);
+        SCENE_GPU_SCOPE(CL, "Bloom");
 
         static const FShaderH DownCS = FShaderLibrary::Get("BloomDownsample.slang");
         static const FShaderH UpCS = FShaderLibrary::Get("BloomUpsampleCS.slang");
@@ -357,7 +357,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Auto Exposure Pass", tracy::Color::Orange3);
+        SCENE_GPU_SCOPE(CL, "Auto Exposure");
 
         const FSceneImage& HDR     = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& Adapted = GetNamedImage(ENamedImage::AdaptedLuminance);
@@ -505,7 +505,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Depth Of Field", tracy::Color::Orchid);
+        SCENE_GPU_SCOPE(CL, "Depth Of Field");
 
         // The water refraction copy is free again by now, and a gather cannot read the image it writes.
         const FSceneImage& HDR        = GetNamedImage(ENamedImage::HDR);
@@ -549,22 +549,65 @@ namespace Lumina
             float  SensorHeight;
             float  MaxRadius;
             float  RadiusStep;
-            float  _Pad;
+            float  BandRadius;
+            float  BandCenter;
+            float  BandHalfHeight;
+            float  BandFalloff;
+            float  BladeSector;
+            float  LensRadius;
+            float  BokehScale;
+            float  _Pad[2];
+            FVector4 FocalPlane;
         };
-        static_assert(sizeof(FDepthOfFieldPushConstants) == 32, "FDepthOfFieldPushConstants must match DepthOfField.slang.");
+        static_assert(sizeof(FDepthOfFieldPushConstants) == 80, "FDepthOfFieldPushConstants must match DepthOfField.slang.");
 
         // Bounds the spiral to roughly this many taps however large the blur is allowed to grow.
         constexpr float MaxTaps = 160.0f;
-        const float MaxRadius = Math::Max(Settings->DepthOfFieldMaxBlur * (float)HDR.GetExtent().y, 1.0f);
+        const FUIntVector2 Extent = HDR.GetExtent();
+        const float MaxRadius = Math::Max(Settings->DepthOfFieldMaxBlur * (float)Extent.y, 1.0f);
+        const float MinFStop = Settings->DepthOfFieldMinFStop;
+        const float FStop = Math::Clamp(Settings->DepthOfFieldFStop, MinFStop, Math::Max(MinFStop, Settings->DepthOfFieldMaxFStop));
+
+        // A set film back width fits the viewport frame inside the sensor, as a real camera crops its gate.
+        float SensorHeight = Settings->DepthOfFieldSensorHeight;
+        if (Settings->DepthOfFieldSensorWidth > 0.0f)
+        {
+            SensorHeight = Math::Min(SensorHeight, Settings->DepthOfFieldSensorWidth * (float)Extent.y / (float)Extent.x);
+        }
 
         FDepthOfFieldPushConstants PC = {};
         PC.SceneColorIndex = (uint32)SceneColor.GetResourceID();
         PC.SceneDepthIndex = (uint32)SceneDepth.GetResourceID();
-        PC.FStop           = Settings->DepthOfFieldFStop;
+        PC.FStop           = FStop;
         PC.FocusDistance   = Math::Max(Settings->DepthOfFieldFocusDistance, 0.1f);
-        PC.SensorHeight    = Math::Max(Settings->DepthOfFieldSensorHeight, 1.0f);
+        PC.SensorHeight    = Math::Max(SensorHeight, 1.0f);
         PC.MaxRadius       = MaxRadius;
         PC.RadiusStep      = Math::Max(0.5f, MaxRadius * MaxRadius / (2.0f * MaxTaps));
+        PC.BandRadius      = Settings->DepthOfFieldBandBlur * MaxRadius;
+        PC.BandCenter      = Settings->DepthOfFieldBandCenter;
+        PC.BandHalfHeight  = Settings->DepthOfFieldBandHalfHeight;
+        PC.BandFalloff     = Math::Max(Settings->DepthOfFieldBandFalloff, 0.01f);
+
+        // The focal plane passes through the focus point on the view axis, and zero tilt leaves its normal on that axis.
+        const float Pitch = Math::Radians(Settings->DepthOfFieldTiltPitch);
+        const float Yaw   = Math::Radians(Settings->DepthOfFieldTiltYaw);
+        const FVector3 PlaneNormal(Math::Cos(Pitch) * Math::Sin(Yaw), Math::Sin(Pitch), Math::Cos(Pitch) * Math::Cos(Yaw));
+        PC.FocalPlane      = FVector4(PlaneNormal, PlaneNormal.z * PC.FocusDistance);
+
+        // Fewer than three blades leave the unit circle, the same shape as a polygon fully rounded by the lens.
+        PC.BladeSector = Math::TwoPi<float>() / 3.0f;
+        PC.LensRadius  = 1.0f;
+        PC.BokehScale  = 1.0f;
+        if (const int32 Blades = Settings->DepthOfFieldBladeCount; Blades >= 3)
+        {
+            const float HalfSector = Math::Pi<float>() / (float)Blades;
+            // The lens circle, in units of the blade polygon's apothem, rounds the corners until the aperture stops down past MinFStop.
+            PC.BladeSector = 2.0f * HalfSector;
+            PC.LensRadius  = Math::Min(FStop / MinFStop, 1.0f / Math::Cos(HalfSector));
+            const float Straight = Math::Acos(1.0f / PC.LensRadius);
+            const float Area = (float)Blades * (Math::Tan(Straight) + PC.LensRadius * PC.LensRadius * (HalfSector - Straight));
+            PC.BokehScale = Math::Sqrt(Math::Pi<float>() / Area);
+        }
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);
@@ -597,7 +640,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Post Process Material Pass", tracy::Color::Magenta);
+        SCENE_GPU_SCOPE(CL, "Post Process Materials");
 
         const FSceneImage& DepthTex         = GetNamedImage(ENamedImage::DepthAttachment);
         const FSceneImage& HDRTex           = GetPostInputImage();
@@ -942,7 +985,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Velocity Debug", tracy::Color::Magenta);
         SCENE_GPU_SCOPE(CL, "Velocity Debug");
 
         const FSceneImage& Output = GetNamedImage(ENamedImage::HDR);
@@ -991,6 +1033,7 @@ namespace Lumina
             return;
         }
 
+        SCENE_GPU_SCOPE(CL, "Snapshot Motion State");
         const uint64 Bytes = RetainedTransformBuffer.Size;
         const FFrameData::FGeometry::FRetainedUpload& Upload = RenderFrame->Geometry.RetainedUpload;
 
@@ -1104,6 +1147,11 @@ namespace Lumina
     bool FDefaultSceneRenderer::IsUpscalingView(const FSceneView& View)
     {
         return View.Size != View.DisplaySize || (View.bIsPrimary && View.Upscaler != nullptr);
+    }
+
+    uint32 FDefaultSceneRenderer::GetScreenSpaceNoiseIndex(const FSceneView& View)
+    {
+        return IsTemporalUpscalerFor(View) ? (View.TemporalFrameIndex % 64u) : 0u;
     }
 
     const FSceneImage& FDefaultSceneRenderer::GetPostInputImage() const

@@ -2,6 +2,7 @@
 #include "RVOAvoidanceSystem.h"
 #include "NavMeshSystem.h"
 #include "PathFollowSystem.h"
+#include "SocketAttachmentSystem.h"
 
 #include "AI/Avoidance/ORCA.h"
 #include "AI/Navigation/NavMesh.h"
@@ -28,13 +29,9 @@ namespace Lumina
     void CRVOAvoidanceSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
-        // The preferred velocity it avoids around is what CPathFollowSystem writes.
-        RunsAfter<CPathFollowSystem>();
-    }
-
-    bool CRVOAvoidanceSystem::HasWork(const SSystemContext& Context)
-    {
-        return AnyQueryHasRows(Avoiders);
+        // Avoids around the preferred velocity CPathFollowSystem writes and the frame's final transforms.
+        RunsAfter<CPathFollowSystem, CSocketAttachmentSystem>();
+        ExcludeFromHasWork(NavMeshes);
     }
 
     void CRVOAvoidanceSystem::OnUpdate(const SSystemContext& Context)

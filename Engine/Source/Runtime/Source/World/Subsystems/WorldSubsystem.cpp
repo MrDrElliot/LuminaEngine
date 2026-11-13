@@ -1,6 +1,7 @@
 ﻿#include "WorldSubsystem.h"
 #include "Networking/NetRealm.h"
 
+#include "Containers/FunctionRef.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectIteration.h"
 #include "Core/Object/ObjectCore.h"
@@ -46,6 +47,26 @@ namespace Lumina::WorldSubsystems
             }
             Subsystem->SetOwningWorld(&World);
             return Subsystem;
+        }
+
+        void DropWhere(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems, TFunctionRef<bool(const CWorldSubsystem&)> Predicate, bool bRemove = true)
+        {
+            // Back to front, so a subsystem created later can still reach an earlier one while it tears down.
+            for (int32 Index = Subsystems.Num(); Index > 0; --Index)
+            {
+                CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get();
+                if (Subsystem == nullptr || !Predicate(*Subsystem))
+                {
+                    continue;
+                }
+
+                Subsystem->OnTeardown();
+                Subsystem->SetOwningWorld(nullptr);
+                if (bRemove)
+                {
+                    Subsystems.RemoveAt((int64)(Index - 1));
+                }
+            }
         }
     }
 
@@ -113,35 +134,18 @@ namespace Lumina::WorldSubsystems
 
     void DropScripted(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems)
     {
-        // Back to front, so a subsystem created later can still reach an earlier one while it tears down.
-        for (int32 Index = Subsystems.Num(); Index > 0; --Index)
+        DropWhere(Subsystems, [](const CWorldSubsystem& Subsystem)
         {
-            CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get();
-            if (Subsystem == nullptr || Cast<CScriptClass>(Subsystem->GetClass()) == nullptr)
-            {
-                continue;
-            }
-
-            Subsystem->OnTeardown();
-            Subsystem->SetOwningWorld(nullptr);
-            Subsystems.RemoveAt((int64)(Index - 1));
-        }
+            return Cast<CScriptClass>(Subsystem.GetClass()) != nullptr;
+        });
     }
 
     void DropOutsideRealm(CWorld& World, TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems)
     {
-        for (int32 Index = Subsystems.Num(); Index > 0; --Index)
+        DropWhere(Subsystems, [&World](const CWorldSubsystem& Subsystem)
         {
-            CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get();
-            if (Subsystem == nullptr || NetRealm::Allows(Subsystem->GetClass(), &World))
-            {
-                continue;
-            }
-
-            Subsystem->OnTeardown();
-            Subsystem->SetOwningWorld(nullptr);
-            Subsystems.RemoveAt((int64)(Index - 1));
-        }
+            return !NetRealm::Allows(Subsystem.GetClass(), &World);
+        });
     }
 
     void Update(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems, float DeltaTime)
@@ -157,16 +161,12 @@ namespace Lumina::WorldSubsystems
 
     void DestroyAll(TVector<TStrongObjectPtr<CWorldSubsystem>>& Subsystems)
     {
-        for (int32 Index = Subsystems.Num(); Index > 0; --Index)
+        // Kept in the list until every teardown ran, so cached engine subsystem pointers and lookups stay valid throughout.
+        DropWhere(Subsystems, [](const CWorldSubsystem&)
         {
-            if (CWorldSubsystem* Subsystem = Subsystems[Index - 1].Get())
-            {
-                Subsystem->OnTeardown();
-                Subsystem->SetOwningWorld(nullptr);
-            }
-        }
+            return true;
+        }, false);
 
-        // The handles are the only strong reference the world holds, matching how a script pool is dropped.
         Subsystems.Reset();
     }
 

@@ -552,10 +552,11 @@ namespace Lumina::SkeletalMeshMerge
             return ((uint64)(uint32)Handle.Index << 32) | (uint32)Handle.Generation;
         }
 
-        // Resource addresses catch a reimport, which swaps the geometry under the same object.
+        // Mesh and skeleton generations catch a reimport, which swaps the geometry under the same object.
         void BuildMergeKey(TSpan<CSkeletalMesh* const> Meshes, const FSettings& Settings, TVector<uint64>& OutKey)
         {
             OutKey.Add(Settings.BaseSkeleton != nullptr ? PackHandle(Settings.BaseSkeleton) : 0ull);
+            OutKey.Add(Settings.BaseSkeleton != nullptr ? (uint64)Settings.BaseSkeleton->GetSocketGeneration() : 0ull);
             OutKey.Add(GetTypeHash(Settings.Name));
             OutKey.Add(Settings.bMergeSockets ? 1ull : 0ull);
 
@@ -567,9 +568,9 @@ namespace Lumina::SkeletalMeshMerge
                 }
                 const CSkeleton* Skeleton = SkeletonOf(Mesh);
                 OutKey.Add(PackHandle(Mesh));
-                OutKey.Add((uint64)(uintptr_t)&Mesh->GetMeshResource());
+                OutKey.Add((uint64)Mesh->GetGeometryVersion());
                 OutKey.Add(PackHandle(Skeleton));
-                OutKey.Add((uint64)(uintptr_t)Skeleton->GetSkeletonResource());
+                OutKey.Add((uint64)Skeleton->GetSocketGeneration());
                 for (const TStrongObjectPtr<CMaterialInterface>& Material : Mesh->Materials)
                 {
                     OutKey.Add((uint64)(uintptr_t)Material.Get());

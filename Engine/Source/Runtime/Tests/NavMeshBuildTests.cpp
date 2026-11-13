@@ -592,6 +592,50 @@ TEST(NavMeshBuild, TilesPageOutAndBackIn)
     EXPECT_TRUE(Path.bValid);
 }
 
+// Detour's addTile can still reject a blob that already passed the size, magic, and version checks.
+TEST(NavMeshBuild, RebuildTileDropsTheOldTileWhenDetourRejectsTheNewBlob)
+{
+    FNavBuildOutput Out;
+    ASSERT_TRUE(NavMeshBuilder::BakeSync(MakeGroundPlane(24.0f), Out));
+
+    TVector<SNavTileData> Baked = Out.Tiles;
+    auto Mesh = MakeUnique<FNavMesh>();
+    ASSERT_TRUE(Mesh->Initialize(Out.Origin, Out.TileWorldSize, Out.MaxTiles, Out.MaxPolysPerTile, std::move(Out.Tiles)));
+
+    const SNavTileData* TileA = nullptr;
+    const SNavTileData* TileB = nullptr;
+    for (const SNavTileData& Tile : Baked)
+    {
+        if (Tile.Blob.IsEmpty())
+        {
+            continue;
+        }
+        if (TileA == nullptr)
+        {
+            TileA = &Tile;
+        }
+        else if (TileB == nullptr)
+        {
+            TileB = &Tile;
+            break;
+        }
+    }
+    ASSERT_NE(TileA, nullptr);
+    ASSERT_NE(TileB, nullptr);
+    ASSERT_TRUE(Mesh->HasTile(TileA->X, TileA->Y));
+    ASSERT_TRUE(Mesh->HasTile(TileB->X, TileB->Y));
+
+    const int32 ResidentBefore = Mesh->GetResidentTileCount();
+
+    // TileB's blob still names TileB's own coordinate, which addTile refuses while TileB is resident.
+    TVector<uint8> WrongCoordBlob = TileB->Blob;
+    EXPECT_FALSE(Mesh->RebuildTile(TileA->X, TileA->Y, std::move(WrongCoordBlob)));
+
+    EXPECT_FALSE(Mesh->HasTile(TileA->X, TileA->Y));
+    EXPECT_TRUE(Mesh->HasTile(TileB->X, TileB->Y));
+    EXPECT_EQ(Mesh->GetResidentTileCount(), ResidentBefore - 1);
+}
+
 namespace
 {
     struct FStreamFixture
@@ -706,6 +750,28 @@ TEST(NavMeshStreaming, BudgetClampsTheResidentSet)
     EXPECT_LE(Stats.Resident, Budget);
     EXPECT_GT(Stats.Starved, 0);
     EXPECT_LE(Fx.Mesh->GetResidentTileCount(), Budget);
+}
+
+TEST(NavMeshStreaming, StarvedVolumeStillSettlesOnceTheResidentSetStabilizes)
+{
+    constexpr int32 Budget = 12;
+    FStreamFixture Fx;
+    ASSERT_TRUE(MakeStreamFixture(Fx, Budget));
+    ASSERT_GT(Fx.NonEmpty, Budget);
+
+    TVector<FVector3> Focus;
+    Focus.Emplace(0.0f, 0.0f, 0.0f);
+    const FNavTileStreamer::FSettings Settings = StreamSettings(Budget, 1000.0f);
+
+    const FNavTileStreamer::FStats First = Fx.Streamer.Update(*Fx.Mesh, Fx.Out.Tiles, Focus, Settings);
+    ASSERT_GT(First.Starved, 0);
+    EXPECT_EQ(First.Resident, Budget);
+    EXPECT_TRUE(Fx.Streamer.CanSkipPass(Focus, Settings));
+
+    const FNavTileStreamer::FStats Skipped = Fx.Streamer.Update(*Fx.Mesh, Fx.Out.Tiles, Focus, Settings);
+    EXPECT_EQ(Skipped.Resident, First.Resident);
+    EXPECT_EQ(Skipped.Added, 0);
+    EXPECT_EQ(Skipped.Removed, 0);
 }
 
 TEST(NavMeshStreaming, PerTickOpCapBoundsTheMutationWindow)

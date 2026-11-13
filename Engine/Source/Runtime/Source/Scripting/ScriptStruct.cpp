@@ -25,6 +25,7 @@
 #include "Core/Reflection/Type/Properties/SoftObjectProperty.h"
 #include "Core/Reflection/Type/Properties/StringProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "Core/Reflection/Type/Properties/SubStructProperty.h"
 #include "Core/Templates/Align.h"
 #include "Core/Threading/Atomic.h"
 #include "Log/Log.h"
@@ -1525,45 +1526,48 @@ namespace Lumina::Scripting
         }
     }
 
+    bool PropertyReferencesType(const FProperty* Property, TFunctionRef<bool(const CField*)> Match)
+    {
+        if (Property == nullptr)
+        {
+            return false;
+        }
+        switch (Property->GetType())
+        {
+        case EPropertyTypeFlags::Struct:
+            return Match(static_cast<const FStructProperty*>(Property)->GetStruct());
+        case EPropertyTypeFlags::InstancedStruct:
+            return Match(static_cast<const FInstancedStructProperty*>(Property)->GetMetaStruct());
+        case EPropertyTypeFlags::SubStruct:
+            return Match(static_cast<const FSubStructProperty*>(Property)->GetMetaStruct());
+        case EPropertyTypeFlags::Enum:
+            return Match(static_cast<const FEnumProperty*>(Property)->GetEnum());
+        case EPropertyTypeFlags::Vector:
+            return PropertyReferencesType(static_cast<const FArrayProperty*>(Property)->GetInternalProperty(), Match);
+        case EPropertyTypeFlags::Optional:
+            return PropertyReferencesType(static_cast<const FOptionalProperty*>(Property)->GetInternalProperty(), Match);
+        case EPropertyTypeFlags::Map:
+        {
+            const FMapProperty* Map = static_cast<const FMapProperty*>(Property);
+            return PropertyReferencesType(Map->GetKeyProperty(), Match) || PropertyReferencesType(Map->GetValueProperty(), Match);
+        }
+        default:
+            return false;
+        }
+    }
+
     namespace
     {
-        bool IsSupersededScriptStruct(const CStruct* Struct)
+        bool IsSupersededScriptStruct(const CField* Type)
         {
-            const CScriptStruct* Script = Struct != nullptr ? Cast<CScriptStruct>(Struct) : nullptr;
+            const CScriptStruct* Script = Type != nullptr ? Cast<CScriptStruct>(Type) : nullptr;
             return Script != nullptr && Script->IsSuperseded();
         }
 
         // A field names its struct rather than carrying its shape, so a reshaped struct is found through the property instead.
         bool ReferencesSupersededStruct(const FProperty* Property)
         {
-            if (Property == nullptr)
-            {
-                return false;
-            }
-            if (Property->GetType() == EPropertyTypeFlags::Struct
-                && IsSupersededScriptStruct(static_cast<const FStructProperty*>(Property)->GetStruct()))
-            {
-                return true;
-            }
-            if (Property->GetType() == EPropertyTypeFlags::InstancedStruct
-                && IsSupersededScriptStruct(static_cast<const FInstancedStructProperty*>(Property)->GetMetaStruct()))
-            {
-                return true;
-            }
-            if (Property->GetType() == EPropertyTypeFlags::Vector)
-            {
-                return ReferencesSupersededStruct(static_cast<const FArrayProperty*>(Property)->GetInternalProperty());
-            }
-            if (Property->GetType() == EPropertyTypeFlags::Optional)
-            {
-                return ReferencesSupersededStruct(static_cast<const FOptionalProperty*>(Property)->GetInternalProperty());
-            }
-            if (Property->GetType() == EPropertyTypeFlags::Map)
-            {
-                const FMapProperty* Map = static_cast<const FMapProperty*>(Property);
-                return ReferencesSupersededStruct(Map->GetKeyProperty()) || ReferencesSupersededStruct(Map->GetValueProperty());
-            }
-            return false;
+            return PropertyReferencesType(Property, &IsSupersededScriptStruct);
         }
     }
 

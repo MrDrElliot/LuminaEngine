@@ -43,6 +43,20 @@ namespace Lumina::Import::VoxelFar
             FVector3 BestNormal = FVector3(0.0f);
             float    BestArea  = 0.0f;
             uint32   Source    = 0;
+
+            void Merge(const FVoxelAccumulator& Other)
+            {
+                NormalSum += Other.NormalSum;
+                Area      += Other.Area;
+                if (Other.BestArea > BestArea)
+                {
+                    UVMin      = Other.UVMin;
+                    UVMax      = Other.UVMax;
+                    BestNormal = Other.BestNormal;
+                    BestArea   = Other.BestArea;
+                    Source     = Other.Source;
+                }
+            }
         };
 
         FORCEINLINE uint32 VoxelKey(uint32 X, uint32 Y, uint32 Z)
@@ -166,22 +180,24 @@ namespace Lumina::Import::VoxelFar
                                 continue;
                             }
 
-                            FVoxelAccumulator& Acc = Out.FindOrAdd(VoxelKey(X, Y, Z));
                             // A triangle spanning many voxels puts at most a voxel face's worth of itself in each.
                             const float AreaInVoxel = Math::Min(Area, VoxelSize * VoxelSize);
-                            Acc.NormalSum += Normal * AreaInVoxel;
-                            Acc.Area      += AreaInVoxel;
-                            if (Area > Acc.BestArea)
-                            {
-                                Acc.BestArea = Area;
-                                Acc.UVMin    = UVMin;
-                                Acc.UVMax    = UVMax;
-                                Acc.BestNormal = Normal;
-                                Acc.Source   = I0;
-                            }
+                            Out.FindOrAdd(VoxelKey(X, Y, Z)).Merge({ Normal * AreaInVoxel, AreaInVoxel, UVMin, UVMax, Normal, Area, I0 });
                         }
                     }
                 }
+            }
+        }
+
+        // Each coarse voxel is exactly its eight children, so merging them stands in for testing every triangle again.
+        void CoarsenLevel(const THashMap<uint32, FVoxelAccumulator>& Fine, uint32 Resolution, THashMap<uint32, FVoxelAccumulator>& Out)
+        {
+            const uint32 MaxIndex = Resolution - 1u;
+            for (const auto& [Key, Acc] : Fine)
+            {
+                uint32 X, Y, Z;
+                KeyToVoxel(Key, X, Y, Z);
+                Out.FindOrAdd(VoxelKey(Math::Min(X / 2u, MaxIndex), Math::Min(Y / 2u, MaxIndex), Math::Min(Z / 2u, MaxIndex))).Merge(Acc);
             }
         }
 
@@ -293,24 +309,27 @@ namespace Lumina::Import::VoxelFar
         LUMINA_MEMORY_SCOPE("Meshes");
 
         OutLevels.Reset();
-        if (In.Indices.Num() < 3 || In.Positions.IsEmpty() || In.AttributeCount < 5u || !(In.VoxelSize > 0.0f))
+        if (In.Indices.Num() < 3 || In.Positions.IsEmpty() || In.AttributeCount < 5u || !(In.VoxelSize > 0.0f) || In.Resolution < kMinResolution)
         {
             return;
         }
 
         THashMap<uint32, FVoxelAccumulator> Voxels;
-        float  VoxelSize  = In.VoxelSize;
+        VoxelizeLevel(In, In.Resolution, In.VoxelSize, Voxels);
+        if (Voxels.IsEmpty())
+        {
+            return;
+        }
+
+        THashMap<uint32, FVoxelAccumulator> Coarser;
+        float VoxelSize = In.VoxelSize;
         for (uint32 Resolution = In.Resolution; Resolution >= kMinResolution; Resolution /= 2u, VoxelSize *= 2.0f)
         {
-            Voxels.Reset();
-            VoxelizeLevel(In, Resolution, VoxelSize, Voxels);
-            if (Voxels.IsEmpty())
-            {
-                continue;
-            }
+            EmitLevel(In, Voxels, VoxelSize, OutLevels.EmplaceGetRef());
 
-            FLevel& Level = OutLevels.EmplaceGetRef();
-            EmitLevel(In, Voxels, VoxelSize, Level);
+            Coarser.Reset();
+            CoarsenLevel(Voxels, Resolution / 2u, Coarser);
+            ElementOps::SwapElements(Voxels, Coarser);
         }
     }
 }

@@ -202,22 +202,7 @@ namespace Lumina
 
         OutlinerContext.RenameFunction = [this](FTreeListView& Tree, FTreeNodeID Item, FStringView NewName)
         {
-            FEntityListViewItemData& Data = Tree.Get<FEntityListViewItemData>(Item);
-            ECS::FRegistry& Registry = World->GetEntityRegistry();
-            if (!Registry.IsValid(Data.Entity))
-            {
-                return;
-            }
-
-            BeginComponentTransaction({ Data.Entity }, SNameComponent::StaticStruct());
-            if (SNameComponent* NameComp = Registry.TryGet<SNameComponent>(Data.Entity))
-            {
-                NameComp->Name = NewName;
-            }
-            EndTransaction("Rename");
-
-            EditorEntityUtils::RenameOutlinerRow(Tree.Get<FTreeNodeDisplay>(Item), NewName);
-            Asset->GetPackage()->MarkDirty();
+            RenameEntityTransacted(Tree.Get<FEntityListViewItemData>(Item).Entity, NewName);
         };
 
         OutlinerContext.VisibilityToggleFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
@@ -613,10 +598,10 @@ namespace Lumina
         // Drain queued reflected-component removals (the shared DrawComponentHeader pushes here).
         ProcessComponentEditRequests();
 
-        if (bViewportHovered)
+        if (bViewportHovered && !ImGui::GetIO().WantTextInput)
         {
             // Delete every selected entity (root is filtered out inside the destroy queue).
-            if (ImGui::IsKeyPressed(ImGuiKey_Delete) && !HasVisualizerSubSelection())
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !HasVisualizerSubSelection())
             {
                 Registry.View<FSelectedInEditorComponent>().ForEach([&](ECS::FEntity Entity)
                 {
@@ -1017,6 +1002,10 @@ namespace Lumina
         }
 
         const ImGuiIO& IO = ImGui::GetIO();
+        if (IO.WantTextInput || IO.KeyAlt)
+        {
+            return;
+        }
         const bool bCopyPressed      = IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C);
         const bool bDuplicatePressed = IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D);
         const bool bPastePressed     = IO.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false);
@@ -1316,14 +1305,14 @@ namespace Lumina
         Settings->GizmoSnapTranslate = GuizmoSnapTranslate;
         Settings->GizmoSnapRotate    = GuizmoSnapRotate;
         Settings->GizmoSnapScale     = GuizmoSnapScale;
-        GConfig->SaveSettings(CPrefabEditorSettings::StaticClass());
+        Global::GConfig->SaveSettings(CPrefabEditorSettings::StaticClass());
     }
 
     void FPrefabEditorTool::PersistCameraPreviewScale()
     {
         CPrefabEditorSettings* Settings = GetMutableDefault<CPrefabEditorSettings>();
         Settings->CameraPreviewScale = CameraPreviewScale;
-        GConfig->SaveSettings(CPrefabEditorSettings::StaticClass());
+        Global::GConfig->SaveSettings(CPrefabEditorSettings::StaticClass());
     }
 
     void FPrefabEditorTool::DrawHelpMenu()
@@ -1404,10 +1393,8 @@ namespace Lumina
 
     void FPrefabEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const
     {
-        ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
-
         ImGuiID LeftDockID = 0, RightDockID = 0;
-        ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &RightDockID, &LeftDockID);
+        SplitDockingLayoutLeftRight(InDockspaceID, 0.3f, LeftDockID, RightDockID);
 
         ImGuiID LeftOutlinerID = 0, LeftViewportID = 0;
         ImGui::DockBuilderSplitNode(LeftDockID, ImGuiDir_Left, 0.25f, &LeftOutlinerID, &LeftViewportID);

@@ -5,6 +5,7 @@
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Containers/Algorithm.h"
+#include "Renderer/RHIUpload.h"
 #include "World/World.h"
 
 namespace Lumina
@@ -233,10 +234,16 @@ namespace Lumina
         }
         ScenePrimitiveSetInternal::ReadCommonMeshState(Prim, Cull, *Component);
 
-        Component->SyncedRenderDataVersion = Component->LoadRenderDataVersion();
-
-        Work.OldDynamicData    = Move(Prim.DynamicRenderData);
-        Prim.DynamicRenderData = Component->LoadRenderData();
+        // A worker can publish after this frame's upload flush, so new data waits for its batch rather than draw an unwritten header.
+        const uint32 Version = Component->LoadRenderDataVersion();
+        TSharedPtr<FDynamicMeshRenderData> Latest = Component->LoadRenderData();
+        Work.bAwaitingUpload = Latest && Latest != Prim.DynamicRenderData && !RHI::Upload::IsBatchComplete(Latest->Resource.MeshBuffers.UploadBatch);
+        if (!Work.bAwaitingUpload)
+        {
+            Component->SyncedRenderDataVersion = Version;
+            ElementOps::SwapElements(Prim.DynamicRenderData, Latest);
+        }
+        Work.OldDynamicData = Move(Latest);
 
         const FDynamicMeshRenderData* Data = Prim.DynamicRenderData.get();
         if (Data == nullptr || Data->MeshletHeaderSlot == 0 || Data->Surfaces.IsEmpty())
@@ -269,6 +276,10 @@ namespace Lumina
         FPrimitiveSyncWork& Work = PrimitiveSyncWork[WorkIndex];
         Work.OldDynamicData.reset();
         Work.NewDynamicData.reset();
+        if (Work.bAwaitingUpload)
+        {
+            DynamicMeshesAwaitingUpload.Add(Primitives[Work.Index].Entity);
+        }
         if (!Work.bPresent)
         {
             return;
@@ -361,6 +372,7 @@ namespace Lumina
         BonelessSkinnedCount = 0;
         CustomDepthCount = 0;
         SkeletalIndices.Reset();
+        DynamicMeshesAwaitingUpload.Reset();
         // Every slice died with the primitives, so the arena restarts rather than leaking live bases.
         BoneSlices.Reset();
         BoneSliceSweepCursor = 0;
@@ -495,6 +507,16 @@ namespace Lumina
     void FScenePrimitiveSet::PollUnhookedSources(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker)
     {
         PollSkeletalBoneRanges(Registry, Tracker);
+        PollDynamicMeshUploads(Tracker);
+    }
+
+    void FScenePrimitiveSet::PollDynamicMeshUploads(FRenderDirtyTracker& Tracker)
+    {
+        for (ECS::FEntity Entity : DynamicMeshesAwaitingUpload)
+        {
+            Tracker.Mark(Entity, EPrimitiveSource::DynamicMesh, EPrimitiveDirty::Data);
+        }
+        DynamicMeshesAwaitingUpload.Reset();
     }
 
     // A skeleton finishing its load marks nothing dirty, so a primitive that synced mid-load stays boneless.

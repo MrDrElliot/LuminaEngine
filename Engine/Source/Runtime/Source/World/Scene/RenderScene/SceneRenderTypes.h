@@ -3,6 +3,7 @@
 #include "Core/Math/Math.h"
 #include "Core/Math/Half.h"
 
+#include "Containers/StaticArray.h"
 #include "Containers/Vector.h"
 #include "Core/LuminaMacros.h"
 #include "Core/Math/Color.h"
@@ -441,16 +442,33 @@ namespace Lumina
                     Tile.UVOffset = FVector2(Rect.X * InvAtlas, Rect.Y * InvAtlas);
                     Tile.UVScale  = FVector2(Rect.Size * InvAtlas);
                     Tiles.Add(Tile);
+                    AllocatedRects.Add(Rect);
                     return Handle;
                 }
             }
             return Constants::kIndexNone;
         }
 
+        // Returns a previously allocated tile's space to its level's free list. No coalescing, the atlas resets fully next frame via FreeTiles().
+        void Free(int32 TileHandle)
+        {
+            FScopeLock Lock(AllocMutex);
+
+            if (!AllocatedRects.IsValidIndex(TileHandle))
+            {
+                return;
+            }
+
+            const FTileRect& Rect = AllocatedRects[TileHandle];
+            const uint32 Level = Log2Floor(Rect.Size) - MinLevel;
+            FreeLists[Level].Add(Rect);
+        }
+
         // Reseeds top-level free list with a grid of MaxTileResolution roots.
         void FreeTiles()
         {
             Tiles.Reset();
+            AllocatedRects.Reset();
             for (TVector<FTileRect>& Q : FreeLists)
             {
                 Q.Reset();   // keeps capacity so the free lists do not reallocate every frame
@@ -503,6 +521,7 @@ namespace Lumina
         FSceneImage ShadowAtlas;
         FShadowAtlasConfig Config;
         TVector<FShadowTile> Tiles;
+        TVector<FTileRect> AllocatedRects;   // Parallel to Tiles, indexed by the same handle; lets Free() find a tile's rect and level.
         TVector<TVector<FTileRect>> FreeLists;   // Indexed by (log2(size) - MinLevel). Used LIFO; cleared (keeps capacity) per frame.
         FMutex AllocMutex;
         uint32 MinLevel  = 0;
@@ -558,6 +577,140 @@ namespace Lumina
 
     static_assert(sizeof(FLightShadowData) == 576, "FLightShadowData layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FLightShadowData);
+
+    constexpr uint32 kAllCubeFaces = 0x3Fu;
+
+    struct FShadowRequest
+    {
+        uint32      LightIndex;
+        ELightType  Type;
+        uint32      DesiredPixels;
+        float       DistanceToCamera;
+        FVector3    Position;
+        FVector3    Direction;      // Spot only
+        FVector3    Up;             // Spot only
+        float       Attenuation;
+        float       OuterFOVDegrees;
+        // Point lights only, one bit per cube face that some view can see a receiver through.
+        uint32      FaceMask = kAllCubeFaces;
+    };
+
+    // Frees any tile it already got rather than committing when the face allocation or MAX_SHADOWS slot budget fails.
+    inline void AllocateShadowSlot(FShadowAtlas& ShadowAtlas, const FShadowRequest& Req, uint32 TileSize, TAtomic<uint32>& ShadowDataCount,
+        TArray<FLight, MAX_LIGHTS>& Lights, TArray<FLightShadowData, MAX_SHADOWS>& Shadows,
+        TArray<TVector<FLightShadow>, (uint32)ELightType::Num>& PackedShadows)
+    {
+        if (Req.Type == ELightType::Point)
+        {
+            int32 FaceTileIndices[6] = { Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone };
+            bool  bAllAllocated = true;
+            for (uint32 Face = 0; Face < 6; ++Face)
+            {
+                if ((Req.FaceMask & (1u << Face)) == 0u)
+                {
+                    continue;
+                }
+                FaceTileIndices[Face] = ShadowAtlas.AllocateTile(TileSize);
+                if (FaceTileIndices[Face] == Constants::kIndexNone)
+                {
+                    bAllAllocated = false;
+                    break;
+                }
+            }
+            const uint32 ShadowSlot = bAllAllocated ? ShadowDataCount.fetch_add(1, std::memory_order_acquire) : (uint32)MAX_SHADOWS;
+            if (ShadowSlot >= (uint32)MAX_SHADOWS)
+            {
+                for (uint32 FreeFace = 0; FreeFace < 6; ++FreeFace)
+                {
+                    if (FaceTileIndices[FreeFace] != Constants::kIndexNone)
+                    {
+                        ShadowAtlas.Free(FaceTileIndices[FreeFace]);
+                    }
+                }
+                return;
+            }
+
+            Lights[Req.LightIndex].ShadowDataIndex = (int32)ShadowSlot;
+            FLightShadowData& ShadowData = Shadows[ShadowSlot];
+
+            const float ShadowNear = Math::Max(Req.Attenuation * 0.01f, 0.1f);
+            FViewVolume LightView(90.0f, 1.0f, ShadowNear, Req.Attenuation);
+
+            auto SetFace = [&](uint32 Face)
+            {
+                switch (Face)
+                {
+                    case 0: LightView.SetView(Req.Position, FViewVolume::RightAxis,    FViewVolume::DownAxis);     break;
+                    case 1: LightView.SetView(Req.Position, FViewVolume::LeftAxis,     FViewVolume::DownAxis);     break;
+                    case 2: LightView.SetView(Req.Position, FViewVolume::UpAxis,       FViewVolume::ForwardAxis);  break;
+                    case 3: LightView.SetView(Req.Position, FViewVolume::DownAxis,     FViewVolume::BackwardAxis); break;
+                    case 4: LightView.SetView(Req.Position, FViewVolume::ForwardAxis,  FViewVolume::DownAxis);     break;
+                    case 5: LightView.SetView(Req.Position, FViewVolume::BackwardAxis, FViewVolume::DownAxis);     break;
+                }
+            };
+
+            for (uint32 Face = 0; Face < 6; ++Face)
+            {
+                SetFace(Face);
+                ShadowData.ViewProjection[Face] = LightView.ToStandardDepthViewProjectionMatrix();
+
+                // A face no view reaches keeps no tile, which the shaders read as unshadowed.
+                FLightShadow& Shadow   = ShadowData.Shadow[Face];
+                if (FaceTileIndices[Face] == Constants::kIndexNone)
+                {
+                    Shadow = FLightShadow{};
+                    Shadow.ShadowMapIndex  = Constants::kIndexNone;
+                    Shadow.LightIndex      = (int32)Req.LightIndex;
+                    Shadow.ShadowDataIndex = (int32)ShadowSlot;
+                    continue;
+                }
+
+                const FShadowTile& FaceTile = ShadowAtlas.GetTile(FaceTileIndices[Face]);
+                Shadow.AtlasUVOffset   = FaceTile.UVOffset;
+                Shadow.AtlasUVScale    = FaceTile.UVScale;
+                Shadow.ShadowMapIndex  = FaceTileIndices[Face];
+                Shadow.LightIndex      = (int32)Req.LightIndex;
+                Shadow.ShadowDataIndex = (int32)ShadowSlot;
+                Shadow._Padding        = 0;
+            }
+
+            PackedShadows[(uint32)ELightType::Point].Add(ShadowData.Shadow[0]);
+        }
+        else
+        {
+            const int32 TileIndex = ShadowAtlas.AllocateTile(TileSize);
+            if (TileIndex == Constants::kIndexNone)
+            {
+                return;
+            }
+
+            const uint32 ShadowSlot = ShadowDataCount.fetch_add(1, std::memory_order_acquire);
+            if (ShadowSlot >= (uint32)MAX_SHADOWS)
+            {
+                ShadowAtlas.Free(TileIndex);
+                return;
+            }
+
+            Lights[Req.LightIndex].ShadowDataIndex = (int32)ShadowSlot;
+            FLightShadowData& ShadowData = Shadows[ShadowSlot];
+            const FShadowTile& Tile      = ShadowAtlas.GetTile(TileIndex);
+
+            const float ShadowNear = Math::Max(Req.Attenuation * 0.01f, 0.1f);
+            FViewVolume ViewVolume(Req.OuterFOVDegrees * 2.0f, 1.0f, ShadowNear, Req.Attenuation);
+            ViewVolume.SetView(Req.Position, Req.Direction, Req.Up);
+            ShadowData.ViewProjection[0] = ViewVolume.ToStandardDepthViewProjectionMatrix();
+
+            FLightShadow& Shadow   = ShadowData.Shadow[0];
+            Shadow.AtlasUVOffset   = Tile.UVOffset;
+            Shadow.AtlasUVScale    = Tile.UVScale;
+            Shadow.ShadowMapIndex  = TileIndex;
+            Shadow.LightIndex      = (int32)Req.LightIndex;
+            Shadow.ShadowDataIndex = (int32)ShadowSlot;
+            Shadow._Padding        = 0;
+
+            PackedShadows[(uint32)ELightType::Spot].Add(Shadow);
+        }
+    }
 
     // The plane a light function is projected through, indexed by the light's atlas tile.
     struct FLightFunction

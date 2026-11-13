@@ -20,4 +20,11 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Tests/ is its own project; exclude it from this one's default glob. -->
+    <Compile Remove="Tests\**\*.cs" />
+    <None Remove="Tests\**\*.cs" />
+    <InternalsVisibleTo Include="LuminaBuildTool.Tests" />
+  </ItemGroup>
+
 </Project>

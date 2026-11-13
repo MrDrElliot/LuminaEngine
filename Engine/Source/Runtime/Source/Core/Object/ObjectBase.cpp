@@ -151,7 +151,7 @@ namespace Lumina
 
         RunOnDestroyOnce();
 
-        GCObjectAllocator.FreeCObject(this);
+        Global::GCObjectAllocator.FreeCObject(this);
     }
 
     void CObjectBase::BeginDestroyForShutdown()
@@ -173,7 +173,7 @@ namespace Lumina
         SetFlag(OF_MarkedDestroy);
         RunOnDestroyOnce();
 
-        GCObjectAllocator.FreeCObject(this);
+        Global::GCObjectAllocator.FreeCObject(this);
     }
 
     void CObjectBase::ForceDestroyNow()
@@ -384,7 +384,7 @@ namespace Lumina
     void InitializeCObjectSystem()
     {
         Object::Internal::AllocateObjectPool(MaxCObjectCount.GetValue());
-        Memory::RegisterCountedCategory("CObject", [] { return GCObjectAllocator.GetStats(); });
+        Memory::RegisterCountedCategory("CObject", [] { return Global::GCObjectAllocator.GetStats(); });
     }
 
     void ShutdownCObjectSystem()

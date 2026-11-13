@@ -6,6 +6,7 @@
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Log/Log.h"
+#include "Memory/Memcpy.h"
 
 
 namespace Lumina::VFS
@@ -40,7 +41,7 @@ namespace Lumina::VFS
     {
         const int32 AliasLength = AliasPath.Len();
 
-        if (Path.Len() < AliasLength || ::memcmp(Path.GetData(), AliasPath.GetData(), AliasLength) != 0)
+        if (Path.Len() < AliasLength || Memory::Memcmp(Path.GetData(), AliasPath.GetData(), AliasLength) != 0)
         {
             return {};
         }

@@ -7,7 +7,7 @@ namespace Lumina
     class FMatrixEditCommand;
 
     // Assets side by side with chosen properties as columns, and a details panel whose edits land on every selected row.
-    class FPropertyMatrixTool : public FEditorTool
+    class EDITOR_API FPropertyMatrixTool : public FEditorTool
     {
     public:
 
@@ -31,6 +31,8 @@ namespace Lumina
         void OnPostUndoRedo() override;
 
     private:
+
+        friend struct FPropertyMatrixTestAccess;
 
         struct FCell
         {
@@ -73,6 +75,9 @@ namespace Lumina
         void BeginEdit(FName Label, TVector<CObject*> Targets, CObject* Source, FProperty* Property);
         void SpreadEdit();
         void FinishEdit();
+
+        // Rolls the open edit back off every surviving target and drops its transaction.
+        void AbortEdit();
 
         // The top-level property of the source that no longer matches the baseline taken when the edit began.
         FProperty* FindChangedProperty() const;

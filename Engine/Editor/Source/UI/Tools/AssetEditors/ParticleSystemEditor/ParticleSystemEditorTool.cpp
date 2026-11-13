@@ -208,10 +208,9 @@ namespace Lumina
             EmitterStacks.Add(ParticleOps::FindOrCreateStack(PS, i));
         }
 
-        if (SelectedEmitter >= EmitterStacks.Num())
-        {
-            SelectedEmitter = 0;
-        }
+        // A removal or reorder shifts indices, so re-find the selection by identity rather than clamp a stale one.
+        const int32 ResolvedIndex = Algo::IndexOfIf(PS->Emitters, [this](const auto& Emitter) { return Emitter.Get() == SelectedEmitterObject; });
+        SelectEmitter(ResolvedIndex != Constants::kIndexNone ? ResolvedIndex : 0);
     }
 
     void FParticleSystemEditorTool::RefreshModulePalette()
@@ -377,6 +376,14 @@ namespace Lumina
         }
     }
 
+    void FParticleSystemEditorTool::SelectEmitter(int32 EmitterIndex)
+    {
+        SelectedEmitter = EmitterIndex;
+        const CParticleSystem* PS = GetSystem();
+        SelectedEmitterObject = (PS != nullptr && EmitterIndex >= 0 && EmitterIndex < PS->Emitters.Num())
+                               ? PS->Emitters[EmitterIndex].Get() : nullptr;
+    }
+
     void FParticleSystemEditorTool::SelectObject(CObject* Object)
     {
         SelectedObject = Object;
@@ -491,7 +498,7 @@ namespace Lumina
             if (CParticleEmitter* Added = PS->AddEmitter())
             {
                 SyncEmitterStacks();
-                SelectedEmitter = PS->Emitters.Num() - 1;
+                SelectEmitter(PS->Emitters.Num() - 1);
                 SelectObject(Added);
                 MarkEdited(PS);
                 DirtyEmitter = SelectedEmitter;
@@ -504,7 +511,7 @@ namespace Lumina
         const FPickerItem* Picked = EmitterAssetPicker.DrawButton("##AddEmitterAsset", LE_ICON_PLUS" Add Emitter Asset", [](TVector<FPickerItem>& Items)
         {
             const FName EmitterClass = CParticleEmitter::StaticClass()->GetName();
-            for (const FAssetData* Data : FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Asset) { return Asset.AssetClass == EmitterClass; }))
+            for (const FAssetDataPtr& Data : FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Asset) { return Asset.AssetClass == EmitterClass; }))
             {
                 const FStringView Path(*Data->Path, Data->Path.Len());
                 FPickerItem& Item = Items.EmplaceGetRef();
@@ -530,7 +537,7 @@ namespace Lumina
         {
             PS->Emitters.Add(Shared);
             SyncEmitterStacks();
-            SelectedEmitter = PS->Emitters.Num() - 1;
+            SelectEmitter(PS->Emitters.Num() - 1);
             SelectObject(Shared);
             MarkEdited(PS);
             DirtyEmitter = Shared->UsesCustomShader() ? Constants::kIndexNone : SelectedEmitter;
@@ -660,7 +667,7 @@ namespace Lumina
         ImGui::SetNextItemAllowOverlap();
         if (ImGui::InvisibleButton("##header", ImVec2(CardWidth, HeaderHeight)))
         {
-            SelectedEmitter = EmitterIndex;
+            SelectEmitter(EmitterIndex);
             SelectObject(Emitter);
         }
         const bool bHeaderHovered = ImGui::IsItemHovered();
@@ -885,7 +892,7 @@ namespace Lumina
         ImGui::SetNextItemAllowOverlap();
         if (ImGui::InvisibleButton("##row", ImVec2(Width, Height)))
         {
-            SelectedEmitter = EmitterIndex;
+            SelectEmitter(EmitterIndex);
             SelectModule(Module);
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !Module->GetTooltip().IsEmpty())
@@ -992,6 +999,10 @@ namespace Lumina
         CParticleModule_Graph* Module = bStillThere ? Cast<CParticleModule_Graph>(GraphModule) : nullptr;
         if (Module == nullptr)
         {
+            if (WiredGraph != nullptr && (SelectedModule == GraphModule || Cast<CEdGraphNode>(SelectedObject) != nullptr))
+            {
+                SelectObject(nullptr);
+            }
             GraphModule = nullptr;
             WiredGraph  = nullptr;
             ImGui::TextDisabled("Select a Graph Module in the stack to edit its nodes here.");
@@ -1005,8 +1016,15 @@ namespace Lumina
             Graph->SetTransactionManager(&GetTransactionManager());
             Graph->SetNodeSelectedCallback([this](CEdGraphNode* Node)
             {
-                SelectedEmitter = GraphModuleEmitter;
+                SelectEmitter(GraphModuleEmitter);
                 SelectObject(Node);
+            });
+            Graph->SetPreNodeDeletedCallback([this](const CEdGraphNode* Node)
+            {
+                if (Node == SelectedObject)
+                {
+                    SelectObject(nullptr);
+                }
             });
             GraphContentVersion = Graph->GetContentVersion();
         }
@@ -1119,7 +1137,7 @@ namespace Lumina
                     CParticleModule* Added = Emitter->AddModule(Entry.Class);
                     if (Added != nullptr)
                     {
-                        SelectedEmitter = EmitterIndex;
+                        SelectEmitter(EmitterIndex);
                         SelectModule(Added);
                         MarkEdited(Added);
                         DirtyEmitter = EmitterIndex;

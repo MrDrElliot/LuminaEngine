@@ -11,7 +11,7 @@
 
 namespace Lumina
 {
-    RUNTIME_API FWorldManager* GWorldManager = nullptr;
+    RUNTIME_API FWorldManager* Global::GWorldManager = nullptr;
 
     static TConsoleVar<float> CVarIdleReclaimSeconds("Editor.RenderScene.IdleReclaimSeconds", 3.0f,
         "Seconds a hidden world's render scene is kept resident before being freed.");
@@ -256,9 +256,9 @@ namespace Lumina
         World->InitializeWorld(Type);
 
         // Loading frees far more than it keeps, and without a trim those spans stay cached for the session.
-        if (GEngine != nullptr)
+        if (Global::GEngine != nullptr)
         {
-            GEngine->ScheduleCacheTrim();
+            Global::GEngine->ScheduleCacheTrim();
         }
 
         return Raw;
@@ -275,9 +275,9 @@ namespace Lumina
         {
             if (Contexts[i]->World.Get() == World)
             {
-                if (GEngine != nullptr)
+                if (Global::GEngine != nullptr)
                 {
-                    GEngine->ScheduleCacheTrim();
+                    Global::GEngine->ScheduleCacheTrim();
                 }
                 World->TeardownWorld();
                 World->OwningContext = nullptr;

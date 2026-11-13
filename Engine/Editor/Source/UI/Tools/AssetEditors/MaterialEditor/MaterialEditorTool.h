@@ -23,7 +23,7 @@ namespace Lumina
 {
     class CMaterialNodeGraph;
 
-    class FMaterialEditorTool : public FAssetEditorTool
+    class EDITOR_API FMaterialEditorTool : public FAssetEditorTool
     {
     public:
 
@@ -118,7 +118,9 @@ namespace Lumina
         void DrawHelpMenu() override;
         
     private:
-        
+
+        friend struct FMaterialEditorToolTestAccess;
+
         void SetDebugMesh(EDebugMesh Mesh, FStringView Path = "");
         
     private:

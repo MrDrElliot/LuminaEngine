@@ -9,9 +9,9 @@ namespace Lumina
 {
     void CWorld::OpenLevel(const FString& Url)
     {
-        if (GEngine != nullptr && !Url.IsEmpty())
+        if (Global::GEngine != nullptr && !Url.IsEmpty())
         {
-            GEngine->OpenLevel(FURL::Parse(FStringView(*Url, Url.Len())), this);
+            Global::GEngine->OpenLevel(FURL::Parse(FStringView(*Url, Url.Len())), this);
         }
     }
 }

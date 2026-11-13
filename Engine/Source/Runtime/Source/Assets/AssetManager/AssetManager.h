@@ -9,6 +9,7 @@
 #include "Core/Object/ObjectMacros.h"
 #include "GUID/GUID.h"
 #include "Memory/SmartPtr.h"
+#include "Core/Threading/Mutex.h"
 #include "Core/Threading/Sync.h"
 #include "AssetManager.generated.h"
 
@@ -136,7 +137,6 @@ namespace Lumina
         THashMap<SAssetId, FGuid>               GroupIds;
         std::atomic<bool>                       bGroupsDirty = true;
 
-        FMutex                             ClassMutex;
-        THashMap<FName, FName>                  GroupOfClass;
+        TMutex<THashMap<FName, FName>>          GroupOfClass;
     };
 }

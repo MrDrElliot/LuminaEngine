@@ -149,12 +149,12 @@ namespace Lumina::DotNet
         {
             FScriptUnit Game;
             Game.Name = "Game";
-            if (GEngine != nullptr)
+            if (Global::GEngine != nullptr)
             {
-                const FFixedString ScriptsDir = GEngine->GetProjectScriptsDirectory();
+                const FFixedString ScriptsDir = Global::GEngine->GetProjectScriptsDirectory();
                 Game.DiskDir = FStringView(ScriptsDir.GetData(), ScriptsDir.Len());
 
-                const FStringView ProjectPath = GEngine->GetProjectPath();
+                const FStringView ProjectPath = Global::GEngine->GetProjectPath();
                 if (!ProjectPath.IsEmpty())
                 {
                     const FString Root(ProjectPath.GetData(), ProjectPath.Len());
@@ -397,7 +397,7 @@ namespace Lumina::DotNet
     // Placed at the project root, and skipped when no project is loaded.
     void WriteScriptSolution(const TVector<FScriptUnit>& Units)
     {
-        if (GEngine == nullptr || GEngine->GetProjectPath().IsEmpty())
+        if (Global::GEngine == nullptr || Global::GEngine->GetProjectPath().IsEmpty())
         {
             return;
         }
@@ -445,12 +445,12 @@ namespace Lumina::DotNet
         Sln += "\tEndGlobalSection\n";
         Sln += "EndGlobal\n";
 
-        FString ProjectName(GEngine->GetProjectName().GetData(), GEngine->GetProjectName().Len());
+        FString ProjectName(Global::GEngine->GetProjectName().GetData(), Global::GEngine->GetProjectName().Len());
         if (ProjectName.IsEmpty())
         {
             ProjectName = "Game";
         }
-        const FString SlnPath = NativePath(Paths::Combine(GEngine->GetProjectPath(), ProjectName + ".GameScripts.sln"));
+        const FString SlnPath = NativePath(Paths::Combine(Global::GEngine->GetProjectPath(), ProjectName + ".GameScripts.sln"));
         WriteTextIfChanged(SlnPath, Sln);
     }
 
@@ -582,9 +582,9 @@ namespace Lumina::DotNet
                 Roots.Add(FString(Plugin->GetDirectory().GetData(), Plugin->GetDirectory().Len()) + "/Scripts");
             }
         }
-        if (GEngine != nullptr)
+        if (Global::GEngine != nullptr)
         {
-            const FFixedString ScriptsDir = GEngine->GetProjectScriptsDirectory();
+            const FFixedString ScriptsDir = Global::GEngine->GetProjectScriptsDirectory();
             Roots.Emplace(ScriptsDir.GetData(), ScriptsDir.Len());
         }
         Roots.Add(Paths::GetEngineResourceDirectory() + "/Scripts");

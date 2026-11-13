@@ -19,6 +19,9 @@ namespace Lumina
         // Loaded in Debug/Development only. Useful for tooling that should
         // not ship.
         Developer,
+
+        // A Reflector generator, which the engine never loads.
+        Reflection,
     };
 
     RUNTIME_API FStringView LexToString(EPluginModuleType Type);

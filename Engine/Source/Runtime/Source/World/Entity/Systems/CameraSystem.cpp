@@ -37,6 +37,29 @@ namespace Lumina
         }
     }
 
+    FQuat AddMouseLook(const FQuat& Rotation, FVector2 YawPitchDegrees)
+    {
+        constexpr float PitchLimit = 89.0f;
+
+        FTransform Look;
+        Look.SetRotation(Rotation);
+        Look.AddYawRadians(Math::Radians(YawPitchDegrees.x));
+
+        // Clamps the accumulated pitch rather than the delta, so the camera cannot flip past vertical.
+        const float Elevation = Math::Degrees(Math::Asin(Math::Clamp(Look.GetForward().y, -1.0f, 1.0f)));
+        Look.AddPitchRadians(Math::Radians(Math::Clamp(YawPitchDegrees.y, Elevation - PitchLimit, Elevation + PitchLimit)));
+        return Look.GetRotation();
+    }
+
+    FViewVolume AddMouseLook(const FViewVolume& View, FVector2 YawPitchDegrees)
+    {
+        const FQuat Rotation = AddMouseLook(Math::QuatLookAt(View.GetForwardVector(), View.GetUpVector()), YawPitchDegrees);
+
+        FViewVolume Turned = View;
+        Turned.SetView(View.GetViewPosition(), Rotation * FVector3(0.0f, 0.0f, 1.0f), Rotation * FVector3(0.0f, 1.0f, 0.0f));
+        return Turned;
+    }
+
     namespace CameraSystemInternal
     {
         static void NewCameraConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity)
@@ -262,9 +285,19 @@ namespace Lumina
         if (Camera.PostProcess.DepthOfFieldFStop > 0.0f)
         {
             ResolvedPostProcess.DepthOfFieldFStop         = Camera.PostProcess.DepthOfFieldFStop;
+            ResolvedPostProcess.DepthOfFieldMinFStop      = Camera.PostProcess.DepthOfFieldMinFStop;
+            ResolvedPostProcess.DepthOfFieldMaxFStop      = Camera.PostProcess.DepthOfFieldMaxFStop;
+            ResolvedPostProcess.DepthOfFieldBladeCount    = Camera.PostProcess.DepthOfFieldBladeCount;
             ResolvedPostProcess.DepthOfFieldFocusDistance = Camera.PostProcess.DepthOfFieldFocusDistance;
             ResolvedPostProcess.DepthOfFieldSensorHeight  = Camera.PostProcess.DepthOfFieldSensorHeight;
+            ResolvedPostProcess.DepthOfFieldSensorWidth   = Camera.PostProcess.DepthOfFieldSensorWidth;
             ResolvedPostProcess.DepthOfFieldMaxBlur       = Camera.PostProcess.DepthOfFieldMaxBlur;
+            ResolvedPostProcess.DepthOfFieldBandBlur       = Camera.PostProcess.DepthOfFieldBandBlur;
+            ResolvedPostProcess.DepthOfFieldBandCenter     = Camera.PostProcess.DepthOfFieldBandCenter;
+            ResolvedPostProcess.DepthOfFieldBandHalfHeight = Camera.PostProcess.DepthOfFieldBandHalfHeight;
+            ResolvedPostProcess.DepthOfFieldBandFalloff    = Camera.PostProcess.DepthOfFieldBandFalloff;
+            ResolvedPostProcess.DepthOfFieldTiltPitch      = Camera.PostProcess.DepthOfFieldTiltPitch;
+            ResolvedPostProcess.DepthOfFieldTiltYaw        = Camera.PostProcess.DepthOfFieldTiltYaw;
         }
 
         TVector<CMaterialInterface*>& PostProcessMaterials = Resolved.PostProcessMaterials;
@@ -331,6 +364,7 @@ namespace Lumina
 
         Resolved.ViewVolume      = Camera.GetViewVolume();
         Resolved.Layers          = Camera.GetViewLayers();
+        Resolved.MouseLookDegreesPerCount = Camera.MouseLookDegreesPerCount;
         Resolved.PostProcess     = FinalPostProcess;
         Resolved.bHasView        = true;
         Resolved.bHasPostProcess = true;

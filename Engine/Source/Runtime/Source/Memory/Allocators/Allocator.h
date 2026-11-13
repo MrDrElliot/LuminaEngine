@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Assertions/Assert.h"
+#include "Core/Math/Math.h"
 #include "Memory/Construct.h"
 #include "Memory/Memory.h"
 #include "Containers/HashTable.h"
@@ -69,8 +70,8 @@ namespace Lumina
         
         void* Allocate(size_t Size, size_t Alignment) override
         {
-            size_t CurrentPtr = reinterpret_cast<size_t>(Base + Offset);
-            SIZE_T AlignedPtr = (CurrentPtr + Alignment - 1) & ~(Alignment - 1);
+            SIZE_T CurrentPtr = reinterpret_cast<SIZE_T>(Base + Offset);
+            SIZE_T AlignedPtr = Math::AlignUp(CurrentPtr, Alignment);
             SIZE_T NextOffset = AlignedPtr - reinterpret_cast<SIZE_T>(Base) + Size;
             ASSERT(NextOffset < Capacity);
             
@@ -172,7 +173,7 @@ namespace Lumina
             }
 
             SIZE_T CurrentPtr = reinterpret_cast<SIZE_T>(CurrentBlock->GetData() + CurrentOffset);
-            SIZE_T AlignedPtr = (CurrentPtr + Alignment - 1) & ~(Alignment - 1);
+            SIZE_T AlignedPtr = Math::AlignUp(CurrentPtr, Alignment);
             SIZE_T NextOffset = AlignedPtr - reinterpret_cast<SIZE_T>(CurrentBlock->GetData()) + Size;
 
             if (NextOffset > GetUsableBlockSize())
@@ -181,7 +182,7 @@ namespace Lumina
                 CurrentOffset = 0;
 
                 CurrentPtr = reinterpret_cast<SIZE_T>(CurrentBlock->GetData() + CurrentOffset);
-                AlignedPtr = (CurrentPtr + Alignment - 1) & ~(Alignment - 1);
+                AlignedPtr = Math::AlignUp(CurrentPtr, Alignment);
                 NextOffset = AlignedPtr - reinterpret_cast<SIZE_T>(CurrentBlock->GetData()) + Size;
 
                 ASSERT(NextOffset <= GetUsableBlockSize());
@@ -332,7 +333,7 @@ namespace Lumina
         void* AllocateLarge(SIZE_T Size, SIZE_T Alignment)
         {
             const SIZE_T HeaderAlignment = Alignment > alignof(FLargeAllocation) ? Alignment : alignof(FLargeAllocation);
-            const SIZE_T HeaderSize = (sizeof(FLargeAllocation) + HeaderAlignment - 1) & ~(HeaderAlignment - 1);
+            const SIZE_T HeaderSize = Math::AlignUp(sizeof(FLargeAllocation), HeaderAlignment);
 
             FLargeAllocation* Large = (FLargeAllocation*)Memory::Malloc(HeaderSize + Size, HeaderAlignment);
             ASSERT(Large != nullptr);

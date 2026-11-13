@@ -422,7 +422,7 @@ namespace Lumina::DotNet
 
         // Bootstrap registers every engine export by name rather than handing native a pointer table.
         GExports.Log = &Export_Log;
-        GExports.LogThreshold = &Logging::GLevelThreshold;
+        GExports.LogThreshold = &Global::GLevelThreshold;
         GExports.ScriptScopesActive = FGameplayProfiler::Get().GetScriptScopesActive();
 
         FBootstrapArgs Args{};

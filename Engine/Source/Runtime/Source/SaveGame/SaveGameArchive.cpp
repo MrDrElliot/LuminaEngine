@@ -35,22 +35,6 @@ namespace Lumina
             }
             return Which == ESaveGameProperties::SaveGame || !Property->ShouldSerialize();
         }
-
-        // Patched in after the payload, so the count and every length cost nothing to know up front.
-        template<typename TBody>
-        void WriteSized(FArchive& Ar, TBody&& Body)
-        {
-            const int64 SizePosition = Ar.Tell();
-            int64 Size = 0;
-            Ar << Size;
-            const int64 Start = Ar.Tell();
-            Body();
-            const int64 End = Ar.Tell();
-            Size = End - Start;
-            Ar.Seek(SizePosition);
-            Ar << Size;
-            Ar.Seek(End);
-        }
     }
 
     FSaveGameArchive::FSaveGameArchive(FArchive& InInnerAr)
@@ -91,7 +75,7 @@ namespace Lumina
             Kind = EObjectRecord::Inline;
             FName ClassName = Value->GetClass()->GetName();
             *this << Kind << ClassName;
-            WriteSized(*this, [&] { SaveGame::SerializeObjectState(*this, Value); });
+            SaveGame::WriteSized(*this, [&] { SaveGame::SerializeObjectState(*this, Value); });
             return *this;
         }
 
@@ -185,25 +169,23 @@ namespace Lumina
         {
             if (Ar.IsWriting())
             {
-                const int64 CountPosition = Ar.Tell();
-                uint32 Count = 0;
-                Ar << Count;
-                for (FProperty* Property : Struct->GetProperties())
+                WriteCounted(Ar, [&]
                 {
-                    if (!Wants(Property, Which))
+                    uint32 Count = 0;
+                    for (FProperty* Property : Struct->GetProperties())
                     {
-                        continue;
+                        if (!Wants(Property, Which))
+                        {
+                            continue;
+                        }
+                        FName Name = Property->GetPropertyName();
+                        uint8 Type = (uint8)Property->GetType();
+                        Ar << Name << Type;
+                        WriteSized(Ar, [&] { Property->Serialize(Ar, Property->GetValuePtr<void>(Data)); });
+                        ++Count;
                     }
-                    FName Name = Property->GetPropertyName();
-                    uint8 Type = (uint8)Property->GetType();
-                    Ar << Name << Type;
-                    WriteSized(Ar, [&] { Property->Serialize(Ar, Property->GetValuePtr<void>(Data)); });
-                    ++Count;
-                }
-                const int64 End = Ar.Tell();
-                Ar.Seek(CountPosition);
-                Ar << Count;
-                Ar.Seek(End);
+                    return Count;
+                });
                 return;
             }
 

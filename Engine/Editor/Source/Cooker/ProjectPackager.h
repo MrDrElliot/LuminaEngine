@@ -6,12 +6,49 @@
 
 namespace Lumina
 {
+    class FThreadStop;
+
     struct FPackageBuildResult
     {
         bool    bSuccess        = false;
         FString OutputDirectory;
         FString PakPath;
         FString ErrorMessage;
+    };
+
+    enum class EPackagePlatform : uint8
+    {
+        Windows64,
+        Linux64,
+    };
+
+    // How one target platform names the binaries the packager stages.
+    struct EDITOR_API FPackagePlatformRules
+    {
+        FStringView Name;
+        FStringView ExecutableExtension;
+        FStringView LibraryPrefix;
+        FStringView LibraryExtension;
+
+        // The .NET runtime folder DotNetHost::RuntimeRid resolves on this platform, under External/DotNet/runtime.
+        FStringView DotNetRuntimeRid;
+
+        // Linux has no delay-loading, so third-party libraries stay beside the executable on its $ORIGIN rpath.
+        bool        bThirdPartyToDataPlugins = true;
+
+        static FPackagePlatformRules For(EPackagePlatform Platform);
+
+        FFixedString BinariesDirectory(FStringView Root) const;
+        FString      ExecutableFileName(FStringView Stem) const;
+        FString      LibraryFileName(FStringView Stem) const;
+        bool         IsExecutable(FStringView FileName) const;
+        bool         IsLibrary(FStringView FileName) const;
+
+        // The file name without the library prefix or the extension, "Runtime-Development" for libRuntime-Development.so.
+        FStringView  ModuleStem(FStringView FileName) const;
+
+        // A binary the build leaves beside the game's that belongs to another configuration, target or the editor alone.
+        bool         IsSkippedBinary(FStringView FileName, FStringView BinaryTail) const;
     };
 
     struct FPackageBuildOptions
@@ -31,6 +68,8 @@ namespace Lumina
 
         // Builds the Server target into <Project>Server, a headless dedicated server with its own data and pak.
         bool    bServer = false;
+
+        EPackagePlatform Platform = EPackagePlatform::Windows64;
 
         // Project root passed to the build tool as -Project, and the second place binaries are
         // collected from. Carried in the options rather than read from the engine, because the
@@ -56,13 +95,13 @@ namespace Lumina
         // The executable and data folder name, which a server package suffixes so it never mixes with the game's.
         static FString GetPackageName(FStringView ProjectName, bool bServer);
 
-        /** Build + binary-copy stages only; expects a .pak to already exist at <OutputDirectory>/<ProjectName>.pak.
-         *  Safe from a worker thread (touches no engine state); LogFunc may be invoked from that thread. */
+        // Worker-safe build and copy of an already cooked pak, where raising Stop kills the build tool and fails the build.
         static FPackageBuildResult BuildAndCopyOnly(
             const FPackageBuildOptions& Options,
             FStringView ProjectName,
             FStringView PakPath,
-            const TFunction<void(FStringView)>& LogFunc = {});
+            const TFunction<void(FStringView)>& LogFunc = {},
+            const FThreadStop* Stop = nullptr);
 
         // Mirrors loose (non-.lasset) files from /Game and /Scripts under <OutDir>/{Game,Scripts}/.
         // Main-thread only (walks VFS).

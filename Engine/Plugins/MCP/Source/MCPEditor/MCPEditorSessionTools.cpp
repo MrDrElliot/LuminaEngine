@@ -1,5 +1,7 @@
 #include "MCPEditorSessionTools.h"
 
+#include <cmath>
+
 #include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentGameThread.h"
 #include "Agent/AgentToolRegistry.h"
@@ -33,6 +35,8 @@ namespace Lumina::MCP
     namespace MCPEditorSessionToolsInternal
     {
         constexpr const char* GNoWorldEditorSession = "No world editor is open.";
+        constexpr int32 GMaxInputHoldMilliseconds = 5000;
+        constexpr float GMaxScriptReloadTimeoutSeconds = 300.0f;
 
         void FillEditorPlayState(SPlayState& Out)
         {
@@ -171,7 +175,7 @@ namespace Lumina::MCP
             if (!SessionOps::StartPlay(SessionError))
             {
                 FillEditorPlayState(Out);
-                return Agent::FToolResult::Error("Already playing.");
+                return Agent::FToolResult::Error(SessionError);
             }
 
             LOG_INFO("[MCP] An agent started play-in-editor.");
@@ -327,14 +331,14 @@ namespace Lumina::MCP
 
         Agent::FToolResult OpenEditorLevel(const FString& Level, SEditorOpenResult& Out)
         {
-            if (GEngine == nullptr)
+            if (Global::GEngine == nullptr)
             {
                 return Agent::FToolResult::Error("The engine is not running.");
             }
 
             const FURL Url = FURL::Parse(FStringView(*Level, Level.Len()));
             Out.Map = Url.Map;
-            GEngine->OpenLevel(Url);
+            Global::GEngine->OpenLevel(Url);
             return Agent::FToolResult::Ok(Lumina::Format("Opening {}.", Url.Map));
         }
 
@@ -531,6 +535,11 @@ namespace Lumina::MCP
 
         Agent::FToolResult ReloadEditorScripts(const SScriptReloadParams& Params, SScriptReloadResult& Out)
         {
+            if (!std::isfinite(Params.TimeoutSeconds) || Params.TimeoutSeconds < 0.0f || Params.TimeoutSeconds > GMaxScriptReloadTimeoutSeconds)
+            {
+                return Agent::FToolResult::Error(Lumina::Format("TimeoutSeconds has to be between 0 and {}.", GMaxScriptReloadTimeoutSeconds));
+            }
+
             if (!DotNet::IsInitialized())
             {
                 return Agent::FToolResult::Error("The .NET host is not running, so there is nothing to reload.");
@@ -552,7 +561,7 @@ namespace Lumina::MCP
             Out.PreviousGeneration = Before;
             Out.Generation = Before;
 
-            const double Deadline = PlatformTime::Seconds() + Math::Max(0.0f, Params.TimeoutSeconds);
+            const double Deadline = PlatformTime::Seconds() + Params.TimeoutSeconds;
             int32 FailedResult = 0;
             while (PlatformTime::Seconds() < Deadline)
             {
@@ -942,6 +951,11 @@ namespace Lumina::MCP
                 Agent::EToolEffect::Mutating, Agent::EToolThread::Any,
                 [](const SEditorInputParams& In, SEditorInputResult& Out)
                 {
+                    if (In.Kind != EEditorInputKind::Text && In.HoldMilliseconds > GMaxInputHoldMilliseconds)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("HoldMilliseconds has to be at most {}.", GMaxInputHoldMilliseconds));
+                    }
+
                     FEditorInputState* State = FMCPEditorModule::GetEditorInput();
                     if (State == nullptr)
                     {

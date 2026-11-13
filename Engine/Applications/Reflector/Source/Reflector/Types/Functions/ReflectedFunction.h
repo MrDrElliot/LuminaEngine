@@ -25,6 +25,7 @@ namespace Lumina
         std::vector<FMetadataPair>    Metadata;
         std::string                   Name;
         std::string                   Outer;
+        uint32_t                      LineNumber = 0;
         // True when an unsupported argument was dropped from Arguments during parsing (LRT1005). The C#
         // binder must skip such a function: its reflected arg list is shorter than the real signature, so
         // a generated call would pass too few args.
@@ -56,9 +57,6 @@ namespace Lumina
         /// The declared pointer type an object parameter is cast back to, empty for anything else. The frame
         /// holds a TStrongObjectPtr<CObject>, because that is the storage FObjectProperty describes.
         std::vector<std::string>                         ParameterObjectCastTypes;
-
-        /// True for a parameter the real signature takes by reference, so the thunk hands the slot over.
-        std::vector<bool>                                ParameterIsReference;
 
         /// True where the signature takes an rvalue reference, so the call moves out of the frame's slot.
         /// A moved-from value is still destructible, which is all the frame teardown needs of it.

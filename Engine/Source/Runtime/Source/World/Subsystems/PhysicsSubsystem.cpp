@@ -30,14 +30,14 @@ namespace Lumina
 
         using FIgnoreList = TInlineVector<ECS::FEntity, MaxInlineIgnoreEntities>;
 
-        FIgnoreList IgnoreOf(ECS::FEntity Entity)
+        FIgnoreList QueryIgnoreOf(ECS::FEntity Entity)
         {
             FIgnoreList Ignore;
             StageIgnore(Entity, Ignore);
             return Ignore;
         }
 
-        SRayResult MissOf(const FVector3& Start, const FVector3& End)
+        SRayResult QueryMissOf(const FVector3& Start, const FVector3& End)
         {
             SRayResult Miss;
             Miss.Start = Start;
@@ -57,7 +57,7 @@ namespace Lumina
 
             const int32 Start = Out.Num();
             Out.SetNum(Start + DefaultQueryCapacity);
-            const int32 Written = Scene->OverlapShape(Shape, Center, LayerMask, IgnoreOf(IgnoreEntity),
+            const int32 Written = Scene->OverlapShape(Shape, Center, LayerMask, QueryIgnoreOf(IgnoreEntity),
                 TSpan<ECS::FEntity>(Out.GetData() + Start, DefaultQueryCapacity));
             Out.SetNum(Start + (size_t)(Written > 0 ? Written : 0));
         }
@@ -66,13 +66,13 @@ namespace Lumina
         {
             Physics::IPhysicsScene* Scene = SceneOf(World);
             ECS::FEntity First;
-            return Scene == nullptr || Scene->OverlapShape(Shape, Center, LayerMask, IgnoreOf(IgnoreEntity), TSpan<ECS::FEntity>(&First, 1)) == 0;
+            return Scene == nullptr || Scene->OverlapShape(Shape, Center, LayerMask, QueryIgnoreOf(IgnoreEntity), TSpan<ECS::FEntity>(&First, 1)) == 0;
         }
     }
 
     SRayResult CPhysicsSubsystem::Raycast(FVector3 Start, FVector3 End, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask)
     {
-        const SRayResult Miss = MissOf(Start, End);
+        const SRayResult Miss = QueryMissOf(Start, End);
         Physics::IPhysicsScene* Scene = SceneOf(GetWorld());
         if (Scene == nullptr)
         {
@@ -136,7 +136,7 @@ namespace Lumina
     {
         Physics::IPhysicsScene* Scene = SceneOf(GetWorld());
         TOptional<SRayResult> Hit = Scene != nullptr ? Scene->CastRayAgainst(Entity, Start, End) : TOptional<SRayResult>();
-        return Hit.IsSet() ? Hit.GetValue() : MissOf(Start, End);
+        return Hit.IsSet() ? Hit.GetValue() : QueryMissOf(Start, End);
     }
 
     void CPhysicsSubsystem::SphereCast(FVector3 Start, FVector3 End, float Radius,
@@ -185,8 +185,8 @@ namespace Lumina
         ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask)
     {
         Physics::IPhysicsScene* Scene = SceneOf(GetWorld());
-        TOptional<SRayResult> Hit = Scene != nullptr ? Scene->CastShapeClosest(Shape, Start, End, LayerMask, IgnoreOf(IgnoreEntity)) : TOptional<SRayResult>();
-        return Hit.IsSet() ? Hit.GetValue() : MissOf(Start, End);
+        TOptional<SRayResult> Hit = Scene != nullptr ? Scene->CastShapeClosest(Shape, Start, End, LayerMask, QueryIgnoreOf(IgnoreEntity)) : TOptional<SRayResult>();
+        return Hit.IsSet() ? Hit.GetValue() : QueryMissOf(Start, End);
     }
 
     void CPhysicsSubsystem::ShapeCastAll(SQueryShape Shape, FVector3 Start, FVector3 End,
@@ -194,7 +194,7 @@ namespace Lumina
     {
         if (Physics::IPhysicsScene* Scene = SceneOf(GetWorld()))
         {
-            Scene->CastShapeAll(Shape, Start, End, LayerMask, IgnoreOf(IgnoreEntity), Out);
+            Scene->CastShapeAll(Shape, Start, End, LayerMask, QueryIgnoreOf(IgnoreEntity), Out);
         }
     }
 

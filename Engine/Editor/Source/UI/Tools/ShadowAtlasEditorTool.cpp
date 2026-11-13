@@ -53,9 +53,9 @@ namespace Lumina
     void FShadowAtlasEditorTool::DrawAtlasWindow(bool bIsFocused)
     {
         CWorld* TargetWorld = nullptr;
-        if (GWorldManager != nullptr)
+        if (Global::GWorldManager != nullptr)
         {
-            const auto& Contexts = GWorldManager->GetContexts();
+            const auto& Contexts = Global::GWorldManager->GetContexts();
             const auto EditorItr = Algo::FindIf(Contexts, [](const TUniquePtr<FWorldContext>& Context)
             {
                 return Context && Context->Type == EWorldType::Editor && Context->World.IsValid();

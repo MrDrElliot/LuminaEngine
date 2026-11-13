@@ -88,9 +88,9 @@ namespace Lumina
             // Opening loads the asset, which nothing else on this row does.
             if (bHasPath && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
-                if (const FAssetData* Asset = FAssetRegistry::Get().GetAssetByPath(PathView))
+                if (const FAssetDataPtr Asset = FAssetRegistry::Get().GetAssetByPath(PathView))
                 {
-                    static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI())->OpenAssetEditor(Asset->AssetGUID);
+                    static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI())->OpenAssetEditor(Asset->AssetGUID);
                 }
             }
 
@@ -134,19 +134,13 @@ namespace Lumina
 
                 if (ImGui::BeginChild("##OptList", ComboDropDownSize, false, ImGuiChildFlags_NavFlattened))
                 {
-                    TVector<FAssetData*> Assets = FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Data)
-                    {
-                        CClass* DataClass = FindObject<CClass>(Data.AssetClass);
-                        return DataClass && PropertyClass && DataClass->IsChildOf(PropertyClass);
-                    });
-
                     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4, 4));
                     if (ImGui::BeginTable("##AssetTable", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInner))
                     {
                         ImGui::TableSetupColumn("##Thumb", ImGuiTableColumnFlags_WidthFixed, 42.0f);
                         ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthStretch);
 
-                        for (const FAssetData* Asset : Assets)
+                        for (const FAssetDataPtr& Asset : AssetsOfClass.Get(PropertyClass))
                         {
                             if (!ImGuiX::PassSearchFilter(SearchFilter, *Asset->AssetName))
                             {
@@ -158,7 +152,7 @@ namespace Lumina
                                 continue;
                             }
 
-                            ImGui::PushID(Asset);
+                            ImGui::PushID(Asset.Get());
                             ImGui::TableNextRow(ImGuiTableRowFlags_None, 42.0f);
                             ImGui::TableSetColumnIndex(0);
 
@@ -199,7 +193,7 @@ namespace Lumina
             }
 
             // Binds by path like the list above, so taking the selection never loads the asset.
-            const FAssetData* BrowserSelection = AssetPickerFilter::GetSelectedAssetOfClass(PropertyClass);
+            const FAssetDataPtr BrowserSelection = AssetPickerFilter::GetSelectedAssetOfClass(PropertyClass);
             if (AssetPickerFilter::DrawUseSelectedButton(BrowserSelection != nullptr, "Select a compatible asset in the Content Browser to use it here."))
             {
                 Path.SetPath(FStringView(*BrowserSelection->Path, BrowserSelection->Path.Len()));

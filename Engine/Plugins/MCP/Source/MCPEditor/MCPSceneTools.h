@@ -11,6 +11,11 @@ namespace Lumina
 {
     class CWorld;
 
+    namespace ECS
+    {
+        class FRegistry;
+    }
+
     REFLECT()
     enum class ESceneCameraAction : uint8
     {
@@ -575,6 +580,9 @@ namespace Lumina
 
         void RegisterSceneTools(FStringView Owner);
 
+        // The scene registry a mutation may edit, or null with a reason when there is none or it is the one playing.
+        ECS::FRegistry* GetEditableSceneRegistry(FString& OutError);
+
         // The playing or simulating world, or null when no game runs.
         CWorld* FindGameWorld();
 
@@ -584,5 +592,10 @@ namespace Lumina
         // The first surface under a point, in the game world when one runs, else the editor's; GNoGroundHeight over nothing.
         float GroundHeightAt(float X, float Z);
         float GroundHeightAt(CWorld* World, float X, float Z);
+
+        inline float GroundOrZero(float Ground)
+        {
+            return Ground > GNoGroundHeight ? Ground : 0.0f;
+        }
     }
 }

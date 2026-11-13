@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Containers/StaticArray.h"
 #include "Core/Threading/Thread.h"
 #include "Config/EngineSettings.h"
 #include "World/Scene/RenderScene/SceneUpscaler.h"
@@ -41,11 +42,24 @@ namespace Lumina
 
         static void ReleaseFeature(FFeature& Feature);
 
+        struct FRenderScaleCacheEntry
+        {
+            FUIntVector2  DisplaySize    = FUIntVector2(0);
+            EUpscalerMode Mode           = EUpscalerMode::Custom;
+            float         RequestedScale = 0.0f;
+            float         Result         = 1.0f;
+        };
+
+        // Several views can call with their own DisplaySize at once, so one cache slot would thrash between them.
+        static constexpr int32 MaxRenderScaleCacheEntries = 8;
+
         mutable FMutex               Mutex;
         mutable bool                 bInitAttempted = false;
         mutable bool                 bAvailable     = false;
         mutable void*                InitializedDevice = nullptr;
         mutable NVSDK_NGX_Parameter* Parameters     = nullptr;
+        mutable TArray<FRenderScaleCacheEntry, MaxRenderScaleCacheEntries> RenderScaleCache;
+        mutable int32                RenderScaleCacheNum = 0;
 
         THashMap<const void*, FFeature> Features;
     };

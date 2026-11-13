@@ -111,21 +111,20 @@ bool CullViewHasFlag(uint ViewIndex, uint Flag)
 }
 GPUSpan<FMeshletHeader>      MeshletHeaders()        { return GetSceneRoot().MeshletHeaders; }
 
-// Slot 0 is the null header and the slot is clamped, so this always returns something readable.
+// Slot 0 is the null header and the slot is clamped, so this always returns something readable even off a garbage instance.
+FMeshletHeader* MeshletHeaderAt(uint Slot)
+{
+    return MeshletHeaders().At(min(Slot, MeshletHeaders().Count - 1u));
+}
+
 extension FGPUInstance
 {
-    property FMeshletHeader* MeshletHeader
-    {
-        get { return MeshletHeaders().At(min(MeshletHeaderSlot, MeshletHeaders().Count - 1u)); }
-    }
+    property FMeshletHeader* MeshletHeader { get { return MeshletHeaderAt(MeshletHeaderSlot); } }
 }
 
 extension FInstanceStatic
 {
-    property FMeshletHeader* MeshletHeader
-    {
-        get { return MeshletHeaders().At(min(MeshletHeaderSlot, MeshletHeaders().Count - 1u)); }
-    }
+    property FMeshletHeader* MeshletHeader { get { return MeshletHeaderAt(MeshletHeaderSlot); } }
 }
 GPUSpan<FMeshletDraw>        MeshletDrawList()       { return GetSceneRoot().MeshletDrawList; }
 GPUSpan<FPreSkinnedVertex>   PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVertices; }

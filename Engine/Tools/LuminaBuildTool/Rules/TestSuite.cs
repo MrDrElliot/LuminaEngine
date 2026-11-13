@@ -87,7 +87,11 @@ public sealed class TestSuite
             Rules.PrivateIncludePaths.Add(Tested.ModulePath(Path));
         }
 
-        Rules.PrivateDependencyModuleNames.Add(Tested.Name);
+        // An executable cannot be linked, so a suite testing one launches the binary its own target builds.
+        if (!Tested.BinaryType.IsExecutable())
+        {
+            Rules.PrivateDependencyModuleNames.Add(Tested.Name);
+        }
         Rules.PrivateDependencyModuleNames.Add(HarnessModuleName);
         Rules.PrivateDependencyModuleNames.AddRange(Tested.TestDependencyModuleNames);
     }
@@ -111,6 +115,12 @@ public sealed class TestSuite
 
         // A suite is not the engine, and publishing would overwrite what project builds read.
         Rules.bPublishesEngineReflectionManifest = false;
+
+        // Testing a plugin module needs its plugin, which an opt-in plugin would otherwise leave out.
+        if (!string.IsNullOrEmpty(ModuleRulesFile.PluginName))
+        {
+            Rules.EnabledPlugins.Add(ModuleRulesFile.PluginName);
+        }
     }
 }
 

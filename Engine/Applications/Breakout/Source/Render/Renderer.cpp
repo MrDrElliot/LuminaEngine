@@ -83,7 +83,7 @@ namespace Breakout
             Options.DebugName = DebugName;
             Options.bGenerateReflectionData = false;
 
-            GShaderCompiler->CompilerShaderRaw(Source, Options,
+            Global::GShaderCompiler->CompilerShaderRaw(Source, Options,
                 [&Out](FShaderHeader Header) { Out = Move(Header.Binaries); });
         }
 
@@ -285,7 +285,7 @@ namespace Breakout
         SubmitCompile(Prelude + Shaders::kBloomCommon + Shaders::kUpsamplePS, "Breakout.UpsamplePS", UpsamplePS);
         SubmitCompile(Prelude + Shaders::kCompositeCommon + Shaders::kCompositePS, "Breakout.CompositePS", CompositePS);
 
-        GShaderCompiler->Flush();
+        Global::GShaderCompiler->Flush();
 
         BackgroundPipeline   = MakePipeline(FullscreenVS, "FullscreenVS", BackgroundPS, "BackgroundPS", kSceneFormat, {});
         QuadAlphaPipeline    = MakePipeline(QuadVS, "QuadVS", QuadPS, "QuadPS", kSceneFormat, PremultipliedBlend());

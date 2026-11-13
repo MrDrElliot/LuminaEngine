@@ -78,3 +78,26 @@ TEST(FixedUpdateStage, AHitchIsClampedToMaxSteps)
     EXPECT_EQ(Fixture.Run({ 5.0 }), MaxSteps);
     EXPECT_EQ(Fixture.Run({ 0.0 }), MaxSteps) << "the clamped hitch must not leave a backlog for later frames";
 }
+
+// A world without a physics scene dispatches OnFixedUpdate through this shared stage rather than its own accumulator.
+TEST(FixedUpdateStage, EntityScriptsWithoutAPhysicsSceneTickThroughIt)
+{
+    RegisterPendingTypes();
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    FWorldTestAccess::KeepOnlySystems(*World, { FName("CEntityScriptSystem") });
+
+    ASSERT_EQ(World->GetPhysicsScene(), nullptr);
+
+    const ECS::FEntity Entity = World->CreateEntity();
+    CEntityScriptTest* Script = static_cast<CEntityScriptTest*>(
+        EntityScripts::Attach(World->GetEntityRegistry(), Entity, CEntityScriptTest::StaticClass()));
+    ASSERT_NE(Script, nullptr);
+
+    // OnFixedUpdate only runs on a readied script, so the first PrePhysics pass is what makes it eligible.
+    FWorldTestAccess::TickStage(*World, EUpdateStage::PrePhysics, 0.1);
+
+    FWorldTestAccess::TickFixedUpdate(*World, 0.102);
+    FWorldTestAccess::TickFixedUpdate(*World, 0.102);
+
+    EXPECT_EQ(Script->FixedUpdateCount, 12) << "0.204s at 60Hz is 12 steps, exactly as many times as TickFixed ran";
+}

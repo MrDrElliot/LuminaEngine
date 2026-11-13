@@ -7,14 +7,17 @@
 #include "Reflector/ProjectSolution.h"
 #include "Reflector/ReflectorInput.h"
 #include "Reflector/Clang/ClangParser.h"
-#include "Reflector/CodeGeneration/CodeGenerator.h"
+#include "Reflector/CodeGeneration/GeneratorRunner.h"
 #include "Reflector/ReflectionCore/ReflectedProject.h"
+#include "Reflector/ReflectionCore/ReflectionModelBuilder.h"
 #include "Reflector/Utils/Timing.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
+#include <string_view>
 #include <thread>
 
 #if defined(_WIN32)
@@ -231,12 +234,26 @@ int main(int argc, char* argv[])
             std::chrono::steady_clock::now() - Start).count();
     });
 
-    FClangParser Parser;
+    // Built before the parse, since the specifiers its generators claim are what every macro is validated against.
+    FGeneratorRunner Generators;
+    for (const FReflectorGeneratorInput& Generator : Input.Generators)
+    {
+        Generators.Load(Generator);
+    }
 
+    FClangParser Parser;
+    Parser.ParsingContext.Specifiers = &Generators.GetSpecifiers();
+
+    std::chrono::seconds GeneratorTimeout(120);
     for (int i = 1; i < argc; ++i)
     {
-        Parser.bStrictParse |= std::string(argv[i]) == "-strict-parse";
-        Parser.bVerboseDiagnostics |= std::string(argv[i]) == "-verbose-diagnostics";
+        const std::string_view Argument(argv[i]);
+        Parser.bStrictParse |= Argument == "-strict-parse";
+        Parser.bVerboseDiagnostics |= Argument == "-verbose-diagnostics";
+        if (Argument.starts_with("-generator-timeout="))
+        {
+            GeneratorTimeout = std::chrono::seconds(std::atoi(argv[i] + Argument.find('=') + 1));
+        }
     }
 
     bool bParseResult;
@@ -493,10 +510,15 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    FReflectionModel Model;
+    {
+        FScopedPhaseTimer ModelTimer("Model build");
+        Model = FReflectionModelBuilder::Build(Workspace, Parser.ParsingContext.ReflectionDatabase);
+    }
+
     {
         FScopedPhaseTimer CodegenTimer("Code generation");
-        FCodeGenerator CodeGenerator(&Workspace, Parser.ParsingContext.ReflectionDatabase);
-        CodeGenerator.GenerateCode();
+        Generators.Run(Model, GeneratorTimeout);
     }
 
     Lumina::FStringHash::Shutdown();

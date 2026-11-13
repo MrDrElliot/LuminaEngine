@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
 #include "Audio/AudioContext.h"
+#include "Audio/AudioGlobals.h"
+#include "Audio/AudioLibrary.h"
 #include "Core/Math/Transform.h"
 #include "Core/Object/ObjectCore.h"
 #include "World/World.h"
+#include "World/Entity/Components/AudioSourceComponent.h"
 #include "World/Entity/Components/AudioVolumeComponent.h"
 #include "World/Entity/Components/ProceduralAudioComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -53,6 +56,12 @@ TEST(AudioVolume, TheBoxFollowsItsEntitysRotationAndScale)
     // The long axis now points along world Z and is doubled, reaching eight units.
     EXPECT_FLOAT_EQ(Volume.ListenerWeight(Turned, FVector3(0.0f, 0.0f, 7.5f)), 1.0f);
     EXPECT_FLOAT_EQ(Volume.ListenerWeight(Turned, FVector3(7.5f, 0.0f, 0.0f)), 0.0f);
+}
+
+TEST(AudioLibrary, GetBusVolumeReadsUnityWithNoAudioDevice)
+{
+    ASSERT_FALSE(Audio::HasDevice());
+    EXPECT_FLOAT_EQ(CAudioLibrary::GetBusVolume(EAudioBus::Master), 1.0f);
 }
 
 TEST(AudioVolume, ASphereUsesItsLargestScaleAxis)
@@ -127,4 +136,25 @@ TEST_F(AudioSystemChangeTracking, AnIdleProceduralSourceIsNotMarkedChanged)
     EXPECT_TRUE(TickChanges<SProceduralAudioComponent>(Entity)) << "the first frame readies the source";
     EXPECT_FALSE(TickChanges<SProceduralAudioComponent>(Entity)) << "a ready source that is not playing has nothing to write";
     EXPECT_TRUE(Registry.Get<SProceduralAudioComponent>(Entity).bReady);
+}
+
+TEST_F(AudioSystemChangeTracking, AListenerWithNoTransformDoesNotCrash)
+{
+    ECS::FRegistry& Registry = World->GetEntityRegistry();
+    const ECS::FEntity Entity = Registry.Create();
+    Registry.Emplace<SAudioListenerComponent>(Entity);
+
+    EXPECT_NO_FATAL_FAILURE(System->OnUpdate(FWorldTestAccess::SystemContext(*World)));
+}
+
+TEST_F(AudioSystemChangeTracking, ASpatializedProceduralSourceWithNoTransformDoesNotCrash)
+{
+    ECS::FRegistry& Registry = World->GetEntityRegistry();
+    const ECS::FEntity Entity = Registry.Create();
+    SProceduralAudioComponent& Source = Registry.Emplace<SProceduralAudioComponent>(Entity);
+    Source.bSpatialized = true;
+    Source.Start();
+    ASSERT_TRUE(Source.bPlaying);
+
+    EXPECT_NO_FATAL_FAILURE(System->OnUpdate(FWorldTestAccess::SystemContext(*World)));
 }

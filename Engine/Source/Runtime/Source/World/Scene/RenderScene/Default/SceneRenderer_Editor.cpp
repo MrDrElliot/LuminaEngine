@@ -59,7 +59,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Picker Resolve", tracy::Color::SlateBlue);
         SCENE_GPU_SCOPE(CL, "Picker Resolve");
 
         const FSceneImage& PickerImg  = GetNamedImage(ENamedImage::Picker);
@@ -244,7 +243,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Selection Outline", tracy::Color::Orange);
         SCENE_GPU_SCOPE(CL, "Selection Outline");
 
         const FSceneImage& Output = CurrentView->Output;
@@ -696,6 +694,7 @@ namespace Lumina
 
         if (bSurfaceSnapshotThisFrame)
         {
+            SCENE_GPU_SCOPE(CL, "Picker Readback");
             bSurfaceSnapshotThisFrame = false;
             CopyPickerRegion(CL, SurfaceSnapshot, 0, 0, PickerImage.GetSizeX(), PickerImage.GetSizeY());
         }
@@ -707,6 +706,7 @@ namespace Lumina
             return;
         }
 
+        SCENE_GPU_SCOPE(CL, "Picker Readback");
         const FPickerRegion Region = PickerCursorRegion(Packed, PickerImage.GetSizeX(), PickerImage.GetSizeY(), PickerRegionExtent);
         CopyPickerRegion(CL, PickerReadbackRing[PickerReadbackWriteIndex], Region.X, Region.Y, Region.Width, Region.Height);
 

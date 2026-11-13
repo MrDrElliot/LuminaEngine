@@ -1,5 +1,7 @@
 #include "RuntimePCH.h"
 #include "PathFollowSystem.h"
+#include "MovementComponentSystem.h"
+#include "ProjectileSystem.h"
 #include "World/ECS/Registry.h"
 
 #include "AI/Navigation/NavMesh.h"
@@ -21,6 +23,8 @@ namespace Lumina
     void CPathFollowSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
+        RunsAfter<CMovementComponentSystem, CProjectileSystem>();
+        ExcludeFromHasWork(NavMeshes, Transforms);
     }
 
     namespace PathFollowSystemInternal
@@ -157,11 +161,6 @@ namespace Lumina
             Fallback = Fallback != nullptr ? Fallback : Entry.Mesh;
         }
         return Agent.IsNone() ? Fallback : nullptr;
-    }
-
-    bool CPathFollowSystem::HasWork(const SSystemContext&)
-    {
-        return AnyQueryHasRows(Followers);
     }
 
     void CPathFollowSystem::OnUpdate(const SSystemContext& Context)

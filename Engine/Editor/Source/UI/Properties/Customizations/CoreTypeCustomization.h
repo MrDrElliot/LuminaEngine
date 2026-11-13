@@ -13,6 +13,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/Widgets/TreeListView.h"
 #include "UI/Properties/NamePicker.h"
+#include "UI/Properties/Customizations/AssetPickerFilter.h"
 #include "Tools/UI/ImGui/ImGuiXNumeric.h"
 
 namespace Lumina
@@ -315,6 +316,7 @@ namespace Lumina
 
         TWeakObjectPtr<CObject> Object;
         ImGuiTextFilter SearchFilter;
+        AssetPickerFilter::FAssetsOfClassCache AssetsOfClass;
 
         // Object edits (clear/pick/drop) are one-frame events: emit Started on the change
         // frame, Finished the next, so they form a proper undo transaction.
@@ -340,6 +342,7 @@ namespace Lumina
 
         FSoftObjectPath Path;
         ImGuiTextFilter SearchFilter;
+        AssetPickerFilter::FAssetsOfClassCache AssetsOfClass;
         bool bFinishPending = false;
     };
 
@@ -495,6 +498,7 @@ namespace Lumina
         FString          DisplayValue;
         ImGuiTextFilter  SearchFilter;
         FNamePickerState PickerState;
+        TVector<FString> CachedPickerPaths;
     };
 
     class FVec2PropertyCustomization : public IPropertyTypeCustomization

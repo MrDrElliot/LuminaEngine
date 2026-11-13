@@ -18,6 +18,14 @@ public static class ReflectorInput
         Record(Out, "Workspace", Document.WorkspaceName);
         Record(Out, "WorkspacePath", Document.WorkspacePath);
 
+        foreach (ReflectionGeneratorEntry Generator in Document.Generators)
+        {
+            Record(Out, "Generator", Generator.Library);
+            Record(Out, "GeneratorFingerprint", Generator.Fingerprint);
+            Record(Out, "GeneratorRules", Generator.RulesFile);
+            Records(Out, "GeneratorOption", Generator.Options.Select(Option => $"{Option.Key}={Option.Value}"));
+        }
+
         foreach (ReflectionProjectEntry Project in Document.Projects)
         {
             Out.Append('\n');

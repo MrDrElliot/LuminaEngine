@@ -14,14 +14,15 @@ namespace Lumina
         {
             case EPluginModuleType::Runtime:   return "Runtime";
             case EPluginModuleType::Editor:    return "Editor";
-            case EPluginModuleType::Developer: return "Developer";
-            default:                           return "Unknown";
+            case EPluginModuleType::Developer:  return "Developer";
+            case EPluginModuleType::Reflection: return "Reflection";
+            default:                            return "Unknown";
         }
     }
 
     bool TryParsePluginModuleType(FStringView Str, EPluginModuleType& OutType)
     {
-        for (const EPluginModuleType Type : { EPluginModuleType::Runtime, EPluginModuleType::Editor, EPluginModuleType::Developer })
+        for (const EPluginModuleType Type : { EPluginModuleType::Runtime, EPluginModuleType::Editor, EPluginModuleType::Developer, EPluginModuleType::Reflection })
         {
             if (Str == LexToString(Type))
             {
@@ -279,7 +280,7 @@ namespace Lumina
                 }
                 if (!TryParsePluginModuleType(Type, Module.Type))
                 {
-                    Read.FailWith(Format("Plugin '{}' module '{}' has unknown Type '{}'; expected Runtime, Editor or Developer.",
+                    Read.FailWith(Format("Plugin '{}' module '{}' has unknown Type '{}'; expected Runtime, Editor, Developer or Reflection.",
                         OutDescriptor.Name, Module.Name, Type));
                     break;
                 }

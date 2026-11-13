@@ -75,7 +75,7 @@ namespace Lumina
             bWasChanged = true;
         };
 
-        FEditorUI* EditorUI = static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI());
+        FEditorUI* EditorUI = static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI());
 
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
         ImGui::PushID(this);
@@ -124,6 +124,10 @@ namespace Lumina
                 if (ImGui::IsWindowAppearing())
                 {
                     ImGui::SetKeyboardFocusHere();
+
+                    // Rebuilt once on popup open rather than every frame it stays open.
+                    CachedDocuments = FAssetRegistry::Get().GetTextAssetsOfKind(ETextAssetKind::RmlDocument);
+                    Algo::Sort(CachedDocuments, [](const FTextAssetDataPtr& A, const FTextAssetDataPtr& B) { return strcmp(*A->Path, *B->Path) < 0; });
                 }
                 SearchFilter.Draw("##Search", -1.0f);
 
@@ -133,10 +137,7 @@ namespace Lumina
                 }
                 ImGui::Separator();
 
-                TVector<FTextAssetData*> Documents = FAssetRegistry::Get().GetTextAssetsOfKind(ETextAssetKind::RmlDocument);
-                Algo::Sort(Documents, [](const FTextAssetData* A, const FTextAssetData* B) { return strcmp(*A->Path, *B->Path) < 0; });
-
-                for (const FTextAssetData* Data : Documents)
+                for (const FTextAssetDataPtr& Data : CachedDocuments)
                 {
                     if (!ImGuiX::PassSearchFilter(SearchFilter, *Data->Path))
                     {
@@ -146,7 +147,7 @@ namespace Lumina
                     FStringView ItemName, ItemFolder;
                     SplitDocumentPath(FStringView(*Data->Path, Data->Path.Len()), ItemName, ItemFolder);
 
-                    ImGui::PushID(Data);
+                    ImGui::PushID(Data.Get());
                     const bool bCurrent = FStringView(*Data->Path, Data->Path.Len()) == ResolvedView;
                     const FString Label = FString(LE_ICON_VIEW_DASHBOARD_OUTLINE " ") + FString(ItemName.GetData(), ItemName.Len());
                     if (ImGui::Selectable(*Label, bCurrent))
@@ -160,7 +161,7 @@ namespace Lumina
                     ImGui::PopID();
                 }
 
-                if (Documents.IsEmpty())
+                if (CachedDocuments.IsEmpty())
                 {
                     ImGui::TextDisabled("No .rml documents in the project.");
                 }

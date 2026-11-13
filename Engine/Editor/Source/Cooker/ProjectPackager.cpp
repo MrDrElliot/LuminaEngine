@@ -94,6 +94,12 @@ namespace Lumina
             return Count;
         }
 
+        FStringView WithoutLibraryPrefix(const FPackagePlatformRules& Rules, FStringView FileName)
+        {
+            const bool bPrefixed = !Rules.LibraryPrefix.IsEmpty() && FileName.StartsWith(Rules.LibraryPrefix);
+            return bPrefixed ? FileName.Mid(IntCastChecked<int32>(Rules.LibraryPrefix.Len())) : FileName;
+        }
+
         // The tail every binary of this package ends in, "Development" for a game and "Server-Development" for a server.
         FString BinaryTail(const FString& Config, bool bServer)
         {
@@ -101,10 +107,10 @@ namespace Lumina
         }
 
         // A suffixed binary that does not end in this package's tail belongs to another configuration or target.
-        bool HasOtherConfigSuffix(FStringView Stem, const FString& MyTail)
+        bool HasOtherConfigSuffix(FStringView Stem, FStringView MyTail)
         {
             FString Mine = "-";
-            Mine.Append(MyTail);
+            Mine.Append(MyTail.GetData(), MyTail.Len());
             if (Stem.EndsWith(FStringView(*Mine, Mine.Len())))
             {
                 return false;
@@ -121,10 +127,10 @@ namespace Lumina
         }
 
         // A game binary ends in exactly "-<Config>", while every other target type names itself first.
-        bool HasForeignTargetElement(FStringView Stem, const FString& MyConfig)
+        bool HasForeignTargetElement(FStringView Stem, FStringView MyConfig)
         {
             FString ConfigTail = "-";
-            ConfigTail.Append(MyConfig);
+            ConfigTail.Append(MyConfig.GetData(), MyConfig.Len());
 
             if (!Stem.EndsWith(FStringView(*ConfigTail, ConfigTail.Len())))
             {
@@ -147,17 +153,16 @@ namespace Lumina
             return false;
         }
 
-        // True if SourceDir has a "<Stem>-<Config>.dll" sibling; identifies stale pre-targetsuffix dupes.
-        bool HasSuffixedSibling(FStringView SourceDir, FStringView Stem)
+        // True if SourceDir has a "<Stem>-<Config>" library sibling; identifies stale pre-targetsuffix dupes.
+        bool HasSuffixedSibling(const FPackagePlatformRules& Rules, FStringView SourceDir, FStringView Stem)
         {
             for (const char* Cfg : { "Debug", "Development", "Shipping" })
             {
-                FString Name(Stem.GetData(), Stem.Len());
-                Name.AppendChar('-');
-                Name.Append(Cfg);
-                Name.Append(".dll");
+                FString Suffixed(Stem.GetData(), Stem.Len());
+                Suffixed.AppendChar('-');
+                Suffixed.Append(Cfg);
 
-                if (Filesystem::Exists(Paths::Combine(SourceDir, Name)))
+                if (Filesystem::Exists(Paths::Combine(SourceDir, Rules.LibraryFileName(Suffixed))))
                 {
                     return true;
                 }
@@ -205,29 +210,33 @@ namespace Lumina
 
         // Binaries an earlier package wrote that this one did not, which the game would otherwise carry forever.
         // The reflector's Clang and the editor-only Nsight and BugSplat SDKs never load in a game, and Shipping compiles Aftermath out.
-        bool IsUnusedByGameDll(FStringView FileName, FStringView ConfigSuffix)
+        bool IsUnusedByGameDll(const FPackagePlatformRules& Rules, FStringView FileName, FStringView ConfigSuffix)
         {
-            if (FileName == FStringView("libclang.dll") || FileName == FStringView("nvperf_grfx_host.dll") || FileName.StartsWith("BugSplat"))
+            const FStringView Unprefixed = WithoutLibraryPrefix(Rules, FileName);
+            if (Rules.IsLibrary(FileName) && (VFS::RemoveExtension(FileName) == FStringView("libclang") || VFS::RemoveExtension(Unprefixed) == FStringView("nvperf_grfx_host")))
             {
                 return true;
             }
-            return ConfigSuffix.EndsWith("Shipping") && FileName.StartsWith("GFSDK_Aftermath");
+            if (Unprefixed.StartsWith("BugSplat"))
+            {
+                return true;
+            }
+            return ConfigSuffix.EndsWith("Shipping") && Unprefixed.StartsWith("GFSDK_Aftermath");
         }
 
-        void RemoveStaleBinaries(FStringView DestDir, const THashSet<FString>& WrittenStems, FStringView ConfigSuffix,
+        void RemoveStaleBinaries(const FPackagePlatformRules& Rules, FStringView DestDir, const THashSet<FString>& WrittenStems, FStringView ConfigSuffix,
                                  const TFunction<void(FStringView)>& LogFunc)
         {
             TVector<FString> Stale;
             Filesystem::IterateDirectory(DestDir, [&](const Filesystem::FDirectoryEntry& Entry)
             {
-                const FStringView Ext = Entry.GetExtension();
-                if (Entry.IsDirectory() || (Ext != FStringView(".dll") && Ext != FStringView(".pdb")))
+                if (Entry.IsDirectory() || (!Rules.IsLibrary(Entry.Name) && Entry.GetExtension() != FStringView(".pdb")))
                 {
                     return;
                 }
                 const FStringView Stem = VFS::RemoveExtension(Entry.Name);
                 const bool bUnwritten = !WrittenStems.Contains(FString(Stem.GetData(), Stem.Len()));
-                if (bUnwritten && (!ModuleOfSuffixedBinary(Stem).IsEmpty() || IsUnusedByGameDll(Entry.Name, ConfigSuffix)))
+                if (bUnwritten && (!ModuleOfSuffixedBinary(Rules.ModuleStem(Entry.Name)).IsEmpty() || IsUnusedByGameDll(Rules, Entry.Name, ConfigSuffix)))
                 {
                     Stale.Emplace(Entry.FullPath.GetData(), Entry.FullPath.Len());
                 }
@@ -253,7 +262,8 @@ namespace Lumina
             FString                  PluginsDirectory;
         };
 
-        size_t CopyRuntimePayload(FStringView SourceDir,
+        size_t CopyRuntimePayload(const FPackagePlatformRules& Rules,
+                                  FStringView SourceDir,
                                   FStringView DestDir,
                                   const FString& ConfigSuffix,
                                   FStringView ProjectName,
@@ -266,9 +276,7 @@ namespace Lumina
             size_t Copied = 0;
             size_t Skipped = 0;
 
-            FString MyExeName = "Lumina-";
-            MyExeName.Append(ConfigSuffix);
-            MyExeName.Append(".exe");
+            const FString MyExeName = Rules.ExecutableFileName(*(FString("Lumina-") + ConfigSuffix));
 
             Filesystem::IterateDirectory(SourceDir, [&](const Filesystem::FDirectoryEntry& Entry)
             {
@@ -278,11 +286,10 @@ namespace Lumina
                 }
 
                 const FStringView FileName = Entry.Name;
-                const FStringView Ext      = Entry.GetExtension();
-                const FStringView Stem     = VFS::RemoveExtension(FileName);
+                const FStringView Stem     = Rules.ModuleStem(FileName);
 
-                const bool bExe = Ext == FStringView(".exe");
-                const bool bDll = Ext == FStringView(".dll");
+                const bool bExe = Rules.IsExecutable(FileName);
+                const bool bDll = Rules.IsLibrary(FileName);
 
                 // Skip tools / wrong-config exes.
                 if (bExe && (FileName != FStringView(*MyExeName, MyExeName.Len()) || !Monolithic.bCopyExecutable))
@@ -307,27 +314,7 @@ namespace Lumina
                     return;
                 }
 
-                if (HasOtherConfigSuffix(Stem, ConfigSuffix))
-                {
-                    ++Skipped;
-                    return;
-                }
-
-                // An editor or program build of the same module, which exports a different surface.
-                if (HasForeignTargetElement(Stem, ConfigSuffix))
-                {
-                    ++Skipped;
-                    return;
-                }
-
-                // The editor module under its pre-rename name, which no game build ever produces.
-                if (Stem.StartsWith("Editor-"))
-                {
-                    ++Skipped;
-                    return;
-                }
-
-                if (IsUnusedByGameDll(FileName, FStringView(*ConfigSuffix, ConfigSuffix.Len())))
+                if (Rules.IsSkippedBinary(FileName, FStringView(*ConfigSuffix, ConfigSuffix.Len())))
                 {
                     ++Skipped;
                     return;
@@ -338,7 +325,7 @@ namespace Lumina
                     && Stem.Find("-Debug") == Constants::kIndexNone
                     && Stem.Find("-Development") == Constants::kIndexNone
                     && Stem.Find("-Shipping") == Constants::kIndexNone
-                    && HasSuffixedSibling(SourceDir, Stem))
+                    && HasSuffixedSibling(Rules, SourceDir, Stem))
                 {
                     ++Skipped;
                     return;
@@ -358,8 +345,7 @@ namespace Lumina
                 FString DstName(FileName.GetData(), FileName.Len());
                 if (bExe && !ExecutableName.IsEmpty())
                 {
-                    DstName = FStringView(ExecutableName.GetData(), ExecutableName.Len());
-                    DstName.Append(".exe");
+                    DstName = Rules.ExecutableFileName(ExecutableName);
                 }
 
                 // Only a monolithic exe is free of startup imports, so only there do third-party DLLs leave the exe's folder.
@@ -409,7 +395,7 @@ namespace Lumina
         }
 
         // The runtime, managed code and third-party DLLs are restaged into the data folder, so earlier copies would only shadow them.
-        void RemoveOldPayload(FStringView OutDir, FStringView DataDir, const TFunction<void(FStringView)>& LogFunc)
+        void RemoveOldPayload(const FPackagePlatformRules& Rules, FStringView OutDir, FStringView DataDir, const TFunction<void(FStringView)>& LogFunc)
         {
             const FStringView OldDirectories[] = { "DotNet", "External" };
             for (const FStringView Directory : OldDirectories)
@@ -432,9 +418,9 @@ namespace Lumina
             }
 
             TVector<FString> ThirdParty;
-            Filesystem::IterateDirectory(OutDir, [&ThirdParty](const Filesystem::FDirectoryEntry& Entry)
+            Filesystem::IterateDirectory(OutDir, [&ThirdParty, &Rules](const Filesystem::FDirectoryEntry& Entry)
             {
-                if (!Entry.IsDirectory() && Entry.GetExtension() == FStringView(".dll") && ModuleOfSuffixedBinary(VFS::RemoveExtension(Entry.Name)).IsEmpty())
+                if (!Entry.IsDirectory() && Rules.IsLibrary(Entry.Name) && ModuleOfSuffixedBinary(Rules.ModuleStem(Entry.Name)).IsEmpty())
                 {
                     ThirdParty.Emplace(Entry.FullPath.GetData(), Entry.FullPath.Len());
                 }
@@ -454,7 +440,8 @@ namespace Lumina
         }
 
         // Mirrors the data-folder layout DotNetHost::Initialize and DotNet::LoadCookedScripts probe.
-        void CopyDotNetPayload(FStringView EngineInstallDir,
+        void CopyDotNetPayload(const FPackagePlatformRules& Rules,
+                               FStringView EngineInstallDir,
                                FStringView BinariesDir,
                                FStringView DataDir,
                                bool bStageSymbols,
@@ -482,12 +469,17 @@ namespace Lumina
                 LogPackager(LogFunc, *Format("DotNet: [warn] managed bootstrap not found at {}; C# disabled in package.", *ManagedSrc));
             }
 
-            // 2. Bundled .NET runtime (whole tree so whatever <rid> the host resolves is present).
-            const FFixedString RuntimeSrc = Paths::Combine(EngineInstallDir, "External/DotNet/runtime");
+            // 2. The bundled .NET runtime for the target platform, which the host resolves as Runtime/<rid>.
+            FFixedString RuntimeSrc = Paths::Combine(EngineInstallDir, "External/DotNet/runtime", Rules.DotNetRuntimeRid);
+            if (!Filesystem::Exists(RuntimeSrc))
+            {
+                // A Linux build in WSL brings its runtime back beside the binaries, since External may be another checkout's.
+                RuntimeSrc = Paths::Combine(BinariesDir, "DotNet/runtime", Rules.DotNetRuntimeRid);
+            }
             if (Filesystem::Exists(RuntimeSrc))
             {
                 LogPackager(LogFunc, "DotNet: copying bundled .NET runtime (this can take a moment)...");
-                const size_t N = CopyDirectoryRecursive(RuntimeSrc, Paths::Combine(DataDir, "Runtime"));
+                const size_t N = CopyDirectoryRecursive(RuntimeSrc, Paths::Combine(DataDir, "Runtime", Rules.DotNetRuntimeRid));
                 LogPackager(LogFunc, *Format("DotNet: staged .NET runtime ({} file(s)).", N));
             }
             else
@@ -579,7 +571,8 @@ namespace Lumina
         const FPackageBuildOptions& Options,
         FStringView ProjectName,
         FStringView PakPath,
-        const TFunction<void(FStringView)>& LogFunc)
+        const TFunction<void(FStringView)>& LogFunc,
+        const FThreadStop* Stop)
     {
         FPackageBuildResult Result;
         Result.OutputDirectory = Options.OutputDirectory;
@@ -594,10 +587,13 @@ namespace Lumina
 
         const FString Tail = BinaryTail(Config, Options.bServer);
         const FString PackageName = GetPackageName(ProjectName, Options.bServer);
+        const FPackagePlatformRules Rules = FPackagePlatformRules::For(Options.Platform);
 
         FString Args = FString(ProjectName.GetData(), ProjectName.Len());
         Args += Options.bServer ? " -TargetType=Server" : " -TargetType=Game";
         Args += " -Configuration=" + Config;
+        Args += " -Platform=";
+        Args.Append(Rules.Name.GetData(), Rules.Name.Len());
 
         if (!ProjectDir.IsEmpty())
         {
@@ -618,7 +614,8 @@ namespace Lumina
                     Prefixed.Append(Line.GetData(), Line.Len());
                     LogPackager(LogFunc, Prefixed);
                 }
-            });
+            },
+            0, Stop);
 
         if (ExitCode != 0)
         {
@@ -627,14 +624,14 @@ namespace Lumina
             return Result;
         }
 
-        const FFixedString BinariesDir = Paths::Combine(Paths::GetEngineInstallDirectory(), "Binaries/Windows64");
+        const FFixedString BinariesDir = Rules.BinariesDirectory(Paths::GetEngineInstallDirectory());
         const FString& DestDir    = Options.OutputDirectory;
 
         LogPackager(LogFunc, *Format("Copying {} binaries from {}",
             *Config, *BinariesDir));
 
         const THashSet<FString> EngineModules = CollectEngineModuleNames(Paths::GetEngineInstallDirectory());
-        const FFixedString ProjectBinaries = ProjectDir.IsEmpty() ? FFixedString() : Paths::Combine(ProjectDir, "Binaries/Windows64");
+        const FFixedString ProjectBinaries = ProjectDir.IsEmpty() ? FFixedString() : Rules.BinariesDirectory(FStringView(*ProjectDir, ProjectDir.Len()));
 
         // Shipping links the game into the engine application, which the build leaves in the project's Binaries.
         FMonolithicCopy Monolithic;
@@ -645,15 +642,18 @@ namespace Lumina
         EngineCopy.bCopyExecutable = !Monolithic.bEnabled;
 
         const FString DataDir = GetDataDirectory(FStringView(*DestDir, DestDir.Len()), FStringView(*PackageName, PackageName.Len()));
-        Monolithic.PluginsDirectory = FString(*Paths::Combine(DataDir, "Plugins"));
-        EngineCopy.PluginsDirectory = Monolithic.PluginsDirectory;
+        if (Rules.bThirdPartyToDataPlugins)
+        {
+            Monolithic.PluginsDirectory = FString(*Paths::Combine(DataDir, "Plugins"));
+            EngineCopy.PluginsDirectory = Monolithic.PluginsDirectory;
+        }
 
         // Staged fresh each build, and an older package kept its DLLs, runtime and managed code beside the exe.
-        RemoveOldPayload(DestDir, DataDir, LogFunc);
+        RemoveOldPayload(Rules, DestDir, DataDir, LogFunc);
 
         THashSet<FString> WrittenStems;
         const FStringView ExecutableName(*PackageName, PackageName.Len());
-        size_t Copied = CopyRuntimePayload(BinariesDir, DestDir, Tail, ProjectName, ExecutableName, &EngineModules, WrittenStems, LogFunc, EngineCopy);
+        size_t Copied = CopyRuntimePayload(Rules, BinariesDir, DestDir, Tail, ProjectName, ExecutableName, &EngineModules, WrittenStems, LogFunc, EngineCopy);
 
         // Project modules link into the project tree, while engine binaries stay shared where they are.
         if (!ProjectBinaries.IsEmpty() && Filesystem::Exists(ProjectBinaries))
@@ -661,7 +661,7 @@ namespace Lumina
             LogPackager(LogFunc, *Format("Copying project binaries from {}",
                 *ProjectBinaries));
 
-            Copied += CopyRuntimePayload(ProjectBinaries, DestDir, Tail, ProjectName, ExecutableName, nullptr, WrittenStems, LogFunc, Monolithic);
+            Copied += CopyRuntimePayload(Rules, ProjectBinaries, DestDir, Tail, ProjectName, ExecutableName, nullptr, WrittenStems, LogFunc, Monolithic);
         }
 
         if (Copied == 0)
@@ -670,13 +670,74 @@ namespace Lumina
             return Result;
         }
         LogPackager(LogFunc, *Format("Copied {} runtime files.", Copied));
-        RemoveStaleBinaries(DestDir, WrittenStems, FStringView(*Tail, Tail.Len()), LogFunc);
+        RemoveStaleBinaries(Rules, DestDir, WrittenStems, FStringView(*Tail, Tail.Len()), LogFunc);
 
         // Lets the cooked game boot CoreCLR and load its scripts without the editor or dev tree.
-        CopyDotNetPayload(Paths::GetEngineInstallDirectory(), BinariesDir, DataDir, !(Config == "Shipping"), LogFunc);
+        CopyDotNetPayload(Rules, Paths::GetEngineInstallDirectory(), BinariesDir, DataDir, !(Config == "Shipping"), LogFunc);
 
         Result.bSuccess = true;
         return Result;
+    }
+
+    FPackagePlatformRules FPackagePlatformRules::For(EPackagePlatform Platform)
+    {
+        if (Platform == EPackagePlatform::Linux64)
+        {
+            return { "Linux64", "", "lib", ".so", "linux-x64", false };
+        }
+        return { "Windows64", ".exe", "", ".dll", "win-x64", true };
+    }
+
+    FFixedString FPackagePlatformRules::BinariesDirectory(FStringView Root) const
+    {
+        return Paths::Combine(Root, "Binaries", Name);
+    }
+
+    FString FPackagePlatformRules::ExecutableFileName(FStringView Stem) const
+    {
+        FString FileName(Stem.GetData(), Stem.Len());
+        FileName.Append(ExecutableExtension.GetData(), ExecutableExtension.Len());
+        return FileName;
+    }
+
+    FString FPackagePlatformRules::LibraryFileName(FStringView Stem) const
+    {
+        FString FileName(LibraryPrefix.GetData(), LibraryPrefix.Len());
+        FileName.Append(Stem.GetData(), Stem.Len());
+        FileName.Append(LibraryExtension.GetData(), LibraryExtension.Len());
+        return FileName;
+    }
+
+    bool FPackagePlatformRules::IsExecutable(FStringView FileName) const
+    {
+        return EqualsIgnoreCase(VFS::Extension(FileName), ExecutableExtension);
+    }
+
+    bool FPackagePlatformRules::IsLibrary(FStringView FileName) const
+    {
+        if (EqualsIgnoreCase(VFS::Extension(FileName), LibraryExtension))
+        {
+            return true;
+        }
+
+        // A versioned soname such as libslang-rt.so.0.2026.3.1 keeps its version after the extension.
+        FString Versioned(LibraryExtension.GetData(), LibraryExtension.Len());
+        Versioned.AppendChar('.');
+        return FileName.Find(*Versioned) != Constants::kIndexNone;
+    }
+
+    FStringView FPackagePlatformRules::ModuleStem(FStringView FileName) const
+    {
+        return VFS::RemoveExtension(WithoutLibraryPrefix(*this, FileName));
+    }
+
+    bool FPackagePlatformRules::IsSkippedBinary(FStringView FileName, FStringView BinaryTail) const
+    {
+        const FStringView Stem = ModuleStem(FileName);
+
+        // An editor or program build of the same module exports a different surface, and no game build names a module Editor.
+        return HasOtherConfigSuffix(Stem, BinaryTail) || HasForeignTargetElement(Stem, BinaryTail) || Stem.StartsWith("Editor-")
+            || IsUnusedByGameDll(*this, FileName, BinaryTail);
     }
 
     FString FProjectPackager::GetPackageName(FStringView ProjectName, bool bServer)
@@ -716,19 +777,19 @@ namespace Lumina
     {
         FPackageBuildResult Result;
 
-        if (GEngine == nullptr || GEngine->GetProjectName().IsEmpty())
+        if (Global::GEngine == nullptr || Global::GEngine->GetProjectName().IsEmpty())
         {
             Result.ErrorMessage = "No project loaded.";
             return Result;
         }
 
-        const FString ProjectName(GEngine->GetProjectName().GetData(), GEngine->GetProjectName().Len());
+        const FString ProjectName(Global::GEngine->GetProjectName().GetData(), Global::GEngine->GetProjectName().Len());
         const FString PackageName = GetPackageName(FStringView(*ProjectName, ProjectName.Len()), Options.bServer);
 
         FString OutDir = Options.OutputDirectory;
         if (OutDir.IsEmpty())
         {
-            OutDir = FString(GEngine->GetProjectPath().GetData(), GEngine->GetProjectPath().Len()) + "/Build/" + PackageName;
+            OutDir = FString(Global::GEngine->GetProjectPath().GetData(), Global::GEngine->GetProjectPath().Len()) + "/Build/" + PackageName;
         }
 
         if (!Filesystem::MakeDirectoryTree(OutDir))
@@ -775,7 +836,7 @@ namespace Lumina
             if (LocalOpts.ProjectDirectory.IsEmpty())
             {
                 LocalOpts.ProjectDirectory =
-                    FString(GEngine->GetProjectPath().GetData(), GEngine->GetProjectPath().Len());
+                    FString(Global::GEngine->GetProjectPath().GetData(), Global::GEngine->GetProjectPath().Len());
             }
             const FPackageBuildResult Sub = BuildAndCopyOnly(LocalOpts, ProjectName, PakPath, LogFunc);
             if (!Sub.bSuccess)

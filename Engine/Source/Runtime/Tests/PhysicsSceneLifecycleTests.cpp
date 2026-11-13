@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
+#include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Core/Object/ObjectCore.h"
+#include "Log/Log.h"
+#include "LogCountTestHelpers.h"
 #include "Physics/API/Box3D/Box3DPhysicsScene.h"
 #include "Physics/API/Box3D/Box3DRagdollHandle.h"
 #include "Physics/API/Box3D/Box3DCharacterHandle.h"
@@ -9,6 +12,7 @@
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Events/CollisionEvent.h"
+#include "World/Scene/RenderScene/SceneMeshes.h"
 #include "World/Subsystems/WorldSettings.h"
 
 using namespace Lumina;
@@ -45,6 +49,21 @@ namespace
             Body.LinearDamping = 0.0f;
             Body.AngularDamping = 0.0f;
             if (bCollider) { Registry->Emplace<SSphereColliderComponent>(Entity).Radius = 0.5f; }
+            return Entity;
+        }
+
+        ECS::FEntity SpawnCompound(float HalfSpan = 0.3f)
+        {
+            const ECS::FEntity Entity = Spawn(0.0f, false);
+            SCompoundColliderComponent& Compound = Registry->Emplace<SCompoundColliderComponent>(Entity);
+            SCompoundSubShape& Left = Compound.Shapes.AddDefaultedGetRef();
+            Left.Type = ECompoundShapeType::Sphere;
+            Left.Offset = FVector3(-HalfSpan, 0.0f, 0.0f);
+            Left.Radius = 0.3f;
+            SCompoundSubShape& Right = Compound.Shapes.AddDefaultedGetRef();
+            Right.Type = ECompoundShapeType::Sphere;
+            Right.Offset = FVector3(HalfSpan, 0.0f, 0.0f);
+            Right.Radius = 0.3f;
             return Entity;
         }
 
@@ -174,6 +193,111 @@ TEST_F(PhysicsSceneLifecycle, EntityFiltersNeedNoBodyLookup)
     Scene->Update(0.0);
     EXPECT_TRUE(Scene->CastRay(Ray()).IsSet());
     EXPECT_FALSE(Scene->CastRay(Query).IsSet());
+}
+
+namespace
+{
+    TUniquePtr<FMeshResource> MakeCubeResource(float Scale)
+    {
+        TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
+        TVector<FSourceVertex> Vertices;
+        PrimitiveMeshes::GenerateCube(Vertices, Resource->Indices);
+        Resource->ReserveVertices(Vertices.Num());
+        for (FSourceVertex& Vertex : Vertices)
+        {
+            Vertex.Position *= Scale;
+            Resource->AppendVertex(Vertex);
+        }
+
+        FGeometrySurface Surface;
+        Surface.IndexCount = static_cast<uint32>(Resource->Indices.Num());
+        Resource->GeometrySurfaces.Add(Surface);
+        return Resource;
+    }
+}
+
+// A reimport swaps geometry inside the same mesh object, so the cached hull and triangle mesh must not outlive it.
+TEST_F(PhysicsSceneLifecycle, MeshCollidersFollowReimportedGeometry)
+{
+    for (bool bConvex : { true, false })
+    {
+        CStaticMesh* Mesh = NewObject<CStaticMesh>();
+        Mesh->SetMeshResource(MakeCubeResource(1.0f));
+
+        const ECS::FEntity Entity = Registry->Create();
+        Registry->Emplace<STransformComponent>(Entity);
+        Registry->Emplace<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
+        SMeshColliderComponent& Collider = Registry->Emplace<SMeshColliderComponent>(Entity);
+        Collider.Mesh = Mesh;
+        Collider.bConvex = bConvex;
+
+        Scene->Update(Dt);
+        const auto Before = Scene->CastRay(Ray(0.1f));
+        ASSERT_TRUE(Before.IsSet());
+        EXPECT_NEAR(Before->Location.z, -0.5f, 0.05f);
+
+        Mesh->SetMeshResource(MakeCubeResource(4.0f));
+        Scene->Update(Dt);
+        const auto After = Scene->CastRay(Ray(0.1f));
+        ASSERT_TRUE(After.IsSet());
+        EXPECT_NEAR(After->Location.z, -2.0f, 0.05f);
+
+        Registry->Destroy(Entity);
+        Scene->Update(Dt);
+    }
+}
+
+TEST_F(PhysicsSceneLifecycle, BodiesPastTheCapWarnOnceAndLeaveExistingBodiesAlone)
+{
+    Scene->StopSimulate();
+    // The settings are shared by every world, and the scene reads the cap only while it is constructed.
+    uint32& Cap = World->GetDefaultWorldSettings().MaxPhysicsBodies;
+    const uint32 SavedCap = Cap;
+    Cap = 3;
+    Scene = MakeUnique<Physics::FBox3DPhysicsScene>(World);
+    Cap = SavedCap;
+    Scene->Simulate();
+
+    const ECS::FEntity First = Spawn(0.0f);
+    Spawn(3.0f);
+    Scene->Update(0.0);
+    ASSERT_EQ(Scene->GetBodyCount(), 2u);
+
+    Logging::ClearLogQueue();
+    CStaticMesh* Mesh = NewObject<CStaticMesh>();
+    Mesh->SetMeshResource(MakeCubeResource(1.0f));
+    const ECS::FEntity Owner = Registry->Create();
+    Physics::FStaticInstanceDesc Instances[3];
+    for (int32 Index = 0; Index < 3; ++Index)
+    {
+        Instances[Index].Position = FVector3(10.0f + 2.0f * (float)Index, 0.0f, 0.0f);
+        Instances[Index].Mesh = Mesh;
+    }
+    ASSERT_NE(Scene->CreateStaticBodyGroup(Owner, Instances), 0u);
+    Scene->Update(0.0);
+
+    const ECS::FEntity Refused = Spawn(6.0f);
+    Scene->Update(0.0);
+    Logging::Flush();
+
+    int32 Warnings = 0;
+    Logging::FLogQueue& Log = Logging::GetConsoleLogQueue();
+    for (int32 Index = 0; Index < Log.Num(); ++Index)
+    {
+        Warnings += Log[Index].Message.Contains("MaxPhysicsBodies") && Log[Index].Message.Contains(" 3 ");
+    }
+    EXPECT_EQ(Warnings, 1) << "the cap warns once per scene, naming its value";
+
+    EXPECT_EQ(Scene->GetBodyCount(), 3u);
+    EXPECT_EQ(Scene->GetBodyStatus(Refused), Physics::EPhysicsBodyStatus::Failed);
+    const auto GroupHit = Scene->CastRay(Ray(10.0f));
+    ASSERT_TRUE(GroupHit.IsSet()) << "the instance built before the cap still collides";
+    EXPECT_EQ(GroupHit->Entity, Owner.Value);
+    EXPECT_FALSE(Scene->CastRay(Ray(12.0f)).IsSet());
+
+    Scene->SetLinearVelocity(First, FVector3(2.0f, 0.0f, 0.0f));
+    Scene->Update(Dt);
+    EXPECT_NEAR(Scene->GetLinearVelocity(First).x, 2.0f, 0.001f);
 }
 
 TEST_F(PhysicsSceneLifecycle, ForceIsConsumedByOneFixedStep)
@@ -337,6 +461,56 @@ TEST_F(PhysicsSceneLifecycle, ShapeSweepsReachPastTheRayLine)
     }
 }
 
+TEST_F(PhysicsSceneLifecycle, RaysAndSweepsPassThroughTriggers)
+{
+    const ECS::FEntity Solid = Spawn();
+    const ECS::FEntity Trigger = Registry->Create();
+    Registry->Emplace<STransformComponent>(Trigger).SetLocation(FVector3(0.0f, 0.0f, -2.0f));
+    Registry->Emplace<SRigidBodyComponent>(Trigger).BodyType = EBodyType::Static;
+    SSphereColliderComponent& Sphere = Registry->Emplace<SSphereColliderComponent>(Trigger);
+    Sphere.Radius = 0.5f;
+    Sphere.bIsTrigger = true;
+    Scene->Update(0.0);
+
+    const ECS::FEntity Unrelated = Registry->Create();
+    for (const bool bWithIgnoreList : { false, true })
+    {
+        SRayCastSettings Query = Ray();
+        if (bWithIgnoreList)
+        {
+            Query.IgnoreEntities.Add(Unrelated);
+        }
+
+        const TOptional<SRayResult> Hit = Scene->CastRay(Query);
+        ASSERT_TRUE(Hit.IsSet()) << "ignore list " << bWithIgnoreList;
+        EXPECT_EQ(Hit->Entity, Solid.Value);
+        EXPECT_NEAR(Hit->Location.z, -0.5f, 0.05f);
+        EXPECT_TRUE(Scene->CastRayAny(Query));
+
+        TVector<SRayResult> All;
+        Scene->CastRayAll(Query, All);
+        ASSERT_EQ(All.Num(), 1);
+        EXPECT_EQ(All[0].Entity, Solid.Value);
+    }
+
+    SRayCastSettings OnlyTrigger = Ray();
+    OnlyTrigger.IgnoreEntities.Add(Solid);
+    EXPECT_FALSE(Scene->CastRayAny(OnlyTrigger)) << "the trigger alone never blocks";
+    EXPECT_FALSE(Scene->CastRay(OnlyTrigger).IsSet());
+
+    const FVector3 Start(0.0f, 0.0f, -3.0f);
+    const FVector3 End(0.0f, 0.0f, 3.0f);
+    const SQueryShape Probe = SQueryShape::Sphere(0.2f);
+    const TOptional<SRayResult> Swept = Scene->CastShapeClosest(Probe, Start, End, ECollisionProfiles::All, {});
+    ASSERT_TRUE(Swept.IsSet());
+    EXPECT_EQ(Swept->Entity, Solid.Value);
+
+    TVector<SRayResult> SweptAll;
+    Scene->CastShapeAll(Probe, Start, End, ECollisionProfiles::All, {}, SweptAll);
+    ASSERT_EQ(SweptAll.Num(), 1);
+    EXPECT_EQ(SweptAll[0].Entity, Solid.Value);
+}
+
 TEST_F(PhysicsSceneLifecycle, AnyHitAndSingleEntityRays)
 {
     const ECS::FEntity Near = Spawn(0.0f);
@@ -375,6 +549,79 @@ TEST_F(PhysicsSceneLifecycle, OverlapsFollowShapeRotationAndLayerMask)
 
     EXPECT_EQ(Scene->OverlapShape(SQueryShape::Sphere(1.0f), FVector3(0.0f), (ECollisionProfiles)0, {}, Found), 0)
         << "an empty layer mask matches nothing";
+}
+
+TEST_F(PhysicsSceneLifecycle, OverlapReturnsACompoundBodyOnlyOnce)
+{
+    const ECS::FEntity Entity = SpawnCompound();
+    Scene->Update(0.0);
+
+    ECS::FEntity Found[4];
+    EXPECT_EQ(Scene->OverlapSphere(FVector3(0.0f), 1.0f, {}, Found), 1)
+        << "a compound body's shapes must collapse to one entity";
+    EXPECT_EQ(Found[0], Entity);
+
+    EXPECT_EQ(Scene->OverlapBox(FVector3(0.0f), FVector3(1.0f), FQuat::Identity(), {}, Found), 1);
+    EXPECT_EQ(Found[0], Entity);
+
+    EXPECT_EQ(Scene->OverlapShape(SQueryShape::Sphere(1.0f), FVector3(0.0f), ECollisionProfiles::All, {}, Found), 1);
+    EXPECT_EQ(Found[0], Entity);
+}
+
+TEST_F(PhysicsSceneLifecycle, CompoundCylinderSubShapeBuildsACylinderHullNotABoxHull)
+{
+    const ECS::FEntity Entity = Registry->Create();
+    STransformComponent& Transform = Registry->Emplace<STransformComponent>(Entity);
+
+    SCompoundColliderComponent Compound;
+    SCompoundSubShape& Child = Compound.Shapes.AddDefaultedGetRef();
+    Child.Type = ECompoundShapeType::Cylinder;
+    Child.Radius = 0.4f;
+    Child.HalfHeight = 0.6f;
+
+    TVector<Physics::FPendingShape> Shapes;
+    ASSERT_TRUE(Scene->BuildCompoundShapes(Compound, Transform, Shapes));
+    ASSERT_EQ(Shapes.Num(), 1);
+
+    EXPECT_EQ(Shapes[0].Hull, Scene->GetOrCreateCylinderHull(Child.Radius, Child.HalfHeight))
+        << "a Cylinder sub-shape must resolve to the cylinder hull cache entry";
+    EXPECT_NE(Shapes[0].Hull, Scene->GetOrCreateBoxHull(Child.HalfExtent))
+        << "a Cylinder sub-shape must not fall through to the box hull used for the default case";
+}
+
+TEST_F(PhysicsSceneLifecycle, OverlapReturnsACompoundBodyOnceWhenManyBodiesSitBetweenItsShapes)
+{
+    constexpr int32 ClusterCount = 10;
+    for (int32 i = 0; i < ClusterCount; ++i)
+    {
+        Spawn(-49.0f + static_cast<float>(i));
+        Spawn(49.0f - static_cast<float>(i));
+    }
+    SpawnCompound(50.0f);
+    Scene->Update(0.0);
+
+    ECS::FEntity Found[32];
+    const int32 Count = Scene->OverlapBox(FVector3(0.0f), FVector3(60.0f, 1.0f, 1.0f), FQuat::Identity(), {}, Found);
+    EXPECT_EQ(Count, ClusterCount * 2 + 1) << "the compound's far shapes must not be reported twice";
+}
+
+TEST_F(PhysicsSceneLifecycle, OverlapFillsTheBufferWithoutDuplicatesWhenMoreEntitiesOverlapThanFit)
+{
+    TVector<ECS::FEntity> Entities;
+    for (int32 i = 0; i < 5; ++i)
+    {
+        Entities.Add(SpawnCompound());
+    }
+    Scene->Update(0.0);
+
+    ECS::FEntity Found[2];
+    const int32 Count = Scene->OverlapSphere(FVector3(0.0f), 1.0f, {}, Found);
+    EXPECT_EQ(Count, 2) << "the buffer should be filled exactly, not short-circuited by a false duplicate";
+    EXPECT_NE(Found[0], Found[1]);
+    for (ECS::FEntity Result : Found)
+    {
+        EXPECT_TRUE(Algo::Contains(Entities, Result));
+    }
 }
 
 TEST_F(PhysicsSceneLifecycle, ClosestPointAndBoundsMeasureTheColliders)
@@ -559,6 +806,131 @@ TEST_F(PhysicsSceneLifecycle, ACharacterStandingInATriggerStaysOverlapped)
     }
 }
 
+TEST_F(PhysicsSceneLifecycle, TriggerOverlapReportsAPointOnTheVisitorAndAUnitNormal)
+{
+    SpawnFloor();
+
+    const ECS::FEntity Character = Registry->Create();
+    Registry->Emplace<STransformComponent>(Character).SetLocation(FVector3(0.0f, 0.0f, 0.0f));
+    Registry->Emplace<SCharacterPhysicsComponent>(Character);
+    Registry->Emplace<SCharacterMovementComponent>(Character);
+
+    ECS::TEventReader<SCollisionEvent> Reader;
+    TVector<SCollisionEvent> Begins;
+    auto Step = [&](int32 Steps)
+    {
+        for (int32 Index = 0; Index < Steps; ++Index)
+        {
+            Scene->Update(Dt);
+            Scene->DispatchPendingEvents();
+            World->FlushCommands();
+            for (const SCollisionEvent& Event : ECS::ReadEvents(World->GetEvents(), Reader))
+            {
+                if (Event.Kind == ECollisionEventKind::OverlapBegin)
+                {
+                    Begins.Add(Event);
+                }
+            }
+            World->GetEvents().Advance();
+        }
+    };
+    Step(60);
+
+    const FPhysicsCharacterHandle& Handle = *Registry->Get<SCharacterPhysicsComponent>(Character).Character;
+    const FVector3 Standing = Handle.Position;
+    const FVector3 TriggerCenter = Standing + FVector3(1.0f, 0.0f, 0.0f);
+    const ECS::FEntity Trigger = Registry->Create();
+    Registry->Emplace<STransformComponent>(Trigger).SetLocation(TriggerCenter);
+    Registry->Emplace<SRigidBodyComponent>(Trigger).BodyType = EBodyType::Static;
+    constexpr float TriggerRadius = 1.0f;
+    SSphereColliderComponent& Sphere = Registry->Emplace<SSphereColliderComponent>(Trigger);
+    Sphere.Radius = TriggerRadius;
+    Sphere.bIsTrigger = true;
+
+    Step(2);
+    ASSERT_EQ(Begins.Num(), 2) << "one overlap begin for each side";
+    for (const SCollisionEvent& Event : Begins)
+    {
+        const float TowardOtherX = Event.Entity == Trigger ? -1.0f : 1.0f;
+        EXPECT_NEAR(Math::Length(Event.Normal), 1.0f, 0.001f);
+        EXPECT_GT(Event.Normal.x * TowardOtherX, 0.9f) << "the normal points from self toward the other body";
+        EXPECT_NEAR(Event.Point.x, Standing.x + Handle.Radius, 0.05f) << "the point is the capsule surface nearest the trigger";
+        EXPECT_NEAR(Event.Point.z, Standing.z, 0.05f);
+        EXPECT_LE(Math::Length(Event.Point - TriggerCenter), TriggerRadius) << "the point lies inside the trigger";
+    }
+}
+
+TEST_F(PhysicsSceneLifecycle, ADynamicRigidBodyMovingIntoATriggerDeliversOverlapToBoth)
+{
+    const ECS::FEntity Body = Spawn(-3.0f);
+    Scene->SetLinearVelocity(Body, FVector3(1.0f, 0.0f, 0.0f));
+
+    const ECS::FEntity Trigger = Registry->Create();
+    Registry->Emplace<STransformComponent>(Trigger).SetLocation(FVector3(0.0f, 0.0f, 0.0f));
+    Registry->Emplace<SRigidBodyComponent>(Trigger).BodyType = EBodyType::Static;
+    SSphereColliderComponent& Sphere = Registry->Emplace<SSphereColliderComponent>(Trigger);
+    Sphere.Radius = 1.0f;
+    Sphere.bIsTrigger = true;
+
+    ECS::TEventReader<SCollisionEvent> Reader;
+    bool bBodyOverlapped = false;
+    bool bTriggerOverlapped = false;
+    for (int32 Index = 0; Index < 240; ++Index)
+    {
+        Scene->Update(Dt);
+        Scene->DispatchPendingEvents();
+        World->FlushCommands();
+        for (const SCollisionEvent& Event : ECS::ReadEvents(World->GetEvents(), Reader))
+        {
+            if (Event.Kind == ECollisionEventKind::OverlapBegin)
+            {
+                bBodyOverlapped |= Event.Entity == Body;
+                bTriggerOverlapped |= Event.Entity == Trigger;
+            }
+        }
+        World->GetEvents().Advance();
+    }
+
+    EXPECT_TRUE(bBodyOverlapped) << "the moving rigid body receives its own overlap begin";
+    EXPECT_TRUE(bTriggerOverlapped) << "the trigger receives an overlap begin for the visiting body";
+}
+
+TEST_F(PhysicsSceneLifecycle, SwitchingAStaticBodyToDynamicLetsItTriggerAfterward)
+{
+    const ECS::FEntity Body = Spawn(-3.0f);
+    Registry->Get<SRigidBodyComponent>(Body).BodyType = EBodyType::Static;
+
+    const ECS::FEntity Trigger = Registry->Create();
+    Registry->Emplace<STransformComponent>(Trigger).SetLocation(FVector3(0.0f, 0.0f, 0.0f));
+    Registry->Emplace<SRigidBodyComponent>(Trigger).BodyType = EBodyType::Static;
+    SSphereColliderComponent& Sphere = Registry->Emplace<SSphereColliderComponent>(Trigger);
+    Sphere.Radius = 1.0f;
+    Sphere.bIsTrigger = true;
+
+    Scene->Update(Dt);
+    Scene->DispatchPendingEvents();
+    World->FlushCommands();
+
+    Scene->ChangeBodyMotionType(Body, EBodyType::Dynamic);
+    Scene->SetLinearVelocity(Body, FVector3(1.0f, 0.0f, 0.0f));
+
+    ECS::TEventReader<SCollisionEvent> Reader;
+    bool bBodyOverlapped = false;
+    for (int32 Index = 0; Index < 240; ++Index)
+    {
+        Scene->Update(Dt);
+        Scene->DispatchPendingEvents();
+        World->FlushCommands();
+        for (const SCollisionEvent& Event : ECS::ReadEvents(World->GetEvents(), Reader))
+        {
+            bBodyOverlapped |= Event.Kind == ECollisionEventKind::OverlapBegin && Event.Entity == Body;
+        }
+        World->GetEvents().Advance();
+    }
+
+    EXPECT_TRUE(bBodyOverlapped) << "a body made dynamic after being static still triggers once it moves into a trigger";
+}
+
 namespace
 {
     // The lowest point of the character's capsule, which crouching and standing must leave where it is.
@@ -674,4 +1046,44 @@ TEST_F(PhysicsSceneLifecycle, ARebuiltBodyKeepsItsVelocity)
     Scene->Update(Dt);
 
     EXPECT_NEAR(Scene->GetLinearVelocity(Ball).x, 3.0f, 0.05f);
+}
+
+// A dense pile of small colliders surrounding the capsule pushes the mover's gathered plane count past its fixed cap.
+TEST_F(PhysicsSceneLifecycle, CharacterSurroundedByManySmallCollidersWarnsOnceAboutDroppedPlanes)
+{
+    SpawnFloor();
+
+    const ECS::FEntity Character = Registry->Create();
+    SCharacterPhysicsComponent& Physics = Registry->Emplace<SCharacterPhysicsComponent>(Character);
+    Registry->Emplace<SCharacterMovementComponent>(Character);
+    const FVector3 Center(0.0f, Physics.Radius + Physics.HalfHeight, 0.0f);
+    Registry->Emplace<STransformComponent>(Character).SetLocation(Center);
+
+    // The character is not resting yet, so the very first step actually queries the world instead of taking the sleep shortcut.
+    constexpr int32 Rings = 10;
+    constexpr int32 PerRing = 8;
+    for (int32 Ring = 0; Ring < Rings; ++Ring)
+    {
+        const float Y = Center.y - Physics.HalfHeight + 2.0f * Physics.HalfHeight * (float)Ring / (float)(Rings - 1);
+        for (int32 Index = 0; Index < PerRing; ++Index)
+        {
+            const float Angle = Math::TwoPi<float>() * (float)Index / (float)PerRing;
+            const ECS::FEntity Pebble = Registry->Create();
+            Registry->Emplace<STransformComponent>(Pebble).SetLocation(FVector3(Center.x + Math::Cos(Angle) * 0.3f, Y, Center.z + Math::Sin(Angle) * 0.3f));
+            Registry->Emplace<SRigidBodyComponent>(Pebble).BodyType = EBodyType::Static;
+            Registry->Emplace<SSphereColliderComponent>(Pebble).Radius = 0.1f;
+        }
+    }
+
+    Logging::Flush();
+    Logging::ClearLogQueue();
+    for (int32 Index = 0; Index < 3; ++Index)
+    {
+        Scene->Update(Dt);
+        World->FlushCommands();
+        World->GetEvents().Advance();
+    }
+
+    const FString EntityTag = Lumina::Format("entity {} gathered", Character.Value);
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Warn, "collision planes in one mover step", EntityTag.View()), 1) << "the mover's plane cap warns once, naming the character entity";
 }

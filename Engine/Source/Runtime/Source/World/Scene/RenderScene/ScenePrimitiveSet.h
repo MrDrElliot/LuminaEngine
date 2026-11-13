@@ -454,8 +454,12 @@ namespace Lumina
             bool                                bHadCustomDepth = false;
             bool                                bContentChanged = false;
             bool                                bPresent = false;
+            bool                                bAwaitingUpload = false;
         };
         TVector<FPrimitiveSyncWork>         PrimitiveSyncWork;
+
+        // Dynamic meshes still drawing their previous data because the published data's upload has not landed; re-marked every poll.
+        TVector<ECS::FEntity>               DynamicMeshesAwaitingUpload;
         TVector<FRenderDirtyTracker::FEntry> PrimitiveSyncScratch;
         TVector<FRenderDirtyTracker::FEntry> PrimitiveMoveScratch;
 
@@ -787,6 +791,7 @@ namespace Lumina
         void    ClearScene();
         void    PollUnhookedSources(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker);
         void    PollSkeletalBoneRanges(ECS::FRegistry& Registry, FRenderDirtyTracker& Tracker);
+        void    PollDynamicMeshUploads(FRenderDirtyTracker& Tracker);
         void    SweepStaleResolves(ECS::FRegistry& Registry, const FSyncPools& Pools);
 
         TVector<FRenderDirtyTracker::FEntry> DrainScratch;

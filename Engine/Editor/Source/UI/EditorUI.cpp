@@ -375,7 +375,7 @@ namespace Lumina
             }
             
             GetMutableDefault<CEditorSettings>()->RecentProjects = Recents;
-            GConfig->SaveSettings(CEditorSettings::StaticClass());
+            Global::GConfig->SaveSettings(CEditorSettings::StaticClass());
         }
 
         void RemoveRecentProject(const FString& LprojPath)
@@ -383,7 +383,7 @@ namespace Lumina
             auto Recents = GetDefault<CEditorSettings>()->RecentProjects;
             Recents.Remove(LprojPath);
             GetMutableDefault<CEditorSettings>()->RecentProjects = Recents;
-            GConfig->SaveSettings(CEditorSettings::StaticClass());
+            Global::GConfig->SaveSettings(CEditorSettings::StaticClass());
         }
 
         // Writes the cleaned list back when anything was pruned, keeping menu and dialog in sync.
@@ -404,7 +404,7 @@ namespace Lumina
             if (Recents.Num() != Before)
             {
                 GetMutableDefault<CEditorSettings>()->RecentProjects = Recents;
-                GConfig->SaveSettings(CEditorSettings::StaticClass());
+                Global::GConfig->SaveSettings(CEditorSettings::StaticClass());
             }
             return Recents;
         }
@@ -533,7 +533,7 @@ namespace Lumina
         FInputViewportRegistry::Get().SetGameInputFocused(false);
 
         ShortcutLayer.Owner = this;
-        GApp->GetEventProcessor().RegisterEventHandler(&ShortcutLayer, (int32)EInputLayer::EditorShortcuts);
+        Global::GApp->GetEventProcessor().RegisterEventHandler(&ShortcutLayer, (int32)EInputLayer::EditorShortcuts);
 
         RegisterBuiltinEditorTools();
         RegisterBuiltinAssetActions();
@@ -674,7 +674,7 @@ namespace Lumina
             Scalability::RestoreProjectValues();
         });
 
-        if (GEditorEngine->GetProjectName().IsEmpty())
+        if (Global::GEditorEngine->GetProjectName().IsEmpty())
         {
             // Falls through to the Open dialog when Editor.StartupProject is also missing or stale.
             const std::string StartupPath = *GetDefault<CEditorSettings>()->StartupProject;
@@ -682,12 +682,12 @@ namespace Lumina
             {
                 if (Filesystem::Exists(FStringView(StartupPath.c_str(), IntCastChecked<int32>(StartupPath.size()))))
                 {
-                    GEditorEngine->LoadProject(FStringView(StartupPath.c_str(), IntCastChecked<int32>(StartupPath.size())));
+                    Global::GEditorEngine->LoadProject(FStringView(StartupPath.c_str(), IntCastChecked<int32>(StartupPath.size())));
                     OnProjectLoaded();
                 }
             }
 
-            if (GEditorEngine->GetProjectName().IsEmpty())
+            if (Global::GEditorEngine->GetProjectName().IsEmpty())
             {
                 OpenProjectDialog();
             }
@@ -710,7 +710,7 @@ namespace Lumina
         FCoreEditorDelegates::OnAssetDeleted.Remove(AssetDeletedHandle);
         FObjectReferenceProviders::Unregister(this);
         CPrefab::SetLoadedWorldRefreshHook({});
-        GApp->GetEventProcessor().UnregisterEventHandler(&ShortcutLayer);
+        Global::GApp->GetEventProcessor().UnregisterEventHandler(&ShortcutLayer);
 
         if (AssetDataChangedHandle.IsValid())
         {
@@ -718,16 +718,31 @@ namespace Lumina
             AssetDataChangedHandle = {};
         }
 
+        if (PendingStartupMapHandle.IsValid())
+        {
+            FAssetRegistry::Get().GetOnAssetRegistryUpdated().Remove(PendingStartupMapHandle);
+            PendingStartupMapHandle = {};
+        }
+
+        if (SessionRestoreRetryHandle.IsValid())
+        {
+            FAssetRegistry::Get().GetOnAssetRegistryUpdated().Remove(SessionRestoreRetryHandle);
+            SessionRestoreRetryHandle = {};
+        }
+
         // Shutting down is not the user closing their tabs; see bTearingDownTools.
         bTearingDownTools = true;
         ModalManager.Dismiss();
+
+        AddPendingTools();
+        ToolsPendingDestroy.Reset();
 
         while (!EditorTools.IsEmpty())
         {
             // Pops internally.
             DestroyTool(UpdateContext, EditorTools[0]);
         }
-        
+
         WorldEditorTool = nullptr;
         ConsoleLogTool = nullptr;
         ImGui::SetCurrentContext(nullptr);
@@ -916,7 +931,7 @@ namespace Lumina
             FApplication::RequestExit();
         }
 
-        if (GEngine->IsCloseRequested() && !bQuitWithoutPrompt)
+        if (Global::GEngine->IsCloseRequested() && !bQuitWithoutPrompt)
         {
             if (!bVerifyingDirtyPackages)
             {
@@ -927,7 +942,7 @@ namespace Lumina
             // Cancel re-arms the guard through FApplication::CancelExit in VerifyDirtyPackages's callback.
             if (ModalManager.HasModal())
             {
-                GEngine->SetEngineReadyToClose(false);
+                Global::GEngine->SetEngineReadyToClose(false);
             }
         }
         
@@ -999,15 +1014,9 @@ namespace Lumina
 
             DestroyTool(UpdateContext, Tool);
         }
-        
-        while (!ToolsPendingAdd.IsEmpty())
-        {
-            FEditorTool* NewTool = ToolsPendingAdd.Peek();
-            ToolsPendingAdd.Pop();
 
-            EditorTools.Add(NewTool);
-        }
-        
+        AddPendingTools();
+
         DrawFooterDrawer(UpdateContext);
 
         ModalManager.DrawDialogue();
@@ -1068,11 +1077,6 @@ namespace Lumina
         {
             Tool->EndFrame();
         }
-
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && ImGui::IsKeyDown(ImGuiMod_Shift) && GamePreviewTool != nullptr)
-        {
-            WorldEditorTool->GetOnPreviewStopRequestedDelegate().Broadcast();
-        }
     }
     
     double FEditorUI::GetToolWorldUpdateInterval(const CWorld* ToolWorld, bool bFocused) const
@@ -1120,12 +1124,6 @@ namespace Lumina
             ActiveFileTools.Remove(FileItr);
         }
 
-        if (Tool == GamePreviewTool)
-        {
-            WorldEditorTool->NotifyPlayInEditorStop();
-            GamePreviewTool = nullptr;
-        }
-
         // Keep extra-player preview bookkeeping consistent when a preview tab is closed directly.
         const int32 PreviewIndex = ExtraGamePreviews.IndexOfByPredicate([Tool](const auto& Preview) { return Preview.Tool == Tool; });
         if (PreviewIndex != Constants::kIndexNone)
@@ -1141,6 +1139,15 @@ namespace Lumina
 
         Tool->Deinitialize(UpdateContext);
         Memory::Delete(Tool);
+    }
+
+    void FEditorUI::AddPendingTools()
+    {
+        FEditorTool* NewTool = nullptr;
+        while (ToolsPendingAdd.Dequeue(NewTool))
+        {
+            EditorTools.Add(NewTool);
+        }
     }
 
     void FEditorUI::PushModal(const FString& Title, ImVec2 Size, TMoveOnlyFunction<bool()> DrawFunction)
@@ -1509,7 +1516,7 @@ namespace Lumina
         }
 
         Settings->OpenTabs.Add(Move(Key));
-        GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
+        Global::GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
     }
 
     void FEditorUI::ForgetSessionTab(FEditorTool* Tool)
@@ -1543,7 +1550,7 @@ namespace Lumina
 
         // Ordered erase, not swap-and-pop, since the order of this list is the whole point.
         Settings->OpenTabs.RemoveAt(TabIndex);
-        GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
+        Global::GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
     }
 
     void FEditorUI::RestoreSessionTabs()
@@ -1582,7 +1589,7 @@ namespace Lumina
                 }
 
                 // Only a miss AFTER the registry has assets counts as gone, or a cold start loses tabs silently.
-                const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(*Guid);
+                const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(*Guid);
                 if (Data == nullptr)
                 {
                     Survivors.Add(Tab);
@@ -1632,7 +1639,7 @@ namespace Lumina
 
             CEditorSessionSettings* MutableSettings = GetMutableDefault<CEditorSessionSettings>();
             MutableSettings->OpenTabs = Move(Survivors);
-            GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
+            Global::GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
         }
 
         // The registry scan is asynchronous, so retry on each update until every tab resolves, then unhook.
@@ -1923,7 +1930,7 @@ namespace Lumina
 
     void FEditorUI::OpenAssetEditor(const FGuid& AssetGUID)
     {
-        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(AssetGUID); Data != nullptr && Data->IsClassMissing())
+        if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(AssetGUID); Data != nullptr && Data->IsClassMissing())
         {
             ImGuiX::Notifications::NotifyWarning("'{0}' cannot be opened because its type '{1}' no longer exists.", *Data->AssetName, *Data->AssetClass);
             return;
@@ -2152,7 +2159,7 @@ namespace Lumina
         return true;
     }
 
-    const FAssetData* FEditorUI::GetContentBrowserSelectedAsset() const
+    FAssetDataPtr FEditorUI::GetContentBrowserSelectedAsset() const
     {
         return ContentBrowser != nullptr ? ContentBrowser->GetSelectedAsset() : nullptr;
     }
@@ -3272,7 +3279,7 @@ namespace Lumina
         for (int32 PlayerIndex = 1; PlayerIndex < NumPlayers; ++PlayerIndex)
         {
             // Each call duplicates the editor source world -> an independent, self-contained PIE world.
-            CWorld* PreviewWorld = GWorldManager->StartPIE(Source, EWorldType::Game, WorldEditorTool->ResolvePlayerNetMode(PlayerIndex));
+            CWorld* PreviewWorld = Global::GWorldManager->StartPIE(Source, EWorldType::Game, WorldEditorTool->ResolvePlayerNetMode(PlayerIndex));
             if (PreviewWorld == nullptr)
             {
                 LOG_WARN("Failed to start PIE world for player {}", PlayerIndex + 1);
@@ -3281,7 +3288,7 @@ namespace Lumina
 
             if (CVarPIEClientBots.GetValue())
             {
-                if (FWorldContext* BotContext = GWorldManager->FindContext(PreviewWorld))
+                if (FWorldContext* BotContext = Global::GWorldManager->FindContext(PreviewWorld))
                 {
                     BotContext->bBot = true;
                 }
@@ -3335,13 +3342,13 @@ namespace Lumina
         };
 
         TVector<FEntry> Entries;
-        for (const FAssetData* Asset : FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; }))
+        for (const FAssetDataPtr& Asset : FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; }))
         {
             Entries.Emplace(Asset->AssetGUID, FFixedString(*Asset->AssetName), Asset->Path,
                             FName(*Asset->Path));
         }
 
-        for (const FTextAssetData* Text : FAssetRegistry::Get().GetTextAssetsOfKind(ETextAssetKind::None))
+        for (const FTextAssetDataPtr& Text : FAssetRegistry::Get().GetTextAssetsOfKind(ETextAssetKind::None))
         {
             const FStringView FileName = VFS::FileName(FStringView(*Text->Path, Text->Path.Len()));
             Entries.Emplace(Text->Guid, FFixedString(FileName.GetData(), FileName.Len()), Text->Path, FName(), EOpenAs::FileEditor);
@@ -4155,7 +4162,7 @@ namespace Lumina
         ImGui::PopStyleVar(3);
 
         // Sized from what is left over, so a long name clips only when it genuinely runs out of window.
-        if (GEditorEngine->HasLoadedProject())
+        if (Global::GEditorEngine->HasLoadedProject())
         {
             const float DividerX   = ImFloor(ImGui::GetCursorScreenPos().x);
             const float DividerTop = ImGui::GetWindowPos().y + ImFloor((BarHeight - RowHeight) * 0.5f);
@@ -4164,7 +4171,7 @@ namespace Lumina
             ImGui::Dummy(ImVec2(1.0f, RowHeight));
 
             ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
-            ImGuiX::Text("{}", GEditorEngine->GetProjectName());
+            ImGuiX::Text("{}", Global::GEditorEngine->GetProjectName());
             ImGui::PopStyleColor();
 
             if (DirtyPackageCount > 0)
@@ -4359,7 +4366,7 @@ namespace Lumina
                 const FString DisplayName = DisplayNameFromLprojPath(Item);
                 if (ImGui::MenuItem(*DisplayName, *Item))
                 {
-                    GEditorEngine->LoadProject(FStringView(*Item, Item.Len()));
+                    Global::GEditorEngine->LoadProject(FStringView(*Item, Item.Len()));
                     OnProjectLoaded();
                 }
             }
@@ -4687,7 +4694,7 @@ namespace Lumina
                 }
                 if (!PendingLoad.IsEmpty())
                 {
-                    GEditorEngine->LoadProject(PendingLoad);
+                    Global::GEditorEngine->LoadProject(PendingLoad);
                     OnProjectLoaded();
                     bShouldClose = true;
                 }
@@ -4710,7 +4717,7 @@ namespace Lumina
                         "Lumina Project (*.lproject)\0*.lproject\0All Files (*.*)\0*.*\0",
                         nullptr))
                 {
-                    GEditorEngine->LoadProject(Project);
+                    Global::GEditorEngine->LoadProject(Project);
                     OnProjectLoaded();
                     bShouldClose = true;
                 }
@@ -4850,19 +4857,19 @@ namespace Lumina
             if (bCreateClicked)
             {
                 FFixedString ProjectFile;
-                if (GEditorEngine->CreateProject(NewProjectName, NewProjectPath, ProjectFile, NewProjectError))
+                if (Global::GEditorEngine->CreateProject(NewProjectName, NewProjectPath, ProjectFile, NewProjectError))
                 {
                     PushRecentProject(*ProjectFile);
 
                     // Its template carries no C++ module, so there is no solution to wait for.
                     if (Paths::IsInstalledBuild())
                     {
-                        GEditorEngine->LoadProject(ProjectFile);
+                        Global::GEditorEngine->LoadProject(ProjectFile);
                         OnProjectLoaded();
                         return true;
                     }
 
-                    GEditorEngine->GenerateProjectFiles(VFS::Parent(ProjectFile));
+                    Global::GEditorEngine->GenerateProjectFiles(VFS::Parent(ProjectFile));
 
                     // Chains into the Project Created dialog, since the editor still has no project loaded.
                     const FString ProjectFileCopy(*ProjectFile, ProjectFile.Len());
@@ -5024,7 +5031,7 @@ namespace Lumina
         const FString EditorStartupMap(*EditorStartupMapFixed, EditorStartupMapFixed.Len());
 
         // A map on disk is invisible until discovery walks it, which is why the caller retries.
-        if (FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(EditorStartupMap))
+        if (FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(EditorStartupMap))
         {
             OpenAssetEditor(Data->AssetGUID);
 
@@ -5102,8 +5109,8 @@ namespace Lumina
         }
 
         // Normalized, since the join can double the slash.
-        const FStringView ProjectDir  = GEngine->GetProjectPath();
-        const FStringView ProjectName = GEngine->GetProjectName();
+        const FStringView ProjectDir  = Global::GEngine->GetProjectPath();
+        const FStringView ProjectName = Global::GEngine->GetProjectName();
         if (!ProjectDir.IsEmpty() && !ProjectName.IsEmpty())
         {
             FFixedString LprojPath;
@@ -5115,7 +5122,7 @@ namespace Lumina
 
             PushRecentProject(FStringView(*LprojPath, LprojPath.Len()));
             GetMutableDefault<CEditorSettings>()->StartupProject = FString(*LprojPath, LprojPath.Len());
-            GConfig->SaveSettings(CEditorSettings::StaticClass());
+            Global::GConfig->SaveSettings(CEditorSettings::StaticClass());
         }
     }
 

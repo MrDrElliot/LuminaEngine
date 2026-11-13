@@ -61,6 +61,7 @@ namespace Lumina::Physics
             SCollisionProfile   Profile{};
             bool                bPermissive = true;
             bool                bCollideWithCharacters = true;
+            ECS::FEntity        Entity{};
         };
 
         bool MoverAcceptsShape(const FMoverPlanes& Query, b3ShapeId ShapeId)
@@ -99,12 +100,18 @@ namespace Lumina::Physics
                 return true;
             }
 
+            const int32 StartCount = Out.Count;
             for (int32 i = 0; i < PlaneCount && Out.Count < kMaxMoverPlanes; ++i)
             {
                 Out.Planes[Out.Count] = b3CollisionPlane{ UprightIfTooSteep(Results[i].plane, Out.CosMaxSlope), FLT_MAX, 0.0f, true };
                 Out.Points[Out.Count] = b3Add(Out.Origin, Results[i].point);
                 Out.Shapes[Out.Count] = ShapeId;
                 ++Out.Count;
+            }
+
+            if (Out.Count - StartCount < PlaneCount)
+            {
+                LOG_WARN_ONCE("Box3DCharacter: entity {} gathered more than {} collision planes in one mover step, the rest are dropped.", Out.Entity.Value, kMaxMoverPlanes);
             }
 
             return true;
@@ -150,7 +157,7 @@ namespace Lumina::Physics
         }
 
         // A surface facing down that reaches into the standing capsule, which is all that can stop a crouched character standing.
-        bool HasRoomToStand(const FPhysicsCharacterHandle& Character, float StandingHalfHeight)
+        bool HasRoomToStand(const FPhysicsCharacterHandle& Character, float StandingHalfHeight, ECS::FEntity Entity)
         {
             constexpr float CeilingNormalY = -0.1f;
             constexpr float StandClearance = 0.01f;
@@ -166,6 +173,7 @@ namespace Lumina::Physics
             Gathered.bCollideWithCharacters = Character.bCollideWithCharacters;
             Gathered.CosMaxSlope            = Character.CosMaxSlope;
             Gathered.Origin                 = Box3DUtils::ToB3Vec3(Character.Position);
+            Gathered.Entity                 = Entity;
             b3World_CollideMover(Character.WorldId, Gathered.Origin, &Standing, Character.Filter, &GatherPlanes, &Gathered);
 
             const FVector3 Center = Character.Position + Offset;
@@ -335,7 +343,7 @@ namespace Lumina::Physics
         }
 
         FPhysicsCharacterHandle& Character = *Physics.Character;
-        if (!bWantsCrouched && !HasRoomToStand(Character, Physics.HalfHeight))
+        if (!bWantsCrouched && !HasRoomToStand(Character, Physics.HalfHeight, Entity))
         {
             return;
         }
@@ -937,6 +945,7 @@ namespace Lumina::Physics
         Gathered.bPermissive = Box3DUtils::UsesPermissiveCollisionFilter();
         Gathered.bCollideWithCharacters = Character.bCollideWithCharacters;
         Gathered.CosMaxSlope = Character.CosMaxSlope;
+        Gathered.Entity = Work.Entity;
 
         auto GatherAt = [&](b3Pos At)
         {

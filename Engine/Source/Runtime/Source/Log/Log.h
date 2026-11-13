@@ -9,6 +9,12 @@
 #include "LogMessage.h"
 
 
+namespace Lumina::Global
+{
+	// Exported as data so the gate below stays inline across module boundaries. Write via SetLevel().
+	RUNTIME_API extern std::atomic<uint8> GLevelThreshold;
+}
+
 namespace Lumina::Logging
 {
 	using FLogQueue = TRingBuffer<FConsoleMessage>;
@@ -39,19 +45,16 @@ namespace Lumina::Logging
 	RUNTIME_API void SetConsoleLogQueueCapacity(uint32 Capacity);
 	RUNTIME_API uint32 GetConsoleLogQueueCapacity();
 
-	// Exported as data so the gate below stays inline across module boundaries. Write via SetLevel().
-	RUNTIME_API extern std::atomic<uint8> GLevelThreshold;
-
 	RUNTIME_API void SetLevel(ELogLevel Level);
 
 	NODISCARD inline ELogLevel GetLevel() noexcept
 	{
-		return static_cast<ELogLevel>(GLevelThreshold.load(std::memory_order_relaxed));
+		return static_cast<ELogLevel>(Global::GLevelThreshold.load(std::memory_order_relaxed));
 	}
 
 	NODISCARD FORCEINLINE bool ShouldLog(ELogLevel Level) noexcept
 	{
-		return static_cast<uint8>(Level) >= GLevelThreshold.load(std::memory_order_relaxed);
+		return static_cast<uint8>(Level) >= Global::GLevelThreshold.load(std::memory_order_relaxed);
 	}
 
 	RUNTIME_API void Dispatch(ELogLevel Level, const char* Text, uint32 Length) noexcept;

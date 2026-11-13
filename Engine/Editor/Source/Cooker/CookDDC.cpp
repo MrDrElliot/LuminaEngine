@@ -58,15 +58,16 @@ namespace Lumina
     }
 
 
-    FCookInputHash FCookDDC::ComputeKey(uint64 SourceContentHash)
+    FCookInputHash FCookDDC::ComputeKey(uint64 SourceContentHash, uint32 EngineVersion)
     {
         if (SourceContentHash == 0)
         {
             return {};
         }
-        // Mix the cook stamp via a large odd multiplier so a stamp bump shuffles every key off its prior bucket (not cryptographic; source hash dominates collision risk).
+        // Mix the cook stamp and engine version via a large odd multiplier so either bump shuffles every key off its prior bucket (not cryptographic; source hash dominates collision risk).
         static constexpr uint64 kMixer = 0x9E3779B97F4A7C15ull;
-        const uint64 H = SourceContentHash ^ (static_cast<uint64>(kCookStamp) * kMixer);
+        const uint64 VersionMix = (static_cast<uint64>(kCookStamp) ^ (static_cast<uint64>(EngineVersion) << 32)) * kMixer;
+        const uint64 H = SourceContentHash ^ VersionMix;
         return { H == 0 ? 1ull : H };
     }
 

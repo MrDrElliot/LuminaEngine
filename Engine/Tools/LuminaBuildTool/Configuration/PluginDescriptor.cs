@@ -9,7 +9,7 @@ public sealed class PluginModuleEntry
 {
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>Runtime, Editor or Developer, the module types the engine's plugin loader knows.</summary>
+    // Runtime, Editor, Developer or Reflection, the module types the engine's plugin loader knows.
     public string Type { get; set; } = "Runtime";
 
     public string LoadingPhase { get; set; } = "PreEngineInit";
@@ -23,6 +23,7 @@ public sealed class PluginModuleEntry
         {
             "Editor" => ModuleHostType.Editor,
             "Developer" => ModuleHostType.Developer,
+            "Reflection" => ModuleHostType.Reflection,
             _ => ModuleHostType.Runtime,
         };
     }
@@ -104,7 +105,7 @@ internal sealed class PluginDependencyConverter : JsonConverter<PluginDependency
 /// <summary>A .lplugin file. The schema, defaults and errors match FPluginDescriptor in the engine, so both read every descriptor alike.</summary>
 public sealed class PluginDescriptor
 {
-    public static readonly string[] ModuleTypes = { "Runtime", "Editor", "Developer" };
+    public static readonly string[] ModuleTypes = { "Runtime", "Editor", "Developer", "Reflection" };
 
     public static readonly string[] LoadingPhases =
         { "Earliest", "Core", "PreEngineInit", "EngineInit", "PostEngineInit", "PostProjectLoad", "EditorInit" };

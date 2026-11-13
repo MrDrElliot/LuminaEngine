@@ -117,10 +117,12 @@ namespace Lumina
         , Commands(InCommands)
     {
         ScriptReloadHandle = FCoreDelegates::OnScriptsWillReload.AddLambda([this] { RemoveManagedListeners(); });
+        Registry.OnEntityDestroyed().Connect<&FGameplayMessageBus::UnsubscribeAll>(this);
     }
 
     FGameplayMessageBus::~FGameplayMessageBus()
     {
+        Registry.OnEntityDestroyed().Disconnect<&FGameplayMessageBus::UnsubscribeAll>(this);
         FCoreDelegates::OnScriptsWillReload.Remove(ScriptReloadHandle);
         Clear();
     }
@@ -246,25 +248,6 @@ namespace Lumina
             ++Removals;
         }
         DestroyRetired();
-    }
-
-    void FGameplayMessageBus::PruneDeadOwners()
-    {
-        TVector<uint32> Dead;
-        {
-            FScopeLock Lock(Mutex);
-            for (const auto& [Packed, Ids] : ByOwner)
-            {
-                if (!Registry.IsValid(ECS::FEntity::FromPacked(Packed)))
-                {
-                    Dead.Add(Packed);
-                }
-            }
-        }
-        for (uint32 Packed : Dead)
-        {
-            UnsubscribeAll(ECS::FEntity::FromPacked(Packed));
-        }
     }
 
     uint32 FGameplayMessageBus::NumListeners() const

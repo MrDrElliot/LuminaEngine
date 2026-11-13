@@ -45,8 +45,6 @@ namespace Lumina
 
         void Configure() override;
 
-        // Only the avoiders decide, since the other queries are lookups.
-        bool HasWork(const SSystemContext& Context) override;
         void OnUpdate(const SSystemContext& Context) override;
 
     private:

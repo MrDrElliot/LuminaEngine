@@ -389,6 +389,7 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
+                    NodeGraphOps::NotifyNodeValuesChanged(Target.Canvas);
                     MarkAssetDirty(Target.Asset);
 
                     return Agent::FToolResult::Ok(Lumina::Format("Transition {} -> {} {} is now {}.",

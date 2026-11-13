@@ -131,7 +131,7 @@ namespace Lumina::Shaders
 
     uint32 PrecompileNewRoots()
     {
-        if (GShaderCompiler == nullptr)
+        if (Global::GShaderCompiler == nullptr)
         {
             return 0;
         }
@@ -171,7 +171,7 @@ namespace Lumina::Shaders
             Option.bGenerateReflectionData = false;
         }
 
-        GShaderCompiler->CompileShaderPaths(ShaderPaths, Options, [](const FShaderHeader& Header)
+        Global::GShaderCompiler->CompileShaderPaths(ShaderPaths, Options, [](const FShaderHeader& Header)
         {
             FShaderLibrary::Commit(Header);
         });

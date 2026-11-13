@@ -94,9 +94,9 @@ namespace Lumina
             {
                 Settings->Tags.Add(Tag);
                 Algo::Sort(Settings->Tags, [](const FString& A, const FString& B) { return strcmp(*A, *B) < 0; });
-                if (GConfig != nullptr)
+                if (Global::GConfig != nullptr)
                 {
-                    GConfig->SaveSettings(CHierarchicalTagsSettings::StaticClass());
+                    Global::GConfig->SaveSettings(CHierarchicalTagsSettings::StaticClass());
                 }
             }
         }

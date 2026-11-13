@@ -9,6 +9,7 @@
 #include "Core/Templates/LuminaTemplate.h"
 #include "Core/Templates/Optional.h"
 #include "Core/Variant/Variant.h"
+#include "Core/Json/Json.h"
 
 namespace Lumina
 {
@@ -211,7 +212,7 @@ namespace Lumina
 
         FConsoleContainer ConsoleVariables;
         FCommandContainer ConsoleCommands;
-        FString LoadedConfigText;
+        FJsonValue LoadedConfig;
     };
 
 

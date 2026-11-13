@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Assets/AssetRegistry/AssetData.h"
 #include "Containers/HashTable.h"
 #include "Containers/Name.h"
 #include "Containers/Span.h"
@@ -13,7 +14,6 @@ namespace Lumina
     class CObject;
     class CPackage;
     class IEditorToolContext;
-    struct FAssetData;
 }
 
 namespace Lumina
@@ -24,7 +24,7 @@ namespace Lumina
     struct FAssetActionContext
     {
         IEditorToolContext* ToolContext = nullptr;
-        const FAssetData*   Asset       = nullptr;
+        FAssetDataPtr       Asset;
     };
 
     // One entry in an asset's right-click menu.

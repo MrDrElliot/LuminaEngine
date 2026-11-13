@@ -2,6 +2,7 @@
 
 #include "Audio/Graph/AudioGraphNodeBuilder.h"
 #include "Core/Math/Scalar.h"
+#include "Log/Log.h"
 #include "Memory/SmartPtr.h"
 
 namespace Lumina
@@ -86,9 +87,16 @@ namespace Lumina
 
                 for (uint32 Frame = 0; Frame < Context.NumFrames; ++Frame)
                 {
-                    if (Cursor.Consume(*In, Frame) && PendingCount < MaxPending)
+                    if (Cursor.Consume(*In, Frame))
                     {
-                        Pending[PendingCount++] = DelayFrames;
+                        if (PendingCount < MaxPending)
+                        {
+                            Pending[PendingCount++] = DelayFrames;
+                        }
+                        else
+                        {
+                            LOG_WARN_ONCE("Audio: TriggerDelay has 16 delays already in flight; dropping a trigger");
+                        }
                     }
 
                     uint32 Write = 0;

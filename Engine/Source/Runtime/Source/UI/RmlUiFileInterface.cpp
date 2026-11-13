@@ -8,7 +8,6 @@
 #include "Core/Object/ObjectCore.h"
 #include "FileSystem/FileSystem.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
-#include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 #include "Memory/Memcpy.h"
 
@@ -42,7 +41,7 @@ namespace Lumina
             }
 
             const FStringView PathView(*Path, Path.Len());
-            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(PathView);
+            const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(PathView);
             if (Data == nullptr || Data->AssetClass != CFont::StaticClass()->GetName())
             {
                 return false;
@@ -99,8 +98,8 @@ namespace Lumina
             return;
         }
         const int64 WriteTime = WriteTimeOf(VirtualPath);
-        FScopeLock Lock(StyleSheetMutex);
-        for (FReadStyleSheet& Sheet : ReadStyleSheets)
+        auto Guard = ReadStyleSheets.Lock();
+        for (FReadStyleSheet& Sheet : *Guard)
         {
             if (FStringView(*Sheet.Path, Sheet.Path.Len()) == VirtualPath)
             {
@@ -108,14 +107,14 @@ namespace Lumina
                 return;
             }
         }
-        ReadStyleSheets.Emplace(FString(VirtualPath.GetData(), VirtualPath.Len()), WriteTime);
+        Guard->Emplace(FString(VirtualPath.GetData(), VirtualPath.Len()), WriteTime);
     }
 
     bool FRmlUiFileInterface::ConsumeChangedStyleSheets()
     {
-        FScopeLock Lock(StyleSheetMutex);
+        auto Guard = ReadStyleSheets.Lock();
         bool bChanged = false;
-        for (const FReadStyleSheet& Sheet : ReadStyleSheets)
+        for (const FReadStyleSheet& Sheet : *Guard)
         {
             if (WriteTimeOf(FStringView(*Sheet.Path, Sheet.Path.Len())) != Sheet.WriteTime)
             {
@@ -126,7 +125,7 @@ namespace Lumina
         // Every sheet is parsed again after a cache clear, which records its new time.
         if (bChanged)
         {
-            ReadStyleSheets.Reset();
+            Guard->Reset();
         }
         return bChanged;
     }

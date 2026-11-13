@@ -80,3 +80,25 @@ TEST(ContentBrowserListing, RecursiveReadFindsNestedSubfolderEntries)
 
     VFS::Unmount("/CBListing");
 }
+
+TEST(ContentBrowserListing, RenamingAFolderMovesNestedChildrenWithIt)
+{
+    VFS::FMemoryFileSystem& FS = VFS::Mount<VFS::FMemoryFileSystem>("/CBRename");
+    const uint8 Byte = 0;
+    FS.AddFile("/CBRename/Props/Rock.cs", TSpan<const uint8>(&Byte, 1));
+    FS.AddFile("/CBRename/Props/Rocks/Deep.cs", TSpan<const uint8>(&Byte, 1));
+
+    EXPECT_TRUE(VFS::Rename("/CBRename/Props", "/CBRename/Items"));
+
+    EXPECT_TRUE(VFS::Exists("/CBRename/Items"));
+    EXPECT_TRUE(VFS::Exists("/CBRename/Items/Rock.cs"));
+    EXPECT_TRUE(VFS::Exists("/CBRename/Items/Rocks"));
+    EXPECT_TRUE(VFS::Exists("/CBRename/Items/Rocks/Deep.cs"));
+
+    EXPECT_FALSE(VFS::Exists("/CBRename/Props"));
+    EXPECT_FALSE(VFS::Exists("/CBRename/Props/Rock.cs"));
+    EXPECT_FALSE(VFS::Exists("/CBRename/Props/Rocks"));
+    EXPECT_FALSE(VFS::Exists("/CBRename/Props/Rocks/Deep.cs"));
+
+    VFS::Unmount("/CBRename");
+}

@@ -193,6 +193,7 @@ namespace Lumina
     {
         FSyncPosition Position;     // shared playhead on the group's blended sync track
         FSyncPosition PrevPosition; // position before this update's advance
+        int32 WholeLoops = 0;       // full cycles this update's advance spanned beyond PrevPosition to Position
 
         float Duration     = 0.0f; // blended seconds one cycle of the track takes
         float NextDuration = 0.0f; // accumulated from this update's blend provenance

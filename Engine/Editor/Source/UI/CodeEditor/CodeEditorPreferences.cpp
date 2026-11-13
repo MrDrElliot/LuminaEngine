@@ -53,7 +53,7 @@ namespace Lumina::CodeEditorPreferences
 
         if (bSave)
         {
-            GConfig->SaveSettings(CCodeEditorSettings::StaticClass());
+            Global::GConfig->SaveSettings(CCodeEditorSettings::StaticClass());
         }
     }
 

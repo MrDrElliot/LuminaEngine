@@ -337,6 +337,17 @@ TEST(ScriptSchemaCodec, DeclaredPropertyFlagsRoundTrip)
     EXPECT_EQ(Schema.Fields[1].Flags, 0u) << "a writer that omits the field must read as no flags, not garbage";
 }
 
+// A garbage declared count must stop the loop on the first desync rather than spinning up to it.
+TEST(ScriptSchemaCodec, AGarbageFieldCountFailsInsteadOfSpinning)
+{
+    FTestSchemaWriter W;
+    W.Header();
+    W.I32(INT32_MAX);
+
+    FScriptExportSchema Schema;
+    EXPECT_FALSE(ParseSchemaBlob(W.Bytes, Schema));
+}
+
 // Without the payload type reaching native, the mint has nothing to synthesize the optional's storage from.
 TEST(ScriptSchemaCodec, AnOptionalCarriesItsPayloadType)
 {

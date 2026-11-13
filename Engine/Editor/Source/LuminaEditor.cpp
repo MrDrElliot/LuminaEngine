@@ -19,18 +19,18 @@
 
 namespace Lumina
 {
-    EDITOR_API FEditorEngine* GEditorEngine = nullptr;
+    EDITOR_API FEditorEngine* Global::GEditorEngine = nullptr;
 
     bool FEditorEngine::Init()
     {
         VFS::Mount<VFS::FNativeFileSystem>("/Editor", Paths::Combine(Paths::GetEngineDirectory(), "Editor"));
 
-        GConfig->LoadPath("/Editor/Config");
+        Global::GConfig->LoadPath("/Editor/Config");
 
         bool bSuccess = FEngine::Init();
 
         // Project settings under /Config load on a later pass, once a project mounts it.
-        GConfig->DiscoverAndLoadSettings();
+        Global::GConfig->DiscoverAndLoadSettings();
 
 
         return bSuccess;
@@ -38,6 +38,7 @@ namespace Lumina
 
     bool FEditorEngine::Shutdown()
     {
+        StopGeneratingProjectFiles();
         const bool bResult = FEngine::Shutdown();
         Platform::ReleaseInstanceLock(ProjectLock);
         return bResult;
@@ -45,7 +46,7 @@ namespace Lumina
 
     bool FEditorEngine::ClaimStartupProject()
     {
-        TOptional<FFixedString> Project = GCommandLine->Get("Project");
+        TOptional<FFixedString> Project = Global::GCommandLine->Get("Project");
         if (!Project.IsSet())
         {
             return true;
@@ -58,7 +59,7 @@ namespace Lumina
     bool FEditorEngine::ClaimProject(FStringView ProjectDirectory)
     {
         // A benchmark opens the project read-only beside whoever is working in it.
-        if (GCommandLine->Has("benchmark") || (ProjectLock.IsHeld() && Paths::PathsEqual(ProjectDirectory, LockedProjectDirectory)))
+        if (Global::GCommandLine->Has("benchmark") || (ProjectLock.IsHeld() && Paths::PathsEqual(ProjectDirectory, LockedProjectDirectory)))
         {
             return true;
         }
@@ -414,7 +415,13 @@ namespace Lumina
         return true;
     }
 
-    bool FEditorEngine::GenerateProjectFiles(FStringView ProjectDirectory) const
+    void FEditorEngine::StopGeneratingProjectFiles()
+    {
+        ProjectFilesWorker.RequestStop();
+        ProjectFilesWorker.Join();
+    }
+
+    bool FEditorEngine::GenerateProjectFiles(FStringView ProjectDirectory)
     {
         // This editor's own engine, which hands the work on if the project names another.
         const FString Script = Paths::GetBuildToolScript();
@@ -428,7 +435,10 @@ namespace Lumina
         const FString Params = Format("GenerateProjectFiles -Project=\"{}\"", ProjectDirectory);
         const FString WorkingDirectory(ProjectDirectory.GetData(), ProjectDirectory.Len());
 
-        FThread([Script, Params, WorkingDirectory]()
+        // A newer request supersedes a run still in flight.
+        StopGeneratingProjectFiles();
+
+        ProjectFilesWorker = FThread([Script, Params, WorkingDirectory](const FThreadStop& Stop)
         {
             FScopedSlowTask Task(1.0f, "Generating project files", "Running LuminaBuildTool GenerateProjectFiles...");
 
@@ -445,17 +455,22 @@ namespace Lumina
                         return;
                     }
                     LOG_INFO("[BuildTool] {0}", *FString(Line.GetData(), Line.Len()));
-                });
+                },
+                0, &Stop);
 
             if (ExitCode == 0)
             {
                 LOG_INFO("[BuildTool] project files generated successfully.");
             }
+            else if (Stop.ShouldStop())
+            {
+                LOG_WARN("[BuildTool] stopped generating project files before they finished.");
+            }
             else
             {
                 LOG_ERROR("[BuildTool] generation failed (exit code {0}).", ExitCode);
             }
-        }).detach();
+        });
 
         return true;
     }

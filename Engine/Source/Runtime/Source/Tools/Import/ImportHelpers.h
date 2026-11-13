@@ -136,6 +136,9 @@ namespace Lumina::Import
         /** Size with its longest edge capped at MaxDimension, aspect preserved. MaxDimension 0 means no cap. */
         RUNTIME_API FUIntVector2 ClampToMaxDimension(FUIntVector2 Size, uint32 MaxDimension);
 
+        /** The float format for an HDR image with this many channels, or NullOpt for a count stb never decodes. */
+        RUNTIME_API TOptional<EFormat> GetHDRChannelFormat(int Channels);
+
         /** Gets an image's raw pixel data */
         RUNTIME_API TOptional<FTextureImportResult> ImportTexture(FStringView RawFilePath, bool bFlipVertical = true, FUIntVector2 Size = {});
         RUNTIME_API TOptional<FTextureImportResult> ImportTexture(TSpan<const uint8> ImageData, bool bFlipVertical = true, FUIntVector2 Size = {});

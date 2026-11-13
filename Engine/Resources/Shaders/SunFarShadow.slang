@@ -5,7 +5,8 @@
 
 // Sun occlusion the cascades cannot hold, marched per pixel from the depth buffer and read back by the lighting.
 
-static const uint kMaxTerrainShadowRecords = 8u;
+// Covers a 4x4 open-world terrain tiling with shadow casting enabled on every tile.
+static const uint kMaxTerrainShadowRecords = 16u;
 
 // Mirror of Lumina::FTerrainShadowRecord.
 struct FTerrainShadowRecord

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Engine/Engine.h"
+#include "Core/Threading/Thread.h"
 #include "Platform/Process/PlatformProcess.h"
 
 namespace Lumina
@@ -11,7 +12,12 @@ namespace Lumina
     class FEditorLayer;
     class FEditorPanel;
 
-    EDITOR_API extern class FEditorEngine* GEditorEngine;
+    class FEditorEngine;
+
+    namespace Global
+    {
+        EDITOR_API extern FEditorEngine* GEditorEngine;
+    }
     
     class EDITOR_API FEditorEngine : public FEngine
     {
@@ -44,7 +50,7 @@ namespace Lumina
         bool CreatePlugin(FStringView NewPluginName, FStringView Description, FFixedString& OutPluginDir, FString& OutError);
 
         // Runs this engine's build tool on a worker and streams its output to the log. False when it cannot start.
-        bool GenerateProjectFiles(FStringView ProjectDirectory) const;
+        bool GenerateProjectFiles(FStringView ProjectDirectory);
 
         // Claims the --Project one before any window opens. False when another editor has it, which then gets focus.
         bool ClaimStartupProject();
@@ -58,6 +64,9 @@ namespace Lumina
 
     private:
 
+        void StopGeneratingProjectFiles();
+
+        FThread                 ProjectFilesWorker;
         Platform::FInstanceLock ProjectLock;
         FFixedString            LockedProjectDirectory;
     };

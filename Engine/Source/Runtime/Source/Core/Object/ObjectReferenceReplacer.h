@@ -4,6 +4,7 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "GUID/GUID.h"
+#include "ObjectHandleTyped.h"
 #include "Platform/GenericPlatform.h"
 
 namespace Lumina
@@ -39,6 +40,8 @@ namespace Lumina
         NODISCARD uint32 GetNumReplaced() const { return NumReplaced; }
 
     private:
+
+        CObject* MatchHard(CObject* Current, TVector<TStrongObjectPtr<CObject>>& Released);
 
         struct FHardEntry
         {

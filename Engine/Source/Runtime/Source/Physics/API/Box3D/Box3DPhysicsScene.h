@@ -32,7 +32,9 @@ namespace Lumina
     struct SRagdollLocomotionComponent;
     struct STransformComponent;
     struct SMeshCollision;
+    struct SMeshColliderComponent;
     class CMesh;
+    class CStaticMesh;
     class CWorld;
 }
 
@@ -285,6 +287,8 @@ namespace Lumina::Physics
         b3BodyId ResolveBody(uint32 BodyID) const;
         uint32 RegisterBody(b3BodyId BodyId);
         void UnregisterBody(uint32 BodyID);
+        // False when Count more bodies would pass MaxBodies, warning once per scene.
+        bool HasBodyCapacity(uint32 Count);
 
         const b3HullData* GetOrCreateBoxHull(const FVector3& HalfExtent);
         const b3HullData* GetOrCreateCylinderHull(float Radius, float HalfHeight);
@@ -381,7 +385,8 @@ namespace Lumina::Physics
 
         void BulkCreateRigidBodies(ECS::FRegistry& Registry);
         void CreateRigidBodiesBatched(const TVector<ECS::FEntity>& Entities);
-        void RebuildStaleDynamicMeshBodies(ECS::FRegistry& Registry);
+        void RebuildStaleMeshBodies(ECS::FRegistry& Registry);
+        static CStaticMesh* ResolveColliderMesh(const ECS::FRegistry& Registry, ECS::FEntity Entity, const SMeshColliderComponent& Collider);
 
         EBodyBuildStatus TryBuildRigidBody(ECS::FRegistry& Registry, ECS::FEntity Entity, FRigidBodyBuildResult& OutResult);
         uint32 CommitRigidBody(ECS::FEntity Entity, FRigidBodyBuildResult& Build);
@@ -406,10 +411,11 @@ namespace Lumina::Physics
             uint8   Kind = 0;
             float   X = 0.0f, Y = 0.0f, Z = 0.0f;
             const void* Source = nullptr;
+            uint32  Version = 0;
 
             bool operator==(const FHullKey& Other) const
             {
-                return Kind == Other.Kind && X == Other.X && Y == Other.Y && Z == Other.Z && Source == Other.Source;
+                return Kind == Other.Kind && X == Other.X && Y == Other.Y && Z == Other.Z && Source == Other.Source && Version == Other.Version;
             }
         };
 
@@ -428,6 +434,7 @@ namespace Lumina::Physics
                 MixFloat(Key.X); MixFloat(Key.Y); MixFloat(Key.Z);
                 Mix((uint32)(reinterpret_cast<uintptr_t>(Key.Source) & 0xFFFFFFFFu));
                 Mix((uint32)(reinterpret_cast<uintptr_t>(Key.Source) >> 32));
+                Mix(Key.Version);
                 return Hash;
             }
         };
@@ -438,7 +445,10 @@ namespace Lumina::Physics
         THashMap<FHullKey, b3BoxHull*, FHullKeyHash>        BoxHullCache;
 
         mutable FSharedMutex                                MeshCacheMutex;
-        THashMap<const void*, b3MeshData*>                  MeshCache;
+        THashMap<FHullKey, b3MeshData*, FHullKeyHash>       MeshCache;
+
+        // Keyed by geometry version, so a replaced mesh builds fresh while bodies still holding the old entry stay valid.
+        static FHullKey MakeMeshGeometryKey(const CMesh* Mesh);
 
         TVector<b3HeightFieldData*>                         OwnedHeightFields;
 
@@ -456,7 +466,6 @@ namespace Lumina::Physics
         struct FDynamicMeshCook
         {
             TAtomic<bool>   bDone{ false };
-            bool            bFailed = false;
             b3MeshData*     Mesh = nullptr;
             b3HullData*     Hull = nullptr;
 
@@ -606,6 +615,7 @@ namespace Lumina::Physics
         float                                   Accumulator = 0.0f;
         uint32                                  CollisionSteps = 0;
         uint32                                  MaxBodies = 0;
+        bool                                    bWarnedBodyCap = false;
 
         static constexpr uint32                 kInitialBodyReservation = 4096;
         static constexpr uint32                 kInitialContactReservation = 8192;

@@ -44,9 +44,30 @@ namespace Lumina
             return Out;
         }
 
+        FStringView PathView(const FFixedString& Path)
+        {
+            return FStringView(*Path, Path.Len());
+        }
+
         FStringView EntryName(const FBulkRenameEntry& Entry)
         {
-            return VFS::FileName(FStringView(*Entry.SourcePath, Entry.SourcePath.Len()), !Entry.bDirectory);
+            return VFS::FileName(PathView(Entry.SourcePath), !Entry.bDirectory);
+        }
+
+        FFixedString SiblingPath(const FBulkRenameEntry& Entry, FStringView Name)
+        {
+            const FStringView Source = PathView(Entry.SourcePath);
+            FFixedString Path = Paths::Combine(VFS::Parent(Source), Name);
+            if (!Entry.bDirectory)
+            {
+                Path.Append(VFS::Extension(VFS::FileName(Source)));
+            }
+            return Path;
+        }
+
+        int32 FindEntryLeaving(const TVector<FBulkRenameEntry>& Entries, FStringView Path)
+        {
+            return Algo::IndexOfIf(Entries, [Path](const FBulkRenameEntry& Entry) { return EqualsIgnoreCase(PathView(Entry.SourcePath), Path); });
         }
 
         const char* DescribeStatus(EBulkRenameStatus Status)
@@ -156,15 +177,15 @@ namespace Lumina
             ImGui::EndTable();
         }
 
-        void RunBulkRename(const TVector<FBulkRenameEntry>& Entries, const TFunction<void()>& OnRenamed)
+        void RunBulkRename(const TVector<FBulkRenameEntry>& Ready, const TFunction<void()>& OnRenamed)
         {
             int32 Renamed = 0;
-            for (const FBulkRenameEntry& Entry : Entries)
+            for (const FBulkRenameEntry& Entry : OrderBulkRename(Ready, [](FStringView Path) { return VFS::Exists(Path); }))
             {
                 const AssetOps::FPathOpResult Result = AssetOps::MovePath(Entry.SourcePath, Entry.TargetPath);
                 if (Result.bSucceeded)
                 {
-                    ++Renamed;
+                    Renamed += Entry.Status == EBulkRenameStatus::Ready;
                 }
                 else
                 {
@@ -197,21 +218,19 @@ namespace Lumina
 
     void PlanBulkRename(const FBulkRenameRule& Rule, TVector<FBulkRenameEntry>& Entries, const TFunction<bool(FStringView)>& Exists)
     {
+        TVector<int32> Leaving;
+        Leaving.Reserve(Entries.Num());
         for (int32 Index = 0; Index < Entries.Num(); ++Index)
         {
             FBulkRenameEntry& Entry = Entries[Index];
-            const FStringView Source(*Entry.SourcePath, Entry.SourcePath.Len());
             const FStringView Name = EntryName(Entry);
 
             Entry.NewName = ApplyBulkRenameRule(Rule, Name, Index);
-            Entry.TargetPath = Paths::Combine(VFS::Parent(Source), Entry.NewName);
-            if (!Entry.bDirectory)
-            {
-                Entry.TargetPath.Append(VFS::Extension(VFS::FileName(Source)));
-            }
+            Entry.TargetPath = SiblingPath(Entry, Entry.NewName);
 
-            const FStringView Target(*Entry.TargetPath, Entry.TargetPath.Len());
-            const bool bSamePath = EqualsIgnoreCase(Target, Source);
+            const FStringView Target = PathView(Entry.TargetPath);
+            const bool bSamePath = EqualsIgnoreCase(Target, PathView(Entry.SourcePath));
+            Leaving.Add(FindEntryLeaving(Entries, Target));
 
             if (Entry.NewName.IsEmpty())
             {
@@ -227,12 +246,12 @@ namespace Lumina
             }
             else if (Algo::AnyOf(TSpan<const FBulkRenameEntry>(Entries.GetData(), Index), [Target](const FBulkRenameEntry& Earlier)
                 {
-                    return EqualsIgnoreCase(FStringView(*Earlier.TargetPath, Earlier.TargetPath.Len()), Target);
+                    return EqualsIgnoreCase(PathView(Earlier.TargetPath), Target);
                 }))
             {
                 Entry.Status = EBulkRenameStatus::Duplicate;
             }
-            else if (!bSamePath && Exists(Target))
+            else if (!bSamePath && Leaving.Last() == Constants::kIndexNone && Exists(Target))
             {
                 Entry.Status = EBulkRenameStatus::Exists;
             }
@@ -241,6 +260,73 @@ namespace Lumina
                 Entry.Status = EBulkRenameStatus::Ready;
             }
         }
+
+        // A path another entry leaves is free only once that entry really moves.
+        for (bool bChanged = true; bChanged;)
+        {
+            bChanged = false;
+            for (int32 Index = 0; Index < Entries.Num(); ++Index)
+            {
+                if (Entries[Index].Status == EBulkRenameStatus::Ready && Leaving[Index] != Constants::kIndexNone && Entries[Leaving[Index]].Status != EBulkRenameStatus::Ready)
+                {
+                    Entries[Index].Status = EBulkRenameStatus::Exists;
+                    bChanged = true;
+                }
+            }
+        }
+    }
+
+    TVector<FBulkRenameEntry> OrderBulkRename(TVector<FBulkRenameEntry> Ready, const TFunction<bool(FStringView)>& Exists)
+    {
+        TVector<int32> Next;
+        Next.Reserve(Ready.Num());
+        for (int32 Index = 0; Index < Ready.Num(); ++Index)
+        {
+            const int32 Leaving = FindEntryLeaving(Ready, PathView(Ready[Index].TargetPath));
+            Next.Add(Leaving == Index ? Constants::kIndexNone : Leaving);
+        }
+
+        TVector<FBulkRenameEntry> Moves;
+        Moves.Reserve(Ready.Num());
+        TVector<bool> Visited(Ready.Num(), false);
+        TVector<int32> Chain;
+        for (int32 Start = 0; Start < Ready.Num(); ++Start)
+        {
+            Chain.Reset();
+            int32 Index = Start;
+            for (; Index != Constants::kIndexNone && !Visited[Index]; Index = Next[Index])
+            {
+                Visited[Index] = true;
+                Chain.Add(Index);
+            }
+
+            // Each target belongs to one entry, so a chain can only loop back to where it started.
+            if (!Chain.IsEmpty() && Index == Start)
+            {
+                FBulkRenameEntry& First = Ready[Start];
+                const auto IsTaken = [&Ready, &Exists](FStringView Path)
+                {
+                    return Exists(Path) || Algo::AnyOf(Ready, [Path](const FBulkRenameEntry& Entry) { return EqualsIgnoreCase(PathView(Entry.TargetPath), Path); });
+                };
+                FFixedString Parked = SiblingPath(First, Format("{}_Renaming", First.NewName));
+                for (int32 Attempt = 1; IsTaken(PathView(Parked)); ++Attempt)
+                {
+                    Parked = SiblingPath(First, Format("{}_Renaming{}", First.NewName, Attempt));
+                }
+
+                // Parking the first entry frees its path for the last, and it is not counted as a rename.
+                FBulkRenameEntry& Park = Moves.AddGetRef(First);
+                Park.TargetPath = Parked;
+                Park.Status = EBulkRenameStatus::Unchanged;
+                First.SourcePath = Move(Parked);
+            }
+
+            for (int32 Link = Chain.Num() - 1; Link >= 0; --Link)
+            {
+                Moves.Add(Ready[Chain[Link]]);
+            }
+        }
+        return Moves;
     }
 
     void OpenBulkRenameModal(IEditorToolContext* Context, TVector<FFixedString> Paths, TFunction<void()> OnRenamed)

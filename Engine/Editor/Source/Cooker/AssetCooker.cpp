@@ -1,4 +1,5 @@
 ﻿#include "AssetCooker.h"
+#include "Containers/Algorithm.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Paths/Paths.h"
 #include "Assets/AssetManager/AssetManager.h"
@@ -131,9 +132,9 @@ namespace Lumina
         }
 
         // Every instance under a master, through instances of instances, since each may select its own permutation.
-        void CollectMaterialInstances(const FGuid& Parent, TVector<FAssetData*>& OutInstances, THashSet<FGuid>& Visited)
+        void CollectMaterialInstances(const FGuid& Parent, TVector<FAssetDataPtr>& OutInstances, THashSet<FGuid>& Visited)
         {
-            for (FAssetData* Referencer : FAssetRegistry::Get().GetReferencersOf(Parent))
+            for (const FAssetDataPtr& Referencer : FAssetRegistry::Get().GetReferencersOf(Parent))
             {
                 if (Referencer == nullptr || Referencer->AssetClass != CMaterialInstance::StaticClass()->GetName()
                     || !Visited.TryAdd(Referencer->AssetGUID))
@@ -148,18 +149,21 @@ namespace Lumina
         // One bad asset falls back to a verbatim copy with a WARN rather than killing the whole cook.
         bool BundleAssetCooked(FPakWriter& Writer, FStringView VirtualPath, const TFunction<void(FStringView)>& LogFunc)
         {
-            FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(VirtualPath);
+            FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(VirtualPath);
             const bool bMaterial = Data != nullptr && Data->AssetClass == CMaterial::StaticClass()->GetName();
             // An emitter asset carries its own simulation shader, which systems sharing it reference rather than embed.
             const bool bParticleSystem = Data != nullptr && (Data->AssetClass == CParticleSystem::StaticClass()->GetName()
                                                           || Data->AssetClass == CParticleEmitter::StaticClass()->GetName());
 
             // Permutations are baked into the master at cook time, so its instances are inputs to its cooked bytes.
-            TVector<FAssetData*> Instances;
+            TVector<FAssetDataPtr> Instances;
             if (bMaterial)
             {
                 THashSet<FGuid> Visited;
                 CollectMaterialInstances(Data->AssetGUID, Instances, Visited);
+
+                // Registry order is hash order, so sort to keep the cook reproducible.
+                Algo::Sort(Instances, [](const FAssetDataPtr& A, const FAssetDataPtr& B) { return A->AssetGUID < B->AssetGUID; });
             }
 
             // A material's cooked bytes carry shaders built from the templates, so a template edit must miss the cache too.
@@ -168,7 +172,7 @@ namespace Lumina
             {
                 SourceHash ^= CParticleEmitter::GetSimulationTemplateHash();
             }
-            for (const FAssetData* Instance : Instances)
+            for (const FAssetDataPtr& Instance : Instances)
             {
                 SourceHash = Hash::GetHash64(&Instance->ContentHash, sizeof(Instance->ContentHash), SourceHash);
             }
@@ -187,6 +191,14 @@ namespace Lumina
             CPackage* Package = CPackage::LoadPackage(VirtualPath);
             if (Package == nullptr)
             {
+                // A verbatim copy only helps when the game can read what the editor could not, never for a damaged file.
+                TVector<uint8> Binary;
+                FPackageHeader Header;
+                if (!CPackage::ReadPackageContainer(VirtualPath, Binary, Header))
+                {
+                    LogCooker(LogFunc, *Format("  [error] not a readable package, left out of the pak: {}", VirtualPath));
+                    return false;
+                }
                 LogCooker(LogFunc, *Format("  [warn] failed to load for cook, falling back to verbatim: {}",
                     VirtualPath));
                 return BundleVfsFile(Writer, VirtualPath, LogFunc);
@@ -211,7 +223,7 @@ namespace Lumina
                 if (Material != nullptr && !Material->StaticSwitches.IsEmpty())
                 {
                     TVector<uint64> Keys;
-                    for (const FAssetData* InstanceData : Instances)
+                    for (const FAssetDataPtr& InstanceData : Instances)
                     {
                         CPackage* InstancePackage = CPackage::LoadPackage(FStringView(*InstanceData->Path, InstanceData->Path.Len()));
                         const CMaterialInstance* Instance = InstancePackage != nullptr
@@ -380,7 +392,7 @@ namespace Lumina
             for (int32 i = 0; i < Nodes.Num(); ++i)
             {
                 const FStringView Path(*Nodes[i]->Path, Nodes[i]->Path.Len());
-                bTryStrip[i] = CooksWithoutLoading(FAssetRegistry::Get().GetAssetByPath(Path), ClassMemo, StructMemo) ? 1 : 0;
+                bTryStrip[i] = CooksWithoutLoading(FAssetRegistry::Get().GetAssetByPath(Path).Get(), ClassMemo, StructMemo) ? 1 : 0;
             }
 
             TVector<TVector<uint8>> Stripped(Nodes.Num());
@@ -437,7 +449,7 @@ namespace Lumina
             }
 
             // Kept with the project rather than in the package, so the shipped folder holds only what the game reads.
-            const FString ContentsDir = FString(GEngine->GetProjectPath().GetData(), GEngine->GetProjectPath().Len()) + "/Saved/Cook";
+            const FString ContentsDir = FString(Global::GEngine->GetProjectPath().GetData(), Global::GEngine->GetProjectPath().Len()) + "/Saved/Cook";
             Filesystem::MakeDirectoryTree(FStringView(*ContentsDir, ContentsDir.Len()));
             const FString ContentsPath = ContentsDir + "/" + FString(LeafName(FStringView(*PakPath, PakPath.Len())).GetData(),
                                                                        LeafName(FStringView(*PakPath, PakPath.Len())).Len()) + ".contents.txt";
@@ -565,7 +577,7 @@ namespace Lumina
             {
                 Doc.Set("Project", FJsonValue::MakeObject());
             }
-            Doc.FindOrAdd("Project").Set("Name", FStringView(GEngine->GetProjectName().GetData(), GEngine->GetProjectName().Len()));
+            Doc.FindOrAdd("Project").Set("Name", FStringView(Global::GEngine->GetProjectName().GetData(), Global::GEngine->GetProjectName().Len()));
 
             const FString Out = Doc.ToString(4);
             Writer.AddEntry("/Config/GameSettings.json", Out.View());
@@ -654,13 +666,13 @@ namespace Lumina
         FCookResult Result;
         FCookDDC::Reset();
 
-        if (GEngine == nullptr || GEngine->GetProjectName().IsEmpty())
+        if (Global::GEngine == nullptr || Global::GEngine->GetProjectName().IsEmpty())
         {
             Result.ErrorMessage = "No project loaded.";
             return Result;
         }
 
-        const TVector<FCookRoot> Roots = GEngine->GetCookRoots();
+        const TVector<FCookRoot> Roots = Global::GEngine->GetCookRoots();
         if (Roots.IsEmpty())
         {
             Result.ErrorMessage =
@@ -678,15 +690,15 @@ namespace Lumina
 
         // FindByPredicate returns hash order, so sort by GUID before adding to keep the graph deterministic.
         {
-            TVector<FAssetData*> Grouped = FAssetRegistry::Get().FindByPredicate(
+            TVector<FAssetDataPtr> Grouped = FAssetRegistry::Get().FindByPredicate(
                 [](const FAssetData& D) { return !FAssetManager::Get().GetGroupOfClass(D.AssetClass).IsNone(); });
             Algo::Sort(Grouped,
-                [](const FAssetData* A, const FAssetData* B) { return A->AssetGUID < B->AssetGUID; });
+                [](const FAssetDataPtr& A, const FAssetDataPtr& B) { return A->AssetGUID < B->AssetGUID; });
             if (!Grouped.IsEmpty())
             {
                 LogCooker(LogFunc, *Format("  Grouped assets: {} -> implicit cook roots", Grouped.Num()));
             }
-            for (const FAssetData* Data : Grouped)
+            for (const FAssetDataPtr& Data : Grouped)
             {
                 FCookRoot Root;
                 Root.Asset = FString(*Data->Path, Data->Path.Len());
@@ -848,7 +860,7 @@ namespace Lumina
 
                 // A near-empty registry usually means stale editor discovery, so warn loudly in the cook log.
                 {
-                    const int32 LiveCount = FAssetRegistry::Get().GetAssets().Num();
+                    const int32 LiveCount = FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; }).Num();
                     TVector<uint8> Bytes;
                     FMemoryWriter Ar(Bytes);
                     FAssetRegistry::Get().WriteToArchive(Ar);

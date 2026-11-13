@@ -72,6 +72,47 @@ namespace Lumina
         constexpr uint32 AudioBitsPerSample = 16;
         constexpr uint32 AacBytesPerSecond = 24000;
 
+        constexpr float CenterDownmixGain = 0.70710678f;
+        constexpr float SurroundDownmixGain = 0.70710678f;
+
+        // Left/right stereo gain per channel role, in the Windows default speaker order (FL, FR, FC, LFE, BL, BR, SL, SR).
+        constexpr float DownmixGains[8][2] =
+        {
+            { 1.0f, 0.0f },
+            { 0.0f, 1.0f },
+            { CenterDownmixGain, CenterDownmixGain },
+            { 0.0f, 0.0f },
+            { SurroundDownmixGain, 0.0f },
+            { 0.0f, SurroundDownmixGain },
+            { SurroundDownmixGain, 0.0f },
+            { 0.0f, SurroundDownmixGain },
+        };
+
+        void DownmixFrameToStereo(const float* Frame, uint32 SourceChannels, float& OutLeft, float& OutRight)
+        {
+            if (SourceChannels == 1)
+            {
+                OutLeft = OutRight = Frame[0];
+                return;
+            }
+
+            float Left = 0.0f;
+            float Right = 0.0f;
+            float LeftGainSum = 0.0f;
+            float RightGainSum = 0.0f;
+            for (uint32 Channel = 0; Channel < SourceChannels; ++Channel)
+            {
+                const uint32 Role = Math::Min(Channel, 7u);
+                Left += Frame[Channel] * DownmixGains[Role][0];
+                Right += Frame[Channel] * DownmixGains[Role][1];
+                LeftGainSum += DownmixGains[Role][0];
+                RightGainSum += DownmixGains[Role][1];
+            }
+            // The mixer copies mono voices onto every surround channel, so an unnormalized sum would boost and clip them.
+            OutLeft = Left / LeftGainSum;
+            OutRight = Right / RightGainSum;
+        }
+
         HRESULT DescribeAudio(IMFMediaType* Type, const GUID& Subtype, uint32 SampleRate, uint32 Channels)
         {
             HRESULT Result = Type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
@@ -119,8 +160,10 @@ namespace Lumina
         {
             return Check(Com, "start COM", OutError);
         }
+        bInitializedCom = SUCCEEDED(Com);
         if (!Check(MFStartup(MF_VERSION), "start up", OutError))
         {
+            Close(OutError);
             return false;
         }
         bStartedMediaFoundation = true;
@@ -178,8 +221,7 @@ namespace Lumina
         if (!bOk)
         {
             SafeRelease(SinkWriter);
-            MFShutdown();
-            bStartedMediaFoundation = false;
+            Close(OutError);
             return false;
         }
 
@@ -211,10 +253,18 @@ namespace Lumina
             int16* Out = reinterpret_cast<int16*>(Data);
             for (uint32 Frame = 0; Frame < FrameCount; ++Frame)
             {
-                for (uint32 Channel = 0; Channel < AudioChannels; ++Channel)
+                float Left, Right;
+                DownmixFrameToStereo(Interleaved + (size_t)Frame * AudioSourceChannels, AudioSourceChannels, Left, Right);
+
+                if (AudioChannels == 1)
                 {
-                    const float Value = Math::Clamp(Interleaved[(size_t)Frame * AudioSourceChannels + Channel], -1.0f, 1.0f);
-                    Out[(size_t)Frame * AudioChannels + Channel] = (int16)(Value * 32767.0f);
+                    const float Mono = Math::Clamp((Left + Right) * 0.5f, -1.0f, 1.0f);
+                    Out[Frame] = (int16)(Mono * 32767.0f);
+                }
+                else
+                {
+                    Out[(size_t)Frame * 2 + 0] = (int16)(Math::Clamp(Left, -1.0f, 1.0f) * 32767.0f);
+                    Out[(size_t)Frame * 2 + 1] = (int16)(Math::Clamp(Right, -1.0f, 1.0f) * 32767.0f);
                 }
             }
             Buffer->Unlock();
@@ -303,6 +353,11 @@ namespace Lumina
         {
             MFShutdown();
             bStartedMediaFoundation = false;
+        }
+        if (bInitializedCom)
+        {
+            CoUninitialize();
+            bInitializedCom = false;
         }
         return bOk;
     }

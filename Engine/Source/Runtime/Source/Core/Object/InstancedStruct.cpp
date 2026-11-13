@@ -264,6 +264,9 @@ namespace Lumina
 
     bool FInstancedStruct::Identical(const FInstancedStruct& Other) const
     {
+        EnsureCurrentType();
+        Other.EnsureCurrentType();
+
         if (ScriptStruct != Other.ScriptStruct)
         {
             return false;

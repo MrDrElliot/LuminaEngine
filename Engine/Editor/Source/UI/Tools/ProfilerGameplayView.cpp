@@ -187,13 +187,13 @@ namespace Lumina
 
     CWorld* FProfilerEditorTool::ResolveWorld() const
     {
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             return nullptr;
         }
 
         CWorld* Editor = nullptr;
-        for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
+        for (const TUniquePtr<FWorldContext>& Context : Global::GWorldManager->GetContexts())
         {
             if (!Context || !Context->World.IsValid())
             {

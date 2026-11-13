@@ -4,6 +4,7 @@
 
 
 #include "FileInfo.h"
+#include "FileSystem.h"
 #include "Paths/Paths.h"
 #include "VfsPathUtils.h"
 
@@ -200,9 +201,7 @@ namespace Lumina::VFS
             }
 
             FStringView OtherView(OtherKey.GetData(), OtherKey.Len());
-            if (OtherView.Len() > Prefix.Len() &&
-                OtherView.StartsWith(Prefix) &&
-                OtherView[Prefix.Len()] == '/')
+            if (IsUnderDirectory(Prefix, OtherView))
             {
                 return false;
             }
@@ -257,13 +256,7 @@ namespace Lumina::VFS
         for (auto It = Entries.begin(); It != Entries.end(); )
         {
             FStringView OtherView(It->Key.GetData(), It->Key.Len());
-            const bool bMatches =
-                OtherView == Prefix ||
-                (OtherView.Len() > Prefix.Len() &&
-                 OtherView.StartsWith(Prefix) &&
-                 OtherView[Prefix.Len()] == '/');
-
-            if (bMatches)
+            if (IsUnderDirectory(Prefix, OtherView))
             {
                 It = Entries.Remove(It);
                 bRemovedAny = true;
@@ -286,17 +279,33 @@ namespace Lumina::VFS
         FFixedString OldKey = NormalizeKey(Old);
         FFixedString NewKey = NormalizeKey(New);
 
-        auto It = Entries.Find(OldKey);
-        if (It == nullptr)
+        if (Entries.Find(OldKey) == nullptr)
         {
             return false;
         }
 
-        FEntry Entry = Move(*It);
-        Entries.Remove(OldKey);
+        FStringView Prefix(OldKey.GetData(), OldKey.Len());
+
+        TVector<FFixedString> KeysToMove;
+        for (const auto& Pair : Entries)
+        {
+            if (IsUnderDirectory(Prefix, FStringView(Pair.Key.GetData(), Pair.Key.Len())))
+            {
+                KeysToMove.Add(Pair.Key);
+            }
+        }
 
         EnsureDirectoryChain(NewKey);
-        Entries[NewKey] = Move(Entry);
+
+        for (const FFixedString& Key : KeysToMove)
+        {
+            FEntry Entry = Move(*Entries.Find(Key));
+            Entries.Remove(Key);
+
+            FFixedString RemappedKey = NewKey + Key.Mid(OldKey.Len());
+            Entries[RemappedKey] = Move(Entry);
+        }
+
         return true;
     }
 
@@ -355,9 +364,7 @@ namespace Lumina::VFS
                 continue;
             }
 
-            if (OtherView.Len() > Prefix.Len() &&
-                OtherView.StartsWith(Prefix) &&
-                OtherView[Prefix.Len()] == '/')
+            if (IsUnderDirectory(Prefix, OtherView))
             {
                 EmitFileInfo(OtherKey, Entry, Callback);
             }

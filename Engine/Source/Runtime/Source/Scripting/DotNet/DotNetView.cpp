@@ -111,6 +111,8 @@ namespace Lumina::DotNetViewInternal
         State.Entities.Reset();
         State.Remaining = 0;
 
+        TInlineVector<ECS::FSparseSet*, 8> Pools;
+        Pools.Reserve(NFilter);
         for (int f = 0; f < NFilter; ++f)
         {
             ECS::FSparseSet* Pool = FindStorage(Registry, FilterOps[f]);
@@ -118,9 +120,10 @@ namespace Lumina::DotNetViewInternal
             {
                 Pool->TrackChanges();
             }
+            Pools.Add(Pool);
         }
 
-        const ECS::FSparseSet* First = FindStorage(Registry, FilterOps[0]);
+        const ECS::FSparseSet* First = Pools[0];
         if (First == nullptr)
         {
             return;
@@ -140,7 +143,7 @@ namespace Lumina::DotNetViewInternal
             bool bPasses = true;
             for (int f = 1; f < NFilter && bPasses; ++f)
             {
-                const ECS::FSparseSet* Pool = FindStorage(Registry, FilterOps[f]);
+                const ECS::FSparseSet* Pool = Pools[f];
                 bPasses = Pool != nullptr && ((AddedMask & (1u << f)) != 0 ? Pool->HasAddedSince(Entity, Since) : Pool->HasChangedSince(Entity, Since));
             }
             if (bPasses)
@@ -245,24 +248,26 @@ LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, vo
 
         // Written before the match is known, since a row the loop rejects is simply overwritten by the next.
         void** Row = OutPtrs + (size_t)Count * (size_t)NInclude;
-
-        void* DriverPayload = nullptr;
-        if (Slot < DriverSize && DriverDense[Slot] == Entity)
+        uint32** TickRow = OutTicks != nullptr ? OutTicks + (size_t)Count * (size_t)NInclude : nullptr;
+        const auto EmitInclude = [&](int k, uint32 DenseIndex, void* Payload)
         {
-            DriverPayload = bDriverBlock ? DriverBlock + Slot * DriverStride : Driver->GetRawAtDense((uint32)Slot);
-        }
-        else
-        {
-            DriverPayload = Driver->GetRaw(Entity);
-            if (DriverPayload == nullptr && !(Driver->IsTagOnly() && Driver->Contains(Entity)))
+            if (k >= K)
             {
-                continue;
+                return;
             }
-        }
-        if (DriverInclude < K)
+            Row[k] = Payload;
+            if (TickRow != nullptr)
+            {
+                TickRow[k] = (State->StampMask & (1u << k)) != 0 ? Includes[k]->GetChangeTickSlot(DenseIndex, State->TickSink) : nullptr;
+            }
+        };
+
+        const uint32 DriverIndex = Slot < DriverSize && DriverDense[Slot] == Entity ? (uint32)Slot : Driver->FindLiveDense(Entity);
+        if (DriverIndex == Lumina::ECS::FSparseSet::InvalidDenseIndex)
         {
-            Row[DriverInclude] = DriverPayload;
+            continue;
         }
+        EmitInclude(DriverInclude, DriverIndex, bDriverBlock ? DriverBlock + DriverIndex * DriverStride : Driver->GetRawAtDense(DriverIndex));
 
         bool bMatches = true;
         for (int k = 0; k < N && bMatches; ++k)
@@ -271,20 +276,11 @@ LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, vo
             {
                 continue;
             }
-            const Lumina::ECS::FSparseSet* Storage = Includes[k];
-            void* Payload = nullptr;
-            if (Storage->IsTagOnly())
+            const uint32 DenseIndex = Includes[k]->FindLiveDense(Entity);
+            bMatches = DenseIndex != Lumina::ECS::FSparseSet::InvalidDenseIndex;
+            if (bMatches)
             {
-                bMatches = Storage->Contains(Entity);
-            }
-            else
-            {
-                Payload = Storage->GetRaw(Entity);
-                bMatches = Payload != nullptr;
-            }
-            if (k < K)
-            {
-                Row[k] = Payload;
+                EmitInclude(k, DenseIndex, Includes[k]->GetRawAtDense(DenseIndex));
             }
         }
         for (int32 e = 0; e < NumExcludes && bMatches; ++e)
@@ -298,16 +294,6 @@ LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, vo
         if (!bMatches)
         {
             continue;
-        }
-
-        if (OutTicks != nullptr)
-        {
-            uint32** Ticks = OutTicks + (size_t)Count * (size_t)NInclude;
-            for (int k = 0; k < K; ++k)
-            {
-                const bool bStamps = (State->StampMask & (1u << k)) != 0;
-                Ticks[k] = bStamps ? Includes[k]->GetChangeTickSlot(Includes[k]->FindLiveDense(Entity), State->TickSink) : nullptr;
-            }
         }
 
         OutEntities[Count] = static_cast<uint32>(Entity.Value);

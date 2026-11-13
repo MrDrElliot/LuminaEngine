@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "World/ECS/Registry.h"
 #include "World/Entity/EntityUtils.h"
+#include "World/Entity/Components/TransformComponent.h"
 
 #include "Components/NetworkComponent.h"
 #include "Net/NetWorldState.h"
@@ -35,16 +36,18 @@ namespace
             return State.GuidTable.Find(SNetGUID{ SpawnedGuid });
         }
 
-        void ReceiveSpawn()
+        void ReceiveSpawn(bool bTruncated = false)
         {
             ECS::FRegistry Server;
             FNetWorldState ServerState;
             const ECS::FEntity Source = Server.Create();
             Server.Emplace<SNetworkComponent>(Source);
+            Server.Emplace<STransformComponent>(Source);
 
             TVector<uint8> Msg;
             WriteSpawnMessage(Server, ServerState, Source, SpawnedGuid, 0, FVector3(0.0f), FQuat::Identity(), FVector3(1.0f), Msg);
-            ApplySpawnEntity(Registry, State, ServerConnection, Msg.GetData(), static_cast<SIZE_T>(Msg.Num()));
+            const SIZE_T Size = static_cast<SIZE_T>(Msg.Num());
+            ApplySpawnEntity(Registry, State, ServerConnection, Msg.GetData(), bTruncated ? Size / 2 : Size);
         }
 
         void ReceiveDespawn()
@@ -62,6 +65,26 @@ namespace
             return Entity;
         }
     };
+}
+
+TEST(NetSpawnLifetime, AWellFormedSpawnRegistersTheEntity)
+{
+    FClient Client;
+    Client.ReceiveSpawn();
+
+    const ECS::FEntity Spawned = Client.Mapped();
+    ASSERT_TRUE(Client.Registry.IsValid(Spawned));
+    EXPECT_EQ(Client.Registry.Get<ECS::Read<SNetworkComponent>>(Spawned).NetGUID.Value, SpawnedGuid);
+    EXPECT_EQ(Client.Registry.NumEntities(), 1);
+}
+
+TEST(NetSpawnLifetime, ATruncatedSpawnLeavesNoEntityBehind)
+{
+    FClient Client;
+    Client.ReceiveSpawn(true);
+
+    EXPECT_EQ(Client.Mapped(), ECS::NullEntity);
+    EXPECT_EQ(Client.Registry.NumEntities(), 0);
 }
 
 TEST(NetSpawnLifetime, ALocallyDestroyedEntityRespawnsAfterTheServerDespawnsIt)

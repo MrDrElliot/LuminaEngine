@@ -13,6 +13,7 @@
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Systems/SystemAccess.h"
 #include "Log/Log.h"
+#include "LogCountTestHelpers.h"
 #include "Core/Object/ObjectReinstancer.h"
 #include "Core/Reflection/Type/ObjectReferenceVisitor.h"
 #include "ScriptTestUtil.h"
@@ -24,6 +25,8 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "World/Entity/Components/EntityTags.h"
+#include "World/Entity/Components/Component.h"
+#include "World/Entity/Components/LifetimeComponent.h"
 #include <chrono>
 #include <cstdio>
 
@@ -582,16 +585,8 @@ namespace
         Logging::Flush();
         Logging::ClearLogQueue();
         Tick();
-        Logging::Flush();
 
-        const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
-        int32 Count = 0;
-        for (int32 Index = 0; Index < Messages.Num(); ++Index)
-        {
-            const FStringView Text = Messages[Index].Message.View();
-            Count += Messages[Index].Level == ELogLevel::Error && Text.Contains("CParallelEntityScriptTest") && Text.Contains(Call) ? 1 : 0;
-        }
-        return Count;
+        return CountLoggedMessages(ELogLevel::Error, "CParallelEntityScriptTest", Call);
     }
 
     // Few enough entities that the pass runs on the ticking thread, so a hook may change the registry without racing anyone.
@@ -694,6 +689,143 @@ namespace
     {
         return Algo::AllOf(Scripts, [](const CParallelEntityScriptTest* Script) { return Script->LastThreadID == Threading::GetThreadID(); });
     }
+}
+
+extern "C" void* LuminaSharp_EmplaceComponent(uint64 World, uint32 Entity, const void* Ops);
+
+// GetOrEmplaceComponent from a worker leaves the live pool to its sibling chunks and adds the configured value at the sync point.
+TEST(EntityScriptUnification, AParallelScriptEmplaceWaitsForTheSyncPoint)
+{
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ECS::FRegistry& Registry = World->GetEntityRegistry();
+    const TVector<CParallelEntityScriptTest*> Scripts = AttachReadiedParallelScripts(Registry, kParallelTestEntities);
+    for (CParallelEntityScriptTest* Script : Scripts)
+    {
+        Script->HookContext = World;
+        Script->UpdateHook  = [](CParallelEntityScriptTest& Self, void* Context)
+        {
+            // The ticking thread's own chunks run undeferred, so only a worker's call is under test.
+            if (Threading::IsMainThread())
+            {
+                return;
+            }
+            const uint32 Entity = Self.GetOwningEntity().GetPacked();
+            void* Added = LuminaSharp_EmplaceComponent(reinterpret_cast<uint64>(Context), Entity, &Meta::GetComponentOps<SLifetimeComponent>());
+            static_cast<SLifetimeComponent*>(Added)->Lifetime = static_cast<float>(Entity);
+        };
+    }
+
+    EntityScripts::Tick(Registry, 0.5f);
+    TVector<CParallelEntityScriptTest*> RanOnWorkers;
+    for (CParallelEntityScriptTest* Script : Scripts)
+    {
+        if (Script->LastThreadID != Threading::GetThreadID())
+        {
+            RanOnWorkers.Add(Script);
+            EXPECT_FALSE(Registry.HasAll<SLifetimeComponent>(Script->GetOwningEntity())) << "a worker's emplace must not touch the live pool";
+        }
+    }
+    ASSERT_FALSE(RanOnWorkers.IsEmpty()) << "no script ran on a worker, so nothing was deferred";
+
+    World->GetCommandBus().Flush();
+    for (CParallelEntityScriptTest* Script : RanOnWorkers)
+    {
+        const SLifetimeComponent* Lifetime = Registry.TryGet<SLifetimeComponent>(Script->GetOwningEntity());
+        ASSERT_NE(Lifetime, nullptr) << "the flush must add what the script staged";
+        EXPECT_EQ(Lifetime->Lifetime, static_cast<float>(Script->GetOwningEntity().GetPacked())) << "the staged value carries what the script configured";
+    }
+}
+
+extern "C" void* LuminaSharp_RegistryConnect(uint64 World, const void* Ops, int32 Kind);
+extern "C" void LuminaSharp_RegistryDisconnect(uint64 World, const void* Ops, int32 Kind, void* Handle);
+
+// Subscribing or unsubscribing writes the pool's shared listener list, so a worker's call waits for the sync point.
+TEST(EntityScriptUnification, AParallelScriptSignalSubscriptionWaitsForTheSyncPoint)
+{
+    struct FSubscription
+    {
+        CWorld*                 World         = nullptr;
+        FManagedSignalListener* Listener      = nullptr;
+        bool                    bUnsubscribed = false;
+    };
+    constexpr int32 Construct = static_cast<int32>(EComponentSignal::Construct);
+    const FComponentOps* Ops = &Meta::GetComponentOps<SLifetimeComponent>();
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ECS::FRegistry& Registry = World->GetEntityRegistry();
+    const TVector<CParallelEntityScriptTest*> Scripts = AttachReadiedParallelScripts(Registry, kParallelTestEntities);
+    TVector<FSubscription> Subscriptions;
+    Subscriptions.SetNum(Scripts.Num());
+    for (int32 Index = 0; Index < Scripts.Num(); ++Index)
+    {
+        Subscriptions[Index].World = World;
+        Scripts[Index]->HookContext = &Subscriptions[Index];
+        Scripts[Index]->UpdateHook  = [](CParallelEntityScriptTest&, void* Context)
+        {
+            FSubscription& Subscription = *static_cast<FSubscription*>(Context);
+            if (!Threading::IsMainThread())
+            {
+                Subscription.Listener = static_cast<FManagedSignalListener*>(LuminaSharp_RegistryConnect(
+                    reinterpret_cast<uint64>(Subscription.World), &Meta::GetComponentOps<SLifetimeComponent>(), Construct));
+            }
+        };
+    }
+
+    EntityScripts::Tick(Registry, 0.5f);
+    TVector<FSubscription*> Subscribed;
+    for (FSubscription& Subscription : Subscriptions)
+    {
+        if (Subscription.Listener != nullptr)
+        {
+            Subscribed.Add(&Subscription);
+            EXPECT_FALSE(Subscription.Listener->Connection.IsConnected()) << "a worker's subscribe must not touch the live pool";
+        }
+    }
+    ASSERT_FALSE(Subscribed.IsEmpty()) << "no script ran on a worker, so nothing was deferred";
+
+    World->GetCommandBus().Flush();
+    for (const FSubscription* Subscription : Subscribed)
+    {
+        EXPECT_TRUE(Subscription->Listener->Connection.IsConnected()) << "the flush must connect what the script subscribed";
+    }
+
+    for (CParallelEntityScriptTest* Script : Scripts)
+    {
+        Script->UpdateHook = [](CParallelEntityScriptTest&, void* Context)
+        {
+            FSubscription& Subscription = *static_cast<FSubscription*>(Context);
+            if (!Threading::IsMainThread() && Subscription.Listener != nullptr)
+            {
+                LuminaSharp_RegistryDisconnect(reinterpret_cast<uint64>(Subscription.World), &Meta::GetComponentOps<SLifetimeComponent>(),
+                    Construct, Subscription.Listener);
+                Subscription.bUnsubscribed = true;
+            }
+        };
+    }
+
+    EntityScripts::Tick(Registry, 0.5f);
+    bool bAnyUnsubscribed = false;
+    for (const FSubscription* Subscription : Subscribed)
+    {
+        if (Subscription->bUnsubscribed)
+        {
+            bAnyUnsubscribed = true;
+            EXPECT_TRUE(Subscription->Listener->Connection.IsConnected()) << "a worker's unsubscribe must not touch the live pool or free the listener";
+        }
+    }
+    ASSERT_TRUE(bAnyUnsubscribed) << "no subscribed script ran on a worker, so nothing was deferred";
+
+    World->GetCommandBus().Flush();
+    for (const FSubscription* Subscription : Subscribed)
+    {
+        if (!Subscription->bUnsubscribed)
+        {
+            LuminaSharp_RegistryDisconnect(reinterpret_cast<uint64>(World), Ops, Construct, Subscription->Listener);
+        }
+    }
+    const ECS::FSparseSet* Pool = Registry.FindStorage(Ops->GetTypeID());
+    ASSERT_NE(Pool, nullptr);
+    EXPECT_TRUE(Pool->Signals.OnConstruct.IsEmpty()) << "every subscription was released once its unsubscribe flushed";
 }
 
 #if !defined(LE_SHIPPING)
@@ -1318,6 +1450,67 @@ TEST(EntityScriptUnification, DetachAllInRegistrySurvivesAnOnDetachThatAttachesS
     ASSERT_TRUE(Context.Spawned != ECS::NullEntity);
     EXPECT_FALSE(Registry.Get<SEntityScriptComponent>(Context.Spawned).Scripts.IsEmpty())
         << "a script attached during the pass is outside the snapshot; the clear that follows drops it";
+}
+
+namespace
+{
+    struct FSpawnChain
+    {
+        ECS::FRegistry*            Registry = nullptr;
+        int32                      Length   = 0;
+        TVector<CEntityScriptTest*> Links;
+
+        CEntityScriptTest* SpawnLink()
+        {
+            CEntityScriptTest* Link = AttachTestScript(*Registry, Registry->Create());
+            Link->HookContext = this;
+            Link->ReadyHook = [](CEntityScriptTest&, void* Ctx)
+            {
+                FSpawnChain& Chain = *static_cast<FSpawnChain*>(Ctx);
+                if (Chain.Links.Num() < Chain.Length)
+                {
+                    Chain.SpawnLink();
+                }
+            };
+            Links.Add(Link);
+            return Link;
+        }
+
+        int32 NumReady() const
+        {
+            int32 Count = 0;
+            for (const CEntityScriptTest* Link : Links)
+            {
+                Count += Link->ReadyCount;
+            }
+            return Count;
+        }
+    };
+}
+
+// Each OnReady spawns the next link, so a chain longer than the per-frame lifecycle rounds spills into the next frame.
+TEST(EntityScriptUnification, ASpawnChainPastTheLifecycleRoundCapWarnsAndFinishesNextFrame)
+{
+    constexpr const char* CapWarning = "spawned past the 8 lifecycle rounds a frame allows, so the 1 still pending run OnAttach or OnReady";
+
+    ECS::FRegistry AtCapRegistry{};
+    FSpawnChain AtCap{ &AtCapRegistry, 8 };
+    AtCap.SpawnLink();
+    EntityScripts::Tick(AtCapRegistry, 0.1f);
+    EXPECT_EQ(AtCap.NumReady(), 8) << "eight links fit the eight rounds of one frame";
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Warn, "lifecycle rounds a frame allows"), 0) << "using every round with nothing left over is not an overflow";
+
+    ECS::FRegistry PastCapRegistry{};
+    FSpawnChain PastCap{ &PastCapRegistry, 12 };
+    PastCap.SpawnLink();
+    EntityScripts::Tick(PastCapRegistry, 0.1f);
+    EXPECT_LT(PastCap.NumReady(), 12) << "the chain runs past what one frame readies";
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Warn, CapWarning), 1);
+
+    EntityScripts::Tick(PastCapRegistry, 0.1f);
+    EXPECT_EQ(PastCap.Links.Num(), 12);
+    EXPECT_EQ(PastCap.NumReady(), 12) << "the spilled links are delayed a frame, never dropped";
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Warn, "lifecycle rounds a frame allows"), 1) << "the warning is not repeated every frame";
 }
 
 // One script class going missing used to end the record, taking its still-resolvable siblings with it.

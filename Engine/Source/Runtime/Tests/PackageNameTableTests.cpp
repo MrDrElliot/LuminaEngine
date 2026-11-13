@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
+#include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
 #include "Containers/Algorithm.h"
 #include "Containers/Name.h"
 #include "Core/Object/Cast.h"
@@ -10,9 +11,16 @@
 #include "Core/Object/ObjectCore.h"
 #include "Core/Reflection/Type/Properties/PropertyHeader.h"
 #include "Core/Serialization/MemoryArchiver.h"
+#include "Core/Serialization/ObjectArchiver.h"
 #include "Core/Serialization/Package/PackageNameTable.h"
 #include "Core/Versioning/CoreVersion.h"
 #include "Log/Log.h"
+#include "LogCountTestHelpers.h"
+#include "Scripting/ScriptTypeRegistry.h"
+#include "World/World.h"
+#include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
+#include "WorldTestAccess.h"
 
 using namespace Lumina;
 
@@ -432,14 +440,7 @@ namespace
 
         Logging::ClearLogQueue();
         EXPECT_EQ(Loaded->LoadObject(Guid), nullptr) << Tag;
-        Logging::Flush();
-
-        const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
-        int32 Errors = 0;
-        for (int32 Index = 0; Index < Messages.Num(); ++Index)
-        {
-            Errors += Messages[Index].Level == ELogLevel::Error && Messages[Index].Message.View().Contains("CUnregisteredNodeGraph");
-        }
+        const int32 Errors = CountLoggedMessages(ELogLevel::Error, "CUnregisteredNodeGraph");
 
         RetireCompatPackage(Loaded);
         return Errors;
@@ -487,4 +488,195 @@ TEST(PackageNameTable, AContainerReadWithoutItsNameTableDoesNotInventNames)
 
     ASSERT_FALSE(Exports.IsEmpty());
     EXPECT_EQ(Exports[0].ObjectName, NAME_None) << "an unresolvable slot must read as none, not as a real name";
+}
+
+namespace
+{
+    // A map whose one entity has a box collider pointing at a second export of the same package.
+    void SaveCompatWorld(const char* Path, const FGuid& WorldGuid, const FGuid& MaterialGuid, int32 ForcedVersion = 0)
+    {
+        EnsureCompatMount();
+        SBoxColliderComponent::StaticStruct();
+        RegisterPendingTypes();
+
+        CPackage* Package = CPackage::CreatePackage(Path);
+        ASSERT_NE(Package, nullptr) << Path;
+        CWorld* World = Cast<CWorld>(NewObject(CWorld::StaticClass(), Package, "Map", WorldGuid));
+        CPhysicsMaterial* Material = Cast<CPhysicsMaterial>(NewObject(CPhysicsMaterial::StaticClass(), Package, "Shape", MaterialGuid));
+        ASSERT_NE(World, nullptr) << Path;
+        ASSERT_NE(Material, nullptr) << Path;
+
+        ECS::FRegistry& Registry = World->GetEntityRegistry();
+        SBoxColliderComponent& Box = Registry.Emplace<SBoxColliderComponent>(Registry.Create());
+        Box.HalfExtent = FVector3(3.0f);
+        Box.PhysicsMaterial = Material;
+
+        SetForcedPackageSaveVersion(ForcedVersion);
+        const bool bSaved = CPackage::SavePackage(Package, Path);
+        SetForcedPackageSaveVersion(0);
+
+        EXPECT_TRUE(bSaved) << Path;
+
+        // The collider's reference would otherwise free the material while the world is destroyed, ahead of its own retire.
+        Registry.Clear();
+        RetireCompatPackage(Package);
+    }
+
+    int32 NewerThanThisEngine()
+    {
+        return Global::GPackageFileLuminaVersion.FileVersion + 1;
+    }
+
+    // Writes some names as others, which is how an archive saved before a schema change reads today.
+    class FRenamingWriter : public FInProcessObjectArchiver
+    {
+    public:
+
+        FRenamingWriter(FArchive& Inner, const THashMap<FName, FName>& InRenames)
+            : FInProcessObjectArchiver(Inner)
+            , Renames(InRenames)
+        {
+        }
+
+        using FInProcessObjectArchiver::operator<<;
+
+        FArchive& operator<<(FName& Value) override
+        {
+            const auto Renamed = Renames.Find(Value);
+            FName Written = Renamed != nullptr ? (*Renamed) : Value;
+            return FInProcessObjectArchiver::operator<<(Written);
+        }
+
+    private:
+
+        const THashMap<FName, FName>& Renames;
+    };
+}
+
+// The collision shape asset type was removed, so maps that pointed at one must still open without it.
+TEST(WorldLoad, AnExportOfAnUnresolvedClassLoadsAsNull)
+{
+    const char* Path = "/PkgCompat/UnresolvedClassWorld.lasset";
+    const FGuid WorldGuid = FGuid::New();
+    const FGuid MaterialGuid = FGuid::New();
+    SaveCompatWorld(Path, WorldGuid, MaterialGuid);
+
+    CPackage* Loaded = CPackage::LoadPackage(Path);
+    ASSERT_NE(Loaded, nullptr);
+    FObjectExport* Export = Algo::FindIf(Loaded->ExportTable, [&](const FObjectExport& E) { return E.ObjectGUID == MaterialGuid; });
+    ASSERT_NE(Export, nullptr);
+    Export->ClassName = FName("CCollisionShape");
+
+    Logging::ClearLogQueue();
+    CWorld* World = Cast<CWorld>(Loaded->LoadObject(WorldGuid));
+    ASSERT_NE(World, nullptr);
+    EXPECT_GE(CountLoggedMessages(ELogLevel::Error, "CCollisionShape"), 1);
+
+    ECS::FRegistry& Registry = FWorldTestAccess::PendingRegistry(*World);
+    int32 Boxes = 0;
+    for (ECS::FEntity Entity : Registry.View<SBoxColliderComponent>())
+    {
+        const SBoxColliderComponent& Box = Registry.Get<SBoxColliderComponent>(Entity);
+        EXPECT_FLOAT_EQ(Box.HalfExtent[0], 3.0f) << "the rest of the component must still load";
+        EXPECT_EQ(Box.PhysicsMaterial.Get(), nullptr);
+        ++Boxes;
+    }
+    EXPECT_EQ(Boxes, 1);
+
+    RetireCompatPackage(Loaded);
+}
+
+TEST(WorldLoad, AWorldFromANewerEngineIsRefusedBeforeItsEntities)
+{
+    const char* Path = "/PkgCompat/NewerWorld.lasset";
+    const FGuid WorldGuid = FGuid::New();
+    SaveCompatWorld(Path, WorldGuid, FGuid::New(), NewerThanThisEngine());
+
+    Logging::ClearLogQueue();
+    EXPECT_EQ(CPackage::LoadPackage(Path), nullptr);
+    EXPECT_EQ(FindObject<CObject>(WorldGuid), nullptr) << "an unreadable file must not hand out a world to deserialize";
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Error, "newer engine"), 1);
+
+    if (CPackage* Refused = CPackage::FindPackageByPath(Path))
+    {
+        RetireCompatPackage(Refused);
+    }
+}
+
+// A loaded package re-reads its file once the cached bytes are dropped, and that file may have been replaced since.
+TEST(WorldLoad, AFileReplacedByANewerEngineIsRefusedOnReread)
+{
+    const char* Path = "/PkgCompat/RereadWorld.lasset";
+    const char* NewerPath = "/PkgCompat/RereadWorldNewer.lasset";
+    const FGuid WorldGuid = FGuid::New();
+
+    SaveCompatWorld(NewerPath, FGuid::New(), FGuid::New(), NewerThanThisEngine());
+    TVector<uint8> NewerFile;
+    ASSERT_TRUE(VFS::ReadFile(NewerFile, NewerPath));
+    SaveCompatWorld(Path, WorldGuid, FGuid::New());
+
+    CPackage* Loaded = CPackage::LoadPackage(Path);
+    ASSERT_NE(Loaded, nullptr);
+    Loaded->LoaderBytes.reset();
+    ASSERT_TRUE(VFS::WriteFile(Path, NewerFile));
+
+    Logging::ClearLogQueue();
+    CWorld* World = Cast<CWorld>(Loaded->LoadObject(WorldGuid));
+    ASSERT_NE(World, nullptr);
+    EXPECT_EQ(FWorldTestAccess::PendingRegistry(*World).NumEntities(), 0);
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Error, "newer engine"), 1);
+
+    RetireCompatPackage(Loaded);
+}
+
+// Properties and components that no longer exist are skipped, and the ones that remain still load.
+TEST(WorldLoad, ComponentsWithRemovedPropertiesStillLoad)
+{
+    SSphereColliderComponent::StaticStruct();
+    SBoxColliderComponent::StaticStruct();
+    STransformComponent::StaticStruct();
+    RegisterPendingTypes();
+
+    CWorld* Source = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ECS::FRegistry& SourceRegistry = Source->GetEntityRegistry();
+    const ECS::FEntity Entity = SourceRegistry.Create();
+    SSphereColliderComponent& Sphere = SourceRegistry.Emplace<SSphereColliderComponent>(Entity);
+    Sphere.Radius = 4.0f;
+    Sphere.TranslationOffset = FVector3(1.0f, 2.0f, 3.0f);
+    SourceRegistry.Emplace<STransformComponent>(Entity);
+
+    // A sphere read back as a box has a Radius the box lacks, and the transform reads as a type that is gone.
+    const THashMap<FName, FName> Renames = {
+        { StructIdentity(SSphereColliderComponent::StaticStruct()), StructIdentity(SBoxColliderComponent::StaticStruct()) },
+        { StructIdentity(STransformComponent::StaticStruct()), FName("SRemovedComponent") },
+    };
+
+    TVector<uint8> Bytes;
+    {
+        FMemoryWriter Writer(Bytes);
+        FRenamingWriter Renaming(Writer, Renames);
+        Source->Serialize(Renaming);
+    }
+
+    Logging::ClearLogQueue();
+    CWorld* Loaded = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    {
+        FMemoryReader Reader(Bytes);
+        FInProcessObjectArchiver Proxy(Reader);
+        Loaded->Serialize(Proxy);
+    }
+    EXPECT_GE(CountLoggedMessages(ELogLevel::Warn, "Radius"), 1);
+
+    ECS::FRegistry& Registry = FWorldTestAccess::PendingRegistry(*Loaded);
+    ASSERT_EQ(Registry.NumEntities(), 1);
+    int32 Boxes = 0;
+    for (ECS::FEntity Read : Registry.View<SBoxColliderComponent>())
+    {
+        const SBoxColliderComponent& Box = Registry.Get<SBoxColliderComponent>(Read);
+        EXPECT_FLOAT_EQ(Box.TranslationOffset[2], 3.0f);
+        EXPECT_FLOAT_EQ(Box.HalfExtent[0], 0.5f) << "a property the file never had keeps its default";
+        EXPECT_FALSE(Registry.HasAll<STransformComponent>(Read));
+        ++Boxes;
+    }
+    EXPECT_EQ(Boxes, 1);
 }

@@ -245,36 +245,6 @@ namespace Lumina
         }
     }
 
-    void FTweenManager::KillTweensForEntity(ECS::FEntity Owner)
-    {
-        if (Owner == ECS::NullEntity)
-        {
-            return;
-        }
-
-        TVector<ECS::FEntity> Doomed;
-        auto View = Registry.View<ECS::Read<FTweenState>>();
-        for (ECS::FEntity Entity : View)
-        {
-            if (View.Get<ECS::Read<FTweenState>>(Entity).Owner == Owner)
-            {
-                Doomed.Add(Entity);
-            }
-        }
-
-        for (ECS::FEntity Entity : Doomed)
-        {
-            if (bTicking)
-            {
-                Registry.Get<ECS::Write<FTweenState>>(Entity).bPendingKill = true;
-            }
-            else
-            {
-                Registry.Destroy(Entity);
-            }
-        }
-    }
-
     void FTweenManager::Clear()
     {
         Registry.Clear();

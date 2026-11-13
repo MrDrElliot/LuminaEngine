@@ -4,7 +4,7 @@
 
 namespace Lumina
 {
-#define DEFINE_REFLECTED_NUMERIC_PROPERTY(ClassName, TypeNameStr)     class ClassName final : public FReflectedProperty     {     public:         const char* GetTypeName() override { return TypeNameStr; }     };
+#define DEFINE_REFLECTED_NUMERIC_PROPERTY(ClassName, TypeNameStr)     class ClassName final : public FReflectedProperty     {     public:         const char* GetTypeName() const override { return TypeNameStr; }     };
 
     DEFINE_REFLECTED_NUMERIC_PROPERTY(FReflectedUInt8Property,  "UInt8")
     DEFINE_REFLECTED_NUMERIC_PROPERTY(FReflectedUInt16Property, "UInt16")

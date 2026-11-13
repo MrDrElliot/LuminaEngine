@@ -97,6 +97,6 @@ namespace Lumina
 
     namespace MCP
     {
-        void RegisterTerrainTools(FStringView Owner);
+        MCPEDITOR_API void RegisterTerrainTools(FStringView Owner);
     }
 }

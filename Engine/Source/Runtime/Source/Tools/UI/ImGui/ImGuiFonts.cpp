@@ -2,7 +2,7 @@
 #include "ImGuiFonts.h"
 #include "Platform/GenericPlatform.h"
 
-namespace Lumina::ImGuiX::Font
+namespace Lumina::Global
 {
-    ImFont* GFonts[static_cast<int32>(EFont::NumFonts)] = {};
+    ImFont* GFonts[static_cast<int32>(ImGuiX::Font::EFont::NumFonts)] = {};
 }

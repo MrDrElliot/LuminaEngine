@@ -40,7 +40,8 @@ namespace Lumina::RmlUi
         FString Message;
     };
 
-    RUNTIME_API bool            Initialize();
+    // bWithRenderer skips FRmlUiRenderer (and the GPU device it needs), for a headless test that only needs a context to dispatch events into.
+    RUNTIME_API bool            Initialize(bool bWithRenderer = true);
     RUNTIME_API void            Shutdown();
 
     // Registers a font asset or .ttf under Family, for documents to select by name. Call after Initialize.

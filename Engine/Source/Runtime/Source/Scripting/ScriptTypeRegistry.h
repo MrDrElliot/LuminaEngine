@@ -43,14 +43,14 @@ namespace Lumina
         // An unchanged struct keeps its object across a reload; a reshaped or removed one is superseded and kept for migration.
         void Refresh(TSpan<const Scripting::FManagedTypeDefinition> Definitions);
 
-        /** Drops every minted type. Called when scripts unload with nothing to replace them. */
-        void Clear();
-
         /** The minted type for a stable script type name, or null when no live type claims it. */
         NODISCARD CScriptStruct* Find(const FName& ScriptTypeName) const;
 
         // Bumped whenever a struct is superseded, so a holder caching a resolved pointer knows to resolve it again.
         NODISCARD uint64 GetGeneration() const { return Generation; }
+
+        // Superseded structs still kept because a value, pool or field is laid out by one.
+        NODISCARD int32 NumSuperseded() const { return Superseded.Num(); }
 
     private:
 
@@ -63,7 +63,7 @@ namespace Lumina
         // Minted types by name. The registry is their owner.
         THashMap<FName, TStrongObjectPtr<CScriptStruct>> Types;
 
-        // Superseded types, kept so a value still laid out by one can be read and destroyed.
+        // Superseded types, kept while a value still laid out by one has to be read and destroyed.
         TVector<TStrongObjectPtr<CScriptStruct>> Superseded;
 
         // One per component type name for the life of the process, since its ECS type id outlives every reshape.
@@ -79,11 +79,17 @@ namespace Lumina
 
         static FScriptEnumRegistry& Get();
 
+        // An enum absent from the reload is renamed aside, so its name no longer resolves.
         void Refresh(TSpan<const Scripting::FManagedTypeDefinition> Definitions);
+
+        // Retired enums still kept because a field of a class not yet reinstanced is typed by one.
+        NODISCARD int32 NumSuperseded() const { return Superseded.Num(); }
 
     private:
 
         THashMap<FName, TStrongObjectPtr<CScriptEnum>> Enums;
+
+        TVector<TStrongObjectPtr<CScriptEnum>> Superseded;
     };
 
     // The struct a stored name means, native or C#, which share one name space since a C# type never takes a native name.

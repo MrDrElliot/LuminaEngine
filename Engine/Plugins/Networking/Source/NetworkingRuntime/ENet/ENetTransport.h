@@ -3,6 +3,7 @@
 #include "Networking/INetworkTransport.h"
 #include "Memory/SmartPtr.h"
 #include "Containers/FunctionRef.h"
+#include "Core/Math/Random.h"
 
 namespace Lumina
 {
@@ -29,10 +30,8 @@ namespace Lumina
 
     private:
 
-        float Rand01();
-
         TVector<FPacket> Delayed;
-        uint32           RandState = 0x9E3779B9u;
+        FRandomStream    Rng{0x9E3779B9u};
     };
 
     // ENet-backed transport. All ENet state lives behind FImpl in the .cpp so no vendored

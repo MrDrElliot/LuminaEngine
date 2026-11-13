@@ -2,6 +2,8 @@
 #include "AssetPickerFilter.h"
 
 #include "Assets/AssetRegistry/AssetData.h"
+#include "Assets/AssetRegistry/AssetRegistry.h"
+#include "Containers/Algorithm.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Session/SessionOps.h"
@@ -124,10 +126,10 @@ namespace Lumina::AssetPickerFilter
         }
     }
 
-    const FAssetData* GetSelectedAssetOfClass(const CClass* Class)
+    FAssetDataPtr GetSelectedAssetOfClass(const CClass* Class)
     {
         const IEditorToolContext* Tools = SessionOps::GetToolContext();
-        const FAssetData* Selected = Tools != nullptr ? Tools->GetContentBrowserSelectedAsset() : nullptr;
+        FAssetDataPtr Selected = Tools != nullptr ? Tools->GetContentBrowserSelectedAsset() : nullptr;
         if (Selected == nullptr || Class == nullptr)
         {
             return nullptr;
@@ -166,5 +168,33 @@ namespace Lumina::AssetPickerFilter
         const bool bPressed = ImGuiX::ToneButton(LE_ICON_CLOSE_CIRCLE "##Clear", ImGuiX::EButtonTone::Danger, kButtonSize);
         ImGuiX::TextTooltip("{}", Tooltip);
         return bPressed;
+    }
+
+    const TVector<FAssetDataPtr>& FAssetsOfClassCache::Get(const CClass* Class)
+    {
+        if (!StaleLatch.Refresh(Class, CachedClass))
+        {
+            return Assets;
+        }
+
+        if (Class == nullptr)
+        {
+            Assets.Reset();
+            return Assets;
+        }
+
+        Assets = FAssetRegistry::Get().FindByPredicate([Class](const FAssetData& Data)
+        {
+            // Null when the asset's class is not registered, e.g. it belongs to an unloaded plugin.
+            const CClass* DataClass = FindObject<CClass>(Data.AssetClass);
+            return DataClass != nullptr && DataClass->IsChildOf(Class);
+        });
+
+        Algo::Sort(Assets, [](const FAssetDataPtr& A, const FAssetDataPtr& B)
+        {
+            return strcmp(*A->AssetName, *B->AssetName) < 0;
+        });
+
+        return Assets;
     }
 }

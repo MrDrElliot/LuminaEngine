@@ -57,7 +57,7 @@ namespace Lumina
     public:
 
         void OnAttach() override      { ++AttachCount; Record('A'); }
-        void OnReady() override       { ++ReadyCount; Record('R'); }
+        void OnReady() override       { ++ReadyCount; Record('R'); if (ReadyHook != nullptr) { ReadyHook(*this, HookContext); } }
         void OnUpdate(float Dt) override      { ++UpdateCount; AccumulatedTime += Dt; }
         void OnFixedUpdate(float Dt) override { ++FixedUpdateCount; }
         void OnInput(SInputEvent Event) override { Record('I'); }
@@ -75,13 +75,17 @@ namespace Lumina
             }
         }
 
-        // Lets a test make OnDetach mutate the registry. Unreflected, so a clone never carries it over.
+        // Lets a test make OnReady or OnDetach mutate the registry. Unreflected, so a clone never carries them over.
+        void (*ReadyHook)(CEntityScriptTest&, void*) = nullptr;
         void (*DetachHook)(CEntityScriptTest&, void*) = nullptr;
         void* HookContext = nullptr;
 
         // A container property, so a duplicate test proves the copy gets this member's address rather than the object base.
         PROPERTY(Hidden)
         TVector<FName> Values;
+
+        PROPERTY(Hidden, Replicated)
+        int32 NetValue = 0;
 
         int32 AttachCount = 0;
         int32 ReadyCount = 0;

@@ -758,10 +758,8 @@ namespace Lumina
 
     void FStaticMeshEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const
     {
-        ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
-
         ImGuiID leftDockID = 0, rightDockID = 0;
-        ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
+        SplitDockingLayoutLeftRight(InDockspaceID, 0.3f, leftDockID, rightDockID);
 
         ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), leftDockID);
         // The unwrap wants the same large canvas, and this is an inspect-one-then-the-other workflow.

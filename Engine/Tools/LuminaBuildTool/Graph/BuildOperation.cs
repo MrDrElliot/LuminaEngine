@@ -53,7 +53,7 @@ public sealed class CopyFileOperation : BuildOperation
         {
             return ContentHash.OfFileContents(Source) == ContentHash.OfFileContents(Destination);
         }
-        catch (IOException)
+        catch (Exception Ex) when (Ex is IOException or UnauthorizedAccessException or FileNotFoundException)
         {
             return false;
         }
@@ -93,7 +93,6 @@ public sealed class WriteFileOperation : BuildOperation
 
     public override void Execute()
     {
-        PathUtils.EnsureDirectoryForFile(Destination);
-        File.WriteAllText(Destination, Contents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        PathUtils.WriteFileAtomic(Destination, Contents, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
     }
 }

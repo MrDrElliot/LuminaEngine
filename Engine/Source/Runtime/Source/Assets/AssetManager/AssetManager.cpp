@@ -153,7 +153,7 @@ namespace Lumina
             }
             for (const FGuid& Asset : Assets)
             {
-                const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Asset);
+                const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(Asset);
                 if (Data == nullptr)
                 {
                     continue;
@@ -207,7 +207,7 @@ namespace Lumina
 
     FAssetHandle FAssetManager::Load(FStringView Path, FName Bundle)
     {
-        const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path);
+        const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Path);
         return Data != nullptr ? Load(Data->AssetGUID, Bundle) : FAssetHandle();
     }
 
@@ -283,7 +283,7 @@ namespace Lumina
     void FAssetManager::PerformLoad(const FGuid& Asset)
     {
         const uint64 Start = PlatformTime::Cycles();
-        const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Asset);
+        const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(Asset);
 
         CObject* Object = FindObject<CObject>(Asset);
         if (!IsResident(Object) && Data != nullptr)
@@ -293,7 +293,7 @@ namespace Lumina
                 Object = Package->LoadObject(Asset);
             }
         }
-        RecordRequest(Data, PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start),
+        RecordRequest(Data.Get(), PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start),
             Object != nullptr ? EAssetLoadOutcome::Loaded : EAssetLoadOutcome::Failed);
 
         TVector<FWaiter> Waiters;
@@ -355,10 +355,7 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         GroupMembers.Reset();
         GroupIds.Reset();
-        {
-            FScopeLock Lock(ClassMutex);
-            GroupOfClass.Reset();
-        }
+        GroupOfClass.Lock()->Reset();
 
         (void)FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Data)
         {
@@ -379,12 +376,12 @@ namespace Lumina
     FName FAssetManager::GetGroupOfClass(FName ClassName)
     {
         // Classes repeat across thousands of assets, so each is walked for its group once.
-        FScopeLock Lock(ClassMutex);
-        if (const FName* Cached = GroupOfClass.Find(ClassName))
+        auto Groups = GroupOfClass.Lock();
+        if (const FName* Cached = Groups->Find(ClassName))
         {
             return *Cached;
         }
-        FName& Group = GroupOfClass.Add(ClassName);
+        FName& Group = Groups->Add(ClassName);
         for (CClass* Class = FindObject<CClass>(ClassName); Class != nullptr; Class = Class->GetSuperClass())
         {
             if (Class->HasMeta("Group"))
@@ -419,7 +416,7 @@ namespace Lumina
         Out.Reserve(Out.Num() + It->Num());
         for (const FGuid& Member : (*It))
         {
-            if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Member))
+            if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(Member))
             {
                 Out.Emplace(Group, Data->AssetName);
             }

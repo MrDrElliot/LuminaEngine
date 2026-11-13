@@ -130,73 +130,78 @@ namespace Lumina
 
 	bool FLuminaAudioContext::AcquireVoiceSlot(uint8 Priority, SAudioHandle& OutHandle)
 	{
-		uint32 Slot = 0;
-		bool bTookFreeSlot = false;
-
-		if (ActiveVoices.load(Atomic::MemoryOrderRelaxed) < MaxActiveVoices.load(Atomic::MemoryOrderRelaxed) && FreeSlots.TryDequeue(Slot))
+		auto ClaimSlot = [&](uint32 Slot, bool bTookFreeSlot)
 		{
-			bTookFreeSlot = true;
-		}
-		else
-		{
-			FScopeLock Lock(SlotLock);
-
-			if (ActiveVoices.load(Atomic::MemoryOrderRelaxed) < MaxActiveVoices.load(Atomic::MemoryOrderRelaxed) && FreeSlots.TryDequeue(Slot))
+			uint32 Generation = NextGeneration.fetch_add(1, Atomic::MemoryOrderRelaxed);
+			if (Generation == 0)
 			{
-				bTookFreeSlot = true;
+				Generation = NextGeneration.fetch_add(1, Atomic::MemoryOrderRelaxed);
 			}
-			else
+
+			SlotCanceled[Slot].store(false, Atomic::MemoryOrderRelaxed);
+			SlotPriority[Slot].store(Priority, Atomic::MemoryOrderRelaxed);
+			SlotGeneration[Slot].store(Generation, Atomic::MemoryOrderRelaxed);
+			SlotState[Slot].store((uint8)EAudioVoiceState::Playing, Atomic::MemoryOrderRelease);
+
+			if (bTookFreeSlot)
 			{
-				// Steal the quietest-priority voice strictly below ours; ties keep the older voice.
-				uint32 Victim = MaxVoiceSlots;
-				uint8 VictimPriority = Priority;
-				for (uint32 i = 0; i < MaxVoiceSlots; ++i)
-				{
-					if (SlotState[i].load(Atomic::MemoryOrderRelaxed) == (uint8)EAudioVoiceState::Free)
-					{
-						continue;
-					}
-					const uint8 SlotPri = SlotPriority[i].load(Atomic::MemoryOrderRelaxed);
-					if (SlotPri < VictimPriority)
-					{
-						VictimPriority = SlotPri;
-						Victim = i;
-					}
-				}
+				ActiveVoices.fetch_add(1, Atomic::MemoryOrderRelaxed);
+			}
 
-				if (Victim == MaxVoiceSlots)
-				{
-					DroppedVoices.fetch_add(1, Atomic::MemoryOrderRelaxed);
-					return false;
-				}
+			OutHandle.Generation = Generation;
+			OutHandle.Index      = Slot;
+			return true;
+		};
 
-				Slot = Victim;
+		uint32 FreeSlot = 0;
+		auto TakeFreeSlot = [&]()
+		{
+			return ActiveVoices.load(Atomic::MemoryOrderRelaxed) < MaxActiveVoices.load(Atomic::MemoryOrderRelaxed) && FreeSlots.TryDequeue(FreeSlot);
+		};
+
+		if (TakeFreeSlot())
+		{
+			return ClaimSlot(FreeSlot, true);
+		}
+
+		FScopeLock Lock(SlotLock);
+
+		if (TakeFreeSlot())
+		{
+			return ClaimSlot(FreeSlot, true);
+		}
+
+		// Steal the quietest-priority voice strictly below ours; ties keep the older voice.
+		uint32 Victim = MaxVoiceSlots;
+		uint8 VictimPriority = Priority;
+		for (uint32 i = 0; i < MaxVoiceSlots; ++i)
+		{
+			if (SlotState[i].load(Atomic::MemoryOrderRelaxed) == (uint8)EAudioVoiceState::Free)
+			{
+				continue;
+			}
+			const uint8 SlotPri = SlotPriority[i].load(Atomic::MemoryOrderRelaxed);
+			if (SlotPri < VictimPriority)
+			{
+				VictimPriority = SlotPri;
+				Victim = i;
 			}
 		}
 
-		uint32 Generation = NextGeneration.fetch_add(1, Atomic::MemoryOrderRelaxed);
-		if (Generation == 0)
+		if (Victim == MaxVoiceSlots)
 		{
-			Generation = NextGeneration.fetch_add(1, Atomic::MemoryOrderRelaxed);
+			DroppedVoices.fetch_add(1, Atomic::MemoryOrderRelaxed);
+			return false;
 		}
 
-		SlotCanceled[Slot].store(false, Atomic::MemoryOrderRelaxed);
-		SlotPriority[Slot].store(Priority, Atomic::MemoryOrderRelaxed);
-		SlotGeneration[Slot].store(Generation, Atomic::MemoryOrderRelaxed);
-		SlotState[Slot].store((uint8)EAudioVoiceState::Playing, Atomic::MemoryOrderRelease);
-
-		if (bTookFreeSlot)
-		{
-			ActiveVoices.fetch_add(1, Atomic::MemoryOrderRelaxed);
-		}
-
-		OutHandle.Generation = Generation;
-		OutHandle.Index      = Slot;
-		return true;
+		// Claimed under SlotLock, so a release of the victim's old voice either frees it before the search or sees the new generation and backs off.
+		return ClaimSlot(Victim, false);
 	}
 
 	void FLuminaAudioContext::ReleaseVoiceSlot(uint32 Slot, uint32 Generation)
 	{
+		ForgetGraphInstance(SAudioHandle{ Generation, Slot });
+
 		FScopeLock Lock(SlotLock);
 
 		// A newer voice may already own this slot through a priority takeover; leave its claim intact.
@@ -364,15 +369,15 @@ namespace Lumina
 
 		const uint32 Slot = Play.Handle.Index;
 
+		// A priority takeover lands on a slot the device thread is still rendering, so its source retires rather than dies.
+		RetireSlotSource(Slot);
+
 		// The voice was stopped or flushed before the pump ever saw it.
 		if (Play.StopEpoch != StopEpoch.load(Atomic::MemoryOrderRelaxed) || SlotCanceled[Slot].load(Atomic::MemoryOrderRelaxed))
 		{
 			ReleaseVoiceSlot(Slot, Play.Handle.Generation);
 			return;
 		}
-
-		// A priority takeover evicts this slot's previous occupant, whose source outlives the swap.
-		RetireSlotSource(Slot);
 
 		// Nothing drains the start queue while the device is down or being reopened, so decoding the voice would only fill it.
 		if (!Device || !Device->IsRunning() || Device->NeedsRestart())
@@ -434,9 +439,6 @@ namespace Lumina
 		Desc.bGenerated = bGenerated;
 		Desc.Params     = Play.Params;
 
-		// A priority takeover lands on a slot the device thread is still rendering, so its source retires rather than dies.
-		RetireSlotSource(Slot);
-
 		// Published before the start is queued, so the device thread never sees a slot without its source.
 		SlotSources[Slot] = Move(Source);
 		SlotSourceGeneration[Slot] = Play.Handle.Generation;
@@ -482,10 +484,10 @@ namespace Lumina
 				continue;
 			}
 
-			const uint32 Generation = SlotGeneration[Slot].load(Atomic::MemoryOrderRelaxed);
+			// Releases the voice that finished, since a steal whose play is still queued has already moved SlotGeneration to the new voice.
+			const uint32 Generation = SlotSourceGeneration[Slot];
 
 			RetireSlotSource(Slot);
-			ForgetGraphInstance(SAudioHandle{ Generation, Slot });
 			ReleaseVoiceSlot(Slot, Generation);
 		}
 	}
@@ -667,6 +669,12 @@ namespace Lumina
 	{
 		FScopeLock Lock(GraphInstanceLock);
 		GraphInstances.Remove(MakeGraphKey(Handle));
+	}
+
+	int32 FLuminaAudioContext::GetGraphInstanceCount() const
+	{
+		FScopeLock Lock(GraphInstanceLock);
+		return GraphInstances.Num();
 	}
 
 	void FLuminaAudioContext::SweepGraphInstances()

@@ -5,6 +5,8 @@
 #include "Audio/Graph/AudioGraphProgram.h"
 #include "Containers/Vector.h"
 #include "Core/Math/Scalar.h"
+#include "Log/Log.h"
+#include "LogCountTestHelpers.h"
 
 using namespace Lumina;
 
@@ -479,6 +481,31 @@ TEST(AudioGraph, WavePlayerLoopsItsRegion)
     EXPECT_EQ(Instance.GetTriggerOutputCount(FName("Looped")), 8u);
 }
 
+// A Wave Player started with no wave bound must still raise Finished, or the voice never retires.
+TEST(AudioGraph, WavePlayerWithNoWaveStillFinishes)
+{
+    FProgramBuilder Builder;
+    const uint16 OnPlay = AddGraphInput(Builder, kAudioGraphOnPlayInput, EAudioGraphType::Trigger);
+
+    FAudioGraphNodeInstance Player;
+    Player.OperatorName = "WavePlayer";
+    Player.InputSlots = {
+        WaveLiteral(Builder, 0), OnPlay, Builder.Slot(EAudioGraphType::Trigger),
+        Builder.Literal(EAudioGraphType::Bool, 0.0f), Builder.Literal(EAudioGraphType::Float, 1.0f),
+        Builder.Literal(EAudioGraphType::Float, 0.0f) };
+    Player.OutputSlots = { Builder.Slot(EAudioGraphType::Audio), Builder.Slot(EAudioGraphType::Audio), Builder.Slot(EAudioGraphType::Trigger) };
+    Builder.Program.OutputLeftSlot = Player.OutputSlots[0];
+    Builder.Program.FinishedSlot   = Player.OutputSlots[2];
+    Builder.Program.Nodes.Add(Player);
+
+    FAudioGraphInstance Instance;
+    ASSERT_TRUE(Instance.Initialize(Builder.Program, {}, kTestSampleRate, 2));
+    EXPECT_FALSE(Instance.IsFinished());
+
+    RenderFrames(Instance, kAudioGraphBlockFrames);
+    EXPECT_TRUE(Instance.IsFinished());
+}
+
 // A graph saved before the Wave Player gained its loop pins still builds and plays, reading zero for the new ones.
 TEST(AudioGraph, ProgramFromBeforeAppendedPinsStillPlays)
 {
@@ -548,6 +575,52 @@ TEST(AudioGraph, RandomWavePicksByMode)
     }
 }
 
+// Random Wave caps at 64 waves and warns about the rest instead of silently dropping them.
+TEST(AudioGraph, RandomWavePastTheSixtyFourthIsDroppedWithAWarning)
+{
+    constexpr int32 kWiredWaves = 70;
+
+    FProgramBuilder Builder;
+    const uint16 Next = AddGraphInput(Builder, "Next", EAudioGraphType::Trigger);
+
+    FAudioGraphNodeInstance Picker;
+    Picker.OperatorName = "RandomWave";
+    Picker.InputSlots = {
+        Next, Builder.Literal(EAudioGraphType::Int32, 0.0f, (int32)EAudioPickMode::Sequential), Builder.Literal(EAudioGraphType::Int32, 0.0f),
+        Builder.Literal(EAudioGraphType::Int32, 0.0f, 7) };
+    for (int32 Index = 0; Index < kWiredWaves; ++Index)
+    {
+        Picker.InputSlots.Add(WaveLiteral(Builder, 0));
+    }
+    Picker.OutputSlots = { Builder.Slot(EAudioGraphType::Wave), Builder.Slot(EAudioGraphType::Int32) };
+
+    FAudioGraphNodeInstance ToFloat;
+    ToFloat.OperatorName = "IntToFloat";
+    ToFloat.InputSlots   = { Picker.OutputSlots[1] };
+    ToFloat.OutputSlots  = { Builder.Slot(EAudioGraphType::Float) };
+    AddGraphOutput(Builder, "Picked", EAudioGraphType::Float, ToFloat.OutputSlots[0]);
+
+    Builder.Program.Nodes.Add(Picker);
+    Builder.Program.Nodes.Add(ToFloat);
+
+    const TSharedPtr<FAudioGraphWaveResource> Wave = MakeRampWave(16);
+    FAudioGraphInstance Instance;
+    ASSERT_TRUE(Instance.Initialize(Builder.Program, { Wave }, kTestSampleRate, 2));
+
+    RenderFrames(Instance, kAudioGraphBlockFrames);
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Warn, "RandomWave has 70 wave inputs wired, dropping 6 past the 64 limit"), 1);
+
+    for (int32 Step = 0; Step < kWiredWaves; ++Step)
+    {
+        ASSERT_TRUE(Instance.TriggerParameter(FName("Next")));
+        RenderFrames(Instance, kAudioGraphBlockFrames);
+
+        const float Picked = Instance.GetFloatOutput(FName("Picked"));
+        ASSERT_GE(Picked, 0.0f);
+        ASSERT_LT(Picked, 64.0f) << "the clamp must never pick past the fixed Waves[64] array";
+    }
+}
+
 // Trigger Select in sequence over three outputs deals the triggers out evenly and leaves the fourth alone.
 TEST(AudioGraph, TriggerSelectDealsInTurn)
 {
@@ -582,6 +655,55 @@ TEST(AudioGraph, TriggerSelectDealsInTurn)
     EXPECT_EQ(Instance.GetTriggerOutputCount(FName("Out1")), 2u);
     EXPECT_EQ(Instance.GetTriggerOutputCount(FName("Out2")), 2u);
     EXPECT_EQ(Instance.GetTriggerOutputCount(FName("Out3")), 0u);
+}
+
+// A fire past the 16 in-flight delay budget is dropped with a warning, while the ones that did fit still arrive.
+TEST(AudioGraph, TriggerDelayPastTheSixteenthIsDroppedWithAWarning)
+{
+    FProgramBuilder Builder;
+    const uint16 Fire = AddGraphInput(Builder, "Fire", EAudioGraphType::Trigger);
+
+    // Long enough that none of the first sixteen can drain before the budget fills.
+    constexpr float kDelayFrames = 6000.0f;
+
+    FAudioGraphNodeInstance& Delay = Builder.AddNode("TriggerDelay");
+    Delay.InputSlots = { Fire, Builder.Literal(EAudioGraphType::Float, kDelayFrames / (float)kTestSampleRate) };
+    Delay.OutputSlots.Add(Builder.Slot(EAudioGraphType::Trigger));
+    AddGraphOutput(Builder, "Delayed", EAudioGraphType::Trigger, Delay.OutputSlots[0]);
+
+    FAudioGraphInstance Instance;
+    ASSERT_TRUE(Instance.Initialize(Builder.Program, {}, kTestSampleRate, 2));
+
+    constexpr int32 kFireCount = 20;
+    Logging::ClearLogQueue();
+    for (int32 Index = 0; Index < kFireCount; ++Index)
+    {
+        ASSERT_TRUE(Instance.TriggerParameter(FName("Fire")));
+        RenderFrames(Instance, kAudioGraphBlockFrames);
+    }
+
+    Logging::Flush();
+
+    bool bWarned = false;
+    Logging::FLogQueue& Log = Logging::GetConsoleLogQueue();
+    for (int32 Index = 0; Index < Log.Num(); ++Index)
+    {
+        if (Log[Index].Message.Contains("TriggerDelay"))
+        {
+            bWarned = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(bWarned) << "firing past the 16 in-flight delay budget must log a warning";
+    EXPECT_EQ(Instance.GetTriggerOutputCount(FName("Delayed")), 0u);
+
+    // Keep rendering until every delay that did fit has had time to drain.
+    for (int32 Index = 0; Index < 30; ++Index)
+    {
+        RenderFrames(Instance, kAudioGraphBlockFrames);
+    }
+
+    EXPECT_EQ(Instance.GetTriggerOutputCount(FName("Delayed")), 16u);
 }
 
 // A full scale sine twenty decibels over a twenty to one threshold comes out near minus nineteen decibels.

@@ -632,12 +632,16 @@ namespace Lumina
 
                 if (MoveFrom >= 0)
                 {
+                    BeginAssetTransaction("Reorder Texture Array Layer");
                     Array->SourceTextures.Swap(MoveFrom, MoveTo);
+                    EndAssetTransaction();
                     Asset->GetPackage()->MarkDirty();
                 }
                 if (RemoveIndex >= 0)
                 {
+                    BeginAssetTransaction("Remove Texture Array Layer");
                     Array->SourceTextures.RemoveAt(RemoveIndex);
+                    EndAssetTransaction();
                     Asset->GetPackage()->MarkDirty();
                 }
 
@@ -657,7 +661,9 @@ namespace Lumina
                         }
                         else
                         {
+                            BeginAssetTransaction("Add Texture Array Layer");
                             Array->SourceTextures.Add(Dropped);
+                            EndAssetTransaction();
                             Asset->GetPackage()->MarkDirty();
                         }
                     }
@@ -875,12 +881,6 @@ namespace Lumina
 
     void FTextureEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const
     {
-        ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
-
-        ImGuiID leftDockID = 0, rightDockID = 0;
-        ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
-
-        ImGui::DockBuilderDockWindow(*GetToolWindowName(TexturePreviewName), leftDockID);
-        ImGui::DockBuilderDockWindow(*GetToolWindowName(TexturePropertiesName), rightDockID);
+        SplitDockingLayoutLeftRight(InDockspaceID, TexturePreviewName, TexturePropertiesName, 0.3f);
     }
 }

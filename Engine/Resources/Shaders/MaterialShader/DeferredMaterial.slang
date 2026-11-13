@@ -333,6 +333,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 
         // No quad in this lane, so the widening comes from surface curvature rather than the normal map.
         G.Roughness = ApplyGeometricSpecularAA(G.Roughness, GeoNormalDDX, GeoNormalDDY);
+        G.ClearcoatRoughness = ApplyGeometricSpecularAA(G.ClearcoatRoughness, GeoNormalDDX, GeoNormalDDY);
     }
 
     const FGBufferPacked P = PackGBuffer(G);

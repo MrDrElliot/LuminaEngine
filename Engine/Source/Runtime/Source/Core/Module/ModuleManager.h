@@ -6,6 +6,7 @@
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
+#include "Core/Threading/Mutex.h"
 #include "Memory/Memory.h"
 #include "Memory/SmartPtr.h"
 
@@ -153,6 +154,10 @@ namespace Lumina
         // Contexts are void* to keep this header ImGui-free; modules opt in via LUMINA_MODULE_IMGUI().
         RUNTIME_API void NotifyImGuiReady(void* InImGuiContext, void* InImPlotContext);
 
+        // False when Directory is already on the list.
+        RUNTIME_API bool AddDLLSearchPath(const FString& Directory);
+        RUNTIME_API TVector<FString> GetDLLSearchPaths() const;
+
 
     private:
 
@@ -172,8 +177,13 @@ namespace Lumina
         // Static module factories from IMPLEMENT_MODULE in monolithic builds (linear list).
         TVector<TPair<FName, ModuleInitFunc>> StaticModuleFactories;
 
+        // Drains FStaticModuleRegistration::Head into StaticModuleFactories exactly once.
+        mutable bool bStaticFactoriesDrained = false;
+
         // Reason the last LoadModule failed, such as an ABI or BuildId mismatch; see GetLastLoadError.
         FString LastLoadError;
+
+        TMutex<TVector<FString>> DLLSearchPaths;
 
         // Engine ImGui/ImPlot contexts (opaque void* to keep ImGui out of this header), null until
         // NotifyImGuiReady. Forwarded to each opted-in module's LuminaModuleSetupImGui export.

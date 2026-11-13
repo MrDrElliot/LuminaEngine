@@ -294,12 +294,12 @@ namespace Lumina::AssetOps
 
     bool IsAnyWorldPlayingOrSimulating()
     {
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             return false;
         }
 
-        for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
+        for (const TUniquePtr<FWorldContext>& Context : Global::GWorldManager->GetContexts())
         {
             if (Context && (Context->Type == EWorldType::Game || Context->Type == EWorldType::Simulation))
             {
@@ -312,7 +312,7 @@ namespace Lumina::AssetOps
 
     bool IsLoadedWorldAsset(FStringView AssetPath)
     {
-        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
+        if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
         {
             if (CObject* Object = FindObject<CObject>(Data->AssetGUID))
             {
@@ -325,7 +325,7 @@ namespace Lumina::AssetOps
 
     FString FindDependentPrefabVariants(FStringView AssetPath)
     {
-        const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath);
+        const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(AssetPath);
         CClass* AssetClass = Data != nullptr ? FindObject<CClass>(Data->AssetClass) : nullptr;
         if (AssetClass == nullptr || !AssetClass->IsChildOf(CPrefab::StaticClass()))
         {
@@ -339,7 +339,7 @@ namespace Lumina::AssetOps
         }
 
         // FindDirectVariants walks loaded objects, so a variant nobody opened has to be brought in first.
-        for (const FAssetData* Referencer : FAssetRegistry::Get().GetReferencersOf(Data->AssetGUID))
+        for (const FAssetDataPtr& Referencer : FAssetRegistry::Get().GetReferencersOf(Data->AssetGUID))
         {
             CClass* ReferencerClass = Referencer != nullptr ? FindObject<CClass>(Referencer->AssetClass) : nullptr;
             if (ReferencerClass != nullptr && ReferencerClass->IsChildOf(CPrefab::StaticClass()))
@@ -390,7 +390,7 @@ namespace Lumina::AssetOps
         }
 
         CObject* AliveObject = nullptr;
-        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
+        if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
         {
             AliveObject = FindObject<CObject>(Data->AssetGUID);
         }

@@ -307,6 +307,8 @@ namespace Lumina
 
     namespace
     {
+        using RootMotion::WholeLoopsIn;
+
         // Per-call scratch that forgets everything between calls without touching it, by stamping each entry with the call that wrote it.
         template<typename T>
         struct TCallScratch
@@ -1066,6 +1068,7 @@ namespace Lumina
                     float PrevSampleTime = PrevClock;
                     float Finished = 0.0f;
                     bool bSynced = false;
+                    int32 WholeLoops = 0;
 
                     // The playhead advances once per update at the group's blended rate, and synced clips loop.
                     if (SyncGroup != kAnimNoSyncGroup && SyncGroup < State.SyncGroups.Num() && Duration > 0.0f)
@@ -1089,18 +1092,22 @@ namespace Lumina
                             Group.PrevPosition = Group.Position;
 
                             const float GroupDuration = Group.Duration > 1e-4f ? Group.Duration : Duration;
-                            Group.Position = Group.Track.Advance(Group.Position, (DeltaTime * Speed) / GroupDuration);
+                            const float GroupCycles = (DeltaTime * Speed) / GroupDuration;
+                            Group.Position   = Group.Track.Advance(Group.Position, GroupCycles);
+                            Group.WholeLoops = WholeLoopsIn(GroupCycles);
                         }
 
                         // The shared position lands on each clip's own markers, so the cycles line up.
                         PrevSampleTime = ClipTrack.GetPercentThrough(Group.PrevPosition) * Duration;
                         Clock          = ClipTrack.GetPercentThrough(Group.Position) * Duration;
+                        WholeLoops     = Group.WholeLoops;
                         bSynced        = true;
                     }
                     else if (Duration > 0.0f)
                     {
                         if (Mode == EClipLoopMode::Loop)
                         {
+                            WholeLoops = WholeLoopsIn((DeltaTime * Speed) / Duration);
                             Clock = fmodf(Clock, Duration);
                             if (Clock < 0.0f)
                             {
@@ -1146,22 +1153,22 @@ namespace Lumina
                             && !Clip->bLockRootMotion && !Clip->IsAdditive())
                         {
                             FRootMotionDelta ClipDelta;
-                            if (Clock != PrevSampleTime)
+                            if (Clock != PrevSampleTime || WholeLoops > 0)
                             {
                                 ClipDelta = RootMotion::ExtractRootDelta(Clip, Skeleton, RootMotionInOut.RootBoneIndex,
-                                                                         PrevSampleTime, Clock, bLooping, Duration);
+                                                                         PrevSampleTime, Clock, bLooping, Duration, WholeLoops);
                             }
                             ClipDelta.bHasMotion   = true;
                             ClockTags.Write(DstClock).Delta = ClipDelta;
                         }
 
                         // Point notifies crossed by this advance, tagged the same way.
-                        if (OutEvents != nullptr && Clip != nullptr && Clock != PrevSampleTime && Clip->HasNotifies())
+                        if (OutEvents != nullptr && Clip != nullptr && (Clock != PrevSampleTime || WholeLoops > 0) && Clip->HasNotifies())
                         {
                             // Crossing is (Prev, Cur], so a just-started clip would never fire a notify sitting on its start.
                             const float NotifyFromTime = bStartedThisUpdate ? PrevSampleTime - 1e-4f : PrevSampleTime;
                             const uint16 EventStart = (uint16)EventScratch.Num();
-                            AnimEvents::CollectTriggeredNotifies(Clip, NotifyFromTime, Clock, bLooping, 1.0f, EventScratch);
+                            AnimEvents::CollectTriggeredNotifies(Clip, NotifyFromTime, Clock, bLooping, 1.0f, EventScratch, WholeLoops);
                             ClockTags.Write(DstClock).Events = { EventStart, (uint16)EventScratch.Num() };
                         }
                     }
@@ -1327,10 +1334,13 @@ namespace Lumina
                 const float PrevSlotValue = (PhaseSlot < (uint16)State.StateSlots.Num()) ? State.StateSlots[PhaseSlot] : 0.0f;
                 const FSyncPosition PrevPosition = FSyncPosition::FromFloat(PrevSlotValue);
                 FSyncPosition Position = PrevPosition;
+                int32 WholeLoops = 0;
 
                 if (BlendedDuration > 1e-4f)
                 {
-                    Position = BlendSpaceTrack.Advance(PrevPosition, (DeltaTime * ReadScalar(SpeedReg, 1.0f)) / BlendedDuration);
+                    const float Cycles = (DeltaTime * ReadScalar(SpeedReg, 1.0f)) / BlendedDuration;
+                    Position   = BlendSpaceTrack.Advance(PrevPosition, Cycles);
+                    WholeLoops = WholeLoopsIn(Cycles);
                 }
 
                 if (PhaseSlot < (uint16)State.StateSlots.Num())
@@ -1374,10 +1384,10 @@ namespace Lumina
                     if (bExtractRootMotion && SampleClip != nullptr
                         && SampleClip->bEnableRootMotion && !SampleClip->bLockRootMotion)
                     {
-                        if (SampleTime != PrevSampleTime)
+                        if (SampleTime != PrevSampleTime || WholeLoops > 0)
                         {
                             SampleDelta = RootMotion::ExtractRootDelta(SampleClip, Skeleton, RootMotionInOut.RootBoneIndex,
-                                                                       PrevSampleTime, SampleTime, true, SampleDuration);
+                                                                       PrevSampleTime, SampleTime, true, SampleDuration, WholeLoops);
                         }
 
                         // Held even on a paused frame so the branch keeps reading as root-motion driven.
@@ -1385,10 +1395,10 @@ namespace Lumina
                     }
 
                     if (OutEvents != nullptr && SampleClip != nullptr
-                        && SampleTime != PrevSampleTime && SampleClip->HasNotifies())
+                        && (SampleTime != PrevSampleTime || WholeLoops > 0) && SampleClip->HasNotifies())
                     {
                         AnimEvents::CollectTriggeredNotifies(SampleClip, PrevSampleTime, SampleTime, true,
-                                                             Weights.Weights[i], EventScratch);
+                                                             Weights.Weights[i], EventScratch, WholeLoops);
                     }
 
                     const int32 SampleIndex = Weights.SampleIndices[i];

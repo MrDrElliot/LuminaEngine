@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "Containers/Algorithm.h"
 #include "UI/Tools/BulkRename.h"
 
 using namespace Lumina;
@@ -91,4 +92,69 @@ TEST(BulkRename, AFolderKeepsADotInItsName)
     EXPECT_EQ(Entries[0].NewName, "Old_v1.2");
     EXPECT_EQ(Entries[0].TargetPath, "/Game/Old_v1.2");
     EXPECT_EQ(Entries[0].Status, EBulkRenameStatus::Ready);
+}
+
+TEST(BulkRename, AShiftMayTakeThePathTheNextEntryLeaves)
+{
+    TVector<FBulkRenameEntry> Entries = { MakeEntry("/Game/A.lasset"), MakeEntry("/Game/AA.lasset") };
+
+    FBulkRenameRule Rule;
+    Rule.Prefix = "A";
+    TVector<FString> Disk = { "/Game/A.lasset", "/Game/AA.lasset" };
+    const auto Exists = [&Disk](FStringView Path) { return Algo::Contains(Disk, FString(Path)); };
+    PlanBulkRename(Rule, Entries, Exists);
+    EXPECT_EQ(Entries[0].Status, EBulkRenameStatus::Ready);
+    EXPECT_EQ(Entries[1].Status, EBulkRenameStatus::Ready);
+
+    // When the next entry cannot move, the path it holds stays taken.
+    Disk.Add("/Game/AAA.lasset");
+    PlanBulkRename(Rule, Entries, Exists);
+    EXPECT_EQ(Entries[1].Status, EBulkRenameStatus::Exists);
+    EXPECT_EQ(Entries[0].Status, EBulkRenameStatus::Exists);
+}
+
+namespace
+{
+    TVector<FString> RunOnDisk(TVector<FString> Disk, const TVector<FBulkRenameEntry>& Ready)
+    {
+        const auto Exists = [&Disk](FStringView Path) { return Algo::Contains(Disk, FString(Path)); };
+        for (const FBulkRenameEntry& Move : OrderBulkRename(Ready, Exists))
+        {
+            EXPECT_FALSE(Exists(FStringView(*Move.TargetPath, Move.TargetPath.Len()))) << *Move.TargetPath;
+            const int32 Source = Algo::IndexOf(Disk, FString(*Move.SourcePath));
+            EXPECT_NE(Source, Constants::kIndexNone) << *Move.SourcePath;
+            if (Source != Constants::kIndexNone)
+            {
+                Disk[Source] = *Move.TargetPath;
+            }
+        }
+        return Disk;
+    }
+
+    FBulkRenameEntry MakeMove(const char* Source, const char* Target, const char* NewName)
+    {
+        FBulkRenameEntry Entry = MakeEntry(Source);
+        Entry.TargetPath = Target;
+        Entry.NewName = NewName;
+        Entry.Status = EBulkRenameStatus::Ready;
+        return Entry;
+    }
+}
+
+TEST(BulkRename, ARenumberMovesTheLastLinkFirst)
+{
+    const TVector<FString> Disk = RunOnDisk({ "/Game/A.lasset", "/Game/B.lasset" }, {
+        MakeMove("/Game/A.lasset", "/Game/B.lasset", "B"),
+        MakeMove("/Game/B.lasset", "/Game/C.lasset", "C"),
+    });
+    EXPECT_EQ(Disk, (TVector<FString>{ "/Game/B.lasset", "/Game/C.lasset" }));
+}
+
+TEST(BulkRename, ASwapParksOneEntryFirst)
+{
+    const TVector<FString> Disk = RunOnDisk({ "/Game/A.lasset", "/Game/B.lasset", "/Game/B_Renaming.lasset" }, {
+        MakeMove("/Game/A.lasset", "/Game/B.lasset", "B"),
+        MakeMove("/Game/B.lasset", "/Game/A.lasset", "A"),
+    });
+    EXPECT_EQ(Disk, (TVector<FString>{ "/Game/B.lasset", "/Game/A.lasset", "/Game/B_Renaming.lasset" }));
 }

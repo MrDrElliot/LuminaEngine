@@ -1,11 +1,14 @@
 ﻿#include "RuntimePCH.h"
 #include "RagdollSystem.h"
 #include "AnimationSystem.h"
+#include "MovementComponentSystem.h"
+#include "ProjectileSystem.h"
 #include "World/ECS/Registry.h"
 #include "Physics/PhysicsScene.h"
 #include "Core/Math/Math.h"
 #include "Core/Math/Transform.h"
 #include "Renderer/MeshData.h"
+#include "Animation/BindPose.h"
 #include "Animation/Pose.h"
 #include "Assets/AssetTypes/PhysicsAsset/PhysicsAsset.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
@@ -57,12 +60,10 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::PostPhysics);
-        RunsAfter<CAnimationSystem>();
-    }
+        RunsAfter<CAnimationSystem, CMovementComponentSystem, CProjectileSystem>();
 
-    bool CRagdollSystem::HasWork(const SSystemContext& Context)
-    {
-        return AnyQueryHasRows(Ragdolls);
+        // Only the ragdolls, since the pose writer matches almost every mesh.
+        ExcludeFromHasWork(PoseTargets);
     }
 
     void CRagdollSystem::OnUpdate(const SSystemContext& Context)
@@ -116,7 +117,7 @@ namespace Lumina
                     Globals.SetNum(NumBones);
                     for (int32 i = 0; i < NumBones; ++i)
                     {
-                        Globals[i] = (*Source)[i] * Math::Inverse(Skeleton->GetBone(i).InvBindMatrix);
+                        Globals[i] = (*Source)[i] * AnimPose::GetBindGlobalMatrix(Skeleton, i);
                     }
 
                     Context.Defer([Entity, Skeleton, Globals = Move(Globals), EntityToWorld = Transform.GetWorldMatrix()](const SExclusiveContext& Exclusive)

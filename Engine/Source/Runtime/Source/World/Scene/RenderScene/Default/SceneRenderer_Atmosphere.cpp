@@ -22,14 +22,7 @@ namespace Lumina
             float    CloudShadowExtent;
 
             float    CloudShadowCenter[2];
-            uint32   ShadowOutUAV;
-            uint32   ShadowHistoryIndex;
-
-            RHI::TGPUSpan<FGPUFogVolume> FogVolumes;   // offset 64, 8-aligned
-
-            uint32   FrameIndex;
-            uint32   bShadowHistoryValid;
-            uint32   _Pad1[2];
+            RHI::TGPUSpan<FGPUFogVolume> FogVolumes;   // offset 56, 8-aligned
         };
         static_assert(sizeof(FFroxelInjectPushConstants) <= 128, "Froxel inject PC must fit 128B");
         static_assert(offsetof(FFroxelInjectPushConstants, FogVolumes) % 8 == 0, "PC pointer must be 8-aligned");
@@ -255,6 +248,8 @@ namespace Lumina
             return false;
         }
 
+        SCENE_GPU_SCOPE(CL, "Cloud Shadow Map");
+
         const FSceneImage& Noise  = GetNamedImage(ENamedImage::CloudNoise);
         const FSceneImage& Shadow = GetNamedImage(ENamedImage::CloudShadow);
         if (!Noise.IsValid() || !Shadow.IsValid() || !BakeCloudNoiseIfNeeded(CL))
@@ -267,8 +262,6 @@ namespace Lumina
         {
             return false;
         }
-
-        LUMINA_PROFILE_SECTION_COLORED("Cloud Shadow Map", tracy::Color::LightSlateGray);
 
         const SCloudComponent& C = Frame.Volumetrics.Clouds;
         const auto& LightData    = Frame.Lighting.LightData;
@@ -343,7 +336,7 @@ namespace Lumina
             && EnumHasAnyFlags(Frame.Lighting.Lights[0].Flags, ELightFlags::Directional)
             && EnumHasAnyFlags(Frame.Lighting.Lights[0].Flags, ELightFlags::Volumetric);
 
-        LUMINA_PROFILE_SECTION_COLORED("Froxel Inject Pass", tracy::Color::SlateBlue);
+        SCENE_GPU_SCOPE(CL, "Froxel Fog Inject");
 
         static const FShaderH CS = FShaderLibrary::Get("VolumetricFogInject.slang");
         if (!CS)
@@ -355,15 +348,6 @@ namespace Lumina
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS));
 
-        const float FogRange = Fog.FogRange;
-        const float FogNear  = Fog.NearPlane;
-
-        ElementOps::SwapElements(CurrentView->Images[(int)ENamedImage::FroxelShadow], CurrentView->Images[(int)ENamedImage::FroxelShadowHistory]);
-        const FSceneImage& Shadow        = GetNamedImage(ENamedImage::FroxelShadow);
-        const FSceneImage& ShadowHistory = GetNamedImage(ENamedImage::FroxelShadowHistory);
-        const bool bShadowHistory = CurrentView->bIsPrimary && CurrentView->bFroxelShadowHistoryValid && CameraCutFramesLeft == 0u
-            && CurrentView->FroxelHistoryNear == FogNear && CurrentView->FroxelHistoryRange == FogRange
-            && Shadow.IsValid() && ShadowHistory.IsValid();
         const uint32 NumVolumes = Math::Min((uint32)Frame.Volumetrics.FogVolumes.Num(), GFogMaxVolumes);
 
         FFroxelInjectPushConstants PC = {};
@@ -371,13 +355,9 @@ namespace Lumina
         PC.GridSize[0]          = FroxelGridSize.x;
         PC.GridSize[1]          = FroxelGridSize.y;
         PC.GridSize[2]          = FroxelGridSize.z;
-        PC.NearPlane            = FogNear;
-        PC.FogRange             = FogRange;
+        PC.NearPlane            = Fog.NearPlane;
+        PC.FogRange             = Fog.FogRange;
         PC.bSunVolumetric       = bSunVolumetric ? 1u : 0u;
-        PC.ShadowOutUAV         = (uint32)Shadow.GetMipUAVIndex(0);
-        PC.ShadowHistoryIndex   = (uint32)ShadowHistory.GetResourceID();
-        PC.FrameIndex           = CurrentView->FroxelFrame++;
-        PC.bShadowHistoryValid  = bShadowHistory ? 1u : 0u;
         PC.Time                 = Frame.SceneGlobalData.Time;
 
         PC.CloudShadowIndex     = Fog.CloudShadowIndex;
@@ -397,10 +377,6 @@ namespace Lumina
                          RenderUtils::GetGroupCount(FroxelGridSize.y, 4),
                          RenderUtils::GetGroupCount(FroxelGridSize.z, 4));
 
-        CurrentView->bFroxelShadowHistoryValid = CurrentView->bIsPrimary && Shadow.IsValid();
-        CurrentView->FroxelHistoryNear         = FogNear;
-        CurrentView->FroxelHistoryRange        = FogRange;
-
         // Integrate reads the scatter volume next.
         RHI::Barriers::ComputeToCompute(CL);
     }
@@ -413,7 +389,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Froxel Integrate Pass", tracy::Color::MediumPurple);
+        SCENE_GPU_SCOPE(CL, "Froxel Fog Integrate");
 
         static const FShaderH CS = FShaderLibrary::Get("VolumetricFogIntegrate.slang");
         if (!CS)
@@ -476,7 +452,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Fog Shafts Pass", tracy::Color::Orange3);
+        SCENE_GPU_SCOPE(CL, "Fog Shafts");
 
         const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
         const AtmosphereInternal::FFogViewTerms Fog = AtmosphereInternal::MakeFogViewTerms(Frame, *CurrentView, GetCurrentViewGlobals(), bCapturingProbe);
@@ -662,10 +638,10 @@ namespace Lumina
             uint32   OffsetX;
             uint32   OffsetY;
 
-            uint32   FrameIndex;
             uint32   WeatherIndex;
             uint32   _Pad1;
             uint32   _Pad2;
+            uint32   _Pad3;
         };
         static_assert(sizeof(FCloudPushConstants) == 160,
             "FCloudPushConstants must match VolumetricClouds.slang::FPushConstants.");
@@ -694,7 +670,7 @@ namespace Lumina
         static_assert(sizeof(FCloudResolvePushConstants) == 64,
             "FCloudResolvePushConstants must match VolumetricCloudsResolve.slang::FPushConstants.");
 
-        // Visits every texel of a 2x2 block once in four frames, alternating diagonals so a still frame converges evenly.
+        // Visits every texel of a 2x2 block once in four frames, alternating diagonals so a still frame refreshes evenly.
         constexpr uint32 kCloudMarchOffsets[4][2] = { { 0u, 0u }, { 1u, 1u }, { 1u, 0u }, { 0u, 1u } };
 
         constexpr uint32 CloudTileSize      = 8;
@@ -805,7 +781,7 @@ namespace Lumina
             return false;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Volumetric Clouds", tracy::Color::White);
+        SCENE_GPU_SCOPE(CL, "Volumetric Clouds");
 
         if (!BakeCloudNoiseIfNeeded(CL))
         {
@@ -874,8 +850,7 @@ namespace Lumina
 
         // Only the primary view carries a previous view projection, and a cut leaves nothing worth reprojecting.
         const bool bTemporal = CurrentView->bIsPrimary && bHistoryValid && CameraCutFramesLeft == 0u;
-        PC.FrameIndex = CurrentView->CloudFrame++;
-        const uint32* Offset = kCloudMarchOffsets[PC.FrameIndex & 3u];
+        const uint32* Offset = kCloudMarchOffsets[CurrentView->CloudFrame++ & 3u];
         PC.Stride  = bTemporal ? 2u : 1u;
         PC.OffsetX = bTemporal ? Offset[0] : 0u;
         PC.OffsetY = bTemporal ? Offset[1] : 0u;

@@ -86,7 +86,12 @@ namespace Lumina
             // Compiled once and kept across rebuilds, since a builtin material's name can be taken only once.
             TStrongObjectPtr<CMaterial> MippedLeaves;
             TStrongObjectPtr<CMaterial> CoverageLeaves;
+            TStrongObjectPtr<CMaterial> GlossyRipples;
+            TStrongObjectPtr<CMaterial> GlossyClearcoat;
         };
+
+        // Destroys the fixture's own entities and re-enables its own disabled suns, whatever world is current.
+        MCPEDITOR_API void ClearFixture(FLookDevFixtureState& State, int32& OutDestroyed);
 
         MCPEDITOR_API void RegisterLookDevTools(FStringView Owner);
     }

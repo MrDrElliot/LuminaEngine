@@ -54,13 +54,13 @@ namespace Lumina
     FString CSaveGameLibrary::GetSaveGameDirectory(int32 UserIndex)
     {
         FFixedString Directory;
-        if (GEngine != nullptr && !GEngine->GetProjectPath().IsEmpty())
+        if (Global::GEngine != nullptr && !Global::GEngine->GetProjectPath().IsEmpty())
         {
-            Directory = Paths::Combine(GEngine->GetProjectPath(), "Saved", "SaveGames");
+            Directory = Paths::Combine(Global::GEngine->GetProjectPath(), "Saved", "SaveGames");
         }
         else
         {
-            const FStringView ProjectName = GEngine != nullptr ? GEngine->GetProjectName() : FStringView();
+            const FStringView ProjectName = Global::GEngine != nullptr ? Global::GEngine->GetProjectName() : FStringView();
             Directory = Paths::Combine(View(Paths::GetUserDataDirectory()), ProjectName.IsEmpty() ? FStringView("Lumina") : ProjectName, "SaveGames");
         }
         if (UserIndex > 0)
@@ -96,7 +96,7 @@ namespace Lumina
         FMemoryWriter Writer(OutBytes);
         uint32 Magic       = SlotMagic;
         uint32 Version     = SlotFormatVersion;
-        int32  FileVersion = GPackageFileLuminaVersion.FileVersion;
+        int32  FileVersion = Global::GPackageFileLuminaVersion.FileVersion;
         FName  ClassName   = SaveGame->GetClass()->GetName();
         Writer << Magic << Version << FileVersion << ClassName;
 
@@ -119,10 +119,10 @@ namespace Lumina
         }
 
         Reader << FileVersion;
-        if (FileVersion > GPackageFileLuminaVersion.FileVersion)
+        if (FileVersion > Global::GPackageFileLuminaVersion.FileVersion)
         {
             LOG_ERROR("The save game was written by a newer engine (format {}, this engine reads up to {}).",
-                FileVersion, GPackageFileLuminaVersion.FileVersion);
+                FileVersion, Global::GPackageFileLuminaVersion.FileVersion);
             return nullptr;
         }
         Reader.SetFileVersion(FileVersion);

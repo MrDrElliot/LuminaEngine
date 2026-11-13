@@ -15,6 +15,9 @@ namespace Lumina
     void CCameraRigSystem::Configure()
     {
         RequireUpdate(EUpdateStage::FrameEnd);
+
+        // The rigs decide, since the target lookup matches nearly every entity.
+        ExcludeFromHasWork(Targets);
     }
 
     namespace CameraRigSystemInternal
@@ -62,11 +65,6 @@ namespace Lumina
             World.SetScale(Current.GetScale());
             XformMut.GetMut().SetWorldTransform(World);
         }
-    }
-
-    bool CCameraRigSystem::HasWork(const SSystemContext&)
-    {
-        return AnyQueryHasRows(Followers, SpringArms);
     }
 
     void CCameraRigSystem::OnUpdate(const SSystemContext& Context)

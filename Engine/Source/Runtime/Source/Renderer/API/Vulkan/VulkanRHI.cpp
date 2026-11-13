@@ -585,6 +585,10 @@ namespace Lumina::RHI
         VkCommandPool   Pool;
         GPUPtr          CurrentIndexBuffer;
         VkIndexType     CurrentIndexType;
+        VkViewport      CurrentViewport;
+        VkRect2D        CurrentScissor;
+        FDepthStencilDesc CurrentDepthStencil;
+        bool            bDepthStencilSet = false;
         EQueueType      Queue;
 
 #if defined(TRACY_ENABLE)
@@ -602,6 +606,43 @@ namespace Lumina::RHI
         bool bGraphicsPipelineBound = false;
         bool bComputePipelineBound  = false;
     };
+
+    // Vulkan rejects a zero-width viewport and a negative scissor offset, so no real set matches these.
+    static constexpr VkViewport kUnsetViewport = {};
+    static constexpr VkRect2D   kUnsetScissor  = { { -1, -1 }, {} };
+
+    static void ForgetBoundState(FCommandList& CommandList)
+    {
+        CommandList.CurrentIndexBuffer        = 0;
+        CommandList.CurrentIndexType          = VK_INDEX_TYPE_UINT32;
+        CommandList.CurrentViewport           = kUnsetViewport;
+        CommandList.CurrentScissor            = kUnsetScissor;
+        CommandList.bDepthStencilSet          = false;
+    }
+
+    static void SetViewport(FCommandList& List, const VkViewport& Viewport)
+    {
+        const VkViewport& Current = List.CurrentViewport;
+        if (Current.x == Viewport.x && Current.y == Viewport.y && Current.width == Viewport.width && Current.height == Viewport.height
+            && Current.minDepth == Viewport.minDepth && Current.maxDepth == Viewport.maxDepth)
+        {
+            return;
+        }
+        List.CurrentViewport = Viewport;
+        vkCmdSetViewportWithCount(List.CommandBuffer, 1, &Viewport);
+    }
+
+    static void SetScissor(FCommandList& List, const VkRect2D& Scissor)
+    {
+        const VkRect2D& Current = List.CurrentScissor;
+        if (Current.offset.x == Scissor.offset.x && Current.offset.y == Scissor.offset.y
+            && Current.extent.width == Scissor.extent.width && Current.extent.height == Scissor.extent.height)
+        {
+            return;
+        }
+        List.CurrentScissor = Scissor;
+        vkCmdSetScissorWithCount(List.CommandBuffer, 1, &Scissor);
+    }
 
     struct FSurface
     {
@@ -961,12 +1002,14 @@ namespace Lumina::RHI
 
     static bool ResolveBuffer(GPUPtr Ptr, FBufferRange& Out)
     {
+        LUMINA_PROFILE_SCOPE();
         FReadScopeLock Lock(GDevice->MemoryMutex);
         return ResolveBufferLocked(Ptr, Out);
     }
 
     static bool ResolveBuffers(GPUPtr A, FBufferRange& OutA, GPUPtr B, FBufferRange& OutB)
     {
+        LUMINA_PROFILE_SCOPE();
         FReadScopeLock Lock(GDevice->MemoryMutex);
         return ResolveBufferLocked(A, OutA) && ResolveBufferLocked(B, OutB);
     }
@@ -1757,7 +1800,9 @@ namespace Lumina::RHI
             {
                 return nullptr;
             }
-            return GDevice->CommandLists[CommandList].CommandBuffer;
+            FCommandList& List = GDevice->CommandLists[CommandList];
+            ForgetBoundState(List);
+            return List.CommandBuffer;
         }
 
         FNativeTexture GetNativeTexture(FTextureH Texture)
@@ -2373,12 +2418,12 @@ namespace Lumina::RHI
 
         auto IsListed = [](const char* Argument, const char* Check)
         {
-            if (GCommandLine == nullptr)
+            if (Global::GCommandLine == nullptr)
             {
                 return false;
             }
 
-            const TOptional<FFixedString> List = GCommandLine->Get(Argument);
+            const TOptional<FFixedString> List = Global::GCommandLine->Get(Argument);
             if (!List.IsSet())
             {
                 return false;
@@ -2440,13 +2485,13 @@ namespace Lumina::RHI
             AddSetting("gpuav_enable", kDisable);
         }
 
-        if (GCommandLine != nullptr)
+        if (Global::GCommandLine != nullptr)
         {
-            if (const TOptional<FFixedString> Disabled = GCommandLine->Get("novalidate"))
+            if (const TOptional<FFixedString> Disabled = Global::GCommandLine->Get("novalidate"))
             {
                 LOG_WARN("Vulkan RHI - validation checks disabled by --novalidate: {}", *Disabled.GetValue());
             }
-            if (const TOptional<FFixedString> Enabled = GCommandLine->Get("validate"))
+            if (const TOptional<FFixedString> Enabled = Global::GCommandLine->Get("validate"))
             {
                 LOG_WARN("Vulkan RHI - validation checks force-enabled by --validate: {}", *Enabled.GetValue());
             }
@@ -2704,7 +2749,7 @@ namespace Lumina::RHI
     static bool ProbeHostImageCopy()
     {
         // The bit alone hangs some drivers, so there has to be a way out without a rebuild.
-        if (GCommandLine != nullptr && GCommandLine->Has("nohostimagecopy"))
+        if (Global::GCommandLine != nullptr && Global::GCommandLine->Has("nohostimagecopy"))
         {
             LOG_DISPLAY("Host image copy declined; -nohostimagecopy was passed.");
             return false;
@@ -2832,7 +2877,7 @@ namespace Lumina::RHI
         GDevice->CrashTracker = MakeUnique<FVulkanCrashTracker>();
         GDevice->bHeadless    = DeviceDesc.bHeadless;
 
-        GLogCopies = GCommandLine != nullptr && GCommandLine->Has("logcopies");
+        GLogCopies = Global::GCommandLine != nullptr && Global::GCommandLine->Has("logcopies");
 
         CheckVulkanLoader(DeviceDesc);
 
@@ -2917,8 +2962,10 @@ namespace Lumina::RHI
             }
 
             // -noaddresscommands forces the buffer-resolve fallback, which is what a driver without the extension runs.
-            const bool bAddressCommandsDisabled = GCommandLine != nullptr && GCommandLine->Has("noaddresscommands");
-            bDeviceAddressCommands = !bAddressCommandsDisabled && EnableIfPresent(VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME);
+            const bool bAddressCommandsDisabled = Global::GCommandLine != nullptr && Global::GCommandLine->Has("noaddresscommands");
+            // 1.4.304 does not know this extension and passes its commands through unvalidated (not present in that SDK's own headers).
+            const bool bLayerKnowsAddressCommands = ValidationLayerVersion == 0 || ValidationLayerVersion >= VK_MAKE_API_VERSION(0, 1, 4, 350);
+            bDeviceAddressCommands = !bAddressCommandsDisabled && bLayerKnowsAddressCommands && EnableIfPresent(VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME);
 
 #if USING(WITH_EDITOR)
             bPipelineStats = EnableIfPresent(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
@@ -4248,7 +4295,7 @@ namespace Lumina::RHI
         bool StripShaderDebugInfo(TSpan<const uint32> Words, TVector<uint32>& Out)
         {
             // -stripshaderdebug forces it on any GPU, so the path can be exercised where it would otherwise be skipped.
-            static const bool bForced = GCommandLine != nullptr && GCommandLine->Has("stripshaderdebug");
+            static const bool bForced = Global::GCommandLine != nullptr && Global::GCommandLine->Has("stripshaderdebug");
             if (static_cast<uint32>(Words.Num()) <= SpvHeaderWords || (GDevice->Properties.vendorID == NvidiaVendorId && !bForced))
             {
                 return false;
@@ -4756,7 +4803,7 @@ namespace Lumina::RHI
     {
         // Resolved on first use because the command line is not parsed yet when the device is created.
         static const bool bArmOnce = [] {
-            GDevice->bCaptureShaderISA = GCommandLine != nullptr && GCommandLine->Has("dumpshaderisa");
+            GDevice->bCaptureShaderISA = Global::GCommandLine != nullptr && Global::GCommandLine->Has("dumpshaderisa");
             LogShaderISACaptureState();
             return true;
         }();
@@ -6525,6 +6572,7 @@ namespace Lumina::RHI
     // Caller holds the queue lock, which is what guards the ring.
     static VkCommandBuffer DrainPendingImageInits(EQueueType Queue)
     {
+        LUMINA_PROFILE_SCOPE();
         // Images are EXCLUSIVE and a layout transition is a write, so only the graphics family may claim them.
         const bool bOwnFamily = Queue == EQueueType::Transfer || (Queue == EQueueType::Compute && HasDedicatedQueue(EQueueType::Compute));
         if (bOwnFamily || GDevice->PendingImageInits.load(std::memory_order_acquire) == 0)
@@ -6783,6 +6831,7 @@ namespace Lumina::RHI
 
     FCmdListH OpenCommandList(EQueueType Type)
     {
+        LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("RHI");
         static constexpr VkCommandBufferBeginInfo BeginInfo
         {
@@ -6834,8 +6883,7 @@ namespace Lumina::RHI
         }
 
         FCommandList& CommandList = GDevice->CommandLists[Handle];
-        CommandList.CurrentIndexBuffer = 0;
-        CommandList.CurrentIndexType   = VK_INDEX_TYPE_UINT32;
+        ForgetBoundState(CommandList);
 #if defined(TRACY_ENABLE)
         CommandList.GPUZoneDepth = 0;
 #endif
@@ -6854,6 +6902,7 @@ namespace Lumina::RHI
 
     void ResetCommandList(FCmdListH CommandList)
     {
+        LUMINA_PROFILE_SCOPE();
         FCommandList& List = GDevice->CommandLists[CommandList];
 
         FScopeLock Lock(GDevice->CommandPoolMutex);
@@ -7030,6 +7079,7 @@ namespace Lumina::RHI
         GDevice->SubmitOrdinal.fetch_add(1, std::memory_order_relaxed);
 #endif
 
+        // A frame's first submit runs 3 to 4 times slower on cold driver caches, and a warm-up submit only adds to that.
         VK_CHECK(vkQueueSubmit2(VulkanQueue, 1, &SubmitInfo, VK_NULL_HANDLE));
     }
 
@@ -7699,6 +7749,7 @@ namespace Lumina::RHI
     void CmdBarrier(FCmdListH CL, EStageFlags Before, EAccessFlags BeforeAccess,
                     EStageFlags After, EAccessFlags AfterAccess)
     {
+        LUMINA_PROFILE_SCOPE();
         const EQueueType Queue = GDevice->CommandLists[CL].Queue;
 
         const EStageFlags SrcStages = ClampStagesToQueue(Before, Queue);
@@ -7787,7 +7838,9 @@ namespace Lumina::RHI
 
     void CmdBeginRenderPass(FCmdListH CL, const FRenderPassDesc& Desc)
     {
-        VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+        LUMINA_PROFILE_SCOPE();
+        FCommandList& List = GDevice->CommandLists[CL];
+        VkCommandBuffer VkCmdBuf = List.CommandBuffer;
 
         FMemMark Mark;
         const uint32 ColorCount = static_cast<uint32>(Desc.ColorAttachments.Num());
@@ -7870,8 +7923,8 @@ namespace Lumina::RHI
 
         VkRect2D Scissor { { 0, 0 }, { Desc.RenderArea.x, Desc.RenderArea.y } };
 
-        vkCmdSetViewportWithCount(VkCmdBuf, 1, &Viewport);
-        vkCmdSetScissorWithCount(VkCmdBuf, 1, &Scissor);
+        SetViewport(List, Viewport);
+        SetScissor(List, Scissor);
     }
 
     void CmdEndRenderPass(FCmdListH CL)
@@ -7882,6 +7935,7 @@ namespace Lumina::RHI
 
     void CmdSetTextureHeap(FCmdListH CL, FTextureHeapH Heap)
     {
+        LUMINA_PROFILE_SCOPE();
         const FCommandList& List = GDevice->CommandLists[CL];
         const uint32 Copy = GDevice->CurrentRetireSlot.load(std::memory_order_acquire) % kFramesInFlight;
         auto* DescriptorSet = GDevice->TextureHeaps[Heap].DescriptorSets[Copy];
@@ -7897,9 +7951,30 @@ namespace Lumina::RHI
         vkCmdBindDescriptorSets(List.CommandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, GDevice->PipelineLayout, 0, 1, &DescriptorSet, 0, nullptr);
     }
 
+    static bool IsSameStencil(const FStencil& A, const FStencil& B)
+    {
+        return A.Test == B.Test && A.FailOp == B.FailOp && A.PassOp == B.PassOp && A.DepthFailOp == B.DepthFailOp && A.Reference == B.Reference;
+    }
+
+    static bool IsSameDepthStencil(const FDepthStencilDesc& A, const FDepthStencilDesc& B)
+    {
+        return A.DepthMode == B.DepthMode && A.DepthTest == B.DepthTest
+            && A.DepthBias == B.DepthBias && A.DepthBiasSlopeFactor == B.DepthBiasSlopeFactor && A.DepthBiasClamp == B.DepthBiasClamp
+            && A.StencilReadMask == B.StencilReadMask && A.StencilWriteMask == B.StencilWriteMask
+            && IsSameStencil(A.StencilFront, B.StencilFront) && IsSameStencil(A.StencilBack, B.StencilBack);
+    }
+
     void CmdSetDepthStencil(FCmdListH CL, const FDepthStencilDesc& State)
     {
-        auto* VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
+        LUMINA_PROFILE_SCOPE();
+        FCommandList& List = GDevice->CommandLists[CL];
+        if (List.bDepthStencilSet && IsSameDepthStencil(List.CurrentDepthStencil, State))
+        {
+            return;
+        }
+        List.CurrentDepthStencil = State;
+        List.bDepthStencilSet    = true;
+        auto* VkCmdBuf = List.CommandBuffer;
         
         vkCmdSetDepthWriteEnable(VkCmdBuf, EnumHasAnyFlags(State.DepthMode, EDepthFlags::Write));
         vkCmdSetDepthTestEnable(VkCmdBuf, EnumHasAnyFlags(State.DepthMode, EDepthFlags::Read));
@@ -7949,6 +8024,7 @@ namespace Lumina::RHI
 
     void CmdSetPipeline(FCmdListH CL, FPipelineH Pipeline)
     {
+        LUMINA_PROFILE_SCOPE();
         FCommandList& List = GDevice->CommandLists[CL];
         const FPipeline PL = Pipeline.Handle != 0 ? GDevice->Pipelines[Pipeline] : FPipeline{};
         if (PL.Pipeline == VK_NULL_HANDLE)
@@ -7977,8 +8053,7 @@ namespace Lumina::RHI
         Scissor.extent.width = Math::Abs(Rect.MaxX - Rect.MinX);
         Scissor.extent.height = Math::Abs(Rect.MaxY - Rect.MinY);
         
-        auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-        vkCmdSetScissorWithCount(VkCmdBuf, 1, &Scissor);
+        SetScissor(GDevice->CommandLists[CL], Scissor);
     }
 
     void CmdSetViewportArray(FCmdListH CL, TSpan<const FRect> Rects)
@@ -7997,9 +8072,11 @@ namespace Lumina::RHI
                                      { (uint32)Math::Abs(Rect.MaxX - Rect.MinX), (uint32)Math::Abs(Rect.MaxY - Rect.MinY) } };
         }
 
-        VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-        vkCmdSetViewportWithCount(VkCmdBuf, Count, Viewports);
-        vkCmdSetScissorWithCount(VkCmdBuf, Count, Scissors);
+        FCommandList& List = GDevice->CommandLists[CL];
+        List.CurrentViewport = kUnsetViewport;
+        List.CurrentScissor  = kUnsetScissor;
+        vkCmdSetViewportWithCount(List.CommandBuffer, Count, Viewports);
+        vkCmdSetScissorWithCount(List.CommandBuffer, Count, Scissors);
     }
 
     void CmdSetViewport(FCmdListH CL, const FRect& Rect)
@@ -8012,8 +8089,7 @@ namespace Lumina::RHI
         Viewport.minDepth = 0.0f;
         Viewport.maxDepth = 1.0f;
         
-        auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-        vkCmdSetViewportWithCount(VkCmdBuf, 1, &Viewport);
+        SetViewport(GDevice->CommandLists[CL], Viewport);
     }
 
     // Legacy path only; the new command needs a range size, and the cache below already gates the resolve.

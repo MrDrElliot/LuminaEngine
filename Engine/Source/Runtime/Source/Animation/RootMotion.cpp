@@ -80,7 +80,8 @@ namespace Lumina::RootMotion
                                       float PrevTime,
                                       float CurTime,
                                       bool bLooping,
-                                      float Duration)
+                                      float Duration,
+                                      int32 WholeLoops)
     {
         FRootMotionDelta Delta;
 
@@ -89,26 +90,30 @@ namespace Lumina::RootMotion
             return Delta;
         }
 
+        const int32 NumWraps = bLooping ? WholeLoops + (CurTime < PrevTime ? 1 : 0) : 0;
+        const FTransform Prev = SampleRoot(Animation, Skeleton, RootIndex, PrevTime);
+        const FTransform Cur  = SampleRoot(Animation, Skeleton, RootIndex, CurTime);
+
         FTransform Combined;
         Combined.SetScale(FVector3(1.0f));
 
         // A body-frame delta would rotate translation by the root's rest tilt, turning forward into drift.
-        if (bLooping && CurTime < PrevTime)
+        if (NumWraps > 0)
         {
-            // The playhead wrapped, so accumulate both spans and a full loop contributes the whole displacement.
-            const FTransform Prev  = SampleRoot(Animation, Skeleton, RootIndex, PrevTime);
+            // Each wrap between the first and last span contributes one full loop's displacement, in playback order.
             const FTransform End   = SampleRoot(Animation, Skeleton, RootIndex, Duration);
             const FTransform Start = SampleRoot(Animation, Skeleton, RootIndex, 0.0f);
-            const FTransform Cur   = SampleRoot(Animation, Skeleton, RootIndex, CurTime);
+            const FTransform FullLoop = End * Start.Inverse();
 
-            const FTransform Seg1 = End * Prev.Inverse();
-            const FTransform Seg2 = Cur * Start.Inverse();
-            Combined = Seg1 * Seg2;
+            Combined = End * Prev.Inverse();
+            for (int32 Loop = 1; Loop < NumWraps; ++Loop)
+            {
+                Combined = Combined * FullLoop;
+            }
+            Combined = Combined * (Cur * Start.Inverse());
         }
         else
         {
-            const FTransform Prev = SampleRoot(Animation, Skeleton, RootIndex, PrevTime);
-            const FTransform Cur  = SampleRoot(Animation, Skeleton, RootIndex, CurTime);
             Combined = Cur * Prev.Inverse();
         }
 

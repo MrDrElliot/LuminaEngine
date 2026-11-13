@@ -65,11 +65,6 @@ namespace Lumina
     {
         FScopeLock Lock(Mutex);
 
-        // Oldest out first, so the list stays the most recent MaxRecentRecords entries.
-        if (static_cast<uint32>(Recent.Num()) >= MaxRecentRecords)
-        {
-            Recent.RemoveAt(0);
-        }
         Recent.Add(Record);
 
         const bool bRequest = Record.Source == EAssetLoadSource::Request;
@@ -103,7 +98,11 @@ namespace Lumina
         FScopeLock Lock(Mutex);
 
         OutRecent.Reset();
-        OutRecent.Append(Recent.begin(), Recent.end());
+        OutRecent.Reserve(Recent.Num());
+        for (int32 Index = 0; Index < Recent.Num(); ++Index)
+        {
+            OutRecent.Add(Recent[Index]);
+        }
 
         auto Flatten = [](const THashMap<FName, FAssetLoadStat>& In, TVector<FAssetLoadStat>& Out)
         {

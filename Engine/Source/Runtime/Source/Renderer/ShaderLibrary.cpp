@@ -58,7 +58,7 @@ namespace Lumina
 
     const FShaderEntry* FShaderLibrary::Resolve(FShaderH Handle)
     {
-        FShaderLibrary* Library = GShaderLibrary;
+        FShaderLibrary* Library = Global::GShaderLibrary;
         if (Library == nullptr)
         {
             return nullptr;
@@ -68,7 +68,7 @@ namespace Lumina
 
     void FShaderLibrary::AddRef(FShaderH Handle)
     {
-        FShaderLibrary* Library = GShaderLibrary;
+        FShaderLibrary* Library = Global::GShaderLibrary;
         if (Library == nullptr)
         {
             return;
@@ -83,7 +83,7 @@ namespace Lumina
 
     void FShaderLibrary::Release(FShaderH Handle)
     {
-        FShaderLibrary* Library = GShaderLibrary;
+        FShaderLibrary* Library = Global::GShaderLibrary;
         if (Library == nullptr)
         {
             return;
@@ -105,7 +105,7 @@ namespace Lumina
 
     void FShaderLibrary::FlushPendingReleases()
     {
-        FShaderLibrary* Library = GShaderLibrary;
+        FShaderLibrary* Library = Global::GShaderLibrary;
         if (Library == nullptr)
         {
             return;
@@ -159,7 +159,7 @@ namespace Lumina
         }
 
         // A packaged build strips the source tree, so the name index is its only mapping.
-        if (FShaderLibrary* Library = GShaderLibrary)
+        if (FShaderLibrary* Library = Global::GShaderLibrary)
         {
             FScopeLock Lock(Library->Mutex);
             auto It = Library->PathsByName.Find(NameOrPath);
@@ -202,7 +202,7 @@ namespace Lumina
     FShaderH FShaderLibrary::Get(const FName& NameOrPath, TSpan<const FString> Defines)
     {
         LUMINA_MEMORY_SCOPE("Shaders");
-        FShaderLibrary* Library = GShaderLibrary;
+        FShaderLibrary* Library = Global::GShaderLibrary;
 
         // Two roots shipping the same file name stay distinct rather than overwriting each other.
         const FName Path  = CanonicalPath(NameOrPath);
@@ -229,7 +229,7 @@ namespace Lumina
         Options.bGenerateReflectionData = true;
         Options.MacroDefinitions = TVector<FString>(Defines.begin(), Defines.end());
         FShaderCompileWaiter Waiter;
-        GShaderCompiler->CompileShaderPath(FString(*Path), Options, [](const FShaderHeader& Header)
+        Global::GShaderCompiler->CompileShaderPath(FString(*Path), Options, [](const FShaderHeader& Header)
         {
             Commit(Header);
         }, Waiter.Track());
@@ -360,15 +360,15 @@ namespace Lumina
 
     FShaderEntry::FGPUStats FShaderLibrary::GetGPUStats(FShaderH Handle)
     {
-        FScopeLock Lock(GShaderLibrary->Mutex);
-        const FShaderEntry* Entry = GShaderLibrary->Entries.TryGet(Handle);
+        FScopeLock Lock(Global::GShaderLibrary->Mutex);
+        const FShaderEntry* Entry = Global::GShaderLibrary->Entries.TryGet(Handle);
         return Entry != nullptr ? Entry->GPUStats : FShaderEntry::FGPUStats{};
     }
 
     bool FShaderLibrary::HasPipelineStats(FShaderH Handle)
     {
-        FScopeLock Lock(GShaderLibrary->Mutex);
-        const FShaderEntry* Entry = GShaderLibrary->Entries.TryGet(Handle);
+        FScopeLock Lock(Global::GShaderLibrary->Mutex);
+        const FShaderEntry* Entry = Global::GShaderLibrary->Entries.TryGet(Handle);
         // Nothing to publish against; treat as done so callers skip the query.
         return Entry == nullptr || !Entry->GPUStats.Pipeline.IsEmpty();
     }
@@ -379,8 +379,8 @@ namespace Lumina
         {
             return;
         }
-        FScopeLock Lock(GShaderLibrary->Mutex);
-        if (FShaderEntry* Entry = GShaderLibrary->Entries.TryGet(Handle))
+        FScopeLock Lock(Global::GShaderLibrary->Mutex);
+        if (FShaderEntry* Entry = Global::GShaderLibrary->Entries.TryGet(Handle))
         {
             Entry->GPUStats.Pipeline = Move(Stats);
         }
@@ -390,7 +390,7 @@ namespace Lumina
     FShaderH FShaderLibrary::Commit(const FName& Key, ERHIShaderType Type, TSpan<const uint32> Spirv)
     {
         LUMINA_MEMORY_SCOPE("Shaders");
-        FShaderLibrary* Library = GShaderLibrary;
+        FShaderLibrary* Library = Global::GShaderLibrary;
 
         // A headless process never built one, and materials still post-load there.
         if (Library == nullptr)
@@ -443,7 +443,7 @@ namespace Lumina
     void FShaderLibrary::Commit(const FShaderHeader& Header)
     {
         LUMINA_MEMORY_SCOPE("Shaders");
-        FShaderLibrary* Library = GShaderLibrary;
+        FShaderLibrary* Library = Global::GShaderLibrary;
         FScopeLock Lock(Library->Mutex);
 
         const FName Path(*Header.DebugName);

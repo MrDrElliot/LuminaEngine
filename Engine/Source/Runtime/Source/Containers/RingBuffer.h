@@ -26,6 +26,9 @@ namespace Lumina::Containers
         NODISCARD FORCEINLINE bool IsEmpty() const noexcept { return Count == 0; }
         NODISCARD FORCEINLINE bool IsFull() const noexcept { return Count != 0 && Count == Storage.Num(); }
 
+        // Moves on every Add, Reset and capacity change, unlike Num() once the buffer saturates.
+        NODISCARD FORCEINLINE uint64 GetVersion() const noexcept { return Version; }
+
         void SetCapacity(size_type NewCapacity)
         {
             LUMINA_CONTAINER_CHECK(NewCapacity >= 0);
@@ -48,6 +51,7 @@ namespace Lumina::Containers
             Storage = std::move(Rebuilt);
             Count = Kept;
             Head = 0;
+            ++Version;
         }
 
         void Add(const T& Value)
@@ -58,6 +62,7 @@ namespace Lumina::Containers
             }
             Storage[SlotFor(Count)] = Value;
             Advance();
+            ++Version;
         }
 
         void Add(T&& Value)
@@ -68,6 +73,7 @@ namespace Lumina::Containers
             }
             Storage[SlotFor(Count)] = std::move(Value);
             Advance();
+            ++Version;
         }
 
         template <typename... TArgs>
@@ -85,6 +91,7 @@ namespace Lumina::Containers
             }
             Count = 0;
             Head = 0;
+            ++Version;
         }
 
         template <typename TSelf>
@@ -121,6 +128,7 @@ namespace Lumina::Containers
         TVector<T, 0, TAllocator> Storage;
         int32 Count = 0;
         int32 Head = 0;
+        uint64 Version = 0;
     };
 }
 

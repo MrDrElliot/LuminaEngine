@@ -461,6 +461,9 @@ namespace Lumina
             uint32      MeshletCount          = 0;
             uint64      VertexStreamBytes     = 0;
 
+            // The upload batch carrying the geometry and header, which a reader waits on before drawing this slot.
+            uint64      UploadBatch           = 0;
+
             RHI::FManagedTexture DistanceFieldTexture;
 
             FMeshBuffers()                               = default;

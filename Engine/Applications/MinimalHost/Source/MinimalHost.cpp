@@ -91,7 +91,7 @@ int main(int ArgC, char** ArgV)
     Jobs::Initialize();
 
     FCommandLine ParsedCommandLine { ArgC, ArgV };
-    GCommandLine = &ParsedCommandLine;
+    Global::GCommandLine = &ParsedCommandLine;
 
     FWindow Window(FWindowSpecs{ .Title = "Lumina Minimal Host", .Extent = { 960, 540 } });
 
@@ -188,7 +188,7 @@ int main(int ArgC, char** ArgV)
     RHI::FreeDevice();
 
     Jobs::Shutdown();
-    GCommandLine = nullptr;
+    Global::GCommandLine = nullptr;
 
     LOG_INFO("MinimalHost: clean shutdown.");
     return 0;

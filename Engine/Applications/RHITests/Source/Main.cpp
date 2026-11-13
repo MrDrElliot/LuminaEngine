@@ -23,9 +23,9 @@ namespace
             "RHITests -- headless RHI exerciser.\n"
             "\n"
             "  --list             List the registered tests and exit.\n"
-            "  --group=<Name>     Run only one group (Device, Memory, Commands, ...).\n"
-            "  --test=<G.Name>    Run exactly one test. Use this to bisect anything that can take the\n"
-            "                     device down -- it is the smallest workload the harness can submit.\n"
+            "  --gtest_filter=<P> Run the tests matching colon-separated Group.Name patterns, with * and ?.\n"
+            "                     One exact name bisects anything that can take the device down, as the\n"
+            "                     smallest workload the harness can submit. SelfTest runs only when named.\n"
             "  --novalidation     Bring the device up without the validation layer.\n"
             "  --nogpuvalidation  Drop GPU-assisted validation (on by default, as in the engine).\n"
             "\n"
@@ -56,9 +56,8 @@ namespace
 
 int main(int ArgC, char** ArgV)
 {
-    const char* GroupFilter = nullptr;
-    const char* TestFilter  = nullptr;
-    bool bValidation        = true;
+    const char* Filter = nullptr;
+    bool bValidation   = true;
 
     for (int i = 1; i < ArgC; ++i)
     {
@@ -77,14 +76,9 @@ int main(int ArgC, char** ArgV)
             bValidation = false;
             continue;
         }
-        if (std::strncmp(ArgV[i], "--group=", 8) == 0)
+        if (std::strncmp(ArgV[i], "--gtest_filter=", 15) == 0)
         {
-            GroupFilter = ArgV[i] + 8;
-            continue;
-        }
-        if (std::strncmp(ArgV[i], "--test=", 7) == 0)
-        {
-            TestFilter = ArgV[i] + 7;
+            Filter = ArgV[i] + 15;
             continue;
         }
     }
@@ -96,7 +90,7 @@ int main(int ArgC, char** ArgV)
 
     // Without this every RHI GPU-AV flag parses, prints nothing, and changes nothing.
     FCommandLine ParsedCommandLine{ ArgC, ArgV };
-    GCommandLine = &ParsedCommandLine;
+    Global::GCommandLine = &ParsedCommandLine;
 
     RHI::CreateDevice(RHI::FDeviceDesc
     {
@@ -108,7 +102,7 @@ int main(int ArgC, char** ArgV)
     });
     
     FSpirVShaderCompiler ShaderCompiler;
-    GShaderCompiler = &ShaderCompiler;
+    Global::GShaderCompiler = &ShaderCompiler;
 
     LogDeviceSummary();
     if (!bValidation)
@@ -117,15 +111,15 @@ int main(int ArgC, char** ArgV)
     }
     LOG_INFO("");
 
-    const int32 FailedCount = RHITests::RunAll(GroupFilter, TestFilter);
+    const int32 FailedCount = RHITests::RunAll(Filter);
 
     ShaderCompiler.Flush();
-    GShaderCompiler = nullptr;
+    Global::GShaderCompiler = nullptr;
 
     RHI::FreeDevice();
 
     Jobs::Shutdown();
-    GCommandLine = nullptr;
+    Global::GCommandLine = nullptr;
 
     return FailedCount == 0 ? 0 : 1;
 }

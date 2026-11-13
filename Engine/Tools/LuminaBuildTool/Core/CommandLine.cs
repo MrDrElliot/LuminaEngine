@@ -73,6 +73,13 @@ public sealed class CommandLine
     /// <summary>Arguments that followed a bare "--", passed through untouched.</summary>
     public IReadOnlyList<string> ForwardedArguments => Forwarded;
 
+    // The options as arguments again, minus the names given, for a mode that reruns the tool elsewhere.
+    public IEnumerable<string> OptionArguments(params string[] Except)
+    {
+        return Options.Where(Pair => !Except.Contains(Pair.Key, StringComparer.OrdinalIgnoreCase))
+            .Select(Pair => Pair.Value == "true" ? $"-{Pair.Key}" : $"-{Pair.Key}={Pair.Value}");
+    }
+
     public string? GetPositional(int Index) => Index < Positionals.Count ? Positionals[Index] : null;
 
     public bool HasFlag(string Name) => Options.ContainsKey(Name);
@@ -90,16 +97,40 @@ public sealed class CommandLine
             return Default;
         }
 
-        return Value.Equals("true", StringComparison.OrdinalIgnoreCase)
+        if (Value.Equals("true", StringComparison.OrdinalIgnoreCase)
             || Value.Equals("1", StringComparison.Ordinal)
             || Value.Equals("on", StringComparison.OrdinalIgnoreCase)
-            || Value.Equals("yes", StringComparison.OrdinalIgnoreCase);
+            || Value.Equals("yes", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (Value.Equals("false", StringComparison.OrdinalIgnoreCase)
+            || Value.Equals("0", StringComparison.Ordinal)
+            || Value.Equals("off", StringComparison.OrdinalIgnoreCase)
+            || Value.Equals("no", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        throw new BuildException($"'-{Name}={Value}' is not a valid boolean.");
     }
 
     public int GetInt(string Name, int Default)
     {
         string? Value = GetString(Name);
-        return Value is not null && int.TryParse(Value, out int Parsed) ? Parsed : Default;
+
+        if (Value is null)
+        {
+            return Default;
+        }
+
+        if (!int.TryParse(Value, out int Parsed))
+        {
+            throw new BuildException($"'-{Name}={Value}' is not a valid integer.");
+        }
+
+        return Parsed;
     }
 
     public TEnum GetEnum<TEnum>(string Name, TEnum Default) where TEnum : struct, Enum
@@ -111,7 +142,7 @@ public sealed class CommandLine
             return Default;
         }
 
-        if (!Enum.TryParse(Value, ignoreCase: true, out TEnum Parsed))
+        if (!EnumUtils.TryParseStrict(Value, out TEnum Parsed))
         {
             throw new BuildException($"'{Value}' is not a valid {typeof(TEnum).Name}. Valid values: {string.Join(", ", Enum.GetNames<TEnum>())}");
         }

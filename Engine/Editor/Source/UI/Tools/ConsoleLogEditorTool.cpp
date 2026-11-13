@@ -181,7 +181,7 @@ namespace Lumina
             CWorldEditorSettings* WorldSettings = GetMutableDefault<CWorldEditorSettings>();
             if (ImGui::Checkbox("Clear on Play", &WorldSettings->bClearConsoleOnPIE))
             {
-                GConfig->SaveSettings(CWorldEditorSettings::StaticClass());
+                Global::GConfig->SaveSettings(CWorldEditorSettings::StaticClass());
             }
             ImGuiX::TextTooltip("Empty the console each time play in editor starts. Also in Editor Settings, World Tool.");
 
@@ -217,7 +217,7 @@ namespace Lumina
         }
 
         ImGui::Separator();
-        ImGui::Text("Messages: %u / %d", FilteredMessageCount, PreviousMessageSize);
+        ImGui::Text("Messages: %d / %d", VisibleRows.Indices.Num(), PreviousMessageSize);
     }
 
     void FConsoleLogEditorTool::DrawLogWindow(bool bIsFocused)
@@ -255,17 +255,8 @@ namespace Lumina
             ImGui::PushFontSize(ImGui::GetFontSize() * Settings.FontScale);
         }
 
-        // Cheap, since it holds indices only and allocates nothing beyond vector growth
-        TVector<uint32> VisibleIndices;
-        VisibleIndices.Reserve(Messages.Num());
-        for (int32 i = 0; i < Messages.Num(); ++i)
-        {
-            if (Filter.PassesFilter(Messages[i]))
-            {
-                VisibleIndices.Add((uint32)i);
-            }
-        }
-        FilteredMessageCount = (uint32)VisibleIndices.Num();
+        VisibleRows.Refresh(Messages, Filter);
+        const TVector<uint32>& VisibleIndices = VisibleRows.Indices;
 
         // Wrap disables clipper; full iteration is still cheaper than a table.
         const bool bUseClipper = !Settings.bWordWrap;

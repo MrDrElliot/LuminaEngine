@@ -1309,7 +1309,7 @@ namespace Lumina
             const uint32 Count = (Batch.DrawFirstIndex[Last] + Batch.DrawIndexCount[Last]) - First;
             NextDraw = UpTo;
 
-            if (Count == 0)
+            if (Count == 0 || Active == kDroppedLayer)
             {
                 return;
             }
@@ -1361,7 +1361,7 @@ namespace Lumina
             switch (Cmd.Op)
             {
             case ELayerOp::Push:
-                if (Cmd.TargetLayer != kNoLayer)
+                if (Cmd.TargetLayer != kNoLayer && Cmd.TargetLayer != kDroppedLayer)
                 {
                     const bool bSaved = bPassScissorSet;
                     bPassScissorSet = false;
@@ -1382,6 +1382,11 @@ namespace Lumina
 
             case ELayerOp::Composite:
             {
+                if (Cmd.Source == kDroppedLayer || Cmd.Destination == kDroppedLayer)
+                {
+                    break;
+                }
+
                 uint32 SourceLayer = Cmd.Source;
                 uint32 BaseCopy    = kNoLayer;
 
@@ -1991,7 +1996,13 @@ namespace Lumina
         const bool bInvert    = (Operation == Rml::ClipMaskOperation::SetInverse);
         const bool bIntersect = (Operation == Rml::ClipMaskOperation::Intersect);
 
-        if (bIntersect && (ActiveClipCount == 0 || ActiveClipCount >= kMaxClipMasksPerDraw))
+        if (bIntersect && ActiveClipCount >= kMaxClipMasksPerDraw)
+        {
+            LOG_WARN_ONCE("[RmlUi] Clip intersection depth exceeds {} nested clips; the rest of this clip mask is dropped.", kMaxClipMasksPerDraw);
+            return;
+        }
+
+        if (bIntersect && ActiveClipCount == 0)
         {
             return;
         }
@@ -2104,6 +2115,10 @@ namespace Lumina
             return 0;
         }
 
+        if (List.size() > GMaxColorStops)
+        {
+            LOG_WARN_ONCE("[RmlUi] Gradient has {} color stops, exceeding the budget of {}; trailing stops are dropped.", List.size(), GMaxColorStops);
+        }
         const size_t StopCount = Math::Min<size_t>(List.size(), GMaxColorStops);
         Shader.Stops.Reserve(IntCastChecked<int32>(StopCount));
         for (size_t i = 0; i < StopCount; ++i)
@@ -2137,7 +2152,8 @@ namespace Lumina
 
     Rml::LayerHandle FRmlUiRenderer::PushLayer()
     {
-        const uint32 Index = AcquireLayer();
+        const uint32 Acquired = AcquireLayer();
+        const uint32 Index    = (Acquired == kNoLayer) ? kDroppedLayer : Acquired;
         LayerStack.Add(Index);
 
         FLayerCommand Cmd;
@@ -2200,6 +2216,11 @@ namespace Lumina
 
     Rml::TextureHandle FRmlUiRenderer::SaveLayerAsTexture()
     {
+        if (CurrentLayerIndex() == kDroppedLayer)
+        {
+            return 0;
+        }
+
         // RmlUi sets the scissor to the region it wants saved, so the result must cover exactly that.
         const float ScaleX = (CurrentLogicalSize.x > 0) ? float(CurrentSize.x) / float(CurrentLogicalSize.x) : 1.0f;
         const float ScaleY = (CurrentLogicalSize.y > 0) ? float(CurrentSize.y) / float(CurrentLogicalSize.y) : 1.0f;
@@ -2434,7 +2455,7 @@ namespace Lumina
                 continue;
             }
 
-            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(
+            const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(
                 FStringView(*Tex.BrushSourcePath, Tex.BrushSourcePath.Len()));
             const bool bResolves = (Data != nullptr) && (Data->AssetGUID == Tex.BrushMaterial->GetGUID());
 

@@ -821,10 +821,11 @@ namespace Lumina
         TVector<CAnimStateTransition*> Outgoing;
         SMGraph->GetOutgoingTransitions(State->GetNodeID(), Outgoing);
 
-        // Drop cached property tables whose backing transition was removed.
+        // Only evict entries for transitions gone from the whole graph, not just this state's outgoing set, since the map is shared across all states.
+        const TVector<TStrongObjectPtr<CAnimStateTransition>>& AllTransitions = SMGraph->GetTransitions();
         for (auto It = TransitionTables.begin(); It != TransitionTables.end(); )
         {
-            const bool bAlive = Algo::Contains(Outgoing, It->Key);
+            const bool bAlive = Algo::Contains(AllTransitions, It->Key, [](const TStrongObjectPtr<CAnimStateTransition>& Transition) { return Transition.Get(); });
             if (!bAlive)
             {
                 It = TransitionTables.Remove(It);
@@ -1339,9 +1340,9 @@ namespace Lumina
         int32 CurrentIndex = DebugTargetWorld.IsValid() ? Constants::kIndexNone : 0;
 
         // Walking every world's graph components is only worth it while the list is showing.
-        if (GWorldManager != nullptr && AssetGraph != nullptr && ImGuiX::IsSearchableComboOpen("##DebugTarget"))
+        if (Global::GWorldManager != nullptr && AssetGraph != nullptr && ImGuiX::IsSearchableComboOpen("##DebugTarget"))
         {
-            for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
+            for (const TUniquePtr<FWorldContext>& Ctx : Global::GWorldManager->GetContexts())
             {
                 CWorld* CandidateWorld = Ctx->World.Get();
                 if (CandidateWorld == nullptr || CandidateWorld == World.Get())
@@ -1528,10 +1529,10 @@ namespace Lumina
             ClipEntries.Reset();
 
             const FName AnimationClassName = CAnimation::StaticClass()->GetName();
-            const TVector<FAssetData*> Clips = FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Data) { return Data.AssetClass == AnimationClassName; });
+            const TVector<FAssetDataPtr> Clips = FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Data) { return Data.AssetClass == AnimationClassName; });
             THashMap<FGuid, bool> SkeletonVerdicts;
 
-            for (const FAssetData* Data : Clips)
+            for (const FAssetDataPtr& Data : Clips)
             {
                 if (!bClipBrowserAnySkeleton && Skeleton != nullptr
                     && !AnimPreview::IsAssetCompatible(*Data, *Skeleton, SkeletonVerdicts))
@@ -1585,7 +1586,7 @@ namespace Lumina
                 if (ImGui::BeginDragDropSource())
                 {
                     const FStringView Path(*Entry.Path, Entry.Path.Len());
-                    if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
+                    if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Path))
                     {
                         DragDrop::SetAssetPayload(*Data);
                     }
@@ -1598,7 +1599,7 @@ namespace Lumina
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     {
                         const FStringView Path(*Entry.Path, Entry.Path.Len());
-                        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
+                        if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Path))
                         {
                             SpawnClipPlayerNode(LoadObject<CAnimation>(Data->AssetGUID), GraphCanvasCenter);
                         }

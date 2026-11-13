@@ -118,6 +118,12 @@ namespace Lumina
         RUNTIME_API void EndFrame();
         RUNTIME_API void OnWindowFocusLost();
 
+        // Pumps the window again just before extract when the captured viewport's camera turns with the mouse, returning whether it did.
+        RUNTIME_API bool PumpLateMouseLook();
+
+        // The yaw and pitch in degrees World's rendered view turns by for the motion PumpLateMouseLook held, or zero.
+        RUNTIME_API FVector2 GetLateMouseLook(const CWorld* World) const;
+
         bool OnEvent(FEvent& Event) override;
 
     private:
@@ -141,6 +147,7 @@ namespace Lumina
         FInputViewport* MousePressViewport = nullptr;
         bool            bGameInputFocused = true;
         bool            bDevOverlayCapturing = false;
+        const CWorld*   LateLookWorld = nullptr;
         TUniquePtr<FInputContext> RawInput;
         FGamepadDevices Gamepads;
 

@@ -89,9 +89,10 @@ namespace Lumina
             return World->GetImmediateLines();
         }
 
-        bool ShouldDraw(const FDebugDrawState& State, const FVector3& Center, float Radius)
+        #if !defined(LE_SHIPPING)
+        template<typename TFrustumTest>
+        static bool ShouldDrawSource(const FDebugDrawState& State, const FVector3& Center, float Radius, TFrustumTest&& FrustumTest)
         {
-            #if !defined(LE_SHIPPING)
             if (!State.bEnabled || !State.bHasView)
             {
                 return false;
@@ -113,7 +114,14 @@ namespace Lumina
                 }
             }
 
-            return State.Frustum.IntersectsSphere(Center, Radius);
+            return FrustumTest();
+        }
+        #endif
+
+        bool ShouldDraw(const FDebugDrawState& State, const FVector3& Center, float Radius)
+        {
+            #if !defined(LE_SHIPPING)
+            return ShouldDrawSource(State, Center, Radius, [&] { return State.Frustum.IntersectsSphere(Center, Radius); });
             #else
             return false;
             #endif
@@ -122,31 +130,8 @@ namespace Lumina
         bool ShouldDraw(const FDebugDrawState& State, const SAABB& Bounds)
         {
             #if !defined(LE_SHIPPING)
-            if (!State.bEnabled || !State.bHasView)
-            {
-                return false;
-            }
-
-            if (!State.bCullSources)
-            {
-                return true;
-            }
-
-            if (State.MaxDistanceSq > 0.0f)
-            {
-                const FVector3 Center = (Bounds.Min + Bounds.Max) * 0.5f;
-                const FVector3 Extent = (Bounds.Max - Bounds.Min) * 0.5f;
-                const float    Radius = Math::Sqrt(Math::Dot(Extent, Extent));
-
-                const FVector3 Delta = Center - State.ViewOrigin;
-                const float Reach = Math::Max(0.0f, Math::Sqrt(Math::Dot(Delta, Delta)) - Radius);
-                if (Reach * Reach > State.MaxDistanceSq)
-                {
-                    return false;
-                }
-            }
-
-            return State.Frustum.IsInside(Bounds);
+            const FVector3 Extent = (Bounds.Max - Bounds.Min) * 0.5f;
+            return ShouldDrawSource(State, (Bounds.Min + Bounds.Max) * 0.5f, Math::Sqrt(Math::Dot(Extent, Extent)), [&] { return State.Frustum.IsInside(Bounds); });
             #else
             return false;
             #endif

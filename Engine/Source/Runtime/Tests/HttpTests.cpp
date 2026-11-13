@@ -5,6 +5,7 @@
 #include "Core/Http/HttpServer.h"
 #include "Core/Threading/Thread.h"
 #include "Platform/Socket/PlatformSocket.h"
+#include "Platform/Time/PlatformTime.h"
 
 using namespace Lumina;
 using namespace Lumina::Http;
@@ -211,8 +212,43 @@ TEST(HttpMessage, AResponseRoundTripsThroughTheParser)
     EXPECT_NE(Text.Find("Connection: close\r\n"), Constants::kIndexNone);
 }
 
+namespace Lumina::Http
+{
+    struct FServerTestAccess
+    {
+        static bool SendAll(FServer& Server, Platform::ISocketConnection& Connection, FStringView Text)
+        {
+            return Server.SendAll(Connection, Text);
+        }
+    };
+}
+
 namespace
 {
+    // Reports WouldBlock on every send, as a peer that stopped reading would.
+    class FStalledConnection : public Platform::ISocketConnection
+    {
+    public:
+
+        int32 Receive(uint8*, int32, Platform::ESocketResult& OutResult) override
+        {
+            OutResult = Platform::ESocketResult::WouldBlock;
+            return 0;
+        }
+
+        int32 Send(const uint8*, int32, Platform::ESocketResult& OutResult) override
+        {
+            OutResult = Platform::ESocketResult::WouldBlock;
+            return 0;
+        }
+
+        void Close() override {}
+
+        NODISCARD bool IsOpen() const override { return true; }
+
+        NODISCARD FString GetPeerDescription() const override { return "stalled"; }
+    };
+
     // Speaks just enough HTTP to drive the server under test over a real socket.
     FString RoundTrip(uint16 Port, const char* RequestText, int32 TimeoutMs = 4000)
     {
@@ -407,6 +443,18 @@ TEST(HttpServer, TwoRequestsShareOneConnection)
     EXPECT_NE(Replies.Find("{\"n\":2}"), Constants::kIndexNone);
 
     Server.Stop();
+}
+
+// A peer that stops reading must not stall SendAll, and therefore the server thread, forever.
+TEST(HttpServer, SendAllGivesUpOnAPeerThatNeverDrains)
+{
+    FServer Server;
+    FStalledConnection Connection;
+
+    PlatformTime::FStopwatch Timer;
+    EXPECT_FALSE(FServerTestAccess::SendAll(Server, Connection, "hello"));
+
+    EXPECT_LT(Timer.ElapsedSeconds(), 60.0);
 }
 
 TEST(HttpServer, GarbageGetsAFourHundredRatherThanAHang)

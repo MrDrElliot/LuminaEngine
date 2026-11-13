@@ -938,7 +938,7 @@ namespace Lumina::ImGuiX
         // A closed combo only shows the current asset, so the registry scan waits until the list is open.
         if (!IsComboListOpen(StrId))
         {
-            const FAssetData* Current = InOutGUID.IsValid() ? FAssetRegistry::Get().GetAssetByGUID(InOutGUID) : nullptr;
+            const FAssetDataPtr Current = InOutGUID.IsValid() ? FAssetRegistry::Get().GetAssetByGUID(InOutGUID) : nullptr;
             const char* ClosedPreview = Current != nullptr ? *Current->AssetName : "Select an asset...";
             SearchableCombo(StrId, ClosedPreview, 0, Current != nullptr ? 0 : Constants::kIndexNone, [](int32) { return FFixedString(); }, ItemIcon);
             return false;
@@ -946,7 +946,7 @@ namespace Lumina::ImGuiX
 
         // Every asset whose class is-a FilterClass, sorted by name, with the class test memoized since a project has few classes.
         THashMap<FName, bool> ClassMatches;
-        TVector<FAssetData*> Assets = FAssetRegistry::Get().FindByPredicate([FilterClass, &ClassMatches](const FAssetData& Data)
+        TVector<FAssetDataPtr> Assets = FAssetRegistry::Get().FindByPredicate([FilterClass, &ClassMatches](const FAssetData& Data)
         {
             auto Known = ClassMatches.Find(Data.AssetClass);
             if (Known == nullptr)
@@ -957,7 +957,7 @@ namespace Lumina::ImGuiX
             return (*Known);
         });
 
-        Algo::Sort(Assets, [](const FAssetData* A, const FAssetData* B)
+        Algo::Sort(Assets, [](const FAssetDataPtr& A, const FAssetDataPtr& B)
         {
             return strcmp(*A->AssetName, *B->AssetName) < 0;
         });

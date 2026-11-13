@@ -2,6 +2,9 @@ using LuminaBuildTool.Configuration;
 
 namespace LuminaBuildTool.Graph;
 
+// A Reflection module a target's reflection step loads, from the library the Reflector's target built.
+public sealed record ReflectionGenerator(string LibraryPath, ModuleRules Rules);
+
 /// <summary>A fully resolved target, with every module it needs, in build order, with output paths assigned.</summary>
 public sealed class BuildTarget
 {
@@ -28,6 +31,8 @@ public sealed class BuildTarget
 
     /// <summary>Plugins contributing modules to this target.</summary>
     public List<PluginDescriptor> EnabledPlugins { get; } = new();
+
+    public List<ReflectionGenerator> ReflectionGenerators { get; } = new();
 
     /// <summary>Every rules file the target was assembled from. Changing any invalidates the build.</summary>
     public List<string> RulesFiles { get; } = new();

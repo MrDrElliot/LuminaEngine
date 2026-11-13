@@ -160,6 +160,18 @@ namespace Lumina
         PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 0.0f, ClampMax = 32.0f, Delta = 0.05f)
         float DepthOfFieldFStop = 0.0f;
 
+        // Widest aperture the lens opens to, where FStop stops down from and the blade corners are fully round.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 0.5f, ClampMax = 32.0f, Delta = 0.05f)
+        float DepthOfFieldMinFStop = 1.2f;
+
+        // Narrowest aperture the lens closes to.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 0.5f, ClampMax = 32.0f, Delta = 0.05f)
+        float DepthOfFieldMaxFStop = 32.0f;
+
+        // Diaphragm blades shaping the bokeh into a polygon, where fewer than three keeps it circular.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 0, ClampMax = 16)
+        int32 DepthOfFieldBladeCount = 0;
+
         // Distance from the camera that is perfectly sharp.
         PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 0.1f, Delta = 0.1f, Units = "m")
         float DepthOfFieldFocusDistance = 10.0f;
@@ -168,9 +180,37 @@ namespace Lumina
         PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 1.0f, ClampMax = 70.0f, Delta = 0.1f)
         float DepthOfFieldSensorHeight = 24.0f;
 
+        // Film back width in millimeters (36 is full frame) that crops the gate to the viewport aspect, where zero leaves SensorHeight alone.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 0.0f, ClampMax = 70.0f, Delta = 0.1f)
+        float DepthOfFieldSensorWidth = 0.0f;
+
         // Largest blur radius as a fraction of the screen height, which also bounds the cost.
         PROPERTY(Editable, Category = "Post Process|Depth Of Field", ClampMin = 0.001f, ClampMax = 0.05f, Delta = 0.0005f)
         float DepthOfFieldMaxBlur = 0.012f;
+
+        // Extra blur above and below a sharp horizontal band, as a fraction of MaxBlur, where zero turns the miniature look off.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field|Tilt Shift", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
+        float DepthOfFieldBandBlur = 0.0f;
+
+        // Height of the sharp band center, from zero at the top of the screen to one at the bottom.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field|Tilt Shift", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.005f)
+        float DepthOfFieldBandCenter = 0.5f;
+
+        // Half the height of the sharp band, as a fraction of the screen height.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field|Tilt Shift", ClampMin = 0.0f, ClampMax = 0.5f, Delta = 0.005f)
+        float DepthOfFieldBandHalfHeight = 0.1f;
+
+        // Screen height fraction over which the blur ramps up to its full amount outside the band.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field|Tilt Shift", ClampMin = 0.01f, ClampMax = 1.0f, Delta = 0.005f)
+        float DepthOfFieldBandFalloff = 0.25f;
+
+        // Tilts the focal plane about the camera's horizontal axis, so the ground can stay sharp as it recedes.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field|Tilt Shift", ClampMin = -80.0f, ClampMax = 80.0f, Delta = 0.1f, Units = "deg")
+        float DepthOfFieldTiltPitch = 0.0f;
+
+        // Swings the focal plane about the camera's vertical axis.
+        PROPERTY(Editable, Category = "Post Process|Depth Of Field|Tilt Shift", ClampMin = -80.0f, ClampMax = 80.0f, Delta = 0.1f, Units = "deg")
+        float DepthOfFieldTiltYaw = 0.0f;
 
         // Fades the picture toward FadeColor, from zero untouched to one solid.
         PROPERTY(Editable, Category = "Post Process|Cinematic", ClampMin = 0.0f, ClampMax = 1.0f, Delta = 0.01f)
@@ -226,9 +266,19 @@ namespace Lumina
         InOut.FilmGrainSize        = LerpF (InOut.FilmGrainSize,        In.FilmGrainSize);
         InOut.FilmGrainResponse    = LerpF (InOut.FilmGrainResponse,    In.FilmGrainResponse);
         InOut.DepthOfFieldFStop         = LerpF (InOut.DepthOfFieldFStop,         In.DepthOfFieldFStop);
+        InOut.DepthOfFieldMinFStop      = LerpF (InOut.DepthOfFieldMinFStop,      In.DepthOfFieldMinFStop);
+        InOut.DepthOfFieldMaxFStop      = LerpF (InOut.DepthOfFieldMaxFStop,      In.DepthOfFieldMaxFStop);
+        InOut.DepthOfFieldBladeCount    = (int32)(LerpF((float)InOut.DepthOfFieldBladeCount, (float)In.DepthOfFieldBladeCount) + 0.5f);
         InOut.DepthOfFieldFocusDistance = LerpF (InOut.DepthOfFieldFocusDistance, In.DepthOfFieldFocusDistance);
         InOut.DepthOfFieldSensorHeight  = LerpF (InOut.DepthOfFieldSensorHeight,  In.DepthOfFieldSensorHeight);
+        InOut.DepthOfFieldSensorWidth   = LerpF (InOut.DepthOfFieldSensorWidth,   In.DepthOfFieldSensorWidth);
         InOut.DepthOfFieldMaxBlur       = LerpF (InOut.DepthOfFieldMaxBlur,       In.DepthOfFieldMaxBlur);
+        InOut.DepthOfFieldBandBlur       = LerpF (InOut.DepthOfFieldBandBlur,       In.DepthOfFieldBandBlur);
+        InOut.DepthOfFieldBandCenter     = LerpF (InOut.DepthOfFieldBandCenter,     In.DepthOfFieldBandCenter);
+        InOut.DepthOfFieldBandHalfHeight = LerpF (InOut.DepthOfFieldBandHalfHeight, In.DepthOfFieldBandHalfHeight);
+        InOut.DepthOfFieldBandFalloff    = LerpF (InOut.DepthOfFieldBandFalloff,    In.DepthOfFieldBandFalloff);
+        InOut.DepthOfFieldTiltPitch      = LerpF (InOut.DepthOfFieldTiltPitch,      In.DepthOfFieldTiltPitch);
+        InOut.DepthOfFieldTiltYaw        = LerpF (InOut.DepthOfFieldTiltYaw,        In.DepthOfFieldTiltYaw);
         InOut.FadeAmount           = LerpF (InOut.FadeAmount,           In.FadeAmount);
         InOut.FadeColor            = LerpV3(InOut.FadeColor,            In.FadeColor);
         InOut.LetterboxAspect      = LerpF (InOut.LetterboxAspect,      In.LetterboxAspect);

@@ -1,4 +1,5 @@
 #pragma once
+#include "Reflector/Public/SpecifierRegistry.h"
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -90,6 +91,9 @@ namespace Lumina::Reflection
         FReflectedType*                                             LastReflectedType = nullptr;
 
         FReflectionDatabase                                         ReflectionDatabase;
+
+        // The run's claim registry, which every specifier a macro carries is validated against.
+        const FSpecifierRegistry*                                   Specifiers = nullptr;
 
         FReflectedWorkspace*                                        Workspace = nullptr;
         FReflectedHeader*                                           ReflectedHeader = nullptr;

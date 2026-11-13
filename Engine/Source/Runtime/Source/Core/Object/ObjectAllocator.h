@@ -47,6 +47,9 @@ namespace Lumina
         FCounterShard Counters[kCounterShards];
     };
 
-    extern RUNTIME_API FCObjectAllocator GCObjectAllocator;
+    namespace Global
+    {
+        extern RUNTIME_API FCObjectAllocator GCObjectAllocator;
+    }
 
 }

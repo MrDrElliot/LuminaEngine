@@ -3,6 +3,7 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/TerrainCommon.slang"
 #include "Includes/WaveAtomics.slang"
+#include "Includes/Culling.slang"
 
 #define LOCAL_SIZE_X 8
 #define LOCAL_SIZE_Y 8
@@ -117,11 +118,13 @@ void main(uint3 Tid : SV_DispatchThreadID)
 
     // Keeping (F/d)^2 of the blades holds their density on screen roughly constant, since a patch's projected area falls the same way.
     float Keep = 1.0;
+    float KeepFade = 1.0;
     if (P->FullDensityDistance > 0.0 && CameraDistance > P->FullDensityDistance)
     {
         const float Ratio = P->FullDensityDistance / CameraDistance;
         Keep = Ratio * Ratio;
-        if (Hash01(CellHash ^ 0x27D4EB2Fu) > Keep)
+        KeepFade = ThinningFade(Keep, Hash01(CellHash ^ 0x27D4EB2Fu));
+        if (KeepFade <= 0.0)
         {
             return;
         }
@@ -165,7 +168,7 @@ void main(uint3 Tid : SV_DispatchThreadID)
     // Survivors grow to cover for the thinned ones, and everything shrinks away over the last stretch so the edge never pops.
     const float Coverage = min(rsqrt(Keep), kMaxThinnedScale);
     const float EdgeFade = 1.0 - smoothstep(P->Radius * kEdgeFadeStart, P->Radius, CameraDistance);
-    const float Scale = lerp(P->ScaleMin, P->ScaleMax, Hash01(CellHash ^ 0x9E3779B9u)) * Coverage * EdgeFade;
+    const float Scale = lerp(P->ScaleMin, P->ScaleMax, Hash01(CellHash ^ 0x9E3779B9u)) * Coverage * EdgeFade * KeepFade;
     if (Scale <= 0.001)
     {
         return;

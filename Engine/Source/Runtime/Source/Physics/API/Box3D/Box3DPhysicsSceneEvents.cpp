@@ -8,6 +8,7 @@
 #include "Box3DInternal.h"
 #include "Box3DUtils.h"
 
+#include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "Log/Log.h"
@@ -189,36 +190,40 @@ namespace Lumina::Physics
             ContactDrainScratch.Add(Record);
         }
 
-        const b3SensorEvents Sensors = b3World_GetSensorEvents(WorldId);
+        // Sensors have no manifold, so the point is the visitor's surface nearest the sensor and the normal joins their bounds centers.
+        auto AddSensorEvent = [&](EContactEventType Type, b3ShapeId SensorShape, b3ShapeId VisitorShape)
+        {
+            const bool bAdded = (Type == EContactEventType::Added);
 
+            FContactRecord Record{};
+            Record.Type = Type;
+            FillPair(Record, SensorShape, VisitorShape);
+            Record.bSensorA = true;
+
+            if (!WantsContactEvents(Record.EntityA, bAdded, true) && !WantsContactEvents(Record.EntityB, bAdded, true))
+            {
+                return;
+            }
+
+            if (b3Shape_IsValid(SensorShape) && b3Shape_IsValid(VisitorShape))
+            {
+                const b3Vec3 SensorCenter = b3AABB_Center(b3Shape_GetAABB(SensorShape));
+                const b3Vec3 VisitorCenter = b3AABB_Center(b3Shape_GetAABB(VisitorShape));
+                Record.Point = Box3DUtils::FromB3Vec3(b3Shape_GetClosestPoint(VisitorShape, SensorCenter));
+                Record.Normal = Box3DUtils::FromB3Vec3(b3Normalize(b3Sub(VisitorCenter, SensorCenter)));
+            }
+
+            ContactDrainScratch.Add(Record);
+        };
+
+        const b3SensorEvents Sensors = b3World_GetSensorEvents(WorldId);
         for (int32 i = 0; i < Sensors.beginCount; ++i)
         {
-            const b3SensorBeginTouchEvent& Event = Sensors.beginEvents[i];
-
-            FContactRecord Record{};
-            Record.Type = EContactEventType::Added;
-            FillPair(Record, Event.sensorShapeId, Event.visitorShapeId);
-            Record.bSensorA = true;
-
-            if (WantsContactEvents(Record.EntityA, true, true) || WantsContactEvents(Record.EntityB, true, true))
-            {
-                ContactDrainScratch.Add(Record);
-            }
+            AddSensorEvent(EContactEventType::Added, Sensors.beginEvents[i].sensorShapeId, Sensors.beginEvents[i].visitorShapeId);
         }
-
         for (int32 i = 0; i < Sensors.endCount; ++i)
         {
-            const b3SensorEndTouchEvent& Event = Sensors.endEvents[i];
-
-            FContactRecord Record{};
-            Record.Type = EContactEventType::Removed;
-            FillPair(Record, Event.sensorShapeId, Event.visitorShapeId);
-            Record.bSensorA = true;
-
-            if (WantsContactEvents(Record.EntityA, false, true) || WantsContactEvents(Record.EntityB, false, true))
-            {
-                ContactDrainScratch.Add(Record);
-            }
+            AddSensorEvent(EContactEventType::Removed, Sensors.endEvents[i].sensorShapeId, Sensors.endEvents[i].visitorShapeId);
         }
     }
 
@@ -316,16 +321,27 @@ namespace Lumina::Physics
         OnRigidBodyComponentUpdated(Registry, Entity);
     }
 
-    void FBox3DPhysicsScene::RebuildStaleDynamicMeshBodies(ECS::FRegistry& Registry)
+    void FBox3DPhysicsScene::RebuildStaleMeshBodies(ECS::FRegistry& Registry)
     {
-        auto View = Registry.View<SDynamicMeshColliderComponent, SDynamicMeshComponent, SRigidBodyComponent>();
-        for (auto [Entity, Collider, Mesh, Body] : View.Each())
+        auto RebuildIfStale = [&](ECS::FEntity Entity, uint32& BuiltVersion, uint32 Version)
         {
-            const uint32 Version = Mesh.LoadRenderDataVersion();
-            if (Version != Collider.GeometryVersion)
+            if (Version != BuiltVersion)
             {
-                Collider.GeometryVersion = Version;
+                BuiltVersion = Version;
                 OnRigidBodyComponentUpdated(Registry, Entity);
+            }
+        };
+
+        for (auto [Entity, Collider, Mesh, Body] : Registry.View<SDynamicMeshColliderComponent, SDynamicMeshComponent, SRigidBodyComponent>().Each())
+        {
+            RebuildIfStale(Entity, Collider.GeometryVersion, Mesh.LoadRenderDataVersion());
+        }
+
+        for (auto [Entity, Collider, Body] : Registry.View<SMeshColliderComponent, SRigidBodyComponent>().Each())
+        {
+            if (const CStaticMesh* Mesh = ResolveColliderMesh(Registry, Entity, Collider))
+            {
+                RebuildIfStale(Entity, Collider.GeometryVersion, Mesh->GetGeometryVersion());
             }
         }
     }

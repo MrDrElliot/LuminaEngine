@@ -3,7 +3,7 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/CloudRay.slang"
 
-// Builds every half-res cloud texel from this frame's one march per 2x2 block and last frame's clouds, reprojected through the camera's motion and the layer's wind.
+// Builds every half-res cloud texel from this frame's one march per 2x2 block, or that texel's own last march reprojected through the camera's motion and the layer's wind.
 
 struct FPushConstants
 {
@@ -28,32 +28,26 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-// Beyond this relative change in the scene depth under a texel, its history was marched against something else.
-static const float kHistoryDepthTolerance = 0.05;
+// Beyond this relative change in scene depth, two texels' rays were marched against different surfaces.
+static const float kSameDepthTolerance = 0.05;
 
-// A marched texel's share against its history, which averages the turning march jitter over its last few visits.
-static const float kFreshWeight = 0.2;
-
-// Reprojected history softens with every bilinear resample, so moving content leans harder on the fresh march.
-static const float kMovingFreshWeight = 0.5;
-static const float kFullMotionPixels  = 4.0;
-
-bool HistoryMatches(float CurrentRaw, float HistoryRaw)
+bool SameSceneDepth(float CurrentRaw, float OtherRaw)
 {
-    if (CurrentRaw <= 0.0 || HistoryRaw <= 0.0)
+    if (CurrentRaw <= 0.0 || OtherRaw <= 0.0)
     {
-        return CurrentRaw <= 0.0 && HistoryRaw <= 0.0;
+        return CurrentRaw <= 0.0 && OtherRaw <= 0.0;
     }
     const float Current = LinearizeSceneDepth(CurrentRaw);
-    return abs(LinearizeSceneDepth(HistoryRaw) - Current) <= Current * kHistoryDepthTolerance;
+    return abs(LinearizeSceneDepth(OtherRaw) - Current) <= Current * kSameDepthTolerance;
 }
 
-// Bilinear over only the history texels that saw the same scene depth, so cloud hidden behind a silhouette last frame is never revealed as stale.
-bool SampleMatchingHistory(float2 PrevUV, float CurrentRaw, int2 Size, out float4 History)
+// Bilinear over only the taps whose ray saw the same scene depth, so cloud never bleeds across a silhouette, from last frame's texels or this frame's block marches.
+bool SampleMatchingDepth(float2 Pixel, float CurrentRaw, int2 Size, bool bFromFresh, out float4 Result)
 {
-    const float2 Pixel = PrevUV * float2(Size) - 0.5;
-    const int2   Base  = int2(floor(Pixel));
-    const float2 F     = Pixel - float2(Base);
+    const int2   Base   = int2(floor(Pixel));
+    const float2 F      = Pixel - float2(Base);
+    const int2   Offset = int2(Pass().OffsetX, Pass().OffsetY);
+    const int2   Screen = int2(Pass().ScreenW, Pass().ScreenH);
 
     float4 Sum    = float4(0.0, 0.0, 0.0, 0.0);
     float  Weight = 0.0;
@@ -64,13 +58,14 @@ bool SampleMatchingHistory(float2 PrevUV, float CurrentRaw, int2 Size, out float
         const int2   Tap    = clamp(Base + Corner, int2(0, 0), Size - 1);
         const float2 Axis   = lerp(1.0 - F, F, float2(Corner));
         const float  W      = Axis.x * Axis.y;
-        if (W > 0.0 && HistoryMatches(CurrentRaw, Pass().HistoryDepth.Load(Tap).r))
+        const float  TapRaw = bFromFresh ? Pass().CloudDepth[min(Tap * 2 + Offset, Screen - 1)].r : Pass().HistoryDepth.Load(Tap).r;
+        if (W > 0.0 && SameSceneDepth(CurrentRaw, TapRaw))
         {
-            Sum    += Pass().History.Load(Tap) * W;
+            Sum    += (bFromFresh ? Pass().Fresh.Load(Tap) : Pass().History.Load(Tap)) * W;
             Weight += W;
         }
     }
-    History = Sum / max(Weight, 1e-4);
+    Result = Sum / max(Weight, 1e-4);
     return Weight > 0.0;
 }
 
@@ -100,9 +95,16 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
+    // A marched texel is taken as is, so nothing here needs more than one frame to look right.
+    const float4 Marched = Pass().Fresh.Load(Block);
+    if (bFresh)
+    {
+        Pass().Scatter[P] = Marched;
+        return;
+    }
+
     // The fresh marches of the surrounding blocks bound what the history may still claim is here.
     const int2 BlockCount = (Size + 1) >> 1;
-    const float4 Marched  = Pass().Fresh.Load(Block);
     float4 BoxMin = Marched;
     float4 BoxMax = Marched;
     [unroll]
@@ -126,21 +128,11 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const bool   bOnScreen = PrevClip.w > 0.0 && all(PrevUV >= 0.0) && all(PrevUV <= 1.0);
 
     float4 History;
-    if (!bOnScreen || !SampleMatchingHistory(PrevUV, Ray.RawDepth, Size, History))
+    if (!bOnScreen || !SampleMatchingDepth(PrevUV * float2(Size) - 0.5, Ray.RawDepth, Size, false, History))
     {
-        Pass().Scatter[P] = Marched;
+        const float2 BlockPixel = float2(P - int2(Pass().OffsetX, Pass().OffsetY)) * 0.5;
+        Pass().Scatter[P] = SampleMatchingDepth(BlockPixel, Ray.RawDepth, BlockCount, true, History) ? History : Marched;
         return;
     }
-    History = clamp(History, BoxMin, BoxMax);
-
-    if (!bFresh)
-    {
-        Pass().Scatter[P] = History;
-        return;
-    }
-
-    const float2 UV          = (float2(P) + 0.5) / float2(Size);
-    const float  MotionPx    = length((PrevUV - UV) * float2(Size));
-    const float  FreshWeight = lerp(kFreshWeight, kMovingFreshWeight, saturate(MotionPx / kFullMotionPixels));
-    Pass().Scatter[P] = lerp(History, Marched, FreshWeight);
+    Pass().Scatter[P] = clamp(History, BoxMin, BoxMax);
 }

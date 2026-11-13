@@ -82,9 +82,15 @@ namespace Lumina
         const uint32 Stamp = Cache.Stamp;
         FEntitySignificance* Scores = Cache.ByEntityIndex.GetData();
 
-        // Every entity owns a distinct index, and one in two pools writes the same score twice, so the body never races.
+        // An entity in two consumer pools is scored once, since the second visit sees this pass's stamp.
         const auto Score = [&](ECS::FEntity Entity, const auto&)
         {
+            FEntitySignificance& Out = Scores[Entity.GetIndex()];
+            if (Cache.IsFresh(Out, Entity))
+            {
+                return;
+            }
+
             const STransformComponent* Xform = Transforms.TryGet<STransformComponent>(Entity);
             if (Xform == nullptr)
             {
@@ -108,7 +114,6 @@ namespace Lumina
             const FVector3 ToEye = Location - ViewOrigin;
             const float DistSq   = Math::Dot(ToEye, ToEye);
 
-            FEntitySignificance& Out = Scores[Entity.GetIndex()];
             Out.Owner              = Entity;
             Out.Stamp              = Stamp;
             Out.DistanceSq         = DistSq;

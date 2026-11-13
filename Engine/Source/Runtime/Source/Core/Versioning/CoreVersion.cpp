@@ -2,5 +2,5 @@
 #include "CoreVersion.h"
 
 
-const FPackageFileVersion GPackageFileLuminaVersion(ELuminaEngineVersion::AUTOMATIC_VERSION);
+const FPackageFileVersion Lumina::Global::GPackageFileLuminaVersion(ELuminaEngineVersion::AUTOMATIC_VERSION);
 

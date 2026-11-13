@@ -129,5 +129,8 @@ namespace Lumina
         void EndActiveNotifyStates(FAnimMontageInstance& Instance, TVector<FAnimNotifyEvent>* OutEvents);
 
         uint32 NextInstanceID = 1;
+
+        // Scratch for DispatchNotifies, reused across calls to avoid reallocating per update.
+        TVector<int32> NotifyScratch;
     };
 }

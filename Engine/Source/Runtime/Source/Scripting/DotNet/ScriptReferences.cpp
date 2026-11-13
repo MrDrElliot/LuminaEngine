@@ -8,6 +8,7 @@
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include "Platform/Process/PlatformProcess.h"
+#include "Scripting/ManagedTypeRegistry.h"
 
 #include <string>
 
@@ -65,19 +66,10 @@ namespace Lumina::DotNet
             return Text;
         }
 
-        struct FResolutionCacheEntry
-        {
-            FString          UnitName;
-            FString          Fingerprint;
-            TVector<FString> Assemblies;
-        };
-
         // Spares every reload, packaging pass, and project generation a re-read of each unit's assets file.
-        TVector<FResolutionCacheEntry> GResolutionCache;
-
-        const FResolutionCacheEntry* FindCachedResolution(FStringView UnitName, const FString& Fingerprint)
+        const Scripting::FScriptReferenceResolution* FindCachedResolution(FStringView UnitName, const FString& Fingerprint)
         {
-            for (const FResolutionCacheEntry& Entry : GResolutionCache)
+            for (const Scripting::FScriptReferenceResolution& Entry : Scripting::FManagedTypeRegistry::Get().GetScriptReferenceResolutions())
             {
                 if (Entry.UnitName == UnitName && Entry.Fingerprint == Fingerprint)
                 {
@@ -89,7 +81,8 @@ namespace Lumina::DotNet
 
         void StoreCachedResolution(FStringView UnitName, const FString& Fingerprint, const TVector<FString>& Assemblies)
         {
-            for (FResolutionCacheEntry& Entry : GResolutionCache)
+            TVector<Scripting::FScriptReferenceResolution>& Entries = Scripting::FManagedTypeRegistry::Get().GetScriptReferenceResolutions();
+            for (Scripting::FScriptReferenceResolution& Entry : Entries)
             {
                 if (Entry.UnitName == UnitName)
                 {
@@ -98,7 +91,7 @@ namespace Lumina::DotNet
                     return;
                 }
             }
-            GResolutionCache.Emplace(FString(UnitName), Fingerprint, Assemblies);
+            Entries.Emplace(FString(UnitName), Fingerprint, Assemblies);
         }
 
         FString BuildRestoreProject(const FScriptReferenceSet& Declared)
@@ -285,7 +278,7 @@ namespace Lumina::DotNet
         const FScriptReferenceSet& Declared, TVector<FString>& OutAssemblyPaths)
     {
         const FString CacheKey = DeclarationFingerprint(Declared);
-        if (const FResolutionCacheEntry* Cached = FindCachedResolution(UnitName, CacheKey))
+        if (const Scripting::FScriptReferenceResolution* Cached = FindCachedResolution(UnitName, CacheKey))
         {
             for (const FString& Assembly : Cached->Assemblies)
             {

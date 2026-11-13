@@ -27,8 +27,8 @@ namespace Lumina::RHITests
             {
                 return true;
             }
-            Failf("%s == %s  (got %llu, want %llu)  [%s:%d]", Expression, "expected",
-                  (unsigned long long)Actual, (unsigned long long)Expected, File, Line);
+            Failf("%s(%d): error: %s == expected  (got %llu, want %llu)", File, Line, Expression,
+                  (unsigned long long)Actual, (unsigned long long)Expected);
             return false;
         }
 
@@ -102,10 +102,8 @@ namespace Lumina::RHITests
         FTestRegistrar(const char* Group, const char* Name, FTestFn Fn, bool bExpectValidationError = false);
     };
 
-    /** Runs every registered test in registration order. Returns the number that failed.
-     *  TestFilter, when set, selects a single "Group.Name" -- the smallest unit that can be put in front
-     *  of a driver, which matters when the thing being bisected takes the device down. */
-    int32 RunAll(const char* GroupFilter, const char* TestFilter = nullptr);
+    // Returns the failure count. Filter takes --gtest_filter's colon-separated Group.Name wildcard patterns.
+    int32 RunAll(const char* Filter);
 
     /** Registered names, for --list. */
     void ForEachTest(void (*Visitor)(const char* Group, const char* Name));

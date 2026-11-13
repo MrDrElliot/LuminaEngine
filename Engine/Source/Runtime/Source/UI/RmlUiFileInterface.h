@@ -4,7 +4,7 @@
 
 #include "Containers/String.h"
 #include "Containers/Vector.h"
-#include "Core/Threading/Sync.h"
+#include "Core/Threading/Mutex.h"
 
 #include <RmlUi/Core/FileInterface.h>
 
@@ -34,7 +34,6 @@ namespace Lumina
         void NoteStyleSheetRead(FStringView VirtualPath);
 
         // RmlUi keeps every parsed stylesheet by path for the whole session, so the files behind them are tracked here.
-        FMutex                   StyleSheetMutex;
-        TVector<FReadStyleSheet> ReadStyleSheets;
+        TMutex<TVector<FReadStyleSheet>> ReadStyleSheets;
     };
 }

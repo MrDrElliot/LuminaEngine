@@ -416,7 +416,7 @@ namespace Lumina::ECS
         void LeaveOwningGroup(FEntity Entity);
 
         // Relaxed, because a mutable Get on a tracked pool may move it from a parallel system.
-        FORCEINLINE void BumpWriteEpoch() { WriteEpoch.store(WriteEpoch.load(std::memory_order_relaxed) + 1u, std::memory_order_relaxed); }
+        FORCEINLINE void BumpWriteEpoch() { WriteEpoch.fetch_add(1u, std::memory_order_relaxed); }
 
         NODISCARD FORCEINLINE bool HasPayloadRoomFor(int32 DenseIndex) const
         {

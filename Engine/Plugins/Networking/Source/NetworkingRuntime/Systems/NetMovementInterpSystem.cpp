@@ -30,8 +30,8 @@ namespace Lumina
 
         //~ Rate-matching avoids the saw-tooth an offset EMA gives on a bursty send cadence.
         const CNetworkSettings* Settings = GetDefault<CNetworkSettings>();
-        const double InterpDelay     = Settings ? static_cast<double>(Settings->InterpDelay) : 0.1;
-        const bool   bExtrapolate    = Settings ? Settings->bEnableExtrapolation : true;
+        const double InterpDelay     = Settings ? static_cast<double>(Settings->InterpDelay) : CNetworkSettings::kDefaultInterpDelay;
+        const bool   bExtrapolate    = Settings ? Settings->bEnableExtrapolation : CNetworkSettings::kDefaultEnableExtrapolation;
         const double MaxExtrap       = Settings ? static_cast<double>(Settings->MaxExtrapolation) : 0.25;
         const double BufferIntervals = Settings ? static_cast<double>(Settings->InterpBufferIntervals) : 1.5;
         const float  TeleportDistance = Settings ? Settings->TeleportDistance : 3.0f;

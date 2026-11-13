@@ -3,8 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include "Core/Math/Math.h"
+#include "Memory/Memcpy.h"
 
 #include "Platform/Process/PlatformProcess.h"
 #include "Renderer/Format.h"
@@ -92,6 +92,20 @@ namespace Lumina
         Terrain.LayerWeights.Init(uint8(0), Res * Res * Terrain.Layers.Num());
         Terrain.CPUState.bFullHeightmapDirty = true;
         Terrain.CPUState.bFullWeightsDirty   = true;
+        return Entity;
+    }
+
+    ECS::FEntity FTerrainEditMode::CreateTerrainTransacted(CWorld* World)
+    {
+        if (Context)
+        {
+            Context->BeginModeCreationTransaction();
+        }
+        ECS::FEntity Entity = CreateDefaultTerrain(World);
+        if (Context)
+        {
+            Context->EndModeTransaction("Create Terrain");
+        }
         return Entity;
     }
 
@@ -262,7 +276,7 @@ namespace Lumina
         ImGui::SameLine();
         if (ImGui::Button("+ Terrain", ImVec2(0, ButtonSize)))
         {
-            CreateDefaultTerrain(World);
+            CreateTerrainTransacted(World);
         }
 
         ImGui::SameLine();
@@ -272,7 +286,7 @@ namespace Lumina
             ECS::FEntity TerrainEntity = FindPreferredTerrain(World);
             if (TerrainEntity == ECS::NullEntity)
             {
-                TerrainEntity = CreateDefaultTerrain(World);
+                TerrainEntity = CreateTerrainTransacted(World);
             }
 
             FFixedString File;
@@ -537,9 +551,9 @@ namespace Lumina
         TVector<uint8> Tmp(LayerStride);
         uint8* PA = &Terrain.LayerWeights[A * LayerStride];
         uint8* PB = &Terrain.LayerWeights[B * LayerStride];
-        std::memcpy(Tmp.GetData(), PA, LayerStride);
-        std::memcpy(PA,         PB, LayerStride);
-        std::memcpy(PB, Tmp.GetData(), LayerStride);
+        Memory::Memcpy(Tmp.GetData(), PA, LayerStride);
+        Memory::Memcpy(PA,         PB, LayerStride);
+        Memory::Memcpy(PB, Tmp.GetData(), LayerStride);
 
         Terrain.CPUState.bFullWeightsDirty = true;
     }
@@ -557,7 +571,7 @@ namespace Lumina
         {
             uint8* Dst = &Terrain.LayerWeights[i     * LayerStride];
             uint8* Src = &Terrain.LayerWeights[(i + 1) * LayerStride];
-            std::memcpy(Dst, Src, LayerStride);
+            Memory::Memcpy(Dst, Src, LayerStride);
         }
         Terrain.LayerWeights.SetNum((LayerCount - 1) * LayerStride);
         Terrain.Layers.RemoveAt(Index);

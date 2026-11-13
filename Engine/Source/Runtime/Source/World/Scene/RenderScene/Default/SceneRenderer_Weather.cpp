@@ -259,7 +259,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Rain Occlusion Pass", tracy::Color::SteelBlue);
         SCENE_GPU_SCOPE(CL, "Rain Occlusion");
 
         const FUIntVector2 Extent = RainOcclusionImage.GetExtent();
@@ -306,7 +305,6 @@ namespace Lumina
         static const FShaderH SimShader   = FShaderLibrary::Get("WeatherFieldSim.slang");
         static const FShaderH SpawnShader = FShaderLibrary::Get("WeatherImpactSpawn.slang");
 
-        LUMINA_PROFILE_SECTION_COLORED("Weather Interaction Pass", tracy::Color::SteelBlue);
         SCENE_GPU_SCOPE(CL, "Weather Interaction");
 
         const RHI::TGPUSpan<FWeatherWaterBodyGPU> Waters = Interaction.WaterBodies.IsEmpty()
@@ -404,7 +402,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Weather Draw Pass", tracy::Color::SteelBlue);
         SCENE_GPU_SCOPE(CL, "Weather");
 
         if (NumDrops > 0u)

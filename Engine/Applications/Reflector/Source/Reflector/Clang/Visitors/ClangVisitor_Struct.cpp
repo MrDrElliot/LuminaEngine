@@ -759,6 +759,7 @@ namespace Lumina::Reflection::Visitor
 
 		if (NewProperty != nullptr)
 		{
+			NewProperty->LineNumber = ClangUtils::GetCursorLineNumber(FieldInfo.OwningCursor);
 			OutProperty = NewProperty.get();
 			Struct->PushProperty(std::move(NewProperty));
 		}
@@ -986,7 +987,6 @@ namespace Lumina::Reflection::Visitor
 			Function.TopLevelParams.push_back(TopLevel);
 			Function.ParameterStorageTypes.push_back(std::move(StorageType));
 			Function.ParameterObjectCastTypes.push_back(std::move(ObjectCastType));
-			Function.ParameterIsReference.push_back(Kind == CXType_LValueReference);
 			Function.ParameterIsRvalue.push_back(bIsRvalueReference);
 			return true;
 		};
@@ -997,7 +997,6 @@ namespace Lumina::Reflection::Visitor
 			Function.TopLevelParams.clear();
 			Function.ParameterStorageTypes.clear();
 			Function.ParameterObjectCastTypes.clear();
-			Function.ParameterIsReference.clear();
 			Function.ParameterIsRvalue.clear();
 			Function.ReturnIndex = -1;
 		};
@@ -1030,6 +1029,7 @@ namespace Lumina::Reflection::Visitor
 		OutFunction = nullptr;
 		
 		auto NewFunction = std::make_unique<FReflectedFunction>();
+		NewFunction->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
 		NewFunction->Outer = Struct->DisplayName;
 		NewFunction->Name = ClangUtils::GetCursorSpelling(Cursor);
 		NewFunction->bIsVirtual = clang_CXXMethod_isVirtual(Cursor) != 0;
@@ -1110,7 +1110,7 @@ namespace Lumina::Reflection::Visitor
 		}
 
 		NewProperty->GenerateMetadata(Specifiers);
-		ValidateSpecifiers(Cursor, ESpecifierTarget::Property, NewProperty->Metadata);
+		ValidateSpecifiers(*Context->Specifiers, Cursor, ESpecifierTarget::Property, NewProperty->Metadata);
 		ApplyReflectAsOverride(Context, Struct, NewProperty, Cursor);
 
 		const long long OffsetInBits = clang_Cursor_getOffsetOfField(Cursor);
@@ -1232,7 +1232,7 @@ namespace Lumina::Reflection::Visitor
 			FReflectedFunction* NewFunction;
 			CreateFunctionForType(Cursor, Context, Type, NewFunction);
 			NewFunction->GenerateMetadata(Specifiers);
-			ValidateSpecifiers(Cursor, ESpecifierTarget::Function, NewFunction->Metadata);
+			ValidateSpecifiers(*Context->Specifiers, Cursor, ESpecifierTarget::Function, NewFunction->Metadata);
 
 			std::string Comment = GetCursorComment(Cursor);
 			if (!Comment.empty())
@@ -1278,7 +1278,7 @@ namespace Lumina::Reflection::Visitor
 		Template.QualifiedName = QualifiedName;
 		Template.Namespace = Context->CurrentNamespace;
 		Template.MacroContents = Macro.MacroContents;
-		ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, FMetadataParser(Macro.MacroContents).Metadata);
+		ValidateSpecifiers(*Context->Specifiers, Cursor, ESpecifierTarget::Reflect, FMetadataParser(Macro.MacroContents).Metadata);
 		Template.Header = Context->ReflectedHeader;
 
 		Context->ReflectedTemplates.insert_or_assign(FStringHash(QualifiedName), std::move(Template));
@@ -1359,7 +1359,7 @@ namespace Lumina::Reflection::Visitor
 		ReflectedStruct->DisplayName = AliasName;
 		ReflectedStruct->bIsAlias = true;
 		ReflectedStruct->GenerateMetadata(Macro.MacroContents);
-		ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, ReflectedStruct->Metadata);
+		ValidateSpecifiers(*Context->Specifiers, Cursor, ESpecifierTarget::Reflect, ReflectedStruct->Metadata);
 		ReflectedStruct->Header = Context->ReflectedHeader;
 		ReflectedStruct->Type = FReflectedType::EType::Structure;
 		ReflectedStruct->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
@@ -1443,7 +1443,7 @@ namespace Lumina::Reflection::Visitor
 		ReflectedStruct->CppName = CppName;
 		ReflectedStruct->CppQualifiedName = CppQualifiedName;
 		ReflectedStruct->GenerateMetadata(Macro.MacroContents);
-		ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, ReflectedStruct->Metadata);
+		ValidateSpecifiers(*Context->Specifiers, Cursor, ESpecifierTarget::Reflect, ReflectedStruct->Metadata);
 		ReflectedStruct->Header = Context->ReflectedHeader;
 		ReflectedStruct->Type = FReflectedType::EType::Structure;
 		ReflectedStruct->GeneratedBodyLineNumber = GeneratedBody.LineNumber;
@@ -1484,6 +1484,7 @@ namespace Lumina::Reflection::Visitor
 		}
 
 		auto NewFunction = std::make_unique<FReflectedFunction>();
+		NewFunction->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
 		NewFunction->bFreeFunction = true;
 		NewFunction->Name = ClangUtils::GetCursorSpelling(Cursor);
 
@@ -1498,7 +1499,7 @@ namespace Lumina::Reflection::Visitor
 		NewFunction->QualifiedName = Qualified;
 
 		NewFunction->GenerateMetadata(Specifiers);
-		ValidateSpecifiers(Cursor, ESpecifierTarget::ScriptExport, NewFunction->Metadata);
+		ValidateSpecifiers(*Context->Specifiers, Cursor, ESpecifierTarget::ScriptExport, NewFunction->Metadata);
 		for (const FMetadataPair& Meta : NewFunction->Metadata)
 		{
 			if (Meta.Key == "Class")
@@ -1585,7 +1586,7 @@ namespace Lumina::Reflection::Visitor
 		ReflectedClass->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
 		RecordNativeLayout(ReflectedClass, clang_getCursorType(Cursor));
 		ReflectedClass->GenerateMetadata(Macro.MacroContents);
-		ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, ReflectedClass->Metadata);
+		ValidateSpecifiers(*Context->Specifiers, Cursor, ESpecifierTarget::Reflect, ReflectedClass->Metadata);
 
 		if (!Context->CurrentNamespace.empty())
 		{

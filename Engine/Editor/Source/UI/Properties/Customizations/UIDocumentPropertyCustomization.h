@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include "Containers/Function.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
+#include "Assets/AssetRegistry/AssetRegistry.h"
 
 namespace Lumina
 {
@@ -20,6 +21,9 @@ namespace Lumina
     private:
 
         ImGuiTextFilter SearchFilter;
+
+        // Rebuilt once on popup open rather than every frame it stays open.
+        TVector<FTextAssetDataPtr> CachedDocuments;
 
         // Applied in UpdatePropertyValue, after the undo snapshot was taken, so the snapshot holds the old document.
         TFunction<void()> PendingMutation;

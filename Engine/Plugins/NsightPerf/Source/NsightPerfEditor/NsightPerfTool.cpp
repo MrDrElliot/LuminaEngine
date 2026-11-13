@@ -146,7 +146,7 @@ namespace Lumina
     {
         State = MakeUnique<FNsightPerfState>();
 
-        if (GCommandLine != nullptr && GCommandLine->Has("nsightexport"))
+        if (Global::GCommandLine != nullptr && Global::GCommandLine->Has("nsightexport"))
         {
             State->bShowMetrics = true;
             State->bAutoExport  = true;

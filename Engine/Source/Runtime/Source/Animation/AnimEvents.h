@@ -47,9 +47,9 @@ namespace Lumina
 
     namespace AnimEvents
     {
-        // Appends a Trigger event for every point notify crossed in (PrevTime, CurTime], handling a
-        // single loop wrap when CurTime landed behind PrevTime. Equal times append nothing.
+        // Fires each notify crossed in (PrevTime, CurTime], plus once more per whole loop a looping advance spanned.
         RUNTIME_API void CollectTriggeredNotifies(const CAnimation* Clip, float PrevTime, float CurTime,
-                                                  bool bLooping, float Weight, TVector<FAnimNotifyEvent>& Out);
+                                                  bool bLooping, float Weight, TVector<FAnimNotifyEvent>& Out,
+                                                  int32 WholeLoops = 0);
     }
 }

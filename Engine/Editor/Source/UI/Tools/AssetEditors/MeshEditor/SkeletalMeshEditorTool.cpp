@@ -1320,10 +1320,8 @@ namespace Lumina
 
     void FSkeletalMeshEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const
     {
-        ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
-
         ImGuiID leftDockID = 0, rightDockID = 0, hierarchyDockID = 0;
-        ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
+        SplitDockingLayoutLeftRight(InDockspaceID, 0.3f, leftDockID, rightDockID);
         ImGui::DockBuilderSplitNode(leftDockID, ImGuiDir_Left, 0.25f, &hierarchyDockID, &leftDockID);
 
         ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), leftDockID);

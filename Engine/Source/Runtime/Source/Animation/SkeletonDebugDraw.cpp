@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "SkeletonDebugDraw.h"
+#include "Animation/BindPose.h"
 #include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
@@ -35,9 +36,7 @@ namespace Lumina::SkeletonDebugDraw
         {
             for (int32 i = 0; i < NumBones; ++i)
             {
-                const FMatrix4 Bind = bHasBinds ? Skeleton->BindGlobalMatrices[i]
-                                                : Math::Inverse(Skeleton->GetBone(i).InvBindMatrix);
-                OutGlobals[i] = BoneTransforms[i] * Bind;
+                OutGlobals[i] = BoneTransforms[i] * AnimPose::GetBindGlobalMatrix(Skeleton, i);
             }
         }
         else if (bHasBinds)

@@ -238,8 +238,8 @@ public sealed class ActionGraph
 
             if (!InProgress.Add(Action))
             {
-                throw new BuildException(
-                    "Cycle in the action graph: " + string.Join(" -> ", Stack.Select(A => A.StatusText)));
+                IEnumerable<BuildAction> Cycle = Stack.Skip(Stack.IndexOf(Action)).Append(Action);
+                throw new BuildException("Cycle in the action graph: " + string.Join(" -> ", Cycle.Select(A => A.StatusText)));
             }
 
             Stack.Add(Action);

@@ -162,6 +162,11 @@ namespace Lumina
 
     bool FPluginManager::IsModuleApplicable(const FPluginModuleDescriptor& Module) const
     {
+        if (Module.Type == EPluginModuleType::Reflection)
+        {
+            return false;
+        }
+
         #if !WITH_EDITOR
             if (Module.Type == EPluginModuleType::Editor)
             {

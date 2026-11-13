@@ -11,6 +11,7 @@
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "Session/SessionOps.h"
+#include "MCPSceneTools.h"
 #include "MCPServer.h"
 #include "MCPTextMatch.h"
 #include "World/ECS/Registry.h"
@@ -43,11 +44,16 @@ namespace Lumina::MCP
         Agent::FToolResult PrefabEditInstance(const SPrefabInstanceParams& In, SPrefabInstanceResult& Out)
         {
             FString Error;
-            ECS::FRegistry* Registry = SessionOps::GetSceneRegistry(Error);
+            ECS::FRegistry* Registry = GetEditableSceneRegistry(Error);
             ECS::FEntity Root = ECS::NullEntity;
             if (Registry == nullptr || !Agent::FEntityTokens::Resolve(*Registry, FStringView(In.Entity), Root, Error))
             {
                 return Agent::FToolResult::Error(Error);
+            }
+            const SPrefabInstanceComponent* Instance = Registry->TryGet<SPrefabInstanceComponent>(Root);
+            if (Instance == nullptr || !Instance->bIsRoot)
+            {
+                return Agent::FToolResult::Error(Lumina::Format("{} is not the root of a placed prefab instance.", In.Entity));
             }
             Out.bDone = In.Action == EPrefabInstanceAction::Detach
                 ? SessionOps::DetachPrefabInstance(Root, Error)
@@ -67,7 +73,7 @@ namespace Lumina::MCP
         Agent::FToolResult PrefabCreateFromEntities(const SCreatePrefabParams& In, SCreatePrefabResult& Out)
         {
             FString Error;
-            ECS::FRegistry* Registry = SessionOps::GetSceneRegistry(Error);
+            ECS::FRegistry* Registry = GetEditableSceneRegistry(Error);
             if (Registry == nullptr)
             {
                 return Agent::FToolResult::Error(Error);
@@ -305,15 +311,10 @@ namespace Lumina::MCP
                 [](const SSpawnPrefabParams& In, SSpawnPrefabResult& Out)
                 {
                     FString SceneError;
-                    ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+                    ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(SceneError);
                     if (ScenePtr == nullptr)
                     {
-                        return Agent::FToolResult::Error("No world editor is open, so there is nowhere to spawn.");
-                    }
-
-                    if (SessionOps::IsSceneTargetSimulating())
-                    {
-                        return Agent::FToolResult::Error("Stop play-in-editor first.");
+                        return Agent::FToolResult::Error(SceneError);
                     }
 
                     CPrefab* Prefab = nullptr;
@@ -385,15 +386,10 @@ namespace Lumina::MCP
                 [](const SCapturePrefabParams& In, SCapturePrefabResult& Out)
                 {
                     FString SceneError;
-                    ECS::FRegistry* ScenePtr = SessionOps::GetSceneRegistry(SceneError);
+                    ECS::FRegistry* ScenePtr = GetEditableSceneRegistry(SceneError);
                     if (ScenePtr == nullptr)
                     {
-                        return Agent::FToolResult::Error("No world editor is open, so there is nothing to capture from.");
-                    }
-
-                    if (SessionOps::IsSceneTargetSimulating())
-                    {
-                        return Agent::FToolResult::Error("Stop play-in-editor first.");
+                        return Agent::FToolResult::Error(SceneError);
                     }
 
                     CPrefab* Prefab = nullptr;

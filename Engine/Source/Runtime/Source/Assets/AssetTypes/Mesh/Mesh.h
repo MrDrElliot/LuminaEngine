@@ -81,10 +81,23 @@ namespace Lumina
         FORCEINLINE FMeshResource& GetMeshResource() const { return *MeshResources.get(); }
         FORCEINLINE const FMeshResource* TryGetMeshResource() const { return MeshResources.get(); }
 
+        // The staged resource while one waits to publish, so an edit builds on the newest geometry.
+        FORCEINLINE const FMeshResource& GetNewestMeshResource() const { return PendingMeshResources ? *PendingMeshResources : *MeshResources; }
+
+        // Stages the resource and has the renderer publish it once its upload has landed, or publishes at once with no renderer.
         void SetMeshResource(TUniquePtr<FMeshResource>&& NewResource);
+
+        // Uploads the resource's geometry and holds it beside the current one, which keeps drawing until PublishPendingMeshResource.
+        void StageMeshResource(TUniquePtr<FMeshResource>&& NewResource);
+
+        // Swaps the staged resource in once its upload batch is complete. True when nothing is left pending.
+        bool PublishPendingMeshResource();
 
         // Takes the resource and bounds now, and leaves meshlets and GPU buffers to an open FMeshBuildBatchScope.
         void SetMeshResourceBatched(TUniquePtr<FMeshResource>&& NewResource);
+
+        // Counts how often published geometry was replaced, so data built from the old geometry can tell it is stale.
+        FORCEINLINE uint32 GetGeometryVersion() const { return GeometryVersion; }
 
         // The two halves a batch runs, the first safely in parallel with other meshes and the second on the game thread.
         void BuildDeferredMeshlets();
@@ -133,8 +146,18 @@ namespace Lumina
         FString SourcePath;
         
     private:
-        
+
+        // Creates the GPU buffers and drops the import-time scratch they were built from.
+        static void UploadGeometry(FMeshResource& Resource);
+
+        void ReplaceMeshResources(TUniquePtr<FMeshResource>&& NewResource);
+
         TUniquePtr<FMeshResource> MeshResources;
+
+        uint32 GeometryVersion = 0;
+
+        // A replacement whose upload has not landed; the live resource keeps drawing until it does.
+        TUniquePtr<FMeshResource> PendingMeshResources;
     };
 
 

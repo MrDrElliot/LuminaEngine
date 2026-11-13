@@ -15,6 +15,9 @@ public sealed class ExecutionResult
 
     public int ActionsFailed { get; set; }
 
+    // Dependents of a failed action that never reached a worker.
+    public int ActionsBlocked { get; set; }
+
     public TimeSpan Elapsed { get; set; }
 
     public bool bSucceeded => ActionsFailed == 0;
@@ -125,6 +128,7 @@ public sealed class ActionExecutor
                 {
                     // A failed dependency blocks its dependents, which stops a broken build linking against stale outputs.
                     RemainingDependencies[Dependent] = 0;
+                    Result.ActionsBlocked++;
                     RetireLocked(Dependent, bSucceeded: false);
                     continue;
                 }
@@ -313,9 +317,10 @@ public sealed class ActionExecutor
     {
         PrepareDirectories(Action);
 
-        if (Action.Operation is not null)
+        if (Action.Operation is BuildOperation Operation)
         {
-            return ExecuteOperation(Action, Action.Operation);
+            // Run off the worker so in-process work overlaps like a tool would, instead of one worker draining the queue.
+            return await Task.Run(() => ExecuteOperation(Action, Operation), Cancellation).ConfigureAwait(false);
         }
 
         WriteResponseFile(Action);
@@ -461,6 +466,12 @@ public sealed class ActionExecutor
         if (Action.WorkingDirectory.Length > 0)
         {
             PathUtils.EnsureDirectory(Action.WorkingDirectory);
+        }
+
+        // A dependency list left over from an earlier build must never be mistaken for this run's.
+        if (Action.DependencyListFile is not null && File.Exists(Action.DependencyListFile))
+        {
+            File.Delete(Action.DependencyListFile);
         }
     }
 

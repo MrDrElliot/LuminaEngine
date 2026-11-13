@@ -15,16 +15,19 @@
 #include "UI/Tools/NodeGraph/EdNodeGraph.h"
 #include "UI/Tools/WorldEditorTool.h"
 
-namespace Lumina::SessionOps
+namespace Lumina::Global
 {
     const char* const GNoSceneEditor = "No world editor is open.";
+}
 
+namespace Lumina::SessionOps
+{
     namespace
     {
         FEditorUI* FindUI()
         {
-            return GEditorEngine != nullptr
-                ? static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI())
+            return Global::GEditorEngine != nullptr
+                ? static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI())
                 : nullptr;
         }
 
@@ -49,28 +52,26 @@ namespace Lumina::SessionOps
             FWorldEditorTool* Tool = FindSceneEditor();
             if (Tool == nullptr)
             {
-                OutError = GNoSceneEditor;
+                OutError = Global::GNoSceneEditor;
             }
             return Tool;
         }
 
-        // Empty targets the world editor; otherwise the tab name of another scene editor, such as a prefab.
-        FString GSceneTargetTab;
-
         FSceneEditorTool* RequireSceneTarget(FString& OutError)
         {
-            if (GSceneTargetTab.IsEmpty())
+            FEditorUI* UI = FindUI();
+            if (UI == nullptr || UI->GetSceneTargetTab().IsEmpty())
             {
                 return RequireSceneEditor(OutError);
             }
 
-            FEditorUI* UI = FindUI();
-            FEditorTool* Tool = UI != nullptr ? UI->FindTab(GSceneTargetTab, OutError) : nullptr;
+            const FString& TargetTab = UI->GetSceneTargetTab();
+            FEditorTool* Tool = UI->FindTab(TargetTab, OutError);
             FSceneEditorTool* Scene = Tool != nullptr ? Tool->AsSceneEditor() : nullptr;
             if (Scene == nullptr)
             {
                 // Never falls back, since a closed target would otherwise send the edit to a different scene.
-                OutError = Lumina::Format("The targeted scene tab '{}' is no longer open.", GSceneTargetTab);
+                OutError = Lumina::Format("The targeted scene tab '{}' is no longer open.", TargetTab);
             }
             return Scene;
         }
@@ -97,7 +98,10 @@ namespace Lumina::SessionOps
     {
         if (TabName.IsEmpty())
         {
-            GSceneTargetTab.Reset();
+            if (FEditorUI* UI = FindUI())
+            {
+                UI->SetSceneTargetTab(FString());
+            }
             return true;
         }
 
@@ -112,13 +116,14 @@ namespace Lumina::SessionOps
             OutError = Lumina::Format("'{}' is not a scene editor.", TabName);
             return false;
         }
-        GSceneTargetTab = FString(TabName.GetData(), TabName.Len());
+        UI->SetSceneTargetTab(FString(TabName.GetData(), TabName.Len()));
         return true;
     }
 
     FString GetSceneTarget()
     {
-        return GSceneTargetTab;
+        FEditorUI* UI = FindUI();
+        return UI != nullptr ? UI->GetSceneTargetTab() : FString();
     }
 
     IEditorToolContext* GetToolContext()
@@ -151,7 +156,8 @@ namespace Lumina::SessionOps
 
     bool IsSceneTargetSimulating()
     {
-        return GSceneTargetTab.IsEmpty() && IsSimulating();
+        FWorldEditorTool* World = FindSceneEditor();
+        return World != nullptr && FindSceneTarget() == static_cast<FSceneEditorTool*>(World) && World->HasSimulatingWorld();
     }
 
     bool GetPlayState(FPlayState& Out, FString& OutError)
@@ -184,7 +190,7 @@ namespace Lumina::SessionOps
         }
         if (!Tool->StartPlayInEditor())
         {
-            OutError = "The play session could not be started.";
+            OutError = "Play could not start, either a session is already running or the world is unsaved.";
             return false;
         }
         return true;

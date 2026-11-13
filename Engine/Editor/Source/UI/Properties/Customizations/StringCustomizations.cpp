@@ -58,8 +58,7 @@ namespace Lumina
         FString Text = DisplayValue.IsNone() ? FString() : DisplayValue.ToString();
 
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
-        if (ImGui::InputTextWithHint("##Name", "None", Text.GetData(), Text.GetCapacity() + 1,
-                                     ImGuiInputTextFlags_CallbackResize, ImGuiX::StringInputResizeCallback<FString>, &Text))
+        if (ImGuiX::InputText("##Name", Text, ImGuiInputTextFlags_None, "None"))
         {
             DisplayValue = FName(Text);
         }
@@ -176,38 +175,40 @@ namespace Lumina
                 if (ImGui::IsWindowAppearing())
                 {
                     ImGui::SetKeyboardFocusHere(-1);
+
+                    // Rebuilt once on popup open rather than every frame it stays open.
+                    CachedPickerPaths.Empty();
+                    if (bTextAsset)
+                    {
+                        for (ETextAssetKind Kind : TextKinds)
+                        {
+                            for (const FTextAssetDataPtr& Data : FAssetRegistry::Get().GetTextAssetsOfKind(Kind))
+                            {
+                                CachedPickerPaths.Add(FString(*Data->Path, Data->Path.Len()));
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (const FAssetDataPtr& Asset : FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; }))
+                        {
+                            CachedPickerPaths.Add(FString(*Asset->Path));
+                        }
+                    }
                 }
                 if (ImGui::BeginChild("##PathList", ImVec2(300, 300)))
                 {
-                    auto Offer = [&](const FString& Path)
+                    for (const FString& Path : CachedPickerPaths)
                     {
                         if (!ImGuiX::PassSearchFilter(SearchFilter, *Path))
                         {
-                            return;
+                            continue;
                         }
                         if (ImGui::Selectable(*Path))
                         {
                             DisplayValue = Path;
                             Result = EPropertyChangeOp::Updated;
                             ImGui::CloseCurrentPopup();
-                        }
-                    };
-
-                    if (bTextAsset)
-                    {
-                        for (ETextAssetKind Kind : TextKinds)
-                        {
-                            for (const FTextAssetData* Data : FAssetRegistry::Get().GetTextAssetsOfKind(Kind))
-                            {
-                                Offer(FString(*Data->Path, Data->Path.Len()));
-                            }
-                        }
-                    }
-                    else
-                    {
-                        for (const FAssetData* Asset : FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; }))
-                        {
-                            Offer(FString(*Asset->Path));
                         }
                     }
                 }

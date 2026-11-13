@@ -217,6 +217,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ScheduleSkinnedGather(ECS::FRegistry& Registry)
     {
+        LUMINA_PROFILE_SCOPE();
         if (ScenePrimitives.GetSkinnedPrimitiveCount() == 0)
         {
             Jobs::Spawn(Jobs::EJobPriority::High, ExtractLatch, [this]

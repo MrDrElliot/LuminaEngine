@@ -292,6 +292,10 @@ namespace Lumina
 
     struct FScopedGPUMarker
     {
+        #if defined(TRACY_ENABLE)
+        // First member, so the pass's CPU recording opens before its GPU marker and closes after it, under the same name.
+        tracy::ScopedZone CpuZone;
+        #endif
         RHI::FCmdListH CL;
         static void SerializeForTiming(RHI::FCmdListH InCL)
         {
@@ -301,7 +305,13 @@ namespace Lumina
                 RHI::CmdBarrier(InCL, RHI::EStageFlags::AllCommands, RHI::EStageFlags::AllCommands);
             }
         }
+        #if defined(TRACY_ENABLE)
+        FScopedGPUMarker(RHI::FCmdListH InCL, const char* Name) : FScopedGPUMarker(InCL, Name, TracyIsConnected ? Profiler::NamedLocation(Name) : nullptr) {}
+        FScopedGPUMarker(RHI::FCmdListH InCL, const char* Name, const tracy::SourceLocationData* CpuLocation)
+            : CpuZone(CpuLocation, -1, CpuLocation != nullptr), CL(InCL) { SerializeForTiming(CL); RHI::CmdBeginMarker(CL, Name); }
+        #else
         FScopedGPUMarker(RHI::FCmdListH InCL, const char* Name) : CL(InCL) { SerializeForTiming(CL); RHI::CmdBeginMarker(CL, Name); }
+        #endif
         ~FScopedGPUMarker() { SerializeForTiming(CL); RHI::CmdEndMarker(CL); }
         FScopedGPUMarker(const FScopedGPUMarker&) = delete;
         FScopedGPUMarker& operator=(const FScopedGPUMarker&) = delete;

@@ -101,9 +101,9 @@ namespace Lumina::Scalability
         CClass* FindSettingsClass(FStringView Section)
         {
             CClass* Found = nullptr;
-            if (GConfig != nullptr)
+            if (Global::GConfig != nullptr)
             {
-                GConfig->ForEachSettingsClass([&](CClass* Class)
+                Global::GConfig->ForEachSettingsClass([&](CClass* Class)
                 {
                     if (Found == nullptr && FStringView(FConfig::GetSettingsSection(Class)) == Section)
                     {

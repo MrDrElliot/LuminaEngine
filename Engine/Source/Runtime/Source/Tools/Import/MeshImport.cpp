@@ -206,7 +206,9 @@ namespace Lumina::Import::Mesh
             }, 4096);
         }
 
+        // Surfaces share vertices, so each one packs into its own slot and the scatter below runs serially.
         const uint32 NumSurfaces = (uint32)MeshResource.GeometrySurfaces.Num();
+        TVector<TVector<uint32>> SurfaceCornerTangents(NumSurfaces);
         Jobs::ParallelFor(NumSurfaces, [&](uint32 SurfaceIdx)
         {
             const FGeometrySurface& Section = MeshResource.GeometrySurfaces[SurfaceIdx];
@@ -226,14 +228,9 @@ namespace Lumina::Import::Mesh
                         meshopt_TangentCompatible);
                 }
 
-                TVector<uint32> CornerPacked(Section.IndexCount);
+                TVector<uint32>& CornerPacked = SurfaceCornerTangents[SurfaceIdx];
+                CornerPacked.SetNum(Section.IndexCount);
                 VertexOps::PackTangents(CornerTangents.GetData(), CornerPacked.GetData(), Section.IndexCount);
-
-                // Per-corner collapsed to per-vertex last-writer-wins, as the previous per-corner writer did.
-                for (uint32 i = 0; i < Section.IndexCount; ++i)
-                {
-                    MeshResource.Tangents[SurfaceIndices[i]] = CornerPacked[i];
-                }
             }
 
             if (Progress)
@@ -241,6 +238,21 @@ namespace Lumina::Import::Mesh
                 Progress->EnterProgressFrame(StepPerSurface);
             }
         });
+
+        // Per-corner collapsed to per-vertex, where the last surface in order wins on a shared vertex.
+        for (uint32 SurfaceIdx = 0; SurfaceIdx < NumSurfaces; ++SurfaceIdx)
+        {
+            const TVector<uint32>& CornerPacked = SurfaceCornerTangents[SurfaceIdx];
+            if (CornerPacked.IsEmpty())
+            {
+                continue;
+            }
+            const uint32* SurfaceIndices = &MeshResource.Indices[MeshResource.GeometrySurfaces[SurfaceIdx].StartIndex];
+            for (int32 i = 0; i < CornerPacked.Num(); ++i)
+            {
+                MeshResource.Tangents[SurfaceIndices[i]] = CornerPacked[i];
+            }
+        }
     }
     
     void GenerateFallbackTangents(FMeshResource& MeshResource)

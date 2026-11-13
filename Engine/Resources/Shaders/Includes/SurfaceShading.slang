@@ -605,6 +605,7 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
 #ifndef SHADING_COMPUTE
     // After the decals, which rewrite roughness and would otherwise blend the widening back out.
     G.Roughness = ApplyGeometricSpecularAA(G.Roughness, ddx(G.WorldNormal), ddy(G.WorldNormal));
+    G.ClearcoatRoughness = ApplyGeometricSpecularAA(G.ClearcoatRoughness, ddx(G.WorldNormal), ddy(G.WorldNormal));
 #endif
 
     return G;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Assets/AssetRegistry/AssetData.h"
 #include "imgui.h"
 #include "Containers/Function.h"
 #include "Containers/String.h"
@@ -13,7 +14,6 @@ namespace Lumina
     class CClass;
     class CPackage;
     class FAssetRegistry;
-    struct FAssetData;
 }
 
 namespace Lumina
@@ -47,7 +47,7 @@ namespace Lumina
         /** The asset highlighted in the Content Browser right now, or null when nothing (or something
          *  that isn't an asset) is selected. Backs the "use the selected asset" button on object
          *  reference properties -- the counterpart to BrowseToAsset. */
-        virtual const FAssetData* GetContentBrowserSelectedAsset() const = 0;
+        virtual FAssetDataPtr GetContentBrowserSelectedAsset() const = 0;
 
         virtual void OnDestroyAsset(CObject* InAsset) = 0;
 

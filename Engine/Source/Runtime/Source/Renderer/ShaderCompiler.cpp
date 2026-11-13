@@ -24,8 +24,8 @@
 
 namespace Lumina
 {
-    IShaderCompiler* GShaderCompiler = nullptr;
-    FShaderLibrary*  GShaderLibrary  = nullptr;
+    IShaderCompiler* Global::GShaderCompiler = nullptr;
+    FShaderLibrary*  Global::GShaderLibrary  = nullptr;
     
     static int GetShaderDebugInfoLevel()
     {
@@ -50,7 +50,7 @@ namespace Lumina
 
     static bool IsShaderValidationEnabled()
     {
-        static const bool bForced = GCommandLine != nullptr && GCommandLine->Has("validateshaders");
+        static const bool bForced = Global::GCommandLine != nullptr && Global::GCommandLine->Has("validateshaders");
         return bForced || CVarValidateShaders.GetValue() != 0;
     }
 

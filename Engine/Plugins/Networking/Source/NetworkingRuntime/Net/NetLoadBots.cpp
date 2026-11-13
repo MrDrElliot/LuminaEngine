@@ -22,7 +22,7 @@ namespace Lumina
 
         float CommandLineFloat(const char* Name, float Default)
         {
-            if (TOptional<FFixedString> Value = GCommandLine->Get(Name))
+            if (TOptional<FFixedString> Value = Global::GCommandLine->Get(Name))
             {
                 return std::strtof(*(*Value), nullptr);
             }
@@ -39,24 +39,11 @@ namespace Lumina
             }
             return Hash;
         }
-
-        uint32 NextRandom(uint32& State)
-        {
-            State ^= State << 13;
-            State ^= State >> 17;
-            State ^= State << 5;
-            return State;
-        }
-
-        float RandomUnit(uint32& State)
-        {
-            return static_cast<float>(NextRandom(State) & 0xFFFFFF) / static_cast<float>(0xFFFFFF);
-        }
     }
 
     TUniquePtr<FNetLoadBotSwarm> FNetLoadBotSwarm::CreateFromCommandLine()
     {
-        TOptional<int> Count = GCommandLine->GetInt("netbots");
+        TOptional<int> Count = Global::GCommandLine->GetInt("netbots");
         if (!Count.IsSet() || Count.GetValue() <= 0)
         {
             return nullptr;
@@ -64,7 +51,7 @@ namespace Lumina
 
         FConfig Config;
         Config.Count = static_cast<uint32>(Count.GetValue());
-        if (TOptional<FFixedString> Connect = GCommandLine->Get("connect"))
+        if (TOptional<FFixedString> Connect = Global::GCommandLine->Get("connect"))
         {
             const FString Address(*(*Connect));
             const int32 Colon = Address.FindLastOf(':');
@@ -80,7 +67,7 @@ namespace Lumina
         Config.ChatSeconds    = CommandLineFloat("botchat", Config.ChatSeconds);
         Config.AttackSeconds  = CommandLineFloat("botattack", Config.AttackSeconds);
         Config.StatsSeconds   = CommandLineFloat("netstats", Config.StatsSeconds);
-        if (TOptional<FFixedString> RpcClass = GCommandLine->Get("botrpcclass"))
+        if (TOptional<FFixedString> RpcClass = Global::GCommandLine->Get("botrpcclass"))
         {
             Config.RpcClass = FString(*(*RpcClass));
         }
@@ -121,8 +108,8 @@ namespace Lumina
         {
             JoinDebt -= 1.0;
             FBot& Bot = Bots[Launched];
-            Bot.Rng = 0x9E3779B9u ^ (Launched * 2654435761u + 1u);
-            Bot.Yaw = RandomUnit(Bot.Rng) * 360.0f;
+            Bot.Rng.Seed(0x9E3779B9u, Launched + 1u);
+            Bot.Yaw = Bot.Rng.NextFloat() * 360.0f;
             Bot.Transport.reset(Network::CreateTransport());
             FConnectParams Params;
             Params.Address.Host = Config.Host;
@@ -181,9 +168,9 @@ namespace Lumina
 
             if (Config.ChatSeconds > 0.0f && Now >= Bot.NextChat)
             {
-                Bot.NextChat = Now + Config.ChatSeconds * (0.5 + RandomUnit(Bot.Rng));
+                Bot.NextChat = Now + Config.ChatSeconds * (0.5 + Bot.Rng.NextFloat());
                 static const char* const Lines[] = { "anyone near the bank?", "lfg dungeon run", "selling iron ore 20g each", "gg", "where is the quest giver" };
-                const FString Text = Lines[NextRandom(Bot.Rng) % 5];
+                const FString Text = Lines[Bot.Rng.RandRange(0, 4)];
                 TVector<uint8> Payload;
                 FNetArchive Writer(Payload);
                 WriteVarUInt(Writer, static_cast<uint32>(Text.Len()));
@@ -193,7 +180,7 @@ namespace Lumina
 
             if (Config.AttackSeconds > 0.0f && Now >= Bot.NextAttack)
             {
-                Bot.NextAttack = Now + Config.AttackSeconds * (0.5 + RandomUnit(Bot.Rng));
+                Bot.NextAttack = Now + Config.AttackSeconds * (0.5 + Bot.Rng.NextFloat());
                 SendRpc(Bot, AttackRpcId, static_cast<uint8>(ERpcTarget::Host), static_cast<uint8>(ENetFlags::None), {});
             }
         }
@@ -259,8 +246,8 @@ namespace Lumina
                         {
                             Bot.PawnGuid = Guid;
                             Bot.PawnAt   = Now;
-                            Bot.NextChat   = Now + Config.ChatSeconds * RandomUnit(Bot.Rng);
-                            Bot.NextAttack = Now + Config.AttackSeconds * RandomUnit(Bot.Rng);
+                            Bot.NextChat   = Now + Config.ChatSeconds * Bot.Rng.NextFloat();
+                            Bot.NextAttack = Now + Config.AttackSeconds * Bot.Rng.NextFloat();
                         }
                     }
                     break;
@@ -322,8 +309,8 @@ namespace Lumina
         const double Now = LastTick;
         if (Now >= Bot.NextTurn)
         {
-            Bot.NextTurn = Now + 2.0 + RandomUnit(Bot.Rng) * 4.0;
-            Bot.Yaw += (RandomUnit(Bot.Rng) - 0.5f) * 140.0f;
+            Bot.NextTurn = Now + 2.0 + Bot.Rng.NextFloat() * 4.0;
+            Bot.Yaw += (Bot.Rng.NextFloat() - 0.5f) * 140.0f;
         }
         // Players linger around where they arrived, the way a hub or a quest area holds them.
         const FVector2 FromHome(Bot.Position.x - Bot.Home.x, Bot.Position.z - Bot.Home.z);

@@ -138,10 +138,15 @@ namespace Lumina::Physics
         return !OutPositions.IsEmpty();
     }
 
+    FBox3DPhysicsScene::FHullKey FBox3DPhysicsScene::MakeMeshGeometryKey(const CMesh* Mesh)
+    {
+        return FHullKey{ 3, 0.0f, 0.0f, 0.0f, Mesh, Mesh->GetGeometryVersion() };
+    }
+
     const b3HullData* FBox3DPhysicsScene::GetOrCreateMeshHull(const CMesh* Mesh)
     {
         // Scale rides on the shape, so one unit-scale hull is shared by every instance of the mesh.
-        const FHullKey Key{ 3, 0.0f, 0.0f, 0.0f, Mesh };
+        const FHullKey Key = MakeMeshGeometryKey(Mesh);
 
         {
             FReadScopeLock Lock(HullCacheMutex);
@@ -174,9 +179,10 @@ namespace Lumina::Physics
 
     const b3MeshData* FBox3DPhysicsScene::GetOrCreateTriangleMesh(const CMesh* Mesh)
     {
+        const FHullKey Key = MakeMeshGeometryKey(Mesh);
         {
             FReadScopeLock Lock(MeshCacheMutex);
-            if (auto It = MeshCache.Find(Mesh); It != nullptr)
+            if (auto It = MeshCache.Find(Key); It != nullptr)
             {
                 return (*It);
             }
@@ -206,11 +212,11 @@ namespace Lumina::Physics
         }
 
         TScopeLock Lock(MeshCacheMutex);
-        if (!MeshCache.TryAdd(Mesh, Built))
+        if (!MeshCache.TryAdd(Key, Built))
         {
             b3DestroyMesh(Built);
         }
-        return MeshCache.FindChecked(Mesh);
+        return MeshCache.FindChecked(Key);
     }
 
     bool FBox3DPhysicsScene::BuildCompoundShapes(const SCompoundColliderComponent& Comp, const STransformComponent& Transform, TVector<FPendingShape>& OutShapes)
@@ -225,14 +231,6 @@ namespace Lumina::Physics
 
             switch (Child.Type)
             {
-                case ECompoundShapeType::Box:
-                {
-                    if (const b3HullData* Hull = GetOrCreateBoxHull(Child.HalfExtent * Scale))
-                    {
-                        OutShapes.Add(MakeHullShape(Hull, ChildOffset, ChildRotation));
-                    }
-                    break;
-                }
                 case ECompoundShapeType::Sphere:
                 {
                     OutShapes.Add(MakeSphereShape(ChildOffset, Child.Radius * UniformScale));
@@ -243,6 +241,15 @@ namespace Lumina::Physics
                     OutShapes.Add(MakeCapsuleShape(ChildOffset, ChildRotation, Child.Radius * UniformScale, Child.HalfHeight * UniformScale));
                     break;
                 }
+                case ECompoundShapeType::Cylinder:
+                {
+                    if (const b3HullData* Hull = GetOrCreateCylinderHull(Child.Radius * UniformScale, Child.HalfHeight * UniformScale))
+                    {
+                        OutShapes.Add(MakeHullShape(Hull, ChildOffset, ChildRotation));
+                    }
+                    break;
+                }
+                case ECompoundShapeType::Box:
                 default:
                 {
                     if (const b3HullData* Hull = GetOrCreateBoxHull(Child.HalfExtent * Scale))

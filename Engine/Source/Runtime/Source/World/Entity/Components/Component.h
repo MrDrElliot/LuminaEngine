@@ -14,6 +14,11 @@
 #include "Traits/ComponentTraits.h"
 #include "World/Entity/Systems/SystemAccess.h"
 
+namespace Lumina::ECS
+{
+    class FCommandBus;
+}
+
 namespace Lumina
 {
     // A managed listener bound to a registry signal. Heap-owned by the bridge; the listener's address is
@@ -62,6 +67,9 @@ namespace Lumina
         // Emplace or replace from Source, so hooks on the add path already see the copied value.
         void* EmplaceCopy(ECS::FRegistry& Registry, ECS::FEntity Entity, const void* Source) const;
         void* EmplaceDefault(ECS::FRegistry& Registry, ECS::FEntity Entity) const;
+
+        // A default value the next flush emplaces or replaces with, which the caller may fill until then. Null for a tag.
+        void* StageEmplace(ECS::FCommandBus& Commands, ECS::FEntity Entity) const;
 
         // Reads one value into a temporary first, so a corrupt archive cannot leave a live component half written.
         void* EmplaceSerialized(ECS::FRegistry& Registry, ECS::FEntity Entity, FArchive& Ar) const;

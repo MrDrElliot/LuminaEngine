@@ -17,8 +17,11 @@ namespace Lumina
     class IShaderCompiler;
 
     // Global shader compiler + library, owned by FRenderManager.
-    extern RUNTIME_API IShaderCompiler* GShaderCompiler;
-    extern RUNTIME_API FShaderLibrary*  GShaderLibrary;
+    namespace Global
+    {
+        extern RUNTIME_API IShaderCompiler* GShaderCompiler;
+        extern RUNTIME_API FShaderLibrary*  GShaderLibrary;
+    }
 
     struct FShaderCompileOptions
     {

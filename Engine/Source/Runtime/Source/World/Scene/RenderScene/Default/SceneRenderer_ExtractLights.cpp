@@ -53,6 +53,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ScheduleLightExtract(ECS::FRegistry& Registry)
     {
+        LUMINA_PROFILE_SCOPE();
         using namespace SceneRendererExtractLightsInternal;
 
         auto Transforms      = Registry.GetStorage<STransformComponent>();
@@ -1106,117 +1107,9 @@ namespace Lumina
 
         for (uint32 SortedI = 0; SortedI < NumRequests; ++SortedI)
         {
-            const uint32 ReqIdx       = SortedIndices[SortedI];
-            const FShadowRequest& Req = ShadowRequests[ReqIdx];
-            const uint32 TileSize     = Sizes[ReqIdx];
-
-            if (Req.Type == ELightType::Point)
-            {
-                int32 FaceTileIndices[6] = { Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone, Constants::kIndexNone };
-                bool  bAllAllocated = true;
-                for (uint32 Face = 0; Face < 6; ++Face)
-                {
-                    if ((Req.FaceMask & (1u << Face)) == 0u)
-                    {
-                        continue;
-                    }
-                    FaceTileIndices[Face] = ShadowAtlas.AllocateTile(TileSize);
-                    if (FaceTileIndices[Face] == Constants::kIndexNone)
-                    {
-                        bAllAllocated = false;
-                        break;
-                    }
-                }
-                if (!bAllAllocated)
-                {
-                    continue;
-                }
-
-                const uint32 ShadowSlot = ShadowDataCount.fetch_add(1, std::memory_order_acquire);
-                if (ShadowSlot >= (uint32)MAX_SHADOWS)
-                {
-                    continue;
-                }
-
-                Frame.Lighting.Lights[Req.LightIndex].ShadowDataIndex = (int32)ShadowSlot;
-                FLightShadowData& ShadowData = Frame.Lighting.Shadows[ShadowSlot];
-
-                const float ShadowNear = Math::Max(Req.Attenuation * 0.01f, 0.1f);
-                FViewVolume LightView(90.0f, 1.0f, ShadowNear, Req.Attenuation);
-
-                auto SetFace = [&](uint32 Face)
-                {
-                    switch (Face)
-                    {
-                        case 0: LightView.SetView(Req.Position, FViewVolume::RightAxis,    FViewVolume::DownAxis);     break;
-                        case 1: LightView.SetView(Req.Position, FViewVolume::LeftAxis,     FViewVolume::DownAxis);     break;
-                        case 2: LightView.SetView(Req.Position, FViewVolume::UpAxis,       FViewVolume::ForwardAxis);  break;
-                        case 3: LightView.SetView(Req.Position, FViewVolume::DownAxis,     FViewVolume::BackwardAxis); break;
-                        case 4: LightView.SetView(Req.Position, FViewVolume::ForwardAxis,  FViewVolume::DownAxis);     break;
-                        case 5: LightView.SetView(Req.Position, FViewVolume::BackwardAxis, FViewVolume::DownAxis);     break;
-                    }
-                };
-
-                for (uint32 Face = 0; Face < 6; ++Face)
-                {
-                    SetFace(Face);
-                    ShadowData.ViewProjection[Face] = LightView.ToStandardDepthViewProjectionMatrix();
-
-                    // A face no view reaches keeps no tile, which the shaders read as unshadowed.
-                    FLightShadow& Shadow   = ShadowData.Shadow[Face];
-                    if (FaceTileIndices[Face] == Constants::kIndexNone)
-                    {
-                        Shadow = FLightShadow{};
-                        Shadow.ShadowMapIndex  = Constants::kIndexNone;
-                        Shadow.LightIndex      = (int32)Req.LightIndex;
-                        Shadow.ShadowDataIndex = (int32)ShadowSlot;
-                        continue;
-                    }
-
-                    const FShadowTile& FaceTile = ShadowAtlas.GetTile(FaceTileIndices[Face]);
-                    Shadow.AtlasUVOffset   = FaceTile.UVOffset;
-                    Shadow.AtlasUVScale    = FaceTile.UVScale;
-                    Shadow.ShadowMapIndex  = FaceTileIndices[Face];
-                    Shadow.LightIndex      = (int32)Req.LightIndex;
-                    Shadow.ShadowDataIndex = (int32)ShadowSlot;
-                    Shadow._Padding        = 0;
-                }
-
-                PackedShadows[(uint32)ELightType::Point].Add(ShadowData.Shadow[0]);
-            }
-            else
-            {
-                const int32 TileIndex = ShadowAtlas.AllocateTile(TileSize);
-                if (TileIndex == Constants::kIndexNone)
-                {
-                    continue;
-                }
-
-                const uint32 ShadowSlot = ShadowDataCount.fetch_add(1, std::memory_order_acquire);
-                if (ShadowSlot >= (uint32)MAX_SHADOWS)
-                {
-                    continue;
-                }
-
-                Frame.Lighting.Lights[Req.LightIndex].ShadowDataIndex = (int32)ShadowSlot;
-                FLightShadowData& ShadowData = Frame.Lighting.Shadows[ShadowSlot];
-                const FShadowTile& Tile      = ShadowAtlas.GetTile(TileIndex);
-
-                const float ShadowNear = Math::Max(Req.Attenuation * 0.01f, 0.1f);
-                FViewVolume ViewVolume(Req.OuterFOVDegrees * 2.0f, 1.0f, ShadowNear, Req.Attenuation);
-                ViewVolume.SetView(Req.Position, Req.Direction, Req.Up);
-                ShadowData.ViewProjection[0] = ViewVolume.ToStandardDepthViewProjectionMatrix();
-
-                FLightShadow& Shadow   = ShadowData.Shadow[0];
-                Shadow.AtlasUVOffset   = Tile.UVOffset;
-                Shadow.AtlasUVScale    = Tile.UVScale;
-                Shadow.ShadowMapIndex  = TileIndex;
-                Shadow.LightIndex      = (int32)Req.LightIndex;
-                Shadow.ShadowDataIndex = (int32)ShadowSlot;
-                Shadow._Padding        = 0;
-
-                PackedShadows[(uint32)ELightType::Spot].Add(Shadow);
-            }
+            const uint32 ReqIdx = SortedIndices[SortedI];
+            AllocateShadowSlot(ShadowAtlas, ShadowRequests[ReqIdx], Sizes[ReqIdx], ShadowDataCount,
+                Frame.Lighting.Lights, Frame.Lighting.Shadows, PackedShadows);
         }
     }
 

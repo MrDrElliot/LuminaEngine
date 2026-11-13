@@ -344,6 +344,7 @@ namespace Lumina
         MeshletBoneIndexBuffer   = 0;
         MeshletLODBoundsBuffer   = 0;
         MeshletCount          = 0;
+        UploadBatch           = 0;
     }
 
     void FMeshResource::FMeshBuffers::ReleaseAll()
@@ -371,6 +372,7 @@ namespace Lumina
         MeshletHeaderSlot     = Other.MeshletHeaderSlot;
         MeshletCount          = Other.MeshletCount;
         VertexStreamBytes     = Other.VertexStreamBytes;
+        UploadBatch           = Other.UploadBatch;
         DistanceFieldTexture  = Other.DistanceFieldTexture;
 
         Other.GeometryBlock         = {};
@@ -389,6 +391,7 @@ namespace Lumina
         Other.MeshletHeaderSlot     = 0;
         Other.MeshletCount          = 0;
         Other.VertexStreamBytes     = 0;
+        Other.UploadBatch           = 0;
         Other.DistanceFieldTexture  = RHI::FManagedTexture{};
     }
 

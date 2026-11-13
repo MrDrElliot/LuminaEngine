@@ -224,10 +224,15 @@ namespace Lumina
         char firstNibble = 0;
         bool hasFirstNibble = false;
         
-        while (i < str.Len() && byteIdx < GUID_SIZE)
+        while (i < str.Len())
         {
+            if (byteIdx >= GUID_SIZE)
+            {
+                return false;
+            }
+
             char c = str[i++];
-            
+
             if (c == '-') continue;
             
             if (!isHex(c))

@@ -884,7 +884,7 @@ namespace Lumina::PropertyTableInternal
         case EPropertyTypeFlags::Enum:
         {
             // An enum can register its own drawing by name, the way a struct does.
-            FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
+            FPropertyCustomizationRegistry* Registry = Global::GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
             TSharedPtr<IPropertyTypeCustomization> Registered = Registry->GetPropertyCustomizationForType(static_cast<FEnumProperty*>(Prop)->GetEnum()->GetName());
             return Registered ? Registered : FEnumPropertyCustomization::MakeInstance();
         }
@@ -2475,7 +2475,7 @@ namespace Lumina::PropertyTableInternal
         : FPropertyRow(InPropHandle, InParentRow, InCallbacks)
         , StructProperty(static_cast<FStructProperty*>(InPropHandle->Property))
     {
-        FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
+        FPropertyCustomizationRegistry* Registry = Global::GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
         Customization = Registry->GetPropertyCustomizationForType(StructProperty->GetStruct()->GetName());
         
         if (StructProperty->HasEditorFlag(EPropertyEditorFlags::DefaultCollapsed))
@@ -3009,10 +3009,9 @@ namespace Lumina
     {
         EnsureTreeBuilt();
 
-        // A customization draws its own table, so it is always shown rather than vanishing under a search.
         if (Customization != nullptr)
         {
-            return true;
+            return Customization->ApplySearch(GetCustomizationHandle(), FStringView(PropertyFilter.InputBuf));
         }
 
         ApplyFilterState();
@@ -3029,6 +3028,14 @@ namespace Lumina
             }
         }
         return false;
+    }
+
+    bool FPropertyTable::MatchesSearch(FStringView Text, FStringView Title)
+    {
+        // A title match shows the table in full, since that is what searching for it means.
+        const bool bTitleMatches = ImGuiX::PassSearchFilter(Text, Title);
+        SetSearchText(bTitleMatches ? FStringView() : Text);
+        return bTitleMatches || PrepareAndTestFilter();
     }
 
     void FPropertyTable::OnScriptsReloaded(const Scripting::FScriptReload& Reload)
@@ -3076,7 +3083,7 @@ namespace Lumina
             return;
         }
 
-        FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
+        FPropertyCustomizationRegistry* Registry = Global::GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
         Customization = Struct != nullptr ? Registry->GetPropertyCustomizationForType(Struct->GetName()) : nullptr;
         if (Customization == nullptr)
         {
@@ -3132,12 +3139,19 @@ namespace Lumina
         }
     }
 
-    void FPropertyTable::DrawCustomization(const FPropertyDrawArgs& Args)
+    const TSharedPtr<FPropertyHandle>& FPropertyTable::GetCustomizationHandle()
     {
         if (CustomizationHandle == nullptr)
         {
             CustomizationHandle = MakeShared<FPropertyHandle>(Object, nullptr);
         }
+        return CustomizationHandle;
+    }
+
+    void FPropertyTable::DrawCustomization(const FPropertyDrawArgs& Args)
+    {
+        // Applied every draw, since a cleared or title-matched search never reaches PrepareAndTestFilter.
+        Customization->ApplySearch(GetCustomizationHandle(), FStringView(PropertyFilter.InputBuf));
 
         const EPropertyChangeOp Op = Customization->UpdateAndDraw(CustomizationHandle, Args);
         PropertyTableInternal::DispatchPropertyChange(Op, bCustomizationEditActive, Callbacks, nullptr, nullptr, [this]
@@ -3164,7 +3178,7 @@ namespace Lumina
     {
         if (Prop->GetType() == EPropertyTypeFlags::Struct)
         {
-            FPropertyCustomizationRegistry* Registry = GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
+            FPropertyCustomizationRegistry* Registry = Global::GEngine->GetDevelopmentToolsUI()->GetPropertyCustomizationRegistry();
             return Registry->GetPropertyCustomizationForType(static_cast<FStructProperty*>(Prop)->GetStruct()->GetName());
         }
         return PropertyTableInternal::MakeLeafPropertyCustomization(Prop);

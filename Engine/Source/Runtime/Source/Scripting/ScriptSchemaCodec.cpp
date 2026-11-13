@@ -37,7 +37,7 @@ namespace Lumina::Scripting
             {
                 int32 N = I32();
                 if (N == 0) { return FString(); }
-                if (N < 0 || P + N > End) { P = End; return FString(); }
+                if (N < 0 || P + N > End) { P = End; bError = true; return FString(); }
                 FString S(reinterpret_cast<const char*>(P), static_cast<size_t>(N));
                 P += N;
                 return S;
@@ -82,7 +82,7 @@ namespace Lumina::Scripting
         {
             const int32 N = R.I32();
             FString Joined;
-            for (int32 i = 0; i < N; ++i)
+            for (int32 i = 0; i < N && !R.bError; ++i)
             {
                 const FString Alias = R.Str();
                 if (Alias.IsEmpty())
@@ -139,8 +139,17 @@ namespace Lumina::Scripting
 
         FScriptExportField ReadField(FBlobReader& R, bool bTopLevel);
 
-        TSharedPtr<FScriptExportType> ReadType(FBlobReader& R)
+        // Bounds the recursion a desynced buffer can drive through nested Vector/Optional/Map kinds.
+        constexpr int32 kMaxTypeNestingDepth = 32;
+
+        TSharedPtr<FScriptExportType> ReadType(FBlobReader& R, int32 Depth = 0)
         {
+            if (Depth > kMaxTypeNestingDepth)
+            {
+                R.bError = true;
+                return MakeShared<FScriptExportType>();
+            }
+
             const FRecordScope Scope(R, EScriptSchemaRecord::Type);
 
             auto Type = MakeShared<FScriptExportType>();
@@ -169,13 +178,13 @@ namespace Lumina::Scripting
                 case EPropertyTypeFlags::Vector:
                 case EPropertyTypeFlags::Optional:
                 {
-                    Type->ElementType = ReadType(R);
+                    Type->ElementType = ReadType(R, Depth + 1);
                     break;
                 }
                 case EPropertyTypeFlags::Map:
                 {
-                    Type->KeyType   = ReadType(R);
-                    Type->ValueType = ReadType(R);
+                    Type->KeyType   = ReadType(R, Depth + 1);
+                    Type->ValueType = ReadType(R, Depth + 1);
                     break;
                 }
                 case EPropertyTypeFlags::InstancedStruct:
@@ -262,7 +271,7 @@ namespace Lumina::Scripting
             }
 
             const int32 Count = R.I32();
-            for (int32 i = 0; i < Count; ++i)
+            for (int32 i = 0; i < Count && !R.bError; ++i)
             {
                 OutSchema.Fields.Add(ReadField(R, /*bTopLevel*/ true));
             }

@@ -183,18 +183,6 @@ namespace Lumina::MCP
             return static_cast<T*>(NewSequenceTrack(Sequence, T::StaticClass(), Binding));
         }
 
-        int32 IndexOfSequenceTrack(const CSequence* Sequence, const CSequenceTrack* Track)
-        {
-            for (int32 Index = 0; Index < Sequence->Tracks.Num(); ++Index)
-            {
-                if (Sequence->Tracks[Index].Get() == Track)
-                {
-                    return Index;
-                }
-            }
-            return Constants::kIndexNone;
-        }
-
         bool ParseSequenceJson(const FString& Text, FJsonValue& Out, FString& OutError)
         {
             if (!FJsonValue::Parse(Text, Out))
@@ -330,8 +318,7 @@ namespace Lumina::MCP
         {
             if (bGround)
             {
-                const float Height = GroundHeightAt(Point.x, Point.z);
-                Point.y += Height > GNoGroundHeight ? Height : 0.0f;
+                Point.y += GroundOrZero(GroundHeightAt(Point.x, Point.z));
             }
         }
 

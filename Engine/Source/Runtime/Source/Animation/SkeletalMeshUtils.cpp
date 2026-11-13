@@ -1,6 +1,8 @@
 ﻿#include "RuntimePCH.h"
 #include "SkeletalMeshUtils.h"
 
+#include "Animation/BindPose.h"
+
 #include <cfloat>
 
 #include "World/ECS/Registry.h"
@@ -44,10 +46,7 @@ namespace Lumina::SkeletalUtils
             return false;
         }
 
-        // The inverse of InvBind is also the bind-pose global, so the no-pose fallback is the same undo.
-        const FMatrix4 BindGlobal = Skeleton->HasBindGlobalMatrices()
-            ? Skeleton->BindGlobalMatrices[BoneIndex]
-            : Math::Inverse(Skeleton->GetBone(BoneIndex).InvBindMatrix);
+        const FMatrix4 BindGlobal = AnimPose::GetBindGlobalMatrix(Skeleton, BoneIndex);
         if (Mesh.BoneTransforms.Num() == Skeleton->GetNumBones())
         {
             OutTransform = Mesh.BoneTransforms[BoneIndex] * BindGlobal;
@@ -201,15 +200,12 @@ namespace Lumina::SkeletalUtils
         const FVector3 LocalPoint = FVector3(WorldToComponent * FVector4(WorldPoint, 1.0f));
 
         const bool bLivePose = Mesh->BoneTransforms.Num() == Skeleton->GetNumBones();
-        const bool bCachedBind = Skeleton->HasBindGlobalMatrices();
 
         int32 Closest = Constants::kIndexNone;
         float BestDistSq = FLT_MAX;
         for (int32 i = 0; i < Skeleton->GetNumBones(); ++i)
         {
-            const FMatrix4 BindGlobal = bCachedBind
-                ? Skeleton->BindGlobalMatrices[i]
-                : Math::Inverse(Skeleton->GetBone(i).InvBindMatrix);
+            const FMatrix4 BindGlobal = AnimPose::GetBindGlobalMatrix(Skeleton, i);
             const FMatrix4 Global = bLivePose ? Mesh->BoneTransforms[i] * BindGlobal : BindGlobal;
             const float DistSq = Math::LengthSquared(FVector3(Global[3]) - LocalPoint);
             if (DistSq < BestDistSq)

@@ -11,3 +11,9 @@ public sealed class TestSuiteTargetTemplateAttribute : Attribute
 public sealed class TestSuiteModuleTemplateAttribute : Attribute
 {
 }
+
+// Marks a hand-written target whose executable is a test runner, so LuminaBuild Test builds and runs it with the suites.
+[AttributeUsage(AttributeTargets.Class)]
+public sealed class TestTargetAttribute : Attribute
+{
+}

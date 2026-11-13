@@ -41,6 +41,15 @@ namespace Lumina
 
     RUNTIME_API const char* ToString(EAudioGraphType Type);
 
+    // Floor against zero/negative input, so Log never sees a non-positive value.
+    inline constexpr float kAudioGraphMinLevel = 1.0e-6f;
+
+    // Twenty over the natural log of ten, so decibels come from Math::Log.
+    inline constexpr float kAudioGraphDecibelsPerNeper = 8.6858896f;
+
+    FORCEINLINE float LinearToDecibels(float Linear) { return kAudioGraphDecibelsPerNeper * Math::Log(Math::Max(Linear, kAudioGraphMinLevel)); }
+    FORCEINLINE float DecibelsToLinear(float Decibels) { return Math::Pow(10.0f, Decibels * 0.05f); }
+
     /** How a node choosing among several options picks the next one. */
     REFLECT()
     enum class EAudioPickMode : uint8

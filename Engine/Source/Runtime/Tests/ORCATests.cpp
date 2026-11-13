@@ -567,6 +567,29 @@ TEST(CrowdSolver, ParallelAndSerialSolvesAgreeExactly)
     EXPECT_GT(Constrained, Count / 2) << "the crowd was too sparse to exercise the solve";
 }
 
+// A MaxNeighbors above kMaxORCALines must not overflow the solver's fixed Hits and Lines buffers.
+TEST(CrowdSolver, MaxNeighborsAboveORCACapDoesNotOverflow)
+{
+    constexpr int32 Count = kMaxORCALines + 8;
+
+    FCrowdAgents Agents;
+    Agents.Reset(Count);
+    for (int32 i = 0; i < Count; ++i)
+    {
+        AddCrowdAgent(Agents, i, (float)i * 0.2f, 0.0f, 3.0f, 0.0f);
+        Agents.MaxNeighbors[i] = kMaxORCALines * 4;
+    }
+
+    SolveCrowd(Agents, Count, 60.0f, false);
+
+    for (int32 i = 0; i < Count; ++i)
+    {
+        EXPECT_EQ(Agents.OutNeighbors[i], kMaxORCALines);
+        EXPECT_TRUE(std::isfinite(Agents.OutVelX[i]));
+        EXPECT_TRUE(std::isfinite(Agents.OutVelZ[i]));
+    }
+}
+
 // A dense pack has no feasible velocity for most agents, so this is the relaxed fallback's path.
 TEST(CrowdSolver, DensePackStaysFiniteAndWithinMaxSpeed)
 {

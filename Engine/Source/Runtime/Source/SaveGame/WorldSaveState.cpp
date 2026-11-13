@@ -48,34 +48,6 @@ namespace Lumina::SaveGame
             CStruct*         Struct = nullptr;
         };
 
-        template<typename TBody>
-        void WriteSized(FArchive& Ar, TBody&& Body)
-        {
-            const int64 SizePosition = Ar.Tell();
-            int64 Size = 0;
-            Ar << Size;
-            const int64 Start = Ar.Tell();
-            Body();
-            const int64 End = Ar.Tell();
-            Size = End - Start;
-            Ar.Seek(SizePosition);
-            Ar << Size;
-            Ar.Seek(End);
-        }
-
-        template<typename TBody>
-        void WriteCounted(FArchive& Ar, TBody&& Body)
-        {
-            const int64 CountPosition = Ar.Tell();
-            uint32 Count = 0;
-            Ar << Count;
-            Count = Body();
-            const int64 End = Ar.Tell();
-            Ar.Seek(CountPosition);
-            Ar << Count;
-            Ar.Seek(End);
-        }
-
         bool ReadCount(FArchive& Ar, uint32& Count, const char* What)
         {
             Ar << Count;
@@ -209,29 +181,89 @@ namespace Lumina::SaveGame
             return Name != nullptr ? Name->Name : FName();
         }
 
-        // Earlier same-named siblings, or for a root the same-named roots with a lower slot, which is creation order.
-        uint32 NameOrdinal(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& Name)
+        // The key a runtime-built entity is found by when it has no SaveKey, its names from the root down.
+        class FEntityNamePaths
         {
-            const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
-            const ECS::FEntity Parent = Hierarchy.GetParent(Entity);
-            uint32 Ordinal = 0;
-            if (!Parent.IsNull())
+        public:
+
+            explicit FEntityNamePaths(ECS::FRegistry& InRegistry)
+                : Registry(InRegistry)
+            {}
+
+            FString Get(ECS::FEntity Entity)
             {
+                TVector<FString> Segments;
+                for (ECS::FEntity Current = Entity; !Current.IsNull(); Current = Registry.GetHierarchy().GetParent(Current))
+                {
+                    const FName Name = EntityName(Registry, Current);
+                    FString Segment = Name.IsNone() ? FString("?") : FString(*Name);
+                    if (const uint32 Ordinal = NameOrdinal(Current, Name); Ordinal > 0)
+                    {
+                        Segment += Format("#{}", Ordinal);
+                    }
+                    Segments.Add(Move(Segment));
+                }
+
+                FString Path;
+                for (int32 Index = Segments.Num(); Index-- > 0;)
+                {
+                    Path += Segments[Index];
+                    if (Index > 0)
+                    {
+                        Path += "/";
+                    }
+                }
+                return Path;
+            }
+
+        private:
+
+            // Earlier same-named siblings, or for a root the same-named roots created before it.
+            uint32 NameOrdinal(ECS::FEntity Entity, const FName& Name)
+            {
+                const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
+                const ECS::FEntity Parent = Hierarchy.GetParent(Entity);
+                if (Parent.IsNull())
+                {
+                    CountRoots();
+                    const auto Found = RootOrdinals.Find(Entity);
+                    return Found != nullptr ? (*Found) : 0u;
+                }
+                uint32 Ordinal = 0;
                 for (ECS::FEntity Sibling = Hierarchy.GetFirstChild(Parent); !Sibling.IsNull() && Sibling != Entity; Sibling = Hierarchy.GetNextSibling(Sibling))
                 {
                     Ordinal += EntityName(Registry, Sibling) == Name ? 1u : 0u;
                 }
                 return Ordinal;
             }
-            for (ECS::FEntity Other : Registry.View<SNameComponent>())
+
+            void CountRoots()
             {
-                if (Other.GetIndex() < Entity.GetIndex() && Hierarchy.GetParent(Other).IsNull() && EntityName(Registry, Other) == Name)
+                if (bRootsCounted)
                 {
-                    ++Ordinal;
+                    return;
+                }
+                bRootsCounted = true;
+                TVector<ECS::FEntity> Roots;
+                for (ECS::FEntity Entity : Registry.View<SNameComponent>())
+                {
+                    if (Registry.GetHierarchy().GetParent(Entity).IsNull())
+                    {
+                        Roots.Add(Entity);
+                    }
+                }
+                Algo::Sort(Roots, [&](ECS::FEntity A, ECS::FEntity B) { return Registry.GetCreationSerial(A) < Registry.GetCreationSerial(B); });
+                THashMap<FName, uint32> Seen;
+                for (ECS::FEntity Root : Roots)
+                {
+                    RootOrdinals.TryAdd(Root, Seen[EntityName(Registry, Root)]++);
                 }
             }
-            return Ordinal;
-        }
+
+            ECS::FRegistry&                Registry;
+            THashMap<ECS::FEntity, uint32> RootOrdinals;
+            bool                           bRootsCounted = false;
+        };
 
         class FEntityMatcher
         {
@@ -239,6 +271,7 @@ namespace Lumina::SaveGame
 
             explicit FEntityMatcher(ECS::FRegistry& InRegistry)
                 : Registry(InRegistry)
+                , NamePaths(InRegistry)
             {}
 
             ECS::FEntity Find(const FRecord& Record)
@@ -292,11 +325,12 @@ namespace Lumina::SaveGame
                 bPathsBuilt = true;
                 for (ECS::FEntity Entity : Registry.View<SNameComponent>())
                 {
-                    ByPath.TryAdd(GetEntityNamePath(Registry, Entity), Entity);
+                    ByPath.TryAdd(NamePaths.Get(Entity), Entity);
                 }
             }
 
             ECS::FRegistry&              Registry;
+            FEntityNamePaths             NamePaths;
             THashMap<FString, ECS::FEntity> ByKey;
             THashMap<FString, ECS::FEntity> ByPath;
             bool                         bKeysBuilt  = false;
@@ -434,6 +468,7 @@ namespace Lumina::SaveGame
                 Hierarchy.ForEachDescendant(Root, AddRespawn);
             }
 
+            FEntityNamePaths NamePaths(Registry);
             uint32 Unmatchable = 0;
             Registry.ForEachEntity([&](ECS::FEntity Entity)
             {
@@ -470,7 +505,7 @@ namespace Lumina::SaveGame
                 else if (!EntityName(Registry, Entity).IsNone())
                 {
                     Record.Match = EMatch::NamePath;
-                    Record.Key   = GetEntityNamePath(Registry, Entity);
+                    Record.Key   = NamePaths.Get(Entity);
                 }
                 else
                 {
@@ -704,6 +739,10 @@ namespace Lumina::SaveGame
                         {
                             Ops->EmplaceSerialized(Registry, Target, Ar);
                         }
+                        else
+                        {
+                            LOG_WARN("Save game: component '{}' is gone, so its saved fields are skipped.", *StructName);
+                        }
                         Ar.Seek(ComponentStart + ComponentSize);
                     }
 
@@ -780,32 +819,6 @@ namespace Lumina::SaveGame
         const uint32 Index = Entity.GetIndex();
         return Level != nullptr && !Entity.IsNull() && Index < static_cast<uint32>(Level->VersionPlusOne.Num())
             && Level->VersionPlusOne[Index] == Entity.GetVersion() + 1u;
-    }
-
-    FString GetEntityNamePath(ECS::FRegistry& Registry, ECS::FEntity Entity)
-    {
-        TVector<FString> Segments;
-        for (ECS::FEntity Current = Entity; !Current.IsNull(); Current = Registry.GetHierarchy().GetParent(Current))
-        {
-            const FName Name = EntityName(Registry, Current);
-            FString Segment = Name.IsNone() ? FString("?") : FString(*Name);
-            if (const uint32 Ordinal = NameOrdinal(Registry, Current, Name); Ordinal > 0)
-            {
-                Segment += Format("#{}", Ordinal);
-            }
-            Segments.Add(Move(Segment));
-        }
-
-        FString Path;
-        for (int32 Index = Segments.Num(); Index-- > 0;)
-        {
-            Path += Segments[Index];
-            if (Index > 0)
-            {
-                Path += "/";
-            }
-        }
-        return Path;
     }
 
     bool SerializeRegistry(FArchive& Ar, ECS::FRegistry& Registry)

@@ -1,7 +1,6 @@
 #include "RuntimePCH.h"
 #include "Core/JsonRpc/JsonRpc.h"
 
-#include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 
 #include <exception>
@@ -85,29 +84,29 @@ namespace Lumina::JsonRpc
 
         const FString Key(Method.GetData(), Method.Len());
 
-        FWriteScopeLock Lock(MethodsMutex);
+        auto Guard = Methods.Write();
 
-        if (Methods.Contains(Key))
+        if (Guard->Contains(Key))
         {
             LOG_WARN("[JsonRpc] '{}' is already registered and the newer handler replaced it.", Key);
         }
 
-        Methods.Add(Key, Move(Entry));
+        Guard->Add(Key, Move(Entry));
     }
 
     bool FDispatcher::UnregisterMethod(FStringView Method)
     {
         const FString Key(Method.GetData(), Method.Len());
 
-        FWriteScopeLock Lock(MethodsMutex);
+        auto Guard = Methods.Write();
 
-        const auto Found = Methods.Find(Key);
+        const auto Found = Guard->Find(Key);
         if (Found == nullptr)
         {
             return false;
         }
 
-        Methods.Remove(Key);
+        Guard->Remove(Key);
         return true;
     }
 
@@ -115,14 +114,14 @@ namespace Lumina::JsonRpc
     {
         const FString Match(Owner.GetData(), Owner.Len());
 
-        FWriteScopeLock Lock(MethodsMutex);
+        auto Guard = Methods.Write();
 
         int32 Removed = 0;
-        for (auto It = Methods.begin(); It != Methods.end(); )
+        for (auto It = Guard->begin(); It != Guard->end(); )
         {
             if (It->Value.Owner == Match)
             {
-                It = Methods.Remove(It);
+                It = Guard->Remove(It);
                 ++Removed;
             }
             else
@@ -138,14 +137,14 @@ namespace Lumina::JsonRpc
     {
         const FString Key(Method.GetData(), Method.Len());
 
-        FReadScopeLock Lock(MethodsMutex);
-        return Methods.Contains(Key);
+        auto Guard = Methods.Read();
+        return Guard->Contains(Key);
     }
 
     int32 FDispatcher::GetMethodCount() const
     {
-        FReadScopeLock Lock(MethodsMutex);
-        return Methods.Num();
+        auto Guard = Methods.Read();
+        return Guard->Num();
     }
 
     void FDispatcher::ForEachMethod(const TFunction<void(FStringView Method, FStringView Owner)>& Functor) const
@@ -155,8 +154,8 @@ namespace Lumina::JsonRpc
             return;
         }
 
-        FReadScopeLock Lock(MethodsMutex);
-        for (const auto& [Method, Entry] : Methods)
+        auto Guard = Methods.Read();
+        for (const auto& [Method, Entry] : *Guard)
         {
             Functor(FStringView(Method), FStringView(Entry.Owner));
         }
@@ -164,9 +163,9 @@ namespace Lumina::JsonRpc
 
     TOptional<FMethodHandler> FDispatcher::FindHandler(const FString& Method) const
     {
-        FReadScopeLock Lock(MethodsMutex);
+        auto Guard = Methods.Read();
 
-        const auto Found = Methods.Find(Method);
+        const auto Found = Guard->Find(Method);
         if (Found == nullptr)
         {
             return NullOpt;

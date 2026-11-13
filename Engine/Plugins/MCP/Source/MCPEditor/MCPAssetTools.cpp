@@ -29,6 +29,7 @@ namespace Lumina::MCP
     namespace MCPAssetToolsInternal
     {
         constexpr const char* GAssetSaveHint = " Save with assets.save to persist.";
+        constexpr const char* GAssetLocationHint = "Assets belong under /Game/Content, since nothing scans for them elsewhere.";
 
         SAssetInfo DescribeAssetData(const FAssetData& Data)
         {
@@ -42,7 +43,7 @@ namespace Lumina::MCP
 
         void CollectAssetReferencers(const FGuid& Guid, TVector<SAssetInfo>& Out)
         {
-            for (const FAssetData* Data : FAssetRegistry::Get().GetReferencersOf(Guid))
+            for (const FAssetDataPtr& Data : FAssetRegistry::Get().GetReferencersOf(Guid))
             {
                 if (Data != nullptr)
                 {
@@ -130,7 +131,7 @@ namespace Lumina::MCP
         bool ReimportExistingAsset(CImporter* Importer, const FFixedString& Destination, const FString& SourcePath,
             SImportAssetsResult& Out, const FString& FileName)
         {
-            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(FStringView(*Destination, Destination.Len()));
+            const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(FStringView(*Destination, Destination.Len()));
             if (Data == nullptr)
             {
                 return false;
@@ -332,13 +333,18 @@ namespace Lumina::MCP
                 Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread,
                 [](const SListFoldersParams& In, SListFoldersResult& Out)
                 {
-                    const FString Root = In.Under.IsEmpty() ? FString("/Game/Content") : In.Under;
+                    FString Root = In.Under.IsEmpty() ? FString("/Game/Content") : In.Under;
                     const int32 Depth = In.Depth > 0 ? In.Depth : 2;
 
                     FString Error;
                     if (!IsWellFormedAssetPath(Root, Error))
                     {
                         return Agent::FToolResult::Error(Error);
+                    }
+
+                    if (Root.Len() > 1 && Root.EndsWith('/'))
+                    {
+                        Root.LeftChopInline(1);
                     }
 
                     if (!VFS::Exists(Root))
@@ -459,6 +465,11 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
+                    if (!AssetOps::IsAssetLocation(FStringView(In.Path)))
+                    {
+                        return Agent::FToolResult::Error(GAssetLocationHint);
+                    }
+
                     if (!In.NewName.IsEmpty() && !AssetOps::IsValidLeafName(FStringView(In.NewName), &Error))
                     {
                         return Agent::FToolResult::Error(Error);
@@ -469,6 +480,11 @@ namespace Lumina::MCP
                         if (!IsWellFormedAssetPath(In.DestinationFolder, Error))
                         {
                             return Agent::FToolResult::Error(Error);
+                        }
+
+                        if (!AssetOps::IsAssetLocation(FStringView(In.DestinationFolder)))
+                        {
+                            return Agent::FToolResult::Error(GAssetLocationHint);
                         }
 
                         if (!VFS::IsDirectory(In.DestinationFolder))
@@ -563,8 +579,7 @@ namespace Lumina::MCP
 
                     if (!AssetOps::IsAssetLocation(FStringView(In.DestinationFolder)))
                     {
-                        return Agent::FToolResult::Error(
-                            "Assets belong under /Game/Content, since nothing scans for them elsewhere.");
+                        return Agent::FToolResult::Error(GAssetLocationHint);
                     }
 
                     const FFixedString Source = Paths::Normalize(FStringView(In.Source));
@@ -786,7 +801,7 @@ namespace Lumina::MCP
                     }
 
                     // The registry knows the path without loading, which a file about to go should not need.
-                    const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(*Guid);
+                    const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(*Guid);
                     if (Data == nullptr)
                     {
                         return Agent::FToolResult::Error(Lumina::Format("No asset has GUID {}.", In.Asset));

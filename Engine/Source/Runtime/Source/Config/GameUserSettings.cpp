@@ -72,13 +72,13 @@ namespace Lumina
 
     FString CGameUserSettings::GetSettingsFilePath()
     {
-        if (GEngine != nullptr && !GEngine->GetProjectPath().IsEmpty())
+        if (Global::GEngine != nullptr && !Global::GEngine->GetProjectPath().IsEmpty())
         {
-            const FFixedString Path = Paths::Combine(GEngine->GetProjectPath(), "Saved", "UserSettings.json");
+            const FFixedString Path = Paths::Combine(Global::GEngine->GetProjectPath(), "Saved", "UserSettings.json");
             return FString(*Path, Path.Len());
         }
 
-        const FStringView ProjectName = GEngine != nullptr ? GEngine->GetProjectName() : FStringView();
+        const FStringView ProjectName = Global::GEngine != nullptr ? Global::GEngine->GetProjectName() : FStringView();
         FString Directory = Paths::GetUserDataDirectory();
         Directory += "/";
         Directory += ProjectName.IsEmpty() ? FString("Lumina") : FString(ProjectName.GetData(), ProjectName.Len());
@@ -189,7 +189,7 @@ namespace Lumina
         #if USING(WITH_EDITOR)
         return;
         #else
-        if (GIsHeadless)
+        if (Global::GIsHeadless)
         {
             return;
         }
@@ -210,9 +210,9 @@ namespace Lumina
             }
         }
 
-        if (GEngine != nullptr)
+        if (Global::GEngine != nullptr)
         {
-            GEngine->SetUserFrameRateLimit(Math::Max(FrameRateLimit, 0));
+            Global::GEngine->SetUserFrameRateLimit(Math::Max(FrameRateLimit, 0));
         }
         #endif
     }

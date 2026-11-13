@@ -223,6 +223,24 @@ TEST(ScratchArray, ConcurrentAcquireReleaseBalances)
     ScratchPool::Trim();
 }
 
+// A class whose own block already dwarfs the per-class retention budget must still retain at most one block.
+TEST(ScratchArray, TopSizeClassRetainsAtMostOneBlock)
+{
+    ScratchPool::Trim();
+
+    constexpr SIZE_T Count = (64 * Constants::kMiB) / sizeof(float);
+    {
+        TScratchArray<float> A(Count);
+        TScratchArray<float> B(Count);
+    }
+
+    const ScratchPool::FStats Stats = ScratchPool::GetStats();
+    EXPECT_EQ(Stats.RetainedBlocks, 1u);
+    EXPECT_EQ(Stats.RetainedBytes, 64 * Constants::kMiB);
+
+    ScratchPool::Trim();
+}
+
 // A block handed back on a different thread than it came from is the case a thread-scoped arena cannot do.
 TEST(ScratchArray, BlockCrossesThreadsBetweenAcquireAndRelease)
 {

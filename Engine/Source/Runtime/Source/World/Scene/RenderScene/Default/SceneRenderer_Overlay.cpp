@@ -20,7 +20,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Scene Debug View", tracy::Color::Magenta);
         SCENE_GPU_SCOPE(CL, "Scene Debug View");
 
         const FSceneImage& ColorImg = GetNamedImage(ENamedImage::HDR);
@@ -185,7 +184,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Widget Picker Pass", tracy::Color::Magenta);
+        SCENE_GPU_SCOPE(CL, "Widget Picker");
 
         static const FShaderH VertexShader = FShaderLibrary::Get("WidgetVert.slang");
         static const FShaderH PixelShader = FShaderLibrary::Get("WidgetPickerPixel.slang");
@@ -240,7 +239,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Widget Pass", tracy::Color::Magenta);
+        SCENE_GPU_SCOPE(CL, "Widgets");
 
         static const FShaderH VertexShader = FShaderLibrary::Get("WidgetVert.slang");
         static const FShaderH PixelShader = FShaderLibrary::Get("WidgetPixel.slang");
@@ -336,7 +335,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Sprite Pass", tracy::Color::Magenta);
+        SCENE_GPU_SCOPE(CL, "Sprites");
 
         static const FShaderH VertexShader = FShaderLibrary::Get("SpriteVert.slang");
         static const FShaderH PixelShader  = FShaderLibrary::Get("SpritePixel.slang");
@@ -492,7 +491,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Debug Text Pass", tracy::Color::Yellow);
+        SCENE_GPU_SCOPE(CL, "Debug Text");
 
         static const FShaderH VertexShader = FShaderLibrary::Get("DebugTextVert.slang");
         static const FShaderH PixelShader = FShaderLibrary::Get("DebugTextPixel.slang");
@@ -668,7 +667,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Batched Triangle Draw", tracy::Color::Green2);
+        SCENE_GPU_SCOPE(CL, "Batched Solid Tris");
 
         static const FShaderH VertexShader = FShaderLibrary::Get("SimpleElementVertex.slang");
         static const FShaderH PixelShader = FShaderLibrary::Get("SimpleElementPixel.slang");

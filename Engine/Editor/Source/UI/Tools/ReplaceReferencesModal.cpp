@@ -17,6 +17,7 @@
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "UI/Properties/Customizations/AssetPickerFilter.h"
 #include <imgui.h>
 #include "Containers/StringFormat.h"
 
@@ -59,16 +60,21 @@ namespace Lumina::ReplaceReferences
             TUniquePtr<FScopedAssetRegistryBatch>       RegistryBatch;
 
             ImGuiTextFilter                 PickerFilter;
+
+            // Only one combo is open at a time, so one cache serves every entry.
+            AssetPickerFilter::FAssetsOfClassCache ReplacementCandidates;
         };
 
-        const FAssetData* FindAsset(const FGuid& GUID)
+        FAssetDataPtr FindAsset(const FGuid& GUID)
         {
             return GUID.IsValid() ? FAssetRegistry::Get().GetAssetByGUID(GUID) : nullptr;
         }
 
-        void DrawReplacementPicker(FAssetReferenceFixup& Entry, const THashSet<FGuid>& ExcludedGUIDs, ImGuiTextFilter& Filter)
+        void DrawReplacementPicker(FModalState& State, FAssetReferenceFixup& Entry)
         {
-            const FAssetData* Selected = FindAsset(Entry.ReplacementGUID);
+            const THashSet<FGuid>& ExcludedGUIDs = State.ExcludedGUIDs;
+            ImGuiTextFilter& Filter = State.PickerFilter;
+            const FAssetDataPtr Selected = FindAsset(Entry.ReplacementGUID);
             const char* Preview = Selected != nullptr ? *Selected->AssetName : kClearLabel;
 
             ImGui::SetNextItemWidth(-1.0f);
@@ -98,34 +104,25 @@ namespace Lumina::ReplaceReferences
                 return;
             }
 
-            TVector<FAssetData*> Candidates = FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Data)
+            for (const FAssetDataPtr& Candidate : State.ReplacementCandidates.Get(Entry.AssetClass))
             {
-                if (Data.AssetGUID == Entry.AssetGUID || ExcludedGUIDs.Contains(Data.AssetGUID))
+                if (Candidate->AssetGUID == Entry.AssetGUID || ExcludedGUIDs.Contains(Candidate->AssetGUID))
                 {
-                    return false;
+                    continue;
                 }
 
                 // Retargeting a referencer onto itself would mint a self-reference where a real edge was.
-                for (const FGuid& ReferencerGUID : Entry.Referencers)
+                if (Entry.Referencers.Contains(Candidate->AssetGUID))
                 {
-                    if (ReferencerGUID == Data.AssetGUID)
-                    {
-                        return false;
-                    }
+                    continue;
                 }
 
-                CClass* DataClass = FindObject<CClass>(Data.AssetClass);
-                return DataClass != nullptr && DataClass->IsChildOf(Entry.AssetClass);
-            });
-
-            for (const FAssetData* Candidate : Candidates)
-            {
                 if (!ImGuiX::PassSearchFilter(Filter, *Candidate->AssetName))
                 {
                     continue;
                 }
 
-                ImGui::PushID(Candidate);
+                ImGui::PushID(Candidate.Get());
                 if (ImGui::Selectable(*Candidate->AssetName, Candidate->AssetGUID == Entry.ReplacementGUID))
                 {
                     Entry.ReplacementGUID = Candidate->AssetGUID;
@@ -169,13 +166,13 @@ namespace Lumina::ReplaceReferences
                 ImGui::Text("%u", (uint32)Entry.Referencers.Num());
 
                 ImGui::TableSetColumnIndex(2);
-                DrawReplacementPicker(Entry, State.ExcludedGUIDs, State.PickerFilter);
+                DrawReplacementPicker(State, Entry);
 
                 if (bExpanded)
                 {
                     for (const FGuid& ReferencerGUID : Entry.Referencers)
                     {
-                        const FAssetData* Referencer = FindAsset(ReferencerGUID);
+                        const FAssetDataPtr Referencer = FindAsset(ReferencerGUID);
 
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
@@ -203,7 +200,7 @@ namespace Lumina::ReplaceReferences
             {
                 FFixedString ReplacementPath;
                 FName        ReplacementName;
-                if (const FAssetData* ReplacementData = FindAsset(Entry.ReplacementGUID))
+                if (const FAssetDataPtr ReplacementData = FindAsset(Entry.ReplacementGUID))
                 {
                     ReplacementPath = ReplacementData->Path;
                     ReplacementName = ReplacementData->AssetName;
@@ -532,7 +529,7 @@ namespace Lumina::ReplaceReferences
         TVector<FAssetReferenceFixup> Targets;
         for (const FFixedString& Path : AssetPaths)
         {
-            const FAssetData* Data = Registry.GetAssetByPath(Path);
+            const FAssetDataPtr Data = Registry.GetAssetByPath(Path);
             if (Data == nullptr)
             {
                 continue;
@@ -551,7 +548,7 @@ namespace Lumina::ReplaceReferences
         TVector<FAssetReferenceFixup> Plan;
         for (FAssetReferenceFixup& Entry : Targets)
         {
-            for (const FAssetData* Referencer : Registry.GetReferencersOf(Entry.AssetGUID))
+            for (const FAssetDataPtr& Referencer : Registry.GetReferencersOf(Entry.AssetGUID))
             {
                 // An asset in the subject set is never fixed up, so its own edges are left alone.
                 if (Referencer == nullptr || ExcludedGUIDs.Contains(Referencer->AssetGUID))

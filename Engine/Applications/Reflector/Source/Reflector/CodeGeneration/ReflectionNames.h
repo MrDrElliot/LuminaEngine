@@ -107,5 +107,11 @@ namespace Lumina::Reflection
             Out += "_Params";
             return Out;
         }
+
+        // A template argument list carries commas, which the offsetof macro would read as extra arguments.
+        inline std::string OffsetBaseTypeName(const std::string& CppQualifiedName, std::string_view Namespace, std::string_view DisplayName)
+        {
+            return CppQualifiedName.find('<') == std::string::npos ? CppQualifiedName : ("LRT_Owner_" + FriendlyFromParts(Namespace, DisplayName));
+        }
     }
 }

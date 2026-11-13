@@ -607,7 +607,7 @@ namespace Lumina
             Settings->CodeFiles.Add(Document->VirtualPath);
         }
         Settings->ActiveCodeFile = ActiveIndex >= 0 && ActiveIndex < Documents.Num() ? Documents[ActiveIndex]->VirtualPath : FString();
-        GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
+        Global::GConfig->SaveSettings(CEditorSessionSettings::StaticClass());
     }
 
     void FCodeWorkspaceTool::RestoreSession()

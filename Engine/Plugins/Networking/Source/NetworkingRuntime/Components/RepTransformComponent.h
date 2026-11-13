@@ -108,6 +108,13 @@ namespace Lumina
         }
     };
 
+    // Bumped each time the quantized pose or scale changes, so each client can compare against what it was last sent.
+    struct FNetChangeSeq
+    {
+        uint32 Pose  = 0;
+        uint32 Scale = 0;
+    };
+
     // Transient, networking-only replicated transform.
     struct FRepTransform
     {
@@ -124,6 +131,8 @@ namespace Lumina
 
         // A character's view pitch as last sent, in the same steps the wire carries.
         int8  LastSentPitch     = 0;
+
+        FNetChangeSeq ChangeSeq;
 
         //~ Receive side. Timestamped sample ring for interpolation/extrapolation.
         FNetInterpState Ring;

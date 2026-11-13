@@ -22,10 +22,13 @@
 
 // A call site formats, copies into a lock-free ring slot and returns, and one backend thread drains.
 
-namespace Lumina::Logging
+namespace Lumina::Global
 {
 	RUNTIME_API std::atomic<uint8> GLevelThreshold{ static_cast<uint8>(ELogLevel::Info) };
+}
 
+namespace Lumina::Logging
+{
 	namespace
 	{
 		constexpr uint32 GQueueCapacity     = 4096;         // power of two
@@ -394,7 +397,7 @@ namespace Lumina::Logging
 
 	void SetLevel(ELogLevel Level)
 	{
-		GLevelThreshold.store(static_cast<uint8>(Level), std::memory_order_relaxed);
+		Global::GLevelThreshold.store(static_cast<uint8>(Level), std::memory_order_relaxed);
 	}
 
 

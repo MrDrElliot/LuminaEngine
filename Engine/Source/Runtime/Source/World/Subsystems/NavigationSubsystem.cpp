@@ -41,7 +41,7 @@ namespace Lumina
         {
             return true;
         }
-        return Path.bPartial || Path.bTruncated || Path.Corners.Num() > MaxCorners;
+        return Path.bPartial || Path.bTruncated || (MaxCorners > 0 && Path.Corners.Num() > MaxCorners);
     }
 
     ENavPathResult CNavigationSubsystem::GetPathResult(FVector3 Start, FVector3 End, int32 MaxCorners, FName Agent)

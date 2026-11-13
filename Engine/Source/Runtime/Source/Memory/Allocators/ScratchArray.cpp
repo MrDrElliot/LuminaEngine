@@ -54,7 +54,13 @@ namespace Lumina::ScratchPool
 
         SIZE_T RetainLimitFor(SIZE_T ClassIndex)
         {
-            const SIZE_T Limit = kRetainedBytesPerClass / CapacityForClass(ClassIndex);
+            const SIZE_T Capacity = CapacityForClass(ClassIndex);
+            if (Capacity >= kRetainedBytesPerClass)
+            {
+                return 1;
+            }
+
+            const SIZE_T Limit = kRetainedBytesPerClass / Capacity;
             return Limit > kMinRetainedBlocks ? Limit : kMinRetainedBlocks;
         }
 

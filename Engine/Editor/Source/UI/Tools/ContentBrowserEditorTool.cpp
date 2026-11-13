@@ -102,6 +102,27 @@ namespace Lumina
             FFixedString Path;
         };
 
+        static FStringView GetDeliveredDragDropSourcePath()
+        {
+            const DragDrop::FPayload* Peek = DragDrop::PeekPayload();
+            if (Peek == nullptr || !DragDrop::IsDelivered())
+            {
+                return FStringView();
+            }
+
+            if (Peek->Kind == DragDrop::EPayloadKind::Asset)
+            {
+                return FStringView(*Peek->AssetPath, Peek->AssetPath.Len());
+            }
+
+            if (Peek->Kind == DragDrop::EPayloadKind::File)
+            {
+                return FStringView(*Peek->FilePath, Peek->FilePath.Len());
+            }
+
+            return FStringView();
+        }
+
         // Resolved once at construction, so the draw loop never reparses or reclassifies the file.
         enum class EIconKind : uint8
         {
@@ -135,7 +156,7 @@ namespace Lumina
                 if (FileInfo.IsLAsset())
                 {
                     FStringView Path(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len());
-                    if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
+                    if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Path))
                     {
                         DragDrop::SetAssetPayload(*Data);
                         return;
@@ -830,7 +851,7 @@ namespace Lumina
         void DrawAssetTooltipContent(const VFS::FFileInfo& Info)
         {
             const FStringView VPath(*Info.VirtualPath, Info.VirtualPath.Len());
-            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(VPath);
+            const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(VPath);
             if (Data == nullptr)
             {
                 ImGui::TextColored(EditorColors::TextDim(), "Asset (not yet indexed)");
@@ -1156,7 +1177,7 @@ namespace Lumina
     void FContentBrowserEditorTool::OnInitialize()
     {
         (void)FAssetRegistry::Get().GetOnAssetRegistryUpdated().AddMember(this, &FContentBrowserEditorTool::RefreshContentBrowser);
-        (void)GEditorEngine->GetProjectLoadedDelegate().AddMember(this, &FContentBrowserEditorTool::OnProjectLoaded);
+        (void)Global::GEditorEngine->GetProjectLoadedDelegate().AddMember(this, &FContentBrowserEditorTool::OnProjectLoaded);
         
         ContentBrowserTileSize = GetDefault<CContentBrowserSettings>()->TileSize;
         ContentBrowserTileView.SetTileSize(ContentBrowserTileSize);
@@ -1164,7 +1185,7 @@ namespace Lumina
         RefreshFilterClasses();
 
         // A --Project launch loads the project before this tool exists, so its broadcast was already missed.
-        if (GEditorEngine->HasLoadedProject())
+        if (Global::GEditorEngine->HasLoadedProject())
         {
             OnProjectLoaded();
         }
@@ -1184,7 +1205,7 @@ namespace Lumina
             DrawContentBrowser(bIsFocused, ImVec2(ImGui::GetContentRegionAvail().x, 0));
         });
         
-        ContentBrowserTileViewContext.DragDropFunction = [this] (FTileViewItem* DropItem, const TVector<FTileViewItem*>& Selections)
+        ContentBrowserTileViewContext.DragDropFunction = [this] (FTileViewItem* DropItem, const TVector<FTileViewItem*>&)
         {
             auto* TypedDroppedItem = static_cast<FTileItem*>(DropItem);
             if (!TypedDroppedItem->IsDirectory())
@@ -1192,22 +1213,8 @@ namespace Lumina
                 return;
             }
 
-            const DragDrop::FPayload* Peek = DragDrop::PeekPayload();
-            if (Peek == nullptr || !DragDrop::IsDelivered())
-            {
-                return;
-            }
-
-            FStringView SourcePath;
-            if (Peek->Kind == DragDrop::EPayloadKind::Asset)
-            {
-                SourcePath = FStringView(*Peek->AssetPath, Peek->AssetPath.Len());
-            }
-            else if (Peek->Kind == DragDrop::EPayloadKind::File)
-            {
-                SourcePath = FStringView(*Peek->FilePath, Peek->FilePath.Len());
-            }
-            else
+            FStringView SourcePath = ContentBrowserEditorToolInternal::GetDeliveredDragDropSourcePath();
+            if (SourcePath.IsEmpty())
             {
                 return;
             }
@@ -1217,22 +1224,7 @@ namespace Lumina
                 HandleContentBrowserDragDrop(TypedDroppedItem->GetVirtualPath(), SourcePath);
             }
 
-            for (FTileViewItem* Item : Selections)
-            {
-                auto* SourceItem = reinterpret_cast<FTileItem*>(Item);
-
-                if (SourceItem->GetVirtualPath() == SourcePath)
-                {
-                    continue;
-                }
-
-                if (SourceItem == TypedDroppedItem)
-                {
-                    continue;
-                }
-
-                HandleContentBrowserDragDrop(TypedDroppedItem->GetVirtualPath(), SourceItem->GetVirtualPath());
-            }
+            MoveSelectedTilesInto(TypedDroppedItem->GetVirtualPath(), SourcePath);
         };
 
         ContentBrowserTileViewContext.DrawItemOverrideFunction = [this] (FTileViewItem* Item)
@@ -1268,7 +1260,7 @@ namespace Lumina
 
                     // RESIDENT ONLY, since loading here would race the editor's loader on a non-atomic object.
                     FStringView AssetPath = ContentItem->GetVirtualPath();
-                    if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
+                    if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
                     {
                         if (CObject* Resident = FindObject<CObject>(Data->AssetGUID))
                         {
@@ -1410,7 +1402,7 @@ namespace Lumina
             }
             else if (ContentItem->IsAsset())
             {
-                if (const FAssetData* Asset = FAssetRegistry::Get().GetAssetByPath(Path))
+                if (const FAssetDataPtr Asset = FAssetRegistry::Get().GetAssetByPath(Path))
                 {
                     ToolContext->OpenAssetEditor(Asset->AssetGUID);
                 }
@@ -1491,7 +1483,7 @@ namespace Lumina
                         AssetEntries.Add(Index);
                     }
                 }
-                TVector<const FAssetData*> AssetData(AssetPaths.Num(), nullptr);
+                TVector<FAssetDataPtr> AssetData(AssetPaths.Num(), nullptr);
                 FAssetRegistry::Get().GetAssetsByPath(AssetPaths, AssetData);
                 for (int32 Found = 0; Found < AssetData.Num(); ++Found)
                 {
@@ -1686,39 +1678,15 @@ namespace Lumina
         {
             ContentBrowserEditorToolInternal::FContentBrowserListViewItemData& Data = Tree.Get<ContentBrowserEditorToolInternal::FContentBrowserListViewItemData>(Item);
 
-            const DragDrop::FPayload* Peek = DragDrop::PeekPayload();
-            if (Peek == nullptr || !DragDrop::IsDelivered())
-            {
-                return;
-            }
-
-            FStringView SourcePath;
-            if (Peek->Kind == DragDrop::EPayloadKind::Asset)
-            {
-                SourcePath = FStringView(*Peek->AssetPath, Peek->AssetPath.Len());
-            }
-            else if (Peek->Kind == DragDrop::EPayloadKind::File)
-            {
-                SourcePath = FStringView(*Peek->FilePath, Peek->FilePath.Len());
-            }
-            else
+            FStringView SourcePath = ContentBrowserEditorToolInternal::GetDeliveredDragDropSourcePath();
+            if (SourcePath.IsEmpty())
             {
                 return;
             }
 
             HandleContentBrowserDragDrop(Data.Path, SourcePath);
 
-            for (FTileViewItem* TileItem : ContentBrowserTileView.GetSelections())
-            {
-                auto* SourceItem = static_cast<FTileItem*>(TileItem);
-
-                if (SourceItem->GetVirtualPath() == SourcePath)
-                {
-                    continue;
-                }
-
-                HandleContentBrowserDragDrop(Data.Path, SourceItem->GetVirtualPath());
-            }
+            MoveSelectedTilesInto(Data.Path, SourcePath);
         };
         
         // Adds one folder node, flagged for lazy children when it actually has subdirectories.
@@ -2066,7 +2034,7 @@ namespace Lumina
         if (FileInfo.IsLAsset())
         {
             const FStringView Path(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len());
-            if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
+            if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Path))
             {
                 return ContentBrowserEditorToolInternal::UpperTypeTag(Data->AssetClass);
             }
@@ -2088,9 +2056,9 @@ namespace Lumina
     void FContentBrowserEditorTool::RefreshFilterClasses()
     {
         // Seeding from factories omitted types that have none, and a missing entry defaulted to shown.
-        for (const TSharedPtr<FAssetData>& Data : FAssetRegistry::Get().GetAssets())
+        for (const FAssetDataPtr& Data : FAssetRegistry::Get().FindByPredicate([](const FAssetData& Asset) { return !Asset.AssetClass.IsNone(); }))
         {
-            if (Data && !Data->AssetClass.IsNone() && !FilterState.Contains(Data->AssetClass))
+            if (!FilterState.Contains(Data->AssetClass))
             {
                 // Existing choices win; only genuinely new types default to visible.
                 FilterState.TryAdd(Data->AssetClass, true);
@@ -2102,17 +2070,9 @@ namespace Lumina
     {
         // Search first, since it is reached for most often and reads as part of the path bar.
         ImGui::SetNextItemWidth(200.0f);
+        if (ImGuiX::InputText("##ContentSearch", SearchText, ImGuiInputTextFlags_None, LE_ICON_MAGNIFY " Search..."))
         {
-            char Buffer[128];
-            const int32 Copied = Math::Min(SearchText.Len(), static_cast<int32>(sizeof(Buffer) - 1));
-            memcpy(Buffer, *SearchText, Copied);
-            Buffer[Copied] = '\0';
-
-            if (ImGui::InputTextWithHint("##ContentSearch", LE_ICON_MAGNIFY " Search...", Buffer, sizeof(Buffer)))
-            {
-                SearchText = Buffer;
-                RefilterContentBrowser();
-            }
+            RefilterContentBrowser();
         }
 
         if (!SearchText.IsEmpty())
@@ -2204,7 +2164,7 @@ namespace Lumina
             if (ImGui::SliderFloat("##Zoom", &ContentBrowserTileSize, 46.0f, 256.0f, "Tile: %.1fx"))
             {
                 GetMutableDefault<CContentBrowserSettings>()->TileSize = ContentBrowserTileSize;
-                GConfig->SaveSettings(CContentBrowserSettings::StaticClass());
+                Global::GConfig->SaveSettings(CContentBrowserSettings::StaticClass());
                 ContentBrowserTileView.SetTileSize(ContentBrowserTileSize);
             }
 
@@ -2225,7 +2185,7 @@ namespace Lumina
             bSortChanged |= ImGui::MenuItem("Ascending", nullptr, &Settings->bSortAscending);
             if (bSortChanged)
             {
-                GConfig->SaveSettings(CContentBrowserSettings::StaticClass());
+                Global::GConfig->SaveSettings(CContentBrowserSettings::StaticClass());
                 RefreshContentBrowser();
             }
 
@@ -2242,6 +2202,18 @@ namespace Lumina
         FFixedString NewName = Paths::Combine(DropPath, DirName);
 
         ActionRegistry.EnqueueAction<ContentBrowserEditorToolInternal::FPendingRename>(ContentBrowserEditorToolInternal::FPendingRename{ OldName, NewName });
+    }
+
+    void FContentBrowserEditorTool::MoveSelectedTilesInto(FStringView DropPath, FStringView SourcePath)
+    {
+        for (FTileViewItem* Item : ContentBrowserTileView.GetSelections())
+        {
+            const FStringView ItemPath = static_cast<FTileItem*>(Item)->GetVirtualPath();
+            if (ItemPath != SourcePath && ItemPath != DropPath)
+            {
+                HandleContentBrowserDragDrop(DropPath, ItemPath);
+            }
+        }
     }
 
     void FContentBrowserEditorTool::OpenDeletionWarningPopup(const FTileItem* Item)
@@ -2454,7 +2426,7 @@ namespace Lumina
                         }
 
                         FAssetRegistry& Reg = FAssetRegistry::Get();
-                        if (const FAssetData* Stale = Reg.GetAssetByPath(Path))
+                        if (const FAssetDataPtr Stale = Reg.GetAssetByPath(Path))
                         {
                             const FGuid StaleGUID = Stale->AssetGUID;
                             Reg.AssetDeleted(StaleGUID);
@@ -2480,10 +2452,10 @@ namespace Lumina
         };
 
         // Project's Content (assets), under the /Game mount. Always present.
-        SpawnWatcher(GEditorEngine->GetProjectContentDirectory(), FStringView("/Game/Content"));
+        SpawnWatcher(Global::GEditorEngine->GetProjectContentDirectory(), FStringView("/Game/Content"));
 
         // The project's C# sources, sibling to Content under /Game.
-        SpawnWatcher(GEditorEngine->GetProjectScriptsDirectory(), FStringView("/Game/Scripts"));
+        SpawnWatcher(Global::GEditorEngine->GetProjectScriptsDirectory(), FStringView("/Game/Scripts"));
 
         // Every enabled plugin with a content mount, keyed by its mount alias.
         for (const FPlugin* Plugin : FPluginManager::Get().GetAllPlugins())
@@ -2698,7 +2670,7 @@ namespace Lumina
             }
 
             // Destinations are taken at the front of the queue, or reserving forty names makes every later one a copy.
-            PendingImports.Add(Path);
+            PendingImports.Enqueue(Path);
         }
 
         // A queue already running will pick these up when it advances.
@@ -2752,29 +2724,33 @@ namespace Lumina
 
     void FContentBrowserEditorTool::ProcessNextImport()
     {
-        if (PendingImports.IsEmpty())
-        {
-            // The batch is over, so the next one starts by asking again.
-            bApplyImportSettingsToAll = false;
-            return;
-        }
+        FFixedString Path;
+        CImporter* ImporterCDO = nullptr;
+        FFixedString DestinationPath;
 
-        const FFixedString Path = PendingImports[0];
-        PendingImports.RemoveAt(0);
-
-        CImporter* ImporterCDO = CImporterRegistry::Get().FindImporterForExtension(VFS::Extension(Path));
-        if (ImporterCDO == nullptr)
+        for (;;)
         {
-            ProcessNextImport();
-            return;
-        }
+            if (!PendingImports.Dequeue(Path))
+            {
+                // The batch is over, so the next one starts by asking again.
+                bApplyImportSettingsToAll = false;
+                return;
+            }
 
-        const FFixedString DestinationPath = MakeUniqueImportDestination(Path);
-        if (DestinationPath.IsEmpty())
-        {
-            ImGuiX::Notifications::NotifyError("No free asset name for \"{0}\"", VFS::FileName(Path).GetData());
-            ProcessNextImport();
-            return;
+            ImporterCDO = CImporterRegistry::Get().FindImporterForExtension(VFS::Extension(Path));
+            if (ImporterCDO == nullptr)
+            {
+                continue;
+            }
+
+            DestinationPath = MakeUniqueImportDestination(Path);
+            if (DestinationPath.IsEmpty())
+            {
+                ImGuiX::Notifications::NotifyError("No free asset name for \"{0}\"", VFS::FileName(Path).GetData());
+                continue;
+            }
+
+            break;
         }
 
         bImportWindowOpen = true;
@@ -3099,7 +3075,7 @@ namespace Lumina
     
     }
 
-    const FAssetData* FContentBrowserEditorTool::GetSelectedAsset() const
+    FAssetDataPtr FContentBrowserEditorTool::GetSelectedAsset() const
     {
         const TVector<FTileViewItem*>& Selections = ContentBrowserTileView.GetSelections();
         if (Selections.Num() != 1)
@@ -3166,7 +3142,7 @@ namespace Lumina
     void FContentBrowserEditorTool::DrawReimportAssetMenuItem(const FTileItem* ContentItem, bool bIsProtected)
     {
         const FFixedString AssetPath(ContentItem->GetVirtualPath().GetData(), ContentItem->GetVirtualPath().Len());
-        const FAssetData*  Data = FAssetRegistry::Get().GetAssetByPath(AssetPath);
+        const FAssetDataPtr  Data = FAssetRegistry::Get().GetAssetByPath(AssetPath);
         if (Data == nullptr)
         {
             return;
@@ -3417,7 +3393,7 @@ namespace Lumina
     void FContentBrowserEditorTool::DrawDuplicateAssetMenuItem(const FTileItem* ContentItem, bool bIsProtected)
     {
         const FFixedString SourcePath(ContentItem->GetVirtualPath().GetData(), ContentItem->GetVirtualPath().Len());
-        const FAssetData*  Data = FAssetRegistry::Get().GetAssetByPath(SourcePath);
+        const FAssetDataPtr  Data = FAssetRegistry::Get().GetAssetByPath(SourcePath);
         if (Data == nullptr)
         {
             return;
@@ -3442,7 +3418,7 @@ namespace Lumina
     void FContentBrowserEditorTool::DrawCreateVariantMenuItem(const FTileItem* ContentItem)
     {
         const FFixedString SourcePath(ContentItem->GetVirtualPath().GetData(), ContentItem->GetVirtualPath().Len());
-        const FAssetData*  Data = FAssetRegistry::Get().GetAssetByPath(SourcePath);
+        const FAssetDataPtr  Data = FAssetRegistry::Get().GetAssetByPath(SourcePath);
         if (Data == nullptr)
         {
             return;
@@ -3555,7 +3531,7 @@ namespace Lumina
             if (ImGui::MenuItem(LE_ICON_FOLDER_OPEN " Open Asset", "Dbl-Click"))
             {
                 FFixedString Path(ContentItem->GetVirtualPath().GetData(), ContentItem->GetVirtualPath().Len());
-                if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
+                if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Path))
                 {
                     ToolContext->OpenAssetEditor(Data->AssetGUID);
                 }
@@ -3591,7 +3567,7 @@ namespace Lumina
         if (bIsAsset)
         {
             const FFixedString AssetPath(ContentItem->GetVirtualPath().GetData(), ContentItem->GetVirtualPath().Len());
-            if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
+            if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
             {
                 if (CClass* AssetClass = FindObject<CClass>(Data->AssetClass))
                 {
@@ -3626,7 +3602,7 @@ namespace Lumina
             DrawReimportAssetMenuItem(ContentItem, bIsProtected);
 
             const FFixedString ExportPath(ContentItem->GetVirtualPath().GetData(), ContentItem->GetVirtualPath().Len());
-            const FAssetData* ExportData = FAssetRegistry::Get().GetAssetByPath(ExportPath);
+            const FAssetDataPtr ExportData = FAssetRegistry::Get().GetAssetByPath(ExportPath);
             if (ExportData != nullptr && AssetExport::CanExport(FindObject<CClass>(ExportData->AssetClass)))
             {
                 if (ImGui::MenuItem(LE_ICON_EXPORT " Export..."))
@@ -3673,7 +3649,7 @@ namespace Lumina
             if (ImGui::MenuItem(LE_ICON_LINK " Copy Reference"))
             {
                 FFixedString Path(ContentItem->GetVirtualPath().GetData(), ContentItem->GetVirtualPath().Len());
-                if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Path))
+                if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Path))
                 {
                     FFixedString Reference;
                     Reference.Append("Asset(").Append(*Data->AssetClass).Append("'").Append(*Path).Append("')");
@@ -3798,7 +3774,7 @@ namespace Lumina
             {
                 continue;
             }
-            const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(ItemPath);
+            const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(ItemPath);
             if (Data == nullptr || Data->IsClassMissing())
             {
                 continue;

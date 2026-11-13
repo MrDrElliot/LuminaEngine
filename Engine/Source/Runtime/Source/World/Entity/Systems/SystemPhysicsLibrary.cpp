@@ -36,20 +36,18 @@ namespace Lumina
         }
     }
 
-    using namespace SystemPhysicsLibraryInternal;
-
     SRayResult CSystemPhysicsLibrary::Raycast(const SSystemContext& Context, FVector3 Start, FVector3 End, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask)
     {
         Physics::IPhysicsQueries* Scene = Context.GetPhysics();
-        TOptional<SRayResult> Hit = Scene != nullptr ? Scene->CastRay(RayOf(Start, End, IgnoreEntity, LayerMask)) : TOptional<SRayResult>();
-        return Hit.IsSet() ? Hit.GetValue() : MissOf(Start, End);
+        TOptional<SRayResult> Hit = Scene != nullptr ? Scene->CastRay(SystemPhysicsLibraryInternal::RayOf(Start, End, IgnoreEntity, LayerMask)) : TOptional<SRayResult>();
+        return Hit.IsSet() ? Hit.GetValue() : SystemPhysicsLibraryInternal::MissOf(Start, End);
     }
 
     void CSystemPhysicsLibrary::RaycastAll(const SSystemContext& Context, FVector3 Start, FVector3 End, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask, TVector<SRayResult>& Out)
     {
         if (Physics::IPhysicsQueries* Scene = Context.GetPhysics())
         {
-            Scene->CastRayAll(RayOf(Start, End, IgnoreEntity, LayerMask), Out);
+            Scene->CastRayAll(SystemPhysicsLibraryInternal::RayOf(Start, End, IgnoreEntity, LayerMask), Out);
         }
     }
 
@@ -57,21 +55,21 @@ namespace Lumina
     {
         Physics::IPhysicsQueries* Scene = Context.GetPhysics();
         TOptional<SRayResult> Hit = Scene != nullptr ? Scene->CastRayAgainst(Entity, Start, End) : TOptional<SRayResult>();
-        return Hit.IsSet() ? Hit.GetValue() : MissOf(Start, End);
+        return Hit.IsSet() ? Hit.GetValue() : SystemPhysicsLibraryInternal::MissOf(Start, End);
     }
 
     SRayResult CSystemPhysicsLibrary::ShapeCast(const SSystemContext& Context, SQueryShape Shape, FVector3 Start, FVector3 End, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask)
     {
         Physics::IPhysicsQueries* Scene = Context.GetPhysics();
-        TOptional<SRayResult> Hit = Scene != nullptr ? Scene->CastShapeClosest(Shape, Start, End, LayerMask, IgnoreOf(IgnoreEntity)) : TOptional<SRayResult>();
-        return Hit.IsSet() ? Hit.GetValue() : MissOf(Start, End);
+        TOptional<SRayResult> Hit = Scene != nullptr ? Scene->CastShapeClosest(Shape, Start, End, LayerMask, SystemPhysicsLibraryInternal::IgnoreOf(IgnoreEntity)) : TOptional<SRayResult>();
+        return Hit.IsSet() ? Hit.GetValue() : SystemPhysicsLibraryInternal::MissOf(Start, End);
     }
 
     void CSystemPhysicsLibrary::ShapeCastAll(const SSystemContext& Context, SQueryShape Shape, FVector3 Start, FVector3 End, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask, TVector<SRayResult>& Out)
     {
         if (Physics::IPhysicsQueries* Scene = Context.GetPhysics())
         {
-            Scene->CastShapeAll(Shape, Start, End, LayerMask, IgnoreOf(IgnoreEntity), Out);
+            Scene->CastShapeAll(Shape, Start, End, LayerMask, SystemPhysicsLibraryInternal::IgnoreOf(IgnoreEntity), Out);
         }
     }
 
@@ -88,8 +86,8 @@ namespace Lumina
         for (;;)
         {
             Out.SetNum(Capacity);
-            Written = Math::Max(Scene->OverlapShape(Shape, Center, LayerMask, IgnoreOf(IgnoreEntity), TSpan<ECS::FEntity>(Out.GetData(), (size_t)Capacity)), 0);
-            if (Written < Capacity || Capacity >= MaxOverlapResults)
+            Written = Math::Max(Scene->OverlapShape(Shape, Center, LayerMask, SystemPhysicsLibraryInternal::IgnoreOf(IgnoreEntity), TSpan<ECS::FEntity>(Out.GetData(), (size_t)Capacity)), 0);
+            if (Written < Capacity || Capacity >= SystemPhysicsLibraryInternal::MaxOverlapResults)
             {
                 break;
             }

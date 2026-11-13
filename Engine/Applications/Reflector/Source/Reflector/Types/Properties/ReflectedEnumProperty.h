@@ -8,7 +8,7 @@ namespace Lumina
     {
     public:
 
-        const char* GetTypeName() override { return "Enum"; }
+        const char* GetTypeName() const override { return "Enum"; }
         EReflectedLink GetLink() const override { return EReflectedLink::Enum; }
     };
 }

@@ -74,6 +74,9 @@ namespace Lumina::RmlBinding
     // Reads every binding in an .rml, attributing each to the data-model that encloses it.
     void Scan(std::string_view Text, FDocumentBindings& Out);
 
+    // The data-model whose bindings the markup at Offset reads, including an open tag's own data-model.
+    EDITOR_API FString ModelEnclosing(std::string_view Text, size_t Offset);
+
     // A stand-in model built from what the markup reads, for a data-model no C# type describes.
     FUIDesignModel Infer(const FString& ModelName, const FDocumentBindings& Bindings);
 

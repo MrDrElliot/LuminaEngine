@@ -249,12 +249,6 @@ namespace Lumina
 
     void FGeometryCollectionEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const
     {
-        ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
-
-        ImGuiID LeftDockID = 0, RightDockID = 0;
-        ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &RightDockID, &LeftDockID);
-
-        ImGui::DockBuilderDockWindow(*GetToolWindowName(ViewportWindowName), LeftDockID);
-        ImGui::DockBuilderDockWindow(*GetToolWindowName(FractureWindowName.GetData()), RightDockID);
+        SplitDockingLayoutLeftRight(InDockspaceID, ViewportWindowName, FractureWindowName.GetData(), 0.3f);
     }
 }

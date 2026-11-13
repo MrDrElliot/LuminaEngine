@@ -1,13 +1,12 @@
 #pragma once
 
+#include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Containers/HashTable.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
-#include "Core/Delegates/Delegate.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "GUID/GUID.h"
 #include "Memory/SmartPtr.h"
-#include <atomic>
 
 namespace Lumina
 {
@@ -38,23 +37,16 @@ namespace Lumina
         };
 
         explicit FCompatibleAssetList(CClass* InAssetClass);
-        ~FCompatibleAssetList();
-
-        FCompatibleAssetList(const FCompatibleAssetList&) = delete;
-        FCompatibleAssetList& operator=(const FCompatibleAssetList&) = delete;
-        FCompatibleAssetList(FCompatibleAssetList&&) = delete;
-        FCompatibleAssetList& operator=(FCompatibleAssetList&&) = delete;
 
         // Assets of the class whose skeleton matches by bones, sorted by name.
         const TVector<FEntry>& Get(const CSkeleton* Skeleton);
 
     private:
 
-        CClass*             AssetClass = nullptr;
-        const CSkeleton*    CachedSkeleton = nullptr;
-        TVector<FEntry>     Entries;
-        std::atomic<bool>   bStale{ true };
-        FDelegateHandle     RegistryHandle;
+        CClass*                  AssetClass = nullptr;
+        const CSkeleton*         CachedSkeleton = nullptr;
+        TVector<FEntry>          Entries;
+        FAssetRegistryStaleLatch StaleLatch;
     };
 
     // A per-editor preview mesh that falls back to the skeleton's own, and is never saved with the asset.

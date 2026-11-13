@@ -1,0 +1,25 @@
+{
+    "FormatVersion": 1,
+    "Name": "ReflectionExample",
+    "Version": 1,
+    "VersionName": "0.1.0",
+    "Author": "Lumina Team",
+    "Description": "An example Reflector plugin. Its generator claims the LuaExport specifier and writes Lua-style binding tables for every class marked with it, which its runtime module compiles and looks up by name. Off by default; only its own tests enable it.",
+    "Category": "Examples",
+    "EnabledByDefault": false,
+    "EditorOnly": false,
+    "ContainsContent": false,
+    "SupportedPlatforms": [],
+    "Dependencies": [],
+    "Modules": [
+        {
+            "Name": "ReflectionExampleGenerator",
+            "Type": "Reflection"
+        },
+        {
+            "Name": "ReflectionExampleRuntime",
+            "Type": "Runtime",
+            "LoadingPhase": "PreEngineInit"
+        }
+    ]
+}

@@ -18,6 +18,8 @@ public sealed class BuildOptions
 
     private readonly Dictionary<string, bool> PluginOverrides = new(StringComparer.OrdinalIgnoreCase);
 
+    private CommandLine? Arguments;
+
     public static BuildOptions Empty { get; } = new();
 
     /// <summary>A copy with the PGO request dropped, for a target being built only as a prerequisite.</summary>
@@ -28,6 +30,7 @@ public sealed class BuildOptions
             bDisableUnityBuild = bDisableUnityBuild,
             bDisableAdaptiveUnity = bDisableAdaptiveUnity,
             bMaximalUnityBuild = bMaximalUnityBuild,
+            Arguments = Arguments,
         };
 
         foreach (KeyValuePair<string, FeatureMode> Mode in Modes)
@@ -40,6 +43,7 @@ public sealed class BuildOptions
             Copy.PluginOverrides[Plugin.Key] = Plugin.Value;
         }
 
+        Copy.ProjectModules.AddRange(ProjectModules);
         return Copy;
     }
 
@@ -57,13 +61,33 @@ public sealed class BuildOptions
 
     public FeatureMode GetMode(string Feature)
     {
-        return Modes.TryGetValue(Feature, out FeatureMode Mode) ? Mode : FeatureMode.Auto;
+        return Modes.TryGetValue(Feature, out FeatureMode Mode) ? Mode : GetArgumentMode(Feature) ?? FeatureMode.Auto;
+    }
+
+    private FeatureMode? GetArgumentMode(string Feature)
+    {
+        string? Value = Arguments?.GetString(Feature);
+
+        if (string.IsNullOrEmpty(Value))
+        {
+            return null;
+        }
+
+        if (!TryParseMode(Value, out FeatureMode Mode))
+        {
+            throw new BuildException($"-{Feature}={Value} is not one of auto, on or off.");
+        }
+
+        return Mode;
     }
 
     public IReadOnlyDictionary<string, FeatureMode> All => Modes;
 
     /// <summary>Plugins someone asked for by name, which is what lets an opt-in plugin compile at all.</summary>
     public IReadOnlyDictionary<string, bool> PluginSettings => PluginOverrides;
+
+    // The .lproject Modules list, which names the project's Reflection modules.
+    public List<PluginModuleEntry> ProjectModules { get; } = new();
 
     /// <summary>Null when nothing named this plugin, leaving its own EnabledByDefault to decide.</summary>
     public bool? GetPluginOverride(string Name)
@@ -130,7 +154,7 @@ public sealed class BuildOptions
 
             if (Arguments.GetString("Pgo") is { Length: > 0 } PgoArgument)
             {
-                if (!Enum.TryParse(PgoArgument, ignoreCase: true, out PgoMode PgoValue))
+                if (!EnumUtils.TryParseStrict(PgoArgument, out PgoMode PgoValue))
                 {
                     throw new BuildException($"-Pgo={PgoArgument} is not one of off, instrument or optimize.");
                 }
@@ -138,10 +162,11 @@ public sealed class BuildOptions
                 Options.Pgo = PgoValue;
             }
 
-            // Overridable by name, so -Tracy=off needs no knowledge of Tracy, limited to config names plus any passed.
+            // Configured features are checked now; GetMode reads any other feature from the arguments on demand.
+            Options.Arguments = Arguments;
             foreach (string Feature in Options.Modes.Keys.ToList())
             {
-                if (TryParseMode(Arguments.GetString(Feature), out FeatureMode Mode))
+                if (Options.GetArgumentMode(Feature) is FeatureMode Mode)
                 {
                     Options.Modes[Feature] = Mode;
                 }
@@ -179,6 +204,11 @@ public sealed class BuildOptions
             {
                 using JsonDocument Document = JsonDocument.Parse(File.ReadAllText(Descriptor));
 
+                if (Document.RootElement.TryGetProperty("Modules", out JsonElement Modules))
+                {
+                    LoadProjectModules(Descriptor, Modules);
+                }
+
                 if (!Document.RootElement.TryGetProperty("Plugins", out JsonElement Plugins)
                     || Plugins.ValueKind != JsonValueKind.Array)
                 {
@@ -212,6 +242,22 @@ public sealed class BuildOptions
         }
     }
 
+    // A game module is declared by its Target.cs, so a project lists only the Reflection modules here.
+    private void LoadProjectModules(string Descriptor, JsonElement Modules)
+    {
+        List<PluginModuleEntry>? Entries = Modules.Deserialize<List<PluginModuleEntry>>();
+
+        foreach (PluginModuleEntry? Entry in Entries ?? new())
+        {
+            if (Entry is null || string.IsNullOrEmpty(Entry.Name) || Entry.GetHostType() != ModuleHostType.Reflection)
+            {
+                throw new BuildException($"'{Descriptor}': every Modules entry needs a Name and Type \"Reflection\", the only module type a project lists.");
+            }
+
+            ProjectModules.Add(Entry);
+        }
+    }
+
     private void ApplyPluginArguments(string? Names, bool bEnabled)
     {
         if (string.IsNullOrWhiteSpace(Names))
@@ -238,7 +284,7 @@ public sealed class BuildOptions
             return false;
         }
 
-        return Enum.TryParse(Value, ignoreCase: true, out Mode);
+        return EnumUtils.TryParseStrict(Value, out Mode);
     }
 
     public override string ToString()

@@ -335,7 +335,7 @@ namespace Lumina
             MaterialClassifyRing[Slot].Release();
             VisibleInstanceRing[Slot].Release();
             TotalsRing[Slot].Release();
-            SunDFItemTotalReadback[Slot].Release();
+            SunDFDemandReadback[Slot].Release();
             ProxyListRing[Slot].Release();
             ProxyDrawArgsRing[Slot].Release();
 
@@ -454,6 +454,7 @@ namespace Lumina
         // Clockwise front faces because the projection bakes the Y-flip, and the caller sets the scene root since it is per-list too.
         RHI::FCmdListH OpenSceneCommandList(RHI::EQueueType Queue)
         {
+            LUMINA_PROFILE_SCOPE();
             const RHI::FCmdListH CL = RHI::OpenCommandList(Queue);
             RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
             if (Queue == RHI::EQueueType::Graphics)
@@ -563,6 +564,10 @@ namespace Lumina
         RHI::FSemaphoreInfo AsyncComputeWait = {};
         bool bShadingWaitSubmitted = false;
 
+        // Captures and probe bakes draw the scene again past the upscale, and a callback there may read anything.
+        const bool bLateSceneReaders = !Frame.Views.CaptureViews.IsEmpty() || Frame.ReflectionProbes.BakingProbe >= 0
+                                    || HasRenderCallbacks(ERenderStage::AfterPostProcess) || HasRenderCallbacks(ERenderStage::Overlay);
+
         // Only a pyramid last frame handed to compute may be read by a compute cull, and one handed over for nothing cannot be read on graphics.
         const RHI::FTextureH CascadePyramidTexture = GetNamedImage(ENamedImage::CascadePyramid).Texture;
         const bool bPyramidOnCompute = CascadePyramidOnCompute && CascadePyramidOnCompute == CascadePyramidTexture;
@@ -575,6 +580,7 @@ namespace Lumina
         RHI::FCmdListH CullCL = CL;
         if (bCullOnCompute)
         {
+            LUMINA_PROFILE_SECTION("Async Compute Handoff");
             CullCL = OpenSceneCommandList(RHI::EQueueType::Compute);
             RHI::CmdBeginMarker(CullCL, "RenderView Frame Cull");
             if (bPyramidOnCompute)
@@ -595,10 +601,7 @@ namespace Lumina
                 RmlUi::RenderWorldWidgets(World, CL);
             }
 
-            {
-                SCENE_GPU_SCOPE(CL, "Reset Pass");
-                ResetPass_Render(CL);
-            }
+            ResetPass_Render(CL);
 
             {
                 SCENE_GPU_SCOPE(CullCL, "Compile Draw Commands");
@@ -607,6 +610,7 @@ namespace Lumina
 
             if (bCullOnCompute)
             {
+                LUMINA_PROFILE_SECTION("Async Compute Handoff");
                 if (bPyramidOnCompute)
                 {
                     RHI::CmdReleaseTexture(CullCL, CascadePyramidTexture, RHI::EQueueType::Graphics);
@@ -619,38 +623,16 @@ namespace Lumina
             PrepareSceneColorForCallbacks(CL);
             RunRenderCallbacks(CL, ERenderStage::FrameStart);
 
-            {
-                SCENE_GPU_SCOPE(CL, "Sky Cube Capture");
-                SkyCubeCapturePass(CL);
-            }
+            SkyCubeCapturePass(CL);
+            TexturePaintPass(CL);
+            TerrainUpdatePass(CL);
+            TerrainCullPass(CL);
 
             {
-                SCENE_GPU_SCOPE(CL, "Texture Paint");
-                TexturePaintPass(CL);
-            }
+                SkinningPass(CL);
 
-            {
-                SCENE_GPU_SCOPE(CL, "Terrain Update");
-                TerrainUpdatePass(CL);
-            }
-
-            {
-                SCENE_GPU_SCOPE(CL, "Terrain Cull");
-                TerrainCullPass(CL);
-            }
-
-            {
-                {
-                    SCENE_GPU_SCOPE(CL, "Skinning");
-                    SkinningPass(CL);
-                }
-                
                 // Terrain first, since it is the one large cheap occluder and every mesh behind a hill then fails early-Z.
-                bool bTerrainCleared = false;
-                {
-                    SCENE_GPU_SCOPE(CL, "Terrain Depth");
-                    bTerrainCleared = TerrainDepthPrePass(CL, /*bClear*/ true);
-                }
+                const bool bTerrainCleared = TerrainDepthPrePass(CL, /*bClear*/ true);
 
                 {
                     SCENE_GPU_SCOPE(CL, "VisBuffer Early");
@@ -673,10 +655,7 @@ namespace Lumina
                     VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ false, ECullPhase::Late);
                 }
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Custom Depth");
-                    CustomDepthStencilPass(CL);
-                }
+                CustomDepthStencilPass(CL);
 
                 // Near cascades cull only now, against everything the finished depth shows the camera can see, and ahead of GTAO so it cannot starve them.
                 if (bShadowReceiverCullThisFrame)
@@ -693,11 +672,7 @@ namespace Lumina
                 // No rebuild here. Nothing between this and the build after Terrain Render writes depth or reads it.
 
                 // GTAO's prefilter is the last reader of depth before shading, so compute only ever needs GTAO's own working depth.
-                bool bGTAOPrefiltered = false;
-                {
-                    SCENE_GPU_SCOPE(CL, "GTAO Prefilter");
-                    bGTAOPrefiltered = GTAOPass(CL, EGTAOStage::Prefilter);
-                }
+                const bool bGTAOPrefiltered = GTAOPass(CL, EGTAOStage::Prefilter);
 
                 // On graphics before the working depth goes to compute, and long before the lighting reads it.
                 if (bGTAOPrefiltered && IsScreenSpaceGITraced())
@@ -711,6 +686,7 @@ namespace Lumina
                 RHI::FCmdListH GeometryCL = {};
                 if (bAsyncCompute)
                 {
+                    LUMINA_PROFILE_SECTION("Async Compute Handoff");
                     if (bGTAOPrefiltered)
                     {
                         RHI::CmdReleaseTexture(CL, GTAOWorkingDepth.Texture, RHI::EQueueType::Compute);
@@ -729,12 +705,7 @@ namespace Lumina
                     }
                 }
 
-                bool bGTAOWritten = false;
-                if (bGTAOPrefiltered)
-                {
-                    SCENE_GPU_SCOPE(ComputeCL, "GTAO");
-                    bGTAOWritten = GTAOPass(ComputeCL, EGTAOStage::Trace);
-                }
+                const bool bGTAOWritten = bGTAOPrefiltered && GTAOPass(ComputeCL, EGTAOStage::Trace);
 
                 bool bAerialWritten = false;
                 {
@@ -756,6 +727,7 @@ namespace Lumina
 
                 if (bAsyncCompute)
                 {
+                    LUMINA_PROFILE_SECTION("Async Compute Handoff");
                     for (RHI::FTextureH Texture : ComputeOutputs)
                     {
                         RHI::CmdReleaseTexture(ComputeCL, Texture, RHI::EQueueType::Graphics);
@@ -778,28 +750,14 @@ namespace Lumina
                     LightCullPass(CL);
                 }
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Point Shadows");
-                    PointShadowPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Spot Shadows");
-                    SpotShadowPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Cascaded Shadows");
-                    CascadedShowPass(CL, Frame.Views.CascadeViewBase);
-                }
+                PointShadowPass(CL);
+                SpotShadowPass(CL);
+                CascadedShowPass(CL, Frame.Views.CascadeViewBase);
 
                 WeatherOcclusionPass(CL);
                 WeatherInteractionPass(CL);
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Light Functions");
-                    LightFunctionPass(CL);
-                }
+                LightFunctionPass(CL);
 
                 if (!FrameSettings.bFreezeCulling)
                 {
@@ -807,36 +765,15 @@ namespace Lumina
                     CascadePyramidPass(CL);
                 }
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Sun DF Shadow Cull");
-                    SunDFShadowCullPass(CL);
-                }
+                SunDFShadowCullPass(CL);
+                SunFarShadowPass(CL);
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Sun Far Shadows");
-                    SunFarShadowPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Sky Irradiance");
-                    IrradianceConvolutionPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Sky Prefilter");
-                    PrefilterEnvMapPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Decals");
-                    DecalPass(CL);
-                }
+                IrradianceConvolutionPass(CL);
+                PrefilterEnvMapPass(CL);
+                DecalPass(CL);
 
                 // Shares the cloud noise volume with the clouds below, so both stay on the queue that baked it.
-                {
-                    SCENE_GPU_SCOPE(CL, "Cloud Shadow Map");
-                    CloudShadowMapPass(CL);
-                }
+                CloudShadowMapPass(CL);
 
                 {
                     SCENE_GPU_SCOPE(CL, "Environment");
@@ -853,36 +790,17 @@ namespace Lumina
                 VisBufferClassifyPass(CL);
                 MaterialGBufferPass(CL);
                 SunContactShadowPass(CL);
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Volumetric Clouds");
-                    VolumetricCloudPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Froxel Fog Inject");
-                    FroxelInjectPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Froxel Fog Integrate");
-                    FroxelIntegratePass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Fog Shafts");
-                    FogShaftPass(CL);
-                }
+                VolumetricCloudPass(CL);
+                FroxelInjectPass(CL);
+                FroxelIntegratePass(CL);
+                FogShaftPass(CL);
 
                 // Here rather than at the end, since nothing later reads the past and the next frame's cull may rewrite the present after this.
                 RHI::CmdBarrier(CL,
                     RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite,
                     RHI::EStageFlags::Transfer | RHI::EStageFlags::Compute,
                     RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
-                {
-                    SCENE_GPU_SCOPE(CL, "Snapshot Motion State");
-                    SnapshotMotionState(CL);
-                }
+                SnapshotMotionState(CL);
 
                 // The next frame decides again, and drops cascade occlusion for a frame if it decides otherwise.
                 if (bAsyncCompute && ShouldCullOnCompute(Frame) && CascadePyramidTexture)
@@ -896,6 +814,7 @@ namespace Lumina
                 // Its own submission, since the wait on the compute queue belongs only to the work that reads its outputs.
                 if (bAsyncCompute)
                 {
+                    LUMINA_PROFILE_SECTION("Async Compute Handoff");
                     // The retained re-send and its staging fills have to land before the first segment runs.
                     WaitDeferredStageFills();
 
@@ -925,6 +844,7 @@ namespace Lumina
                 RHI::CmdBeginMarker(CL, "RenderView Shading");
                 if (bAsyncCompute)
                 {
+                    LUMINA_PROFILE_SECTION("Async Compute Handoff");
                     for (RHI::FTextureH Texture : ComputeOutputs)
                     {
                         RHI::CmdAcquireTexture(CL, Texture, RHI::EQueueType::Compute);
@@ -942,10 +862,7 @@ namespace Lumina
                     #endif
                 }
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Terrain Render");
-                    TerrainRenderPass(CL);
-                }
+                TerrainRenderPass(CL);
 
                 #if !defined(LE_SHIPPING)
                 VelocityDebugPass(CL);
@@ -953,10 +870,7 @@ namespace Lumina
 
                 RunRenderCallbacks(CL, ERenderStage::AfterOpaque);
                 
-                {
-                    SCENE_GPU_SCOPE(CL, "Screen Space Reflections");
-                    ScreenSpaceReflectionsPass(CL);
-                }
+                ScreenSpaceReflectionsPass(CL);
 
                 // Lit opaque color before the atmosphere fogs it, which is what next frame's indirect diffuse bounces.
                 if (WantsScreenSpaceGI(*CurrentView))
@@ -972,50 +886,20 @@ namespace Lumina
                 }
 
                 // After the composite, which would take water with nothing beneath it for sky; the water hazes itself.
-                {
-                    SCENE_GPU_SCOPE(CL, "Water");
-                    WaterPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Transparent");
-                    TransparentPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "OIT Resolve");
-                    OITResolvePass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Unordered Translucent");
-                    UnorderedTranslucentPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Batched Solid Tris");
-                    BatchedTriangleDraw(CL);
-                }
+                WaterPass(CL);
+                TransparentPass(CL);
+                OITResolvePass(CL);
+                UnorderedTranslucentPass(CL);
+                BatchedTriangleDraw(CL);
 
                 {
                     SCENE_GPU_SCOPE(CL, "Batched Lines");
                     BatchedLineDraw(CL);
                 }
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Particles Simulate");
-                    ParticleSimulatePass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Particles Sort");
-                    ParticleSortPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Particles Render");
-                    ParticleRenderPass(CL);
-                }
+                ParticleSimulatePass(CL);
+                ParticleSortPass(CL);
+                ParticleRenderPass(CL);
 
                 WeatherDrawPass(CL);
                 ReleaseIdleWeatherResources();
@@ -1025,10 +909,7 @@ namespace Lumina
                     BillboardPass(CL);
                 }
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Sprites");
-                    SpritePass(CL);
-                }
+                SpritePass(CL);
 
                 // World-space text, pre-tone-map into HDR + Picker (one MRT pass), like billboards.
                 {
@@ -1037,42 +918,22 @@ namespace Lumina
                 }
 
                 #if USING(WITH_EDITOR)
-                {
-                    SCENE_GPU_SCOPE(CL, "Widget Picker");
-                    WidgetPickerPass(CL);
-                }
-                {
-                    // After the last picker RT write; readback happens lazily in GetEntityAtPixel.
-                    SCENE_GPU_SCOPE(CL, "Picker Readback");
-                    IssuePickerReadback(CL);
-                }
+                WidgetPickerPass(CL);
+                // After the last picker RT write; readback happens lazily in GetEntityAtPixel.
+                IssuePickerReadback(CL);
                 #endif
 
                 RunRenderCallbacks(CL, ERenderStage::AfterTranslucency);
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Underwater");
-                    UnderwaterPass(CL);
-                }
+                UnderwaterPass(CL);
+                DepthOfFieldPass(CL);
+                BloomPass(CL);
+                AutoExposurePass(CL);
 
+                // The next frame's compute cull starts here, beside the upscale, unless something after it renders the scene again or it culls on graphics.
+                if (bCullOnCompute && !bLateSceneReaders)
                 {
-                    SCENE_GPU_SCOPE(CL, "Depth Of Field");
-                    DepthOfFieldPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Bloom");
-                    BloomPass(CL);
-                }
-
-                {
-                    SCENE_GPU_SCOPE(CL, "Auto Exposure");
-                    AutoExposurePass(CL);
-                }
-
-                // The next frame's compute cull starts here, beside the upscale, unless something after it renders the scene again.
-                if (bAsyncCompute)
-                {
+                    LUMINA_PROFILE_SECTION("Async Compute Handoff");
                     RHI::CmdEndMarker(CL);
                     WaitDeferredStageFills();
                     FrameCullGateValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1},
@@ -1095,10 +956,7 @@ namespace Lumina
                     ToneMappingPass(CL);
                 }
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Post Process Materials");
-                    PostProcessMaterialPass(CL);
-                }
+                PostProcessMaterialPass(CL);
 
                 RunRenderCallbacks(CL, ERenderStage::AfterPostProcess);
 
@@ -1125,24 +983,15 @@ namespace Lumina
                 }
 
                 // After SMAA so the neighborhood blend cannot smear the outline, before Widgets so UI wins.
-                {
-                    SCENE_GPU_SCOPE(CL, "Selection Outline");
-                    SelectionOutlinePass(CL);
-                }
+                SelectionOutlinePass(CL);
                 #endif
 
                 RunRenderCallbacks(CL, ERenderStage::Overlay);
 
-                {
-                    SCENE_GPU_SCOPE(CL, "Widgets");
-                    WidgetPass(CL);
-                }
+                WidgetPass(CL);
 
                 #if !defined(LE_SHIPPING)
-                {
-                    SCENE_GPU_SCOPE(CL, "Debug Text");
-                    DebugTextPass(CL);
-                }
+                DebugTextPass(CL);
                 #endif
 
                 for (const FFrameData::FCaptureViewData& Capture : Frame.Views.CaptureViews)
@@ -1187,10 +1036,7 @@ namespace Lumina
         const uint64 FinalValue = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1},
                     bWaitCompute ? TSpan<const RHI::FSemaphoreInfo>{&AsyncComputeWait, 1} : TSpan<const RHI::FSemaphoreInfo>{});
 
-        // Captures and probe bakes draw the scene again past the upscale, and a callback there may read anything.
-        const bool bLateSceneReaders = !Frame.Views.CaptureViews.IsEmpty() || Frame.ReflectionProbes.BakingProbe >= 0
-                                    || HasRenderCallbacks(ERenderStage::AfterPostProcess) || HasRenderCallbacks(ERenderStage::Overlay);
-        if (!bShadingWaitSubmitted || bLateSceneReaders)
+        if (!bShadingWaitSubmitted)
         {
             FrameCullGateValue = FinalValue;
         }
@@ -1596,6 +1442,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::BeginFrameScratch(RHI::FCmdListH CL, const FFrameData& Frame)
     {
+        LUMINA_PROFILE_SCOPE();
         uint32 GrassCursors = 0;
         for (const FFrameData::FTerrainExtract& Terrain : Frame.Extracts.TerrainExtracts)
         {
@@ -1778,8 +1625,6 @@ namespace Lumina
         case ENamedImage::AdaptedLuminance:   return "Scene.AdaptedLuminance";
         case ENamedImage::FroxelScatter:      return "Scene.FroxelScatter";
         case ENamedImage::FroxelIntegrated:   return "Scene.FroxelIntegrated";
-        case ENamedImage::FroxelShadow:       return "Scene.FroxelShadow";
-        case ENamedImage::FroxelShadowHistory: return "Scene.FroxelShadowHistory";
         case ENamedImage::AerialInScatter:    return "Scene.AerialInScatter";
         case ENamedImage::AerialTransmittance: return "Scene.AerialTransmittance";
         case ENamedImage::CloudNoise:         return "Scene.CloudNoise";
@@ -2177,6 +2022,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::PointAtView(FSceneView& View)
     {
+        LUMINA_PROFILE_SCOPE();
         CurrentView = &View;
         EnsureOptionalViewImages(View);
     }
@@ -2302,11 +2148,6 @@ namespace Lumina
             FroxelDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::FroxelScatter]    = CreateSceneImage(FroxelDesc, true, true);
             View.Images[(int)ENamedImage::FroxelIntegrated] = CreateSceneImage(FroxelDesc, true, true);
-
-            FroxelDesc.Format = EFormat::RG16_FLOAT;
-            View.Images[(int)ENamedImage::FroxelShadow]        = CreateSceneImage(FroxelDesc, true, true);
-            View.Images[(int)ENamedImage::FroxelShadowHistory] = CreateSceneImage(FroxelDesc, true, true);
-            View.bFroxelShadowHistoryValid = false;
         }
 
         {
@@ -3281,7 +3122,7 @@ namespace Lumina
                     }
                 });
                 DeferredStageFills.SetNum(FirstChunk);
-                RHI::FlushUploads();
+                FrameCullGateValue = Math::Max(FrameCullGateValue, RHI::FlushUploads());
             }
             return;
         }
@@ -3369,11 +3210,11 @@ namespace Lumina
         }
         DeferredStageFills.Reset();
 
-        // Submitted ahead of the scene list, so its reads of the retained buffers see the re-sent bytes.
+        // Submitted ahead of the scene list, and gated on by a compute-queue cull, so its reads of the retained buffers see the re-sent bytes.
         if (bDeferredUploadsQueued)
         {
             bDeferredUploadsQueued = false;
-            RHI::FlushUploads();
+            FrameCullGateValue = Math::Max(FrameCullGateValue, RHI::FlushUploads());
         }
     }
 

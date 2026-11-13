@@ -24,6 +24,7 @@ namespace LuminaPluginDescriptorTests
         { "mixed dependencies", R"lplugin({ "Name": "P", "Dependencies": [ "A", { "Name": "B" } ] })lplugin", "P|101|1|A/0/0,B/0/0|" },
         { "module defaults", R"lplugin({ "Name": "P", "Modules": [ { "Name": "PRuntime" } ] })lplugin", "P|101|1||PRuntime/Runtime/PreEngineInit/" },
         { "module platforms", R"lplugin({ "Name": "P", "Modules": [ { "Name": "PRuntime", "Type": "Editor", "LoadingPhase": "EditorInit", "SupportedPlatforms": [ "Linux" ] } ] })lplugin", "P|101|1||PRuntime/Editor/EditorInit/Linux" },
+        { "reflection module", R"lplugin({ "Name": "P", "Modules": [ { "Name": "PGenerator", "Type": "Reflection" } ] })lplugin", "P|101|1||PGenerator/Reflection/PreEngineInit/" },
         { "unknown key ignored", R"lplugin({ "Name": "P", "CookRoots": [ "/Game/Map" ], "Whatever": 3 })lplugin", "P|101|1||" },
         { "missing name", R"lplugin({ "Version": 1 })lplugin", nullptr },
         { "empty name", R"lplugin({ "Name": "" })lplugin", nullptr },

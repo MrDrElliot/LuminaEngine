@@ -195,10 +195,6 @@ namespace Lumina
 
     float CAudioLibrary::GetBusVolume(EAudioBus Bus)
     {
-        if (!Audio::HasDevice())
-        {
-            return 0.0f;
-        }
         return Audio::Context().GetBusVolume(SafeBus(Bus));
     }
 
@@ -240,7 +236,7 @@ namespace Lumina
     void CAudioLibrary::SaveMixSettings()
     {
         // Collapsing this would overwrite the user's saved mix with defaults on a headless save.
-        if (!Audio::HasDevice() || GConfig == nullptr)
+        if (!Audio::HasDevice() || Global::GConfig == nullptr)
         {
             return;
         }
@@ -256,6 +252,6 @@ namespace Lumina
             Settings->SetBusVolume((EAudioBus)Index, Audio::Context().GetBusVolume((EAudioBus)Index));
         }
 
-        GConfig->SaveSettings(CAudioSettings::StaticClass());
+        Global::GConfig->SaveSettings(CAudioSettings::StaticClass());
     }
 }

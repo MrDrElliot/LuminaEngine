@@ -10,7 +10,7 @@ static const uint kSunDFMaxStepsPerObject = 32u;
 // Past this many cells a caster is binned by a whole group, since one lane walking them in turn stalls the pass.
 static const uint kSunDFLargeCasterCells = 64u;
 
-// Set on a caster the large list took, so the per-lane binning skips it.
+// Set on every caster over kSunDFLargeCasterCells so the per-lane binning skips it, which drops one the full large list could not take.
 static const uint kSunDFLargeCaster = 2u;
 
 // Mirror of Lumina::FSunDFObject (112 B). One caster, already inverted so the trace never touches its transform.

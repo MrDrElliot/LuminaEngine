@@ -41,6 +41,46 @@ namespace Lumina
 			// "failed to load" match every line holding "to".
 			return TextFilter.PassFilter(Entry.Message.GetData());
         }
+
+        uint32 GetFlagsMask() const
+        {
+            return (bShowTrace << 0) | (bShowDebug << 1) | (bShowInfo << 2)
+                | (bShowWarning << 3) | (bShowError << 4) | (bShowCritical << 5);
+        }
+    };
+
+    // Queue indices that pass the filter, rebuilt only when the queue or the filter changed since the last Refresh.
+    struct FConsoleVisibleRows
+    {
+        TVector<uint32> Indices;
+        uint64 QueueVersion = (uint64)-1;
+        uint32 FilterMask = 0;
+        FString FilterText;
+
+        bool Refresh(const Logging::FLogQueue& Messages, const FConsoleFilter& Filter)
+        {
+            const uint64 Version = Messages.GetVersion();
+            const uint32 Mask = Filter.GetFlagsMask();
+            if (Version == QueueVersion && Mask == FilterMask && FilterText == Filter.TextFilter.InputBuf)
+            {
+                return false;
+            }
+
+            Indices.Reset();
+            Indices.Reserve(Messages.Num());
+            for (int32 Index = 0; Index < Messages.Num(); ++Index)
+            {
+                if (Filter.PassesFilter(Messages[Index]))
+                {
+                    Indices.Add((uint32)Index);
+                }
+            }
+
+            QueueVersion = Version;
+            FilterMask = Mask;
+            FilterText = Filter.TextFilter.InputBuf;
+            return true;
+        }
     };
 
     struct FAutoCompleteCandidate
@@ -68,7 +108,6 @@ namespace Lumina
             : FEditorTool(Context, "Console", nullptr)
             , HistoryIndex(0)
             , bNeedsScrollToBottom(false)
-            , FilteredMessageCount(0)
             , bShowAutoComplete(false)
             , AutoCompleteSelectedIndex(0)
             , bShowHistory(false)
@@ -123,7 +162,7 @@ namespace Lumina
         bool bFocusInput = true;
         uint64 HistoryIndex;
         bool bNeedsScrollToBottom;
-        uint32 FilteredMessageCount;
+        FConsoleVisibleRows VisibleRows;
 
         struct FConsoleSettings
         {

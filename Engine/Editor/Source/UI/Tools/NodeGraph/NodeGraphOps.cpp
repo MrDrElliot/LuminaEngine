@@ -183,12 +183,12 @@ namespace Lumina::NodeGraphOps
 
     FString FindOpenEditorName(CObject* Asset)
     {
-        if (GEditorEngine == nullptr || Asset == nullptr)
+        if (Global::GEditorEngine == nullptr || Asset == nullptr)
         {
             return FString();
         }
 
-        FEditorUI* UI = static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI());
+        FEditorUI* UI = static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI());
         if (UI == nullptr)
         {
             return FString();

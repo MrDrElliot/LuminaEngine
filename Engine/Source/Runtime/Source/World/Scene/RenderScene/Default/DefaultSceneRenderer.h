@@ -110,21 +110,6 @@ namespace Lumina
             }
         };
 
-        struct FShadowRequest
-        {
-            uint32      LightIndex;
-            ELightType  Type;
-            uint32      DesiredPixels;
-            float       DistanceToCamera;
-            FVector3    Position;
-            FVector3    Direction;      // Spot only
-            FVector3    Up;             // Spot only
-            float       Attenuation;
-            float       OuterFOVDegrees;
-            // Point lights only, one bit per cube face that some view can see a receiver through.
-            uint32      FaceMask = kAllCubeFaces;
-        };
-
         // Gathered by the light tasks and resolved serially, since resolving touches the material.
         struct FLightFunctionRequest
         {
@@ -139,7 +124,6 @@ namespace Lumina
             float       ProjectionScale = 1.0f;
         };
 
-        static constexpr uint32 kAllCubeFaces = 0x3Fu;
         // The cube faces of a point light whose region reaches any relevance view, since the rest shadow nothing on screen.
         uint32 VisibleCubeFaces(const FVector3& Position, float Radius) const;
 
@@ -657,8 +641,6 @@ namespace Lumina
             AdaptedLuminance,
             FroxelScatter,
             FroxelIntegrated,
-            FroxelShadow,
-            FroxelShadowHistory,
             AerialInScatter,
             AerialTransmittance,
             CloudNoise,
@@ -718,14 +700,10 @@ namespace Lumina
             FSceneImage                                     BloomChainImage;
             // CloudNoise is per-view, so a renderer-wide flag leaves view two sampling an unbaked volume.
             bool                                            bCloudNoiseBaked = false;
-            // Picks which texel of each 2x2 block the clouds march this frame, the rest coming from history.
+            // Picks which texel of each 2x2 block the clouds march this frame, the rest keeping their last march.
             uint32                                          CloudFrame = 0;
             bool                                            bCloudHistoryValid = false;
             FVector2                                        CloudHistoryWindOffset = FVector2(0.0f);
-            uint32                                          FroxelFrame = 0;
-            bool                                            bFroxelShadowHistoryValid = false;
-            float                                           FroxelHistoryNear = 0.0f;
-            float                                           FroxelHistoryRange = 0.0f;
             RHI::EQueueType                                 CloudNoiseQueue  = RHI::EQueueType::Graphics;
             RHI::FGPUAllocation                                    ClusterBuffer;
             RHI::FGPUAllocation                                    ClusterLightMaskBuffer;
@@ -1130,6 +1108,8 @@ namespace Lumina
         static bool IsTemporalAAEnabledFor(const FSceneView& View);
         static bool IsTemporalUpscalerFor(const FSceneView& View);
         static bool IsUpscalingView(const FSceneView& View);
+        // Only a temporal upscaler averages enough frames to hide rotating noise, and T2x's two-frame blend makes it crawl.
+        static uint32 GetScreenSpaceNoiseIndex(const FSceneView& View);
         // What tonemapping and post-process materials read, the upscaled image when the view has one.
         const FSceneImage& GetPostInputImage() const;
         bool IsTemporalAAEnabled() const;
@@ -1797,17 +1777,17 @@ namespace Lumina
         FSceneBuffer InstanceBlockBoundsBuffer { "Retained.InstanceBlockBounds", 1.5f, EBufferInit::Zeroed };
 
         // The sun's distance-field casters for this frame and the grid they are binned into.
-        FSceneBuffer SunDFObjectBuffer    { "SunDF.Objects",    1.0f, EBufferInit::Undefined, false };
+        FSceneBuffer SunDFObjectBuffer    { "SunDF.Objects",    kSceneBufferGrowth, EBufferInit::Undefined, false };
         FSceneBuffer SunDFCellCountBuffer { "SunDF.CellCounts", 1.0f, EBufferInit::Zeroed,    false };
-        FSceneBuffer SunDFCellItemBuffer  { "SunDF.CellItems",  1.0f, EBufferInit::Undefined, false };
+        FSceneBuffer SunDFCellItemBuffer  { "SunDF.CellItems",  kSceneBufferGrowth, EBufferInit::Undefined, false };
         FSceneBuffer SunDFCounterBuffer   { "SunDF.Counters",   1.0f, EBufferInit::Zeroed,    false };
         FSceneBuffer SunDFBlockListBuffer { "SunDF.Blocks",     1.5f, EBufferInit::Undefined };
         FSceneBuffer SunDFLargeObjectBuffer { "SunDF.LargeObjects", 1.0f, EBufferInit::Undefined, false };
-        // The cell items each frame's binning asked for, read back to warn when the grid's item budget ran out.
-        TArray<FSceneBuffer, RHI::kFramesInFlight> SunDFItemTotalReadback = MakeSceneRing<RHI::kFramesInFlight>("Readback.SunDFItemTotal", 1.0f);
+        // The cell items and casters each frame's binning asked for, read back to grow the item and object buffers to the demand.
+        TArray<FSceneBuffer, RHI::kFramesInFlight> SunDFDemandReadback = MakeSceneRing<RHI::kFramesInFlight>("Readback.SunDFDemand", 1.0f);
         static constexpr uint32 kSunDFGridDimension = 128u;
         static constexpr uint32 kSunDFCellCapacity  = 32u;
-        static constexpr uint32 kSunDFMaxObjects    = 16384u;
+        static constexpr uint32 kSunDFMinObjects    = 16384u;
         static constexpr uint32 kTransformStreamGroupSize = 64u;
         // A caster past this count bins in the cull pass itself, slower but never dropped.
         static constexpr uint32 kSunDFMaxLargeCasters = 256u;
@@ -2020,8 +2000,8 @@ namespace Lumina
         uint32                                              BlockListPeak = 0;
         uint32                                              DrawListPeak = 0;
         uint32                                              VisiblePeak = 0;
-        FVector3                                            LastCullOrigin = FVector3(0.0f);
-        bool                                                bHasLastCullOrigin = false;
+        FCullView                                           LastCameraCullView = {};
+        bool                                                bHasLastCameraCullView = false;
         uint32                                              CameraCutFramesLeft = 0;
         // A load appends before its readback lands, so the lists hold the whole scene for the frames in between.
         uint32                                              SceneFloorFramesLeft = 0;

@@ -3,6 +3,7 @@
 #include "ForkDeque.h"
 #include "ForkStack.h"
 #include "Core/Assertions/Assert.h"
+#include "Core/Math/Scalar.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 #include "Memory/Memory.h"
@@ -822,9 +823,16 @@ namespace Lumina::Jobs
         GRuntime = Memory::New<FRuntime>();
         ++GGeneration;
         const uint32 Hardware = Threading::GetNumThreads();
-        GRuntime->NumWorkers  = Config.NumWorkers != FRuntimeConfig::kAutoWorkers ? Config.NumWorkers : (Hardware > 1 ? Hardware - 1 : 1);
-        GRuntime->NumExternal = Config.NumExternalThreads != 0 ? Config.NumExternalThreads : 1;
+        const uint32 RequestedWorkers  = Config.NumWorkers != FRuntimeConfig::kAutoWorkers ? Config.NumWorkers : (Hardware > 1 ? Hardware - 1 : 1);
+        const uint32 RequestedExternal = Config.NumExternalThreads != 0 ? Config.NumExternalThreads : 1;
+        GRuntime->NumExternal = Math::Min(RequestedExternal, kMaxThreadSlots - 1);
+        GRuntime->NumWorkers  = Math::Min(RequestedWorkers, kMaxThreadSlots - GRuntime->NumExternal);
         GRuntime->NumSlots    = GRuntime->NumWorkers + GRuntime->NumExternal;
+        if (GRuntime->NumWorkers != RequestedWorkers || GRuntime->NumExternal != RequestedExternal)
+        {
+            LOG_WARN("Jobs: {} workers and {} external threads exceed {} thread slots; clamped to {} and {}.",
+                     RequestedWorkers, RequestedExternal, kMaxThreadSlots, GRuntime->NumWorkers, GRuntime->NumExternal);
+        }
         GRuntime->ExternalSlotsFree.store(GRuntime->NumExternal >= 64 ? ~0ull : ((1ull << GRuntime->NumExternal) - 1), std::memory_order_relaxed);
 
         GRuntime->Slots = static_cast<FSlot*>(Memory::Malloc(sizeof(FSlot) * GRuntime->NumSlots, alignof(FSlot)));

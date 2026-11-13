@@ -5,7 +5,7 @@
 
 namespace Lumina
 {
-    // Ticks entity scripts in either language: OnReady and OnUpdate in PrePhysics, OnFixedUpdate at the fixed rate in PostPhysics.
+    // Ticks entity scripts in either language, OnReady and OnUpdate in PrePhysics, OnFixedUpdate in EUpdateStage::FixedUpdate.
     REFLECT()
     class RUNTIME_API CEntityScriptSystem : public CExclusiveSystem
     {
@@ -19,7 +19,5 @@ namespace Lumina
     private:
 
         ECS::TQuery<ECS::Read<SEntityScriptComponent>> Scripts;
-
-        float FixedAccumulator = 0.0f;
     };
 }

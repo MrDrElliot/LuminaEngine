@@ -35,7 +35,7 @@ TEST(SoftObjectPath, ResolveFollowsRenameByGUID)
     FAssetRegistry& Registry = FAssetRegistry::Get();
     Registry.AssetCreated(Table);
 
-    const FAssetData* Data = Registry.GetAssetByGUID(Table->GetGUID());
+    const FAssetDataPtr Data = Registry.GetAssetByGUID(Table->GetGUID());
     ASSERT_NE(Data, nullptr);
 
     const FFixedString OldPath = Data->Path;

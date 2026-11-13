@@ -319,6 +319,8 @@ namespace Lumina
 
         OscBuffer.Reset();
 
+        Title.Reset();
+
         for (FTerminalLine& Line : Screen)
         {
             Line.Cells.Reset();

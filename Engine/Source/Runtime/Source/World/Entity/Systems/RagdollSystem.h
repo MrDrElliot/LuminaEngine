@@ -18,11 +18,6 @@ namespace Lumina
 
         void Configure() override;
 
-    public:
-
-        // Only the ragdolls, since the pose writer matches almost every mesh.
-        bool HasWork(const SSystemContext& Context) override;
-
         void OnUpdate(const SSystemContext& Context) override;
 
     private:

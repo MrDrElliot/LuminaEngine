@@ -4,6 +4,7 @@
 #include "Core/Object/Class.h"
 #include "Core/Serialization/Archiver.h"
 #include "Memory/Memory.h"
+#include "World/ECS/CommandBus.h"
 
 namespace Lumina
 {
@@ -39,6 +40,21 @@ namespace Lumina
             }
             Memory::Free(Value);
         }
+
+        // Owns a staged value until its command runs, so a discarded command still frees it.
+        struct FStagedComponent
+        {
+            const FComponentOps* Ops;
+            void* Value;
+
+            explicit FStagedComponent(const FComponentOps* InOps) : Ops(InOps), Value(InOps->New()) {}
+            FStagedComponent(FStagedComponent&& Other) noexcept : Ops(Other.Ops), Value(Other.Value) { Other.Value = nullptr; }
+            ~FStagedComponent() { if (Value != nullptr) { Ops->Delete(Value); } }
+
+            FStagedComponent(const FStagedComponent&) = delete;
+            FStagedComponent& operator=(const FStagedComponent&) = delete;
+            FStagedComponent& operator=(FStagedComponent&&) = delete;
+        };
 
         ECS::FComponentSignal& SignalOf(ECS::FSparseSet& Storage, EComponentSignal Kind)
         {
@@ -104,6 +120,20 @@ namespace Lumina
     void* FComponentOps::EmplaceDefault(ECS::FRegistry& Registry, ECS::FEntity Entity) const
     {
         return Registry.EmplaceOrReplaceRaw(GetTypeID(), Entity, nullptr);
+    }
+
+    void* FComponentOps::StageEmplace(ECS::FCommandBus& Commands, ECS::FEntity Entity) const
+    {
+        FStagedComponent Staged(this);
+        void* Value = InfoOf(*this).bEmpty ? nullptr : Staged.Value;
+        Commands.Enqueue([Entity, Staged = Move(Staged)](ECS::FRegistry& InRegistry)
+        {
+            if (InRegistry.IsValid(Entity))
+            {
+                Staged.Ops->EmplaceCopy(InRegistry, Entity, Staged.Value);
+            }
+        });
+        return Value;
     }
 
     void* FComponentOps::EmplaceSerialized(ECS::FRegistry& Registry, ECS::FEntity Entity, FArchive& Ar) const

@@ -730,8 +730,9 @@ namespace Lumina
             return;
         }
 
+        const std::string_view Text(CompAssignText.data(), CompAssignText.size());
         TVector<RmlBinding::FAttribute> Attributes;
-        RmlBinding::ReadDataAttributes(std::string_view(CompAssignText.data(), CompAssignText.size()), SelectedOpenLt, Attributes);
+        RmlBinding::ReadDataAttributes(Text, SelectedOpenLt, Attributes);
         if (Attributes.IsEmpty())
         {
             return;
@@ -739,7 +740,9 @@ namespace Lumina
 
         ImGui::Spacing();
         ImGui::TextDisabled(LE_ICON_LINK_VARIANT " Bindings");
-        const FUIDesignModel* Model = DesignModels.IsEmpty() ? nullptr : &DesignModels[0];
+        const int32 ModelIndex = Algo::IndexOf(DesignModels, RmlBinding::ModelEnclosing(Text, SelectedOpenLt), &FUIDesignModel::Name);
+        const FUIDesignModel* Model = ModelIndex == Constants::kIndexNone ? nullptr : &DesignModels[ModelIndex];
+        void* ObjectModel = Model != nullptr && ModelIndex < DesignObjectModels.Num() ? DesignObjectModels[ModelIndex] : nullptr;
         for (const RmlBinding::FAttribute& Attribute : Attributes)
         {
             ImGui::TextColored(RmlDataPanel::kDesignDimColor, "%s", *Attribute.Name);
@@ -750,8 +753,8 @@ namespace Lumina
             if (Model != nullptr && PreviewContext != nullptr && Model->FindScalar(FStringView(*Attribute.Value, Attribute.Value.Len())) != nullptr)
             {
                 const FStringView Member(*Attribute.Value, Attribute.Value.Len());
-                const FString Current = (!DesignObjectModels.IsEmpty() && DesignObjectModels[0] != nullptr)
-                    ? RmlUi::GetObjectModelValue(DesignObjectModels[0], Member)
+                const FString Current = ObjectModel != nullptr
+                    ? RmlUi::GetObjectModelValue(ObjectModel, Member)
                     : RmlUi::GetEditorDesignValue(PreviewContext, FStringView(*Model->Name, Model->Name.Len()), Member);
                 ImGui::SameLine();
                 ImGui::TextColored(RmlDataPanel::kDesignInfoColor, "= %s", *Current);

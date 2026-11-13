@@ -52,6 +52,21 @@ TEST(NetReplTypeTable, SkipsBoundEventStructsAndStillReplicatesASpawn)
     EXPECT_NE(Client.TryGet<ECS::Read<SNetworkComponent>>(Spawned), nullptr);
 }
 
+TEST(NetReplTypeTable, AllocateDynamicNeverWrapsToInvalid)
+{
+    FNetGUIDTable Table;
+    Table.NextDynamic = UINT32_MAX;
+
+    const SNetGUID Last = Table.AllocateDynamic();
+    EXPECT_TRUE(Last.IsValid());
+    EXPECT_EQ(Last.Value, UINT32_MAX);
+
+    const SNetGUID Wrapped = Table.AllocateDynamic();
+    EXPECT_TRUE(Wrapped.IsValid());
+    EXPECT_NE(Wrapped, SNetGUID::Invalid());
+    EXPECT_EQ(Wrapped.Value, NetGUID_DynamicStart);
+}
+
 TEST(NetReplTypeTable, ANewSessionSeesATypeReboundAfterTheLastOne)
 {
     CStruct* Original = SNetworkComponent::StaticStruct();

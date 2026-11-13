@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Containers/Name.h"
+#include "Containers/StringFormat.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectArray.h"
@@ -278,6 +279,37 @@ TEST(ObjectReinstancer, AnOriginalWhoseOnlyHolderMovesDiesAfterTheWalk)
     EXPECT_EQ(Provider.Held->GetClass(), New);
     EXPECT_EQ(*FindInt(Provider.Held.Get(), "Value"), 9);
     EXPECT_EQ(Object::Internal::ResolveHandle(OriginalHandle), Provider.Held.Get()) << "the original handle redirects to the replacement";
+}
+
+TEST(ObjectReinstancer, AHandleFromBeforeManyReloadsStillResolvesToTheLiveObject)
+{
+    Scripting::FScriptExportSchema Schema;
+    Schema.Fields.Add(ScriptTest::ScalarField("Value", EPropertyTypeFlags::Int32));
+    CScriptClass* Current = ScriptTest::MintWith("ReinstChain_0", Schema);
+    ASSERT_NE(Current, nullptr);
+
+    FStrongTestProvider Provider;
+    Provider.Held = NewObject(Current, nullptr, NAME_None, FGuid::New(), OF_Transient);
+    const FObjectHandle FirstHandle = Object::Internal::GetHandleByObject(Provider.Held.Get());
+    FObjectReferenceProviders::Register(&Provider);
+
+    constexpr int32 ReloadCount = 24;
+    for (int32 Reload = 1; Reload <= ReloadCount; ++Reload)
+    {
+        CScriptClass* Next = ScriptTest::MintWith(*Format("ReinstChain_{}", Reload), Schema);
+        ASSERT_NE(Next, nullptr);
+
+        FObjectReinstancer Reinstancer;
+        Reinstancer.MapClass(Current, Next);
+        ASSERT_EQ(Reinstancer.Commit().InstancesReplaced, 1);
+        Current = Next;
+    }
+
+    FObjectReferenceProviders::Unregister(&Provider);
+
+    ASSERT_NE(Provider.Held.Get(), nullptr);
+    EXPECT_EQ(Provider.Held->GetClass(), Current);
+    EXPECT_EQ(Object::Internal::ResolveHandle(FirstHandle), Provider.Held.Get()) << "a handle from before the first reload follows every reinstance";
 }
 
 extern "C" void* LuminaSharp_PinObject(void* Object);

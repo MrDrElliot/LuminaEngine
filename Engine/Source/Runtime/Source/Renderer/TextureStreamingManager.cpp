@@ -36,6 +36,29 @@ namespace Lumina
         // Short enough to reclaim promptly, long enough that a mip boundary is not crossed repeatedly.
         constexpr uint16 kDemoteDeadBandFrames = 30;
 
+        // Only mips with a bulk ref, since anything else has no way back once its bytes are gone.
+        void ReleaseMipsBelow(FTextureResource& Resource, uint32 FirstMip)
+        {
+            const uint32 NumLayers = Math::Max(Resource.GetNumLayers(), 1u);
+            for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
+            {
+                for (uint32 Mip = 0; Mip < FirstMip; ++Mip)
+                {
+                    const uint32 Index = Resource.MipIndex(Layer, Mip);
+                    if (Index >= static_cast<uint32>(Resource.Mips.Num()))
+                    {
+                        continue;
+                    }
+
+                    FTextureResource::FMip& MipData = Resource.Mips[Index];
+                    if (MipData.BulkRef.IsValid())
+                    {
+                        MipData.Pixels.Reset();
+                        MipData.Pixels.Shrink();
+                    }
+                }
+            }
+        }
     }
 
     void FTextureStreamingManager::Initialize()
@@ -75,11 +98,10 @@ namespace Lumina
 
         FScopeLock Lock(Mutex);
 
-        auto It = TextureToIndex.Find(Texture);
-        if (It != nullptr)
+        if (FStreamingTexture* Found = Find(Texture))
         {
             // Refreshes the cached sizes rather than adding a second entry that double-counts.
-            FStreamingTexture& Existing = Textures[(*It)];
+            FStreamingTexture& Existing = *Found;
             ResidentBytesTotal -= Existing.ResidentBytes;
             Existing.ResidentBytes = Resource.CalcResidentSizeBytes();
             Existing.FullBytes     = Resource.CalcFullSizeBytes();
@@ -99,7 +121,7 @@ namespace Lumina
 
         ResidentBytesTotal += Entry.ResidentBytes;
 
-        TextureToIndex.Add(Texture, (uint32)Textures.Num());
+        TextureToIndex.Add(Entry.Texture.GetHandle(), (uint32)Textures.Num());
         Textures.Add(Move(Entry));
     }
 
@@ -112,7 +134,8 @@ namespace Lumina
 
         FScopeLock Lock(Mutex);
 
-        auto It = TextureToIndex.Find(Texture);
+        const FObjectHandle Handle = Object::Internal::GetHandleByObject(Texture);
+        auto It = TextureToIndex.Find(Handle);
         if (It == nullptr)
         {
             return;
@@ -126,20 +149,17 @@ namespace Lumina
         if (Index != LastIndex)
         {
             Textures[Index] = Move(Textures[LastIndex]);
-            if (CTexture* Moved = Textures[Index].Texture.Get())
-            {
-                TextureToIndex.Add(Moved, Index);
-            }
+            TextureToIndex.Add(Textures[Index].Texture.GetHandle(), Index);
         }
         Textures.Pop();
-        TextureToIndex.Remove(Texture);
+        TextureToIndex.Remove(Handle);
 
-        // The worker's weak pointer will have gone null, and canceling mid-read means synchronizing.
+        // A load in flight keeps only its package pinned and is dropped on completion, since canceling mid-read means synchronizing.
     }
 
     FTextureStreamingManager::FStreamingTexture* FTextureStreamingManager::Find(CTexture* Texture)
     {
-        auto It = TextureToIndex.Find(Texture);
+        auto It = TextureToIndex.Find(Object::Internal::GetHandleByObject(Texture));
         return It == nullptr ? nullptr : &Textures[(*It)];
     }
 
@@ -558,26 +578,7 @@ namespace Lumina
             ++TotalDemotions;
 
             // Only below the new resident level, since anything at or above it is what the image now holds.
-            FTextureResource& Resource = Texture->GetTextureResource();
-            const uint32 NumLayers = Math::Max(Resource.GetNumLayers(), 1u);
-            for (uint32 Layer = 0; Layer < NumLayers; ++Layer)
-            {
-                for (uint32 Mip = 0; Mip < Entry.BudgetedFirstMip; ++Mip)
-                {
-                    const uint32 Index = Resource.MipIndex(Layer, Mip);
-                    if (Index >= static_cast<uint32>(Resource.Mips.Num()))
-                    {
-                        continue;
-                    }
-
-                    FTextureResource::FMip& MipData = Resource.Mips[Index];
-                    if (MipData.BulkRef.IsValid())
-                    {
-                        MipData.Pixels.Reset();
-                        MipData.Pixels.Shrink();
-                    }
-                }
-            }
+            ReleaseMipsBelow(Texture->GetTextureResource(), Entry.BudgetedFirstMip);
         }
     }
 
@@ -623,7 +624,7 @@ namespace Lumina
             FStreamingTexture& Entry   = Textures[i];
             CTexture*          Texture = Entry.Texture.Get();
 
-            if (Texture == nullptr || Entry.bLoadInFlight || Texture->GetPackage() == nullptr)
+            if (Texture == nullptr || Entry.bLoadInFlight || Texture->GetPackage() == nullptr || Texture->IsResidencyBlocked())
             {
                 continue;
             }
@@ -688,52 +689,10 @@ namespace Lumina
                 continue;
             }
 
-            TUniquePtr<FPendingLoad> Load = MakeUnique<FPendingLoad>();
-            Load->Texture        = Texture;
+            TUniquePtr<FPendingLoad> Load = MakeUnique<FPendingLoad>(Texture, TargetFirstMip, CurrentFirstMip, LayerCount);
             Load->GrowthBytes    = GrowthBytes;
             PendingGrowth       += GrowthBytes;
-            Load->TargetFirstMip = (uint8)TargetFirstMip;
-            Load->SourceFirstMip = (uint8)CurrentFirstMip;
-            Load->LayerCount     = LayerCount;
             Load->StagingBytes   = StagingBytes;
-            Load->MipBytes.SetNum(IntCastChecked<int32>(static_cast<int64>(Load->LayerCount) * Load->MipSpan()));
-            Load->MipRefs.SetNum(IntCastChecked<int32>(static_cast<int64>(Load->LayerCount) * Load->MipSpan()));
-
-            // Every layer, since Mips is layer-major and the promotion is refused unless all are populated.
-            {
-                const FTextureResource& Resource = Texture->GetTextureResource();
-
-                // Snapshotted with the refs, so a save landing before the worker reads is caught rather than read through.
-                if (const CPackage* RefPackage = Texture->GetPackage())
-                {
-                    Load->BulkGeneration = RefPackage->GetBulkGeneration();
-                }
-
-                for (uint32 Layer = 0; Layer < Load->LayerCount; ++Layer)
-                {
-                    for (uint32 Mip = Load->TargetFirstMip; Mip < Load->SourceFirstMip; ++Mip)
-                    {
-                        const uint32 MipIndex = Resource.MipIndex(Layer, Mip);
-                        if (MipIndex >= static_cast<uint32>(Resource.Mips.Num()))
-                        {
-                            continue;   // no ref and no bytes, so the worker fails the load on this slice
-                        }
-
-                        const FTextureResource::FMip& MipData = Resource.Mips[MipIndex];
-                        const uint32 Slice = Load->SliceIndex(Layer, Mip);
-
-                        // Also the correct fallback when a failed save left the ref pointing into an unwritten region.
-                        if (!MipData.Pixels.IsEmpty())
-                        {
-                            Load->MipBytes[Slice] = MipData.Pixels;
-                        }
-                        else
-                        {
-                            Load->MipRefs[Slice] = MipData.BulkRef;
-                        }
-                    }
-                }
-            }
 
             FPendingLoad* Raw = Load.get();
             PendingLoads.Add(Move(Load));
@@ -741,39 +700,77 @@ namespace Lumina
             Entry.bLoadInFlight = true;
 
             // Only the disk read is off-thread, and the residency change it feeds runs on the game thread.
-            Jobs::Spawn(Jobs::EJobPriority::Background, [](FPendingLoad* Read) -> Jobs::TTask<void>
+            Jobs::Spawn(Jobs::EJobPriority::Background, [](FPendingLoad* InFlight) -> Jobs::TTask<void>
             {
-                LUMINA_PROFILE_SECTION("Texture Stream Read");
-                LUMINA_MEMORY_SCOPE("Texture Streaming");
-
-                // The texture's weak pointer already says whether any of this is still worth doing.
-                CTexture* Target  = Read->Texture.Get();
-                CPackage* Package = Target ? Target->GetPackage() : nullptr;
-                if (Target == nullptr || Package == nullptr)
-                {
-                    Read->bFailed = true;
-                    Read->bComplete.store(true, std::memory_order_release);
-                    co_return;
-                }
-
-                for (int32 Slice = 0; Slice < Read->MipBytes.Num() && !Read->bFailed; ++Slice)
-                {
-                    if (!Read->MipBytes[Slice].IsEmpty())
-                    {
-                        continue;   // handed over already resident
-                    }
-
-                    if (!Read->MipRefs[Slice].IsValid()
-                     || !Package->ReadBulkData(Read->MipRefs[Slice], Read->MipBytes[Slice], Read->BulkGeneration))
-                    {
-                        Read->bFailed = true;
-                    }
-                }
-
-                Read->bComplete.store(true, std::memory_order_release);
+                InFlight->Read();
                 co_return;
             }, Raw);
         }
+    }
+
+    FTextureStreamingManager::FPendingLoad::FPendingLoad(CTexture* InTexture, uint32 InTargetFirstMip, uint32 InSourceFirstMip, uint32 InLayerCount)
+        : Texture(InTexture)
+        , Package(InTexture->GetPackage())
+        , TargetFirstMip((uint8)InTargetFirstMip)
+        , SourceFirstMip((uint8)InSourceFirstMip)
+        , LayerCount(InLayerCount)
+    {
+        MipBytes.SetNum(IntCastChecked<int32>(static_cast<int64>(LayerCount) * MipSpan()));
+        MipRefs.SetNum(IntCastChecked<int32>(static_cast<int64>(LayerCount) * MipSpan()));
+
+        // Snapshotted with the refs, so a save landing before the worker reads is caught rather than read through.
+        if (Package)
+        {
+            BulkGeneration = Package->GetBulkGeneration();
+        }
+
+        // Every layer, since Mips is layer-major and the promotion is refused unless all are populated.
+        const FTextureResource& Resource = InTexture->GetTextureResource();
+        for (uint32 Layer = 0; Layer < LayerCount; ++Layer)
+        {
+            for (uint32 Mip = TargetFirstMip; Mip < SourceFirstMip; ++Mip)
+            {
+                const uint32 MipIndex = Resource.MipIndex(Layer, Mip);
+                if (MipIndex >= static_cast<uint32>(Resource.Mips.Num()))
+                {
+                    continue;   // no ref and no bytes, so the worker fails the load on this slice
+                }
+
+                const FTextureResource::FMip& MipData = Resource.Mips[MipIndex];
+                const uint32 Slice = SliceIndex(Layer, Mip);
+
+                // Also the correct fallback when a failed save left the ref pointing into an unwritten region.
+                if (!MipData.Pixels.IsEmpty())
+                {
+                    MipBytes[Slice] = MipData.Pixels;
+                }
+                else
+                {
+                    MipRefs[Slice] = MipData.BulkRef;
+                }
+            }
+        }
+    }
+
+    void FTextureStreamingManager::FPendingLoad::Read()
+    {
+        LUMINA_PROFILE_SECTION("Texture Stream Read");
+        LUMINA_MEMORY_SCOPE("Texture Streaming");
+
+        // A destroyed package still reads safely here and fails on its removed file, which the game thread then drops.
+        bFailed = !Package;
+
+        for (int32 Slice = 0; Slice < MipBytes.Num() && !bFailed; ++Slice)
+        {
+            if (!MipBytes[Slice].IsEmpty())
+            {
+                continue;   // handed over already resident
+            }
+
+            bFailed = !MipRefs[Slice].IsValid() || !Package->ReadBulkData(MipRefs[Slice], MipBytes[Slice], BulkGeneration);
+        }
+
+        bComplete.store(true, std::memory_order_release);
     }
 
     void FTextureStreamingManager::ProcessCompletedLoads()
@@ -856,6 +853,10 @@ namespace Lumina
                             TotalBytesRead += BytesRead;
 
                             // Applying only STAGES an image, and the host uploads are metered as they happen.
+                        }
+                        else
+                        {
+                            ReleaseMipsBelow(Resource, NowFirstMip);
                         }
                     }
                     else if (Load.bFailed)

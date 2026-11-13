@@ -127,6 +127,13 @@ TEST(NetMoveCommands, ATruncatedUploadIsRefused)
     }
 }
 
+TEST(NetMoveCommands, AppliedPitchStaysWithinTheReplicatedRange)
+{
+    EXPECT_FLOAT_EQ(NetPrediction::PitchDegrees(32767), 90.0f);
+    EXPECT_FLOAT_EQ(NetPrediction::PitchDegrees(-32767), -90.0f);
+    EXPECT_FLOAT_EQ(NetPrediction::PitchDegrees(-250), -2.5f);
+}
+
 TEST(NetMoveCommands, YawJustEitherSideOfZeroQuantizesNextToZero)
 {
     constexpr uint16 OneDegree = 182;

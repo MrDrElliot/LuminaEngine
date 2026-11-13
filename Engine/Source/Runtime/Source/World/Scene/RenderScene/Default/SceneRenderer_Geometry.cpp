@@ -11,7 +11,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Texture Paint Pass", tracy::Color::Red);
+        SCENE_GPU_SCOPE(CL, "Texture Paint");
 
         static const FShaderH PaintShader = FShaderLibrary::Get("TexturePaint.slang");
         if (!PaintShader)
@@ -340,7 +340,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Proxy Occlusion Cull", tracy::Color::Magenta2);
         SCENE_GPU_SCOPE(CL, "Proxy Occlusion Cull");
         DispatchComputeIndirect(CL, CullShader, PC,
                                 ProxyDrawArgsRing[Slot].Sub(sizeof(RHI::FDrawIndirectArguments) * 2u, sizeof(RHI::FDispatchIndirectArguments)));
@@ -355,13 +354,13 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Far Proxies", tracy::Color::Red);
         SCENE_GPU_SCOPE(CL, "Far Proxies");
 
         FGraphicsPipelineKey Key;
         Key.VS          = ProxyVertex;
         Key.PS          = ProxyPixel;
         Key.DepthFormat = EFormat::D32;
+        Key.Topology    = RHI::ETopology::TriangleStrip;
         Key.ColorTargets.Add({ VisFormat, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
@@ -396,7 +395,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Custom Depth Pass", tracy::Color::Red);
+        SCENE_GPU_SCOPE(CL, "Custom Depth");
 
         const bool bHasDraws = !Frame.Geometry.DrawCommands.IsEmpty() && FindMissingMeshletDrawBuffer() == nullptr
                             && GetVisBufferPixelShader() != nullptr;
@@ -619,7 +618,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Point Light Shadow Pass", tracy::Color::DeepPink2);
+        SCENE_GPU_SCOPE(CL, "Point Shadows");
 
         static const FShaderH PixelShader = FShaderLibrary::Get("ShadowMappingPixel.slang");
         if (!PixelShader)
@@ -757,7 +756,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Spot Shadow Pass", tracy::Color::DeepPink4);
+        SCENE_GPU_SCOPE(CL, "Spot Shadows");
 
         static const FShaderH PixelShader = FShaderLibrary::Get("ShadowMappingPixel.slang");
         if (!PixelShader)
@@ -874,7 +873,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Cascaded Shadow Map Pass", tracy::Color::DeepPink2);
+        SCENE_GPU_SCOPE(CL, "Cascaded Shadows");
 
         RHI::FRenderPassDesc Pass;
         Pass.DepthAttachment.Texture  = GetNamedImage(ENamedImage::Cascade).Texture;
@@ -985,7 +984,7 @@ namespace Lumina
         Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(Colors, 4);
         Pass.RenderArea       = DBufferA.GetExtent();
 
-        LUMINA_PROFILE_SECTION_COLORED("Decal Pass", tracy::Color::Orange);
+        SCENE_GPU_SCOPE(CL, "Decals");
 
         RHI::CmdBeginRenderPass(CL, Pass);
         SetViewportScissor(CL, DBufferA.GetExtent());
@@ -1149,14 +1148,17 @@ namespace Lumina
 
     void FDefaultSceneRenderer::TerrainUpdatePass(RHI::FCmdListH CL)
     {
-        LUMINA_PROFILE_SECTION_COLORED("Terrain Update", tracy::Color::SeaGreen);
-
         static const FShaderH NormalShader = FShaderLibrary::Get("TerrainNormalCompute.slang");
 
         const FFrameData& Frame = *RenderFrame;
 
         PruneTerrainStates();
+        if (Frame.Extracts.TerrainExtracts.IsEmpty())
+        {
+            return;
+        }
 
+        SCENE_GPU_SCOPE(CL, "Terrain Update");
         bool bAnyUpload = false;
 
         // Last frame's terrain passes and this frame's grass scatter may still read what the uploads below overwrite.
@@ -1356,7 +1358,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Terrain Cull", tracy::Color::SeaGreen);
+        SCENE_GPU_SCOPE(CL, "Terrain Cull");
 
         static const FShaderH CullShader = FShaderLibrary::Get("TerrainCull.slang");
         if (!CullShader)
@@ -1542,7 +1544,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Grass Scatter", tracy::Color::ForestGreen);
         SCENE_GPU_SCOPE(CL, "Grass Scatter");
 
         const FVector3 CameraPos = FVector3(Frame.SceneGlobalData.CameraData.Location);
@@ -1787,7 +1788,7 @@ namespace Lumina
             return false;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Terrain Depth", tracy::Color::SeaGreen);
+        SCENE_GPU_SCOPE(CL, "Terrain Depth");
 
         static const FShaderH StampPS = FShaderLibrary::Get("TerrainDepthPixel.slang");
         const FSceneImage& VisRT = GetNamedImage(ENamedImage::VisBuffer);
@@ -1932,7 +1933,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Terrain Render", tracy::Color::SeaGreen);
+        SCENE_GPU_SCOPE(CL, "Terrain Render");
 
         bool bPassOpen = false;
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)

@@ -4,14 +4,11 @@
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
-#include "Containers/StringFormat.h"
 #include "Core/Object/Package/Package.h"
 #include "Renderer/Vertex.h"
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
 #include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/World.h"
-
-#include <atomic>
 
 namespace Lumina
 {
@@ -66,8 +63,7 @@ namespace Lumina
 
         TUniquePtr<FMeshResource> Resource = BuildMeshResource(Data, Options);
 
-        static std::atomic<uint32> Serial = 0;
-        CStaticMesh* Mesh = NewObject<CStaticMesh>(CPackage::GetTransientPackage(), FName(Format("ScriptMesh_{}", Serial.fetch_add(1))));
+        CStaticMesh* Mesh = NewObject<CStaticMesh>(CPackage::GetTransientPackage());
 
         // An empty slot never reports ready, which would keep the mesh from ever drawing.
         Mesh->Materials.SetNum(1);

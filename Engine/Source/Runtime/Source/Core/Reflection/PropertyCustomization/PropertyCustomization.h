@@ -138,7 +138,10 @@ namespace Lumina
         virtual void UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property) = 0;
 
         virtual void HandleExternalUpdate(const TSharedPtr<FPropertyHandle>& Property) = 0;
-        
+
+        // Narrows what DrawProperty shows to the details search, and reports whether anything is left.
+        virtual bool ApplySearch(const TSharedPtr<FPropertyHandle>& Property, FStringView Text) { return true; }
+
     };
     
     class RUNTIME_API FPropertyCustomizationRegistry

@@ -25,6 +25,7 @@ namespace Lumina
         SPostProcessSettings            PostProcess;
         TVector<CMaterialInterface*>    PostProcessMaterials;
         FViewLayerSettings              Layers;
+        float                           MouseLookDegreesPerCount = 0.0f;
         bool                            bHasView = false;
         bool                            bHasPostProcess = false;
     };

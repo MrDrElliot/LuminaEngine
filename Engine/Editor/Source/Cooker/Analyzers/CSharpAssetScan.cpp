@@ -135,6 +135,10 @@ namespace Lumina
                 FString Literal;
                 bool bCut = false;
                 i = ReadLiteral(Src, Quote, bVerbatim, bInterpolated, Literal, bCut);
+                if (bCut)
+                {
+                    Literal.LeftInline(VFS::Parent(FStringView(*Literal, Literal.Len())).Len());
+                }
                 if (LooksLikeContentPath(FStringView(*Literal, Literal.Len())))
                 {
                     Out.Emplace(Move(Literal));

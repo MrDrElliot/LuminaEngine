@@ -10,6 +10,8 @@ public sealed class ProcessResult
 
     public required string Output { get; init; }
 
+    public string Error { get; init; } = string.Empty;
+
     public bool bSucceeded => ExitCode == 0;
 }
 
@@ -150,7 +152,7 @@ public static class ProcessRunner
             }
 
             Task.WaitAll(Output, Errors);
-            return new ProcessResult { ExitCode = Runner.ExitCode, Output = Output.Result };
+            return new ProcessResult { ExitCode = Runner.ExitCode, Output = Output.Result, Error = Errors.Result };
         }
         catch (Exception Ex) when (Ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {

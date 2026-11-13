@@ -37,9 +37,10 @@ namespace Lumina::Avoidance
             Self.MaxSpeed = Agents.MaxSpeed[i];
 
             FNeighborHit Hits[kMaxORCALines];
+            const int32  MaxNeighbors = Math::Min(Agents.MaxNeighbors[i], kMaxORCALines);
             const int32  Found = GatherNeighbors(Agents.Grid, i, Self.PosX, Self.PosZ,
                                                  Agents.NeighborRange[i],
-                                                 Agents.MaxNeighbors[i], Hits);
+                                                 MaxNeighbors, Hits);
 
             FORCALine   Lines[kMaxORCALines];
             const float InvHorizon     = Agents.InvTimeHorizon[i];

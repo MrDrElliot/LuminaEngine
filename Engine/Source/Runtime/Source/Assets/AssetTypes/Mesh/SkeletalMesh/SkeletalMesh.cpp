@@ -218,9 +218,18 @@ namespace Lumina
         SkeletonJointIndicesAddress->ComputeBindPoseSkinningMatrices(FromBindPose);
         Skeleton->ComputeBindPoseSkinningMatrices(ToBindPose);
 
+        // Remapped on a copy, so instances keep drawing the live geometry until the copy's upload lands.
+        const FMeshResource& Current = GetNewestMeshResource();
+        TUniquePtr<FMeshResource> Remapped = MakeUnique<FMeshResource>();
+        Remapped->Name             = Current.Name;
+        Remapped->bSkinnedMesh     = Current.bSkinnedMesh;
+        Remapped->GeometrySurfaces = Current.GeometrySurfaces;
+        Remapped->MeshletData      = Current.MeshletData;
+        Remapped->DistanceField    = Current.DistanceField;
+
         float WorstBindPoseDelta = 0.0f;
         uint32 WorstBone = 0;
-        for (uint32& GlobalBone : GetMeshResource().MeshletData.MeshletBoneIndices)
+        for (uint32& GlobalBone : Remapped->MeshletData.MeshletBoneIndices)
         {
             const uint32 OldBone = GlobalBone;
             GlobalBone = OldBone < static_cast<uint32>(FromToTo.Num()) ? FromToTo[OldBone] : 0u;
@@ -252,6 +261,6 @@ namespace Lumina
         }
 
         SkeletonJointIndicesAddress = Skeleton;
-        GenerateGPUBuffers();
+        SetMeshResource(Move(Remapped));
     }
 }

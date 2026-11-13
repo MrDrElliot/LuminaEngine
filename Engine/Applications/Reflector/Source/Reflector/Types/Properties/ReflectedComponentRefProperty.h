@@ -9,7 +9,7 @@ namespace Lumina
     {
     public:
 
-        const char* GetTypeName() override { return "ComponentRef"; }
+        const char* GetTypeName() const override { return "ComponentRef"; }
         EReflectedLink GetLink() const override { return EReflectedLink::Struct; }
     };
 }

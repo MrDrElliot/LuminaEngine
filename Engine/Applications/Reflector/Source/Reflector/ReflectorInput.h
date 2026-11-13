@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <istream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Lumina::Reflection
@@ -22,11 +23,20 @@ namespace Lumina::Reflection
         std::vector<std::string> Headers;
     };
 
+    // A Reflection module's library, run after the built-in generators.
+    struct FReflectorGeneratorInput
+    {
+        std::string                                      Library;
+        std::string                                      RulesFile;
+        std::vector<std::pair<std::string, std::string>> Options;
+    };
+
     struct FReflectorInput
     {
-        std::string                        WorkspaceName;
-        std::string                        WorkspacePath;
-        std::vector<FReflectorModuleInput> Modules;
+        std::string                           WorkspaceName;
+        std::string                           WorkspacePath;
+        std::vector<FReflectorGeneratorInput> Generators;
+        std::vector<FReflectorModuleInput>    Modules;
     };
 
     // Reads what LuminaBuildTool's ReflectorInput.cs writes. On failure OutError says why and OutLine where.

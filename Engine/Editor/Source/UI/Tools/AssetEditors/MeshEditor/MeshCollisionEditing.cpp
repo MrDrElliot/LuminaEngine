@@ -345,12 +345,7 @@ namespace Lumina
 
     void FMeshCollisionEditing::CloseOpenDragTransaction()
     {
-        if (HandleState.bHandleTransactionOpen || HandleState.bGizmoTransactionOpen)
-        {
-            HandleState.bHandleTransactionOpen = false;
-            HandleState.bGizmoTransactionOpen = false;
-            EndTransaction();
-        }
+        ShapeHandles::CloseOpenDragTransaction(*this, HandleState);
     }
 
     void FMeshCollisionEditing::RebuildHullWireframes()
@@ -594,7 +589,7 @@ namespace Lumina
             }
         }
 
-        if (HasSelection() && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+        if (HasSelection() && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
         {
             PendingRemoval = SelectedPrimitive;
         }

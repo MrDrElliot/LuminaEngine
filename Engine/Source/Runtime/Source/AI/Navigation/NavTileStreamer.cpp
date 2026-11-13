@@ -192,7 +192,7 @@ namespace Lumina
         Stats.Resident = Resident.Num();
 
         // Resident only ever holds wanted tiles once evictions finish, so equal counts mean the sets match.
-        bSettled = Ops < Settings.MaxOpsPerTick && Stats.Starved == 0 && Resident.Num() + Stats.Rejected == Wanted.Num();
+        bSettled = Ops < Settings.MaxOpsPerTick && Resident.Num() + Stats.Rejected == Wanted.Num();
         if (bSettled)
         {
             SettledFocus = FocusPoints;

@@ -40,7 +40,7 @@ namespace Lumina
         // Console commands take no arguments, so they reach the overlay through the engine that owns it.
         FGameDevUI* GetGameDevUI()
         {
-            return GEngine != nullptr ? static_cast<FGameDevUI*>(GEngine->GetDevelopmentToolsUI()) : nullptr;
+            return Global::GEngine != nullptr ? static_cast<FGameDevUI*>(Global::GEngine->GetDevelopmentToolsUI()) : nullptr;
         }
 
         void ScreenshotCommand()
@@ -61,15 +61,15 @@ namespace Lumina
 
         void QuitCommand()
         {
-            if (GEngine != nullptr)
+            if (Global::GEngine != nullptr)
             {
-                GEngine->RequestExitGame();
+                Global::GEngine->RequestExitGame();
             }
         }
 
         FString ScreenshotPath()
         {
-            const FStringView ProjectPath = GEngine->GetProjectPath();
+            const FStringView ProjectPath = Global::GEngine->GetProjectPath();
             const FString Folder = ProjectPath.IsEmpty()
                 ? Paths::GetEngineDirectory() + "/Saved/Screenshots"
                 : FString(*Paths::Combine(ProjectPath, "Saved", "Screenshots"));
@@ -92,10 +92,10 @@ namespace Lumina
         FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("quit", "Closes the game.", &QuitCommand));
         FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("DevUI.Toggle", "Opens or closes the developer overlay, as the grave key does.", &ToggleCommand));
 
-        if (GCommandLine != nullptr)
+        if (Global::GCommandLine != nullptr)
         {
             // Split on semicolons, as -exec="DebugDraw.Enabled false;screenshot" lists several lines.
-            if (const TOptional<FFixedString> Exec = GCommandLine->Get("exec"); Exec.IsSet())
+            if (const TOptional<FFixedString> Exec = Global::GCommandLine->Get("exec"); Exec.IsSet())
             {
                 FStringView Remaining(*(*Exec), Exec->Len());
                 while (!Remaining.IsEmpty())
@@ -109,7 +109,7 @@ namespace Lumina
                     Remaining = Split == Constants::kIndexNone ? FStringView() : Remaining.Mid(Split + 1);
                 }
             }
-            SetOpen(GCommandLine->Has("devui"));
+            SetOpen(Global::GCommandLine->Has("devui"));
         }
 
         ApplyImGuiInputFlags();
@@ -185,7 +185,7 @@ namespace Lumina
             return;
         }
 
-        GWorldManager->ForEachWorld([](CWorld& World)
+        Global::GWorldManager->ForEachWorld([](CWorld& World)
         {
             if (World.IsGameWorld() && !World.IsSuspended())
             {
@@ -202,7 +202,7 @@ namespace Lumina
         }
 
         bool bHasGameWorld = false;
-        GWorldManager->ForEachWorld([&bHasGameWorld](CWorld& World)
+        Global::GWorldManager->ForEachWorld([&bHasGameWorld](CWorld& World)
         {
             bHasGameWorld = bHasGameWorld || (World.IsGameWorld() && !World.IsSuspended());
         });

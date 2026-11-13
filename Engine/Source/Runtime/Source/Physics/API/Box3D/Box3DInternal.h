@@ -52,6 +52,20 @@ namespace Lumina::Physics
         return b3Shape_IsValid(Shape) ? EntityOfBody(b3Shape_GetBody(Shape)) : ECS::NullEntity;
     }
 
+    // Inline for the common single-shape body, spilling only for a large compound.
+    using FBodyShapes = TInlineVector<b3ShapeId, 8>;
+
+    inline bool GatherShapes(b3BodyId Body, FBodyShapes& Out)
+    {
+        if (!b3Body_IsValid(Body))
+        {
+            return false;
+        }
+        Out.SetNum(b3Body_GetShapeCount(Body));
+        Out.SetNum(b3Body_GetShapes(Body, Out.GetData(), Out.Num()));
+        return !Out.IsEmpty();
+    }
+
     FORCEINLINE FPendingShape MakeSphereShape(const FVector3& Center, float Radius)
     {
         FPendingShape Shape;

@@ -370,7 +370,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Material GBuffer Pass", tracy::Color::Red);
         SCENE_GPU_SCOPE(CL, "Material GBuffer");
 
         const FSceneImage& VisRT = GetNamedImage(ENamedImage::VisBuffer);
@@ -502,7 +501,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Deferred Lighting Pass", tracy::Color::Gold);
         SCENE_GPU_SCOPE(CL, "Deferred Lighting");
 
         const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
@@ -587,7 +585,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Transparent Pass", tracy::Color::CadetBlue);
+        SCENE_GPU_SCOPE(CL, "Transparent");
 
         const FSceneImage& Accum     = GetNamedImage(ENamedImage::Accum);
         const FSceneImage& Revealage = GetNamedImage(ENamedImage::Revealage);
@@ -681,7 +679,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("OIT Resolve Pass", tracy::Color::GreenYellow);
+        SCENE_GPU_SCOPE(CL, "OIT Resolve");
 
         static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
         static const FShaderH PixelShader = FShaderLibrary::Get("OITResolve.slang");
@@ -750,7 +748,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Unordered Translucent Pass", tracy::Color::CadetBlue3);
+        SCENE_GPU_SCOPE(CL, "Unordered Translucent");
 
         const FSceneImage& HDR = GetNamedImage(ENamedImage::HDR);
         const FUIntVector2 Extent = HDR.GetExtent();
@@ -859,7 +857,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Water Pass", tracy::Color::CadetBlue);
+        SCENE_GPU_SCOPE(CL, "Water");
 
         static const FShaderH VS = FShaderLibrary::Get("WaterVert.slang");
         static const FShaderH PS = FShaderLibrary::Get("WaterPixel.slang");
@@ -966,7 +964,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Underwater Pass", tracy::Color::SteelBlue);
+        SCENE_GPU_SCOPE(CL, "Underwater");
 
         static const FShaderH VS = FShaderLibrary::Get("FullscreenQuad.slang");
         static const FShaderH PS = FShaderLibrary::Get("WaterUnderwater.slang");

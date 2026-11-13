@@ -267,6 +267,9 @@ namespace Lumina
         // Reads and decompresses the package container, leaving the bulk region on disk and merely locating it.
         RUNTIME_API static bool ReadPackageFile(FStringView Path, TVector<uint8>& OutBinary, FBulkRegion* OutBulkRegion = nullptr);
 
+        // ReadPackageFile plus the header check, so a truncated or foreign file is refused before anyone walks its tables.
+        NODISCARD RUNTIME_API static bool ReadPackageContainer(FStringView Path, TVector<uint8>& OutBinary, FPackageHeader& OutHeader, FBulkRegion* OutBulkRegion = nullptr);
+
         // One ranged read of a bulk payload, uncached so the caller owns the bytes, and safe from a worker thread.
         NODISCARD RUNTIME_API bool ReadBulkData(const FBulkDataRef& Ref, TVector<uint8>& OutBytes, uint32 ExpectedGeneration = 0) const;
 
@@ -281,13 +284,17 @@ namespace Lumina
         // True while a save copies this bulk region across verbatim, where a PreSave that reads payloads back costs the whole saving.
         NODISCARD RUNTIME_API bool IsBulkPassthrough() const { return bBulkPassthrough; }
 
-        void CreateLoader(const TVector<uint8>& FileBinary);
+        // Publishes a copy of FileBinary as the resident bytes and returns it, with no name table until a reader parses one.
+        TSharedPtr<FPackageFileBytes> CreateLoader(const TVector<uint8>& FileBinary);
 
-        // the bytes, the version to stamp a reader with and the table to resolve its slots, re-read on demand
+        // the bytes, the version to stamp a reader with and the table to resolve its slots, re-read from disk when the cache was dropped
         TSharedPtr<FPackageFileBytes> AcquireLoaderBytes(int32& OutFileVersion, TSharedPtr<const FPackageNameTable>& OutNames);
 
         // leaves Ar where it found it, and reports an empty table for a file whose names are inline text
         RUNTIME_API static bool ReadNameTable(FArchive& Ar, const FPackageHeader& Header, FPackageNameTable& OutNames);
+
+        // Logs and refuses a header that is not a package, that a newer engine wrote, or whose table offsets fall outside the container.
+        NODISCARD RUNTIME_API static bool IsReadableHeader(const FPackageHeader& Header, FStringView Path, int64 ContainerSize);
 
         RUNTIME_API void BuildSaveContext(FSaveContext& Context);
 
@@ -365,9 +372,6 @@ namespace Lumina
 
         // StaticLoadObject that keeps the request, so an import loaded mid-graph defers like the rest.
         static CObject* LoadImport(const FGuid& GUID, FLoadRequest& Request);
-
-        // Re-opens the on-disk bytes when the cache was dropped, false for a package with no backing file.
-        bool EnsureLoader();
 
         // Drops this package's reference to the cached bytes once every export is resident, never a reader's.
         void ConditionalDropLoader();

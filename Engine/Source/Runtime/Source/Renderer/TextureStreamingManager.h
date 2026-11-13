@@ -14,6 +14,7 @@
 
 namespace Lumina
 {
+    class CPackage;
     class CTexture;
 
     // Decides how much of each texture's mip chain is resident, relying on Textures::Recreate keeping its bindless slot.
@@ -28,8 +29,8 @@ namespace Lumina
         static void Shutdown();
 
         // Called from CTexture::PostLoad, and ignores textures whose whole chain is inline.
-        void RegisterTexture(CTexture* Texture);
-        void UnregisterTexture(CTexture* Texture);
+        RUNTIME_API void RegisterTexture(CTexture* Texture);
+        RUNTIME_API void UnregisterTexture(CTexture* Texture);
 
         // Reference counted, and a pinned texture is exempt from budget eviction.
         RUNTIME_API void Pin(CTexture* Texture);
@@ -107,6 +108,8 @@ namespace Lumina
 
     private:
 
+        friend struct FTextureStreamingTestAccess;
+
         struct FStreamingTexture
         {
             TWeakObjectPtr<CTexture> Texture;
@@ -145,7 +148,17 @@ namespace Lumina
         // The worker only reads bytes, and the residency change is applied on the game thread.
         struct FPendingLoad
         {
+            // Snapshots the refs of mips [InTargetFirstMip, InSourceFirstMip) on the game thread.
+            RUNTIME_API FPendingLoad(CTexture* InTexture, uint32 InTargetFirstMip, uint32 InSourceFirstMip, uint32 InLayerCount);
+
+            // The worker side, which reads through the pinned package and never dereferences the texture.
+            RUNTIME_API void Read();
+
             TWeakObjectPtr<CTexture> Texture;
+
+            // Pinned for the load's life, so a destroy mid-read cannot free the package under ReadBulkData.
+            TStrongObjectPtr<CPackage> Package;
+
             uint8                    TargetFirstMip = 0;
 
             // Levels [TargetFirstMip, SourceFirstMip) of every layer in SliceIndex order, since an array promotes only whole.
@@ -204,7 +217,8 @@ namespace Lumina
         TVector<TPair<float, uint32>>           PromotionScratch;
 
         TVector<FStreamingTexture>              Textures;
-        THashMap<CTexture*, uint32>             TextureToIndex;
+        // Keyed by handle, since a texture marked for destroy resolves null yet still unregisters in its OnDestroy.
+        THashMap<FObjectHandle, uint32>         TextureToIndex;
 
         // Bindless slot to Textures index, rebuilt every submit because a slot moves when its texture is recreated.
         THashMap<uint32, uint32>                SlotToEntry;

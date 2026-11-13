@@ -10,14 +10,14 @@ namespace Lumina
 {
     void CGameLibrary::QuitGame()
     {
-        if (GEngine != nullptr)
+        if (Global::GEngine != nullptr)
         {
-            GEngine->RequestExitGame();
+            Global::GEngine->RequestExitGame();
         }
     }
 
     bool CGameLibrary::IsHeadless()
     {
-        return GIsHeadless;
+        return Global::GIsHeadless;
     }
 }

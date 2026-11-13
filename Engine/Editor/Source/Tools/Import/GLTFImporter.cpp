@@ -1433,7 +1433,7 @@ namespace Lumina
                 Skeleton->Bones.Reserve(IntCastChecked<int32>(Skin.joints_count));
 
                 TVector<FMatrix4> InverseBindMatrices;
-                if (Skin.inverse_bind_matrices != nullptr)
+                if (Skin.inverse_bind_matrices != nullptr && Skin.inverse_bind_matrices->count > 0)
                 {
                     InverseBindMatrices.SetNum(IntCastChecked<int32>(Skin.inverse_bind_matrices->count));
                     cgltf_accessor_unpack_floats(Skin.inverse_bind_matrices,

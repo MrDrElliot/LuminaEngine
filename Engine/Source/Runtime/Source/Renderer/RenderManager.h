@@ -17,6 +17,7 @@
 
 namespace Lumina
 {
+    class CMesh;
     class IImGuiRenderer;
     class FSpirVShaderCompiler;
     class FShaderLibrary;
@@ -155,6 +156,9 @@ namespace Lumina
         // Deferred release of renderer-side state whose owner has gone away.
         NODISCARD RHI::FRenderReleaseQueue& GetReleaseQueue() { return ReleaseQueue; }
 
+        // Polls the mesh's staged resource every frame, since an upload batch landing marks nothing dirty. Any thread.
+        RUNTIME_API void WatchMeshPublish(CMesh* Mesh);
+
         // Lazily populated by the first render scene; aliased by all later scenes.
         NODISCARD FSharedRenderResources& GetSharedRenderResources() { return SharedRenderResources; }
         NODISCARD FScenePipelineCache& GetScenePipelineCache() { return ScenePipelineCache; }
@@ -173,6 +177,8 @@ namespace Lumina
         // Runs once the slot's fence has been waited, which is when its frame finished on the GPU.
         void PlotInputToGPUComplete(uint8 FrameIndex);
 
+        void PublishPendingMeshes();
+
         #if USING(WITH_DEV_UI)
         IImGuiRenderer*                     ImGuiRenderer = nullptr;
         #endif
@@ -186,6 +192,10 @@ namespace Lumina
         TUniquePtr<RHI::FMaterialCollectionManager> CollectionManager;
 
         RHI::FRenderReleaseQueue            ReleaseQueue;
+
+        // Guarded by MeshPublishMutex, since a reimport stages its mesh from a worker.
+        FMutex                              MeshPublishMutex;
+        TVector<TWeakObjectPtr<CMesh>>      MeshesAwaitingPublish;
 
         // Backing storage for GShaderLibrary / GShaderCompiler.
         FShaderLibrary*                     ShaderLibrary = nullptr;

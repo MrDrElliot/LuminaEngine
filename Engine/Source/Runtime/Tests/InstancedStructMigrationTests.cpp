@@ -193,17 +193,47 @@ TEST(InstancedStructMigration, ValueOutlivesItsTypesRegistryRef)
         RegistryRef = nullptr;
     }
 
-    TStrongObjectPtr<CScriptStruct> MigratedRef = BuildLayout(Schema);
-    ASSERT_TRUE(MigratedRef.IsValid());
-    MigratedRef->Metadata.AddValue("ScriptTypeName", "ReloadProbeRow");
+    ScriptTest::PublishStructs({ ScriptTest::StructDefinition("ReloadProbeRow", Schema) });
+    CScriptStruct* Published = FScriptStructRegistry::Get().Find(FName("ReloadProbeRow"));
+    ASSERT_NE(Published, nullptr);
 
     FInstancedStruct Value;
-    Value.InitializeAs(MigratedRef.Get());
-    MigratedRef = nullptr;
-    FScriptStructRegistry::Get().Clear();
+    Value.InitializeAs(Published);
+    ScriptTest::PublishStructs({});
 
     // The type is gone from the registry, so the value migrates to nothing, destroying its old contents on the way.
     EXPECT_FALSE(Value.IsValid());
+}
+
+// A reload mints a new type for the same name; a value nobody touched since still holds the old one.
+TEST(InstancedStructMigration, IdenticalRefreshesBothSidesBeforeComparing)
+{
+    FScriptExportSchema Before;
+    Before.Fields.Add(ScriptTest::ScalarField("Value", EPropertyTypeFlags::Int32));
+    ScriptTest::PublishStructs({ ScriptTest::StructDefinition("IdenticalReloadProbeRow", Before) });
+    CScriptStruct* Original = FScriptStructRegistry::Get().Find(FName("IdenticalReloadProbeRow"));
+    ASSERT_NE(Original, nullptr);
+
+    FInstancedStruct A;
+    FInstancedStruct B;
+    A.InitializeAs(Original);
+    B.InitializeAs(Original);
+    *Original->GetProperty(FName("Value"))->GetValuePtr<int32>(A.GetMutableMemory()) = 7;
+    *Original->GetProperty(FName("Value"))->GetValuePtr<int32>(B.GetMutableMemory()) = 7;
+
+    // A field is added, so the layout changes and the reload must mint a new type for this name.
+    FScriptExportSchema After;
+    After.Fields.Add(ScriptTest::ScalarField("Value", EPropertyTypeFlags::Int32));
+    After.Fields.Add(ScriptTest::ScalarField("Extra", EPropertyTypeFlags::Int32));
+    ScriptTest::PublishStructs({ ScriptTest::StructDefinition("IdenticalReloadProbeRow", After) });
+    CScriptStruct* Reloaded = FScriptStructRegistry::Get().Find(FName("IdenticalReloadProbeRow"));
+    ASSERT_NE(Reloaded, nullptr);
+    ASSERT_NE(Reloaded, Original) << "the reshape must have minted a new type for this to test anything";
+
+    // Only B is touched, so it refreshes to the reloaded type while A still holds the stale one.
+    B.GetMemory();
+
+    EXPECT_TRUE(A.Identical(B)) << "Identical must refresh both sides before comparing, not compare a stale type against a fresh one";
 }
 
 namespace InstancedStructMigrationTestsInternal
@@ -423,7 +453,7 @@ TEST(ArrayElementKind, AListSavedAsIntsLoadsIntoLongsAndFloatsByValue)
     Ints.Fields.Add(ListField("Numbers", MakeType(EPropertyTypeFlags::Int32)));
     CScriptStruct* Saved = BuildLayout(Ints);
     ASSERT_NE(Saved, nullptr);
-    const TVector<uint8> Bytes = SaveIntList(Saved, { 1, -2, 300000 }, GPackageFileLuminaVersion.FileVersion);
+    const TVector<uint8> Bytes = SaveIntList(Saved, { 1, -2, 300000 }, Global::GPackageFileLuminaVersion.FileVersion);
 
     for (EPropertyTypeFlags Kind : { EPropertyTypeFlags::Int64, EPropertyTypeFlags::Float })
     {

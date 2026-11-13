@@ -2,6 +2,7 @@
 
 #include "Audio/Graph/AudioGraphNodeBuilder.h"
 #include "Core/Math/Scalar.h"
+#include "Log/Log.h"
 #include "Memory/SmartPtr.h"
 
 namespace Lumina
@@ -319,6 +320,7 @@ namespace Lumina
                 {
                     Wave     = nullptr;
                     bPlaying = false;
+                    FinishedOut->Add(Frame);
                     return;
                 }
 
@@ -396,6 +398,10 @@ namespace Lumina
             {
                 const uint32 Listed = Params.NumInputs() > kFixedInputs ? Params.NumInputs() - kFixedInputs : 0u;
                 WaveCount = Math::Min(Listed, kMaxWaves);
+                if (Listed > kMaxWaves)
+                {
+                    LOG_WARN_ONCE("AudioGraph: RandomWave has {} wave inputs wired, dropping {} past the {} limit", Listed, Listed - kMaxWaves, kMaxWaves);
+                }
                 for (uint32 Index = 0; Index < WaveCount; ++Index)
                 {
                     Waves[Index] = Params.WaveIn(kFixedInputs + Index);

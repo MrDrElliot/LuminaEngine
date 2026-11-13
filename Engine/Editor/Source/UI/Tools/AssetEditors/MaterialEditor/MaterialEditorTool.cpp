@@ -118,6 +118,7 @@ namespace Lumina
         {
             if (Node == SelectedNode)
             {
+                SelectedNode = nullptr;
                 GetPropertyTable()->SetObject(nullptr, nullptr);
             }
         });
@@ -244,7 +245,7 @@ namespace Lumina
         {
             StaticMeshComponent.SetStaticMesh(nullptr);
 
-            const FAssetData* Data = MaterialInterface
+            const FAssetDataPtr Data = MaterialInterface
                 ? FAssetRegistry::Get().GetAssetByGUID(MaterialInterface->GetGUID())
                 : nullptr;
             if (Data != nullptr)
@@ -1398,11 +1399,9 @@ namespace Lumina
 
     void FMaterialEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const
     {
-        ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
-
         ImGuiID leftDockID = 0, rightDockID = 0, rightBottomDockID = 0;
 
-        ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &rightDockID, &leftDockID);
+        SplitDockingLayoutLeftRight(InDockspaceID, 0.3f, leftDockID, rightDockID);
         ImGui::DockBuilderSplitNode(rightDockID, ImGuiDir_Down, 0.3f, &rightBottomDockID, &rightDockID);
 
         ImGui::DockBuilderDockWindow(*GetToolWindowName(MaterialGraphName),       leftDockID);

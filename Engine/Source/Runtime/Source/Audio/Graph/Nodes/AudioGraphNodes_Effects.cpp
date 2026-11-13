@@ -9,14 +9,6 @@ namespace Lumina
 {
     namespace
     {
-        constexpr float kMinLevel = 1.0e-6f;
-
-        // Twenty over the natural log of ten, so decibels come from Math::Log.
-        constexpr float kDecibelsPerNeper = 8.6858896f;
-
-        FORCEINLINE float LinearToDecibels(float Linear) { return kDecibelsPerNeper * Math::Log(Math::Max(Linear, kMinLevel)); }
-        FORCEINLINE float DecibelsToLinear(float Decibels) { return Math::Pow(10.0f, Decibels * 0.05f); }
-
         // One pole smoothing coefficient that settles in roughly Seconds.
         FORCEINLINE float SmoothingCoefficient(float Seconds, uint32 SampleRate)
         {

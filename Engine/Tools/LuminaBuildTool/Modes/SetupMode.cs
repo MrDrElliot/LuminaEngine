@@ -360,9 +360,13 @@ public static class SetupMode
         {
             Log.Info("Git hooks path set to {0}", HooksPath);
         }
-        else
+        else if (Result.Error.Length == 0)
         {
             Log.Warning("git config returned {0}; hooks were not configured.", Result.ExitCode);
+        }
+        else
+        {
+            Log.Warning("git config returned {0}; hooks were not configured: {1}", Result.ExitCode, Result.Error.Trim());
         }
     }
 }

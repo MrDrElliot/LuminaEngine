@@ -26,7 +26,7 @@ namespace Lumina
         }
 
         FStringView Path = Prefab.GetPath();
-        FAssetData* AssetData = FAssetRegistry::Get().GetAssetByPath(Path);
+        FAssetDataPtr AssetData = FAssetRegistry::Get().GetAssetByPath(Path);
         if (AssetData == nullptr)
         {
             LOG_WARN("SpawnPrefab: no asset found at path '{}'", Path);

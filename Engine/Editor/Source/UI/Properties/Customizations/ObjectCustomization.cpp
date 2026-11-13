@@ -77,7 +77,7 @@ namespace Lumina
             {
                 if (HardObject)
                 {
-                    static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI())->OpenAssetEditor(HardObject->GetGUID());
+                    static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI())->OpenAssetEditor(HardObject->GetGUID());
                 }
             }
 
@@ -133,21 +133,13 @@ namespace Lumina
 
                 if (ImGui::BeginChild("##OptList", ComboDropDownSize, false, ImGuiChildFlags_NavFlattened))
                 {
-                    TVector<FAssetData*> Assets = FAssetRegistry::Get().FindByPredicate([&](const FAssetData& Data)
-                    {
-                        // Null when the asset's class is not registered, e.g. it belongs to an unloaded plugin.
-                        CClass* DataClass = FindObject<CClass>(Data.AssetClass);
-                        CClass* PropertyClass = ObjectProperty->GetPropertyClass();
-                        return DataClass != nullptr && DataClass->IsChildOf(PropertyClass);
-                    });
-                    
                     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(4, 4));
                     if (ImGui::BeginTable("##AssetTable", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInner))
                     {
                         ImGui::TableSetupColumn("##Thumb", ImGuiTableColumnFlags_WidthFixed, 42.0f);
                         ImGui::TableSetupColumn("##Name",  ImGuiTableColumnFlags_WidthStretch);
                         
-                        for (const FAssetData* Asset : Assets)
+                        for (const FAssetDataPtr& Asset : AssetsOfClass.Get(ObjectProperty->GetPropertyClass()))
                         {
                             if (!ImGuiX::PassSearchFilter(SearchFilter, *Asset->AssetName))
                             {
@@ -159,7 +151,7 @@ namespace Lumina
                                 continue;
                             }
 
-                            ImGui::PushID(Asset);
+                            ImGui::PushID(Asset.Get());
                             ImGui::TableNextRow(ImGuiTableRowFlags_None, 42.0f);
                             ImGui::TableSetColumnIndex(0);
                             
@@ -202,7 +194,7 @@ namespace Lumina
             }
         
             // Outside the disabled block, since this is most useful exactly when the slot is empty.
-            const FAssetData* BrowserSelection = AssetPickerFilter::GetSelectedAssetOfClass(ObjectProperty->GetPropertyClass());
+            const FAssetDataPtr BrowserSelection = AssetPickerFilter::GetSelectedAssetOfClass(ObjectProperty->GetPropertyClass());
             if (AssetPickerFilter::DrawUseSelectedButton(BrowserSelection != nullptr, "Select a compatible asset in the Content Browser to use it here."))
             {
                 if (CObject* Loaded = LoadObject<CObject>(BrowserSelection->AssetGUID))

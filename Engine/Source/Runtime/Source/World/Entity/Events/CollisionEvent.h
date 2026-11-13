@@ -31,11 +31,11 @@ namespace Lumina
         PROPERTY(Hidden)
         ECS::FEntity Other = ECS::NullEntity;
 
-        /** World-space contact point. */
+        /** World-space contact point, or the origin for an overlap end whose shape was destroyed. */
         PROPERTY(Hidden)
         FVector3 Point = FVector3(0.0f);
 
-        /** Contact normal pointing away from self toward the other body. */
+        /** Unit normal pointing away from self toward the other body, zero for an overlap whose shapes share a bounds center or were destroyed. */
         PROPERTY(Hidden)
         FVector3 Normal = FVector3(0.0f, 1.0f, 0.0f);
 

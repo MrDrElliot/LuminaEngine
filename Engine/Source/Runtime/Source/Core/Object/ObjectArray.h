@@ -118,8 +118,8 @@ namespace Lumina::Object::Internal
 
         CObjectBase* ResolveHandle(const FObjectHandle& Handle) const;
 
-        // Points every future resolve of From at To, so weak references follow a reinstanced object.
-        void AddReinstanceRedirect(const FObjectHandle& From, const FObjectHandle& To);
+        // Points every future resolve of each old handle at its replacement, so weak references follow a reinstanced object.
+        void AddReinstanceRedirects(const THashMap<FObjectHandle, FObjectHandle>& Redirects);
 
     private:
 
@@ -209,7 +209,7 @@ namespace Lumina::Object::Internal
     RUNTIME_API void Shutdown();
     RUNTIME_API FObjectHandle AllocateObject(CObjectBase* Object);
     RUNTIME_API void DeallocateObject(int32 Index);
-    RUNTIME_API void AddReinstanceRedirect(const FObjectHandle& From, const FObjectHandle& To);
+    RUNTIME_API void AddReinstanceRedirects(const THashMap<FObjectHandle, FObjectHandle>& Redirects);
     RUNTIME_API FObjectHandle GetHandleByIndex(int32 Index);
     RUNTIME_API bool ReleaseStrongRef(CObjectBase* Object);
     RUNTIME_API bool ConditionalDestroy(CObjectBase* Object);

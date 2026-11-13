@@ -5,6 +5,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -204,7 +205,28 @@ namespace Lumina::Platform
                     {
                         continue;
                     }
-                    return errno == EAGAIN;
+
+                    if (errno != EAGAIN)
+                    {
+                        return false;
+                    }
+
+                    pollfd PollFd = {};
+                    PollFd.fd     = Master;
+                    PollFd.events = POLLOUT;
+
+                    const int32 PollResult = poll(&PollFd, 1, -1);
+                    if (PollResult < 0 && errno == EINTR)
+                    {
+                        continue;
+                    }
+
+                    if (PollResult <= 0 || (PollFd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+                    {
+                        return false;
+                    }
+
+                    continue;
                 }
 
                 Written += static_cast<int32>(Chunk);

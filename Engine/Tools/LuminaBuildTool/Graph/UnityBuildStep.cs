@@ -116,6 +116,11 @@ public static class UnityBuildStep
 
         for (int Index = 0; Index < Groups.Count; Index++)
         {
+            if (Groups[Index].Count == 0)
+            {
+                continue;
+            }
+
             string BlobPath = Path.Combine(BlobDirectory, $"{Module.Name}.{Index}{BlobExtension}");
 
             if (PathUtils.WriteFileIfChanged(BlobPath, BuildBlobContents(Module, Groups[Index])))

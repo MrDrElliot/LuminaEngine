@@ -93,6 +93,9 @@ public sealed class RulesAssembly
     // Suites synthesized from a Tests directory beside a module's Build.cs, keyed by suite name.
     public IReadOnlyDictionary<string, TestSuite> DiscoveredTestSuites => TestSuites;
 
+    public IEnumerable<string> TestTargetNames =>
+        TargetTypes.Where(P => P.Value.IsDefined(typeof(TestTargetAttribute), false)).Select(P => P.Key);
+
     public static RulesAssembly Create(BuildDirectories Directories, bool bForceRecompile)
     {
         RulesScanner Scanner = new(Directories);

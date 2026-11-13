@@ -70,7 +70,7 @@ public static class RulesProjectGenerator
     }
 
     /// <summary>Groups a rules file by kind and owner, so the IDE shows Modules/Runtime, not forty Build.cs.</summary>
-    private static string MakeLinkPath(RulesFile File)
+    internal static string MakeLinkPath(RulesFile File)
     {
         string Category = File.Kind switch
         {

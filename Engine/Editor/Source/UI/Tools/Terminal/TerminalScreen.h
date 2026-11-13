@@ -54,7 +54,7 @@ namespace Lumina
     };
 
     /** Cell grid plus the VT parser that drives it, with no dependency on how it gets drawn. */
-    class FTerminalScreen
+    class EDITOR_API FTerminalScreen
     {
     public:
 

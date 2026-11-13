@@ -3,6 +3,7 @@
 #include "WeatherSystem.h"
 #include "WeatherInteractionSystem.h"
 
+#include "Animation/BindPose.h"
 #include "Animation/SkeletalMeshUtils.h"
 #include "Physics/PhysicsScene.h"
 #include "Renderer/SkeletonResource.h"
@@ -96,7 +97,7 @@ namespace Lumina
         }
 
         // Turns the authored contacts, or the ones found on the mesh, into bone indices and local offsets.
-        void ResolveContacts(SWeatherInteractorComponent& Interactor, const SSkeletalMeshComponent* Skeletal,
+        void ResolveContacts(ECS::FEntity Entity, SWeatherInteractorComponent& Interactor, const SSkeletalMeshComponent* Skeletal,
                              const FSkeletonResource* Skeleton, const SStaticMeshComponent* Static)
         {
             Interactor.Runtime.Reset();
@@ -122,13 +123,19 @@ namespace Lumina
 
             if (Skeleton != nullptr)
             {
-                for (int32 Bone = 0; Bone < Skeleton->GetNumBones() && static_cast<uint32>(Interactor.Runtime.Num()) < kMaxAutoContacts; ++Bone)
+                for (int32 Bone = 0; Bone < Skeleton->GetNumBones(); ++Bone)
                 {
                     const float Radius = AutoContactRadius(Skeleton->GetBone(Bone).Name);
-                    if (Radius > 0.0f)
+                    if (Radius <= 0.0f)
                     {
-                        AddResolved(Interactor, Bone, FVector3(0.0f), Radius);
+                        continue;
                     }
+                    if (static_cast<uint32>(Interactor.Runtime.Num()) >= kMaxAutoContacts)
+                    {
+                        LOG_WARN_ONCE("CWeatherInteractionSystem: entity {} has more than {} auto contact bones, the rest are dropped.", Entity.Value, kMaxAutoContacts);
+                        break;
+                    }
+                    AddResolved(Interactor, Bone, FVector3(0.0f), Radius);
                 }
                 if (!Interactor.Runtime.IsEmpty())
                 {
@@ -153,7 +160,7 @@ namespace Lumina
         // Component-space bone origin from the live pose, or the bind pose before the first one is evaluated.
         FMatrix4 BoneComponentMatrix(const SSkeletalMeshComponent& Skeletal, const FSkeletonResource& Skeleton, int32 Bone)
         {
-            const FMatrix4& BindGlobal = Skeleton.BindGlobalMatrices[Bone];
+            const FMatrix4 BindGlobal = AnimPose::GetBindGlobalMatrix(&Skeleton, Bone);
             return static_cast<size_t>(Skeletal.BoneTransforms.Num()) == (size_t)Skeleton.GetNumBones() ? Skeletal.BoneTransforms[Bone] * BindGlobal : BindGlobal;
         }
 
@@ -219,10 +226,15 @@ namespace Lumina
         const FVector3 Camera     = bHasCamera ? View.ViewVolume.GetViewPosition() : FVector3(0.0f);
 
         TInlineVector<FWaterSurfaceSource, kMaxWaterBodies> Waters;
-        WaterSources.ForEach([&](const SWaterComponent& Water, const STransformComponent& Transform)
+        WaterSources.ForEach([&](ECS::FEntity Entity, const SWaterComponent& Water, const STransformComponent& Transform)
         {
-            if (!Water.bInteractive || static_cast<uint32>(Waters.Num()) >= kMaxWaterBodies)
+            if (!Water.bInteractive)
             {
+                return;
+            }
+            if (static_cast<uint32>(Waters.Num()) >= kMaxWaterBodies)
+            {
+                LOG_WARN_ONCE("CWeatherInteractionSystem: more than {} interactive water bodies in one update, entity {} and later are dropped.", kMaxWaterBodies, Entity.Value);
                 return;
             }
             Waters.Emplace(&Water, Math::Inverse(WaterToWorld(Water, Transform.GetWorldMatrix())), Transform.GetWorldLocation().y);
@@ -249,7 +261,7 @@ namespace Lumina
 
             if (!Interactor.bResolved || Interactor.ResolvedSkeleton != Skeleton || Interactor.ResolvedContactCount != (uint32)Interactor.Contacts.Num())
             {
-                ResolveContacts(Interactor, Skeletal, Skeleton, Static);
+                ResolveContacts(Entity, Interactor, Skeletal, Skeleton, Static);
             }
 
             const FMatrix4 EntityWorld = Transform.GetWorldMatrix();
@@ -444,13 +456,19 @@ namespace Lumina
             // Characters are often a root entity with their meshes as children, which draw under their own ids.
             AddRecord(Entity);
             uint32 Children = 0u;
-            for (ECS::FEntity Child = Hierarchy.GetFirstChild(Entity); !Child.IsNull() && Children < kMaxWetChildren; Child = Hierarchy.GetNextSibling(Child))
+            for (ECS::FEntity Child = Hierarchy.GetFirstChild(Entity); !Child.IsNull(); Child = Hierarchy.GetNextSibling(Child))
             {
-                if (SkeletalMeshes.TryGet<SSkeletalMeshComponent>(Child) != nullptr || StaticMeshes.TryGet<SStaticMeshComponent>(Child) != nullptr)
+                if (SkeletalMeshes.TryGet<SSkeletalMeshComponent>(Child) == nullptr && StaticMeshes.TryGet<SStaticMeshComponent>(Child) == nullptr)
                 {
-                    AddRecord(Child);
-                    ++Children;
+                    continue;
                 }
+                if (Children >= kMaxWetChildren)
+                {
+                    LOG_WARN_ONCE("CWeatherInteractionSystem: entity {} has more than {} wet mesh children, the rest are not marked wet.", Entity.Value, kMaxWetChildren);
+                    break;
+                }
+                AddRecord(Child);
+                ++Children;
             }
         });
     }

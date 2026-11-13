@@ -45,11 +45,6 @@ namespace Lumina::NetPrediction
             return (int32)(Value >> 1) ^ -(int32)(Value & 1);
         }
 
-        float FixedStepOf(CWorld* World)
-        {
-            return 1.0f / Math::Max(10.0f, World->GetDefaultWorldSettings().PhysicsHz);
-        }
-
         int8 QuantizeAxis(float Value)
         {
             return (int8)Math::Clamp((int32)Math::Round(Math::Clamp(Value, -1.0f, 1.0f) * 127.0f), -127, 127);
@@ -124,6 +119,11 @@ namespace Lumina::NetPrediction
         return IsCharacter(Registry, Entity);
     }
 
+    float FixedStepOf(CWorld* World)
+    {
+        return 1.0f / Math::Max(10.0f, World->GetDefaultWorldSettings().PhysicsHz);
+    }
+
     FNetMoveCommand MakeMoveCommand(uint32 Seq, const FVector3& Move, float YawDegrees, uint32 Buttons)
     {
         FNetMoveCommand Command;
@@ -133,6 +133,11 @@ namespace Lumina::NetPrediction
         Command.Yaw     = QuantizeYaw(YawDegrees);
         Command.Buttons = Buttons;
         return Command;
+    }
+
+    float PitchDegrees(int16 Pitch)
+    {
+        return ClampViewPitch((float)Pitch / 100.0f);
     }
 
     void RefreshDrives(CWorld* World, ECS::FRegistry& Registry, bool bServer)
@@ -208,15 +213,8 @@ namespace Lumina::NetPrediction
         Prediction.Budget = 4.0f;
     }
 
-    void OnCharacterStep(CWorld* World, float FixedDt, bool bAfter)
+    void OnCharacterStep(ECS::FRegistry& Registry, Physics::IPhysicsScene& Scene, bool bAfter)
     {
-        if (World == nullptr || World->GetNetMode() != ENetMode::Client)
-        {
-            return;
-        }
-
-        ECS::FRegistry& Registry = World->GetEntityRegistry();
-        Physics::IPhysicsScene* Scene = World->GetPhysicsScene();
         auto View = Registry.View<ECS::Write<FNetPredictionClient>>();
         for (ECS::FEntity Entity : View)
         {
@@ -232,7 +230,7 @@ namespace Lumina::NetPrediction
             {
                 if (!Prediction.Pending.IsEmpty() && !Prediction.Pending.Last().bHasAfter)
                 {
-                    Prediction.Pending.Last().bHasAfter = Scene->GetCharacterNetState(Entity, Prediction.Pending.Last().After);
+                    Prediction.Pending.Last().bHasAfter = Scene.GetCharacterNetState(Entity, Prediction.Pending.Last().After);
                 }
                 continue;
             }
@@ -364,29 +362,29 @@ namespace Lumina::NetPrediction
 
             const uint32 First = (uint32)Prediction.Pending.Num() - Count;
 
-            static thread_local TVector<FNetMoveCommand> Upload;
+            TVector<FNetMoveCommand>& Upload = State.ReplicationScratch.MoveCommands;
             Upload.Reset();
             for (uint32 Index = First; Index < (uint32)Prediction.Pending.Num(); ++Index)
             {
                 Upload.Add(Prediction.Pending[Index].Command);
             }
-            TVector<uint8> Buffer;
+            TVector<uint8>& Buffer = State.ReplicationScratch.Buffer;
+            Buffer.Reset();
             WriteMoveCommands(Buffer, Net.NetGUID.Value, Upload.GetData(), Count);
             Net::SendFramed(*State.Transport, State.ServerConnection, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()), 1, ESendMode::UnreliableSequenced);
         }
     }
 
-    void ReceiveCommands(CWorld* World, ECS::FRegistry& Registry, uint32 Sender, const uint8* Data, SIZE_T Size)
+    void ReceiveCommands(ECS::FRegistry& Registry, Physics::IPhysicsScene& Scene, float FixedDt, uint32 Sender, const uint8* Data, SIZE_T Size)
     {
         FNetWorldState* State = Registry.Ctx().Find<FNetWorldState>();
-        Physics::IPhysicsScene* Scene = World->GetPhysicsScene();
-        if (State == nullptr || Scene == nullptr)
+        if (State == nullptr)
         {
             return;
         }
 
         uint32 Guid = 0;
-        TVector<FNetMoveCommand> Commands;
+        TVector<FNetMoveCommand>& Commands = State->ReplicationScratch.MoveCommands;
         if (!ReadMoveCommands(Data, Size, Guid, Commands))
         {
             return;
@@ -405,7 +403,6 @@ namespace Lumina::NetPrediction
             return;
         }
 
-        const float FixedDt = FixedStepOf(World);
         for (const FNetMoveCommand& Command : Commands)
         {
             if (Command.Seq <= Prediction->LastProcessed)
@@ -413,33 +410,49 @@ namespace Lumina::NetPrediction
                 continue;
             }
 
-            // Moves past the budget wait, since the client resends everything it has not seen confirmed.
+            // Moves past the budget wait for the next upload, which carries the newest MaxMovesPerUpload unconfirmed moves.
             if (Prediction->Budget < 1.0f)
             {
                 break;
             }
             Prediction->Budget -= 1.0f;
 
+            // Moves that slid out of the upload window are gone, so the host resyncs here and its next ack rebaselines the client.
+            if (Command.Seq > Prediction->LastProcessed + 1)
+            {
+                Prediction->SkippedMoves += Command.Seq - Prediction->LastProcessed - 1;
+                LOG_WARN_ONCE("[Net][Predict] Host skipped moves {} to {} that fell out of the upload window", Prediction->LastProcessed + 1, Command.Seq - 1);
+            }
+
             Controller->LookInput.x = YawDegrees(Command.Yaw);
-            Controller->LookInput.y = (float)Command.Pitch / 100.0f;
+            Controller->LookInput.y = PitchDegrees(Command.Pitch);
             Controller->Buttons     = Command.Buttons;
 
-            Scene->SimulateCharacterStep(Entity, ToInput(Command, 0.0f), FixedDt, false);
+            Scene.SimulateCharacterStep(Entity, ToInput(Command, 0.0f), FixedDt, false);
             Prediction->LastProcessed = Command.Seq;
             Prediction->AckSeq        = Command.Seq;
-            Prediction->bAckPending   = Scene->GetCharacterNetState(Entity, Prediction->AckState);
+            Prediction->bAckPending   = Scene.GetCharacterNetState(Entity, Prediction->AckState);
         }
     }
 
-    void TickBudgets(CWorld* World, ECS::FRegistry& Registry, float DeltaTime)
+    void TickBudgets(ECS::FRegistry& Registry, float FixedDt, float DeltaTime)
     {
-        const float FixedDt = FixedStepOf(World);
         const float Cap = MaxBudgetSeconds / FixedDt + 4.0f;
         for (ECS::FEntity Entity : Registry.View<ECS::Write<FNetPredictionServer>>())
         {
             FNetPredictionServer& Prediction = Registry.Get<ECS::Write<FNetPredictionServer>>(Entity);
             Prediction.Budget = Math::Min(Prediction.Budget + DeltaTime / FixedDt, Cap);
         }
+    }
+
+    void WriteMoveAck(TVector<uint8>& Buffer, uint32 Guid, uint32 Seq, const Physics::FCharacterNetState& State)
+    {
+        FNetArchive Writer(Buffer);
+        uint8 Type = static_cast<uint8>(ENetMessage::MoveAck);
+        Writer << Type;
+        Net::WriteNetGuid(Writer, Guid);
+        WriteVarUInt(Writer, Seq);
+        WriteState(Writer, State);
     }
 
     void SendAcks(ECS::FRegistry& Registry, FNetWorldState& State, float DeltaTime)
@@ -460,25 +473,15 @@ namespace Lumina::NetPrediction
             Prediction.bAckPending  = false;
             Prediction.TimeSinceAck = 0.0f;
 
-            TVector<uint8> Buffer;
-            FNetArchive Writer(Buffer);
-            uint8 Type = static_cast<uint8>(ENetMessage::MoveAck);
-            Writer << Type;
-            Net::WriteNetGuid(Writer, Net.NetGUID.Value);
-            WriteVarUInt(Writer, Prediction.AckSeq);
-            WriteState(Writer, Prediction.AckState);
+            TVector<uint8>& Buffer = State.ReplicationScratch.Buffer;
+            Buffer.Reset();
+            WriteMoveAck(Buffer, Net.NetGUID.Value, Prediction.AckSeq, Prediction.AckState);
             Net::SendFramed(*State.Transport, FConnectionHandle{ Net.OwningConnectionId }, Buffer.GetData(), static_cast<SIZE_T>(Buffer.Num()), 1, ESendMode::UnreliableSequenced);
         }
     }
 
-    void ReceiveAck(CWorld* World, ECS::FRegistry& Registry, FNetWorldState& State, const uint8* Data, SIZE_T Size)
+    void ReceiveAck(ECS::FRegistry& Registry, FNetWorldState& State, Physics::IPhysicsScene& Scene, float FixedDt, const uint8* Data, SIZE_T Size)
     {
-        Physics::IPhysicsScene* Scene = World->GetPhysicsScene();
-        if (Scene == nullptr)
-        {
-            return;
-        }
-
         FNetArchive Reader(Data, Size);
         uint8 Type = 0;
         Reader << Type;
@@ -528,14 +531,13 @@ namespace Lumina::NetPrediction
             Corrected.Velocity  = Host.Velocity;
             Corrected.bGrounded = Host.bGrounded;
             Corrected.JumpCount = Host.JumpCount;
-            Scene->SetCharacterNetState(Entity, Corrected);
+            Scene.SetCharacterNetState(Entity, Corrected);
 
-            const float FixedDt = FixedStepOf(World);
             for (int32 Later = Index + 1; Later < Prediction->Pending.Num(); ++Later)
             {
                 FPredictedMove& Move = Prediction->Pending[Later];
-                Scene->SimulateCharacterStep(Entity, ToInput(Move.Command, Move.MoveSpeed), FixedDt, true);
-                Move.bHasAfter = Scene->GetCharacterNetState(Entity, Move.After);
+                Scene.SimulateCharacterStep(Entity, ToInput(Move.Command, Move.MoveSpeed), FixedDt, true);
+                Move.bHasAfter = Scene.GetCharacterNetState(Entity, Move.After);
             }
 
             if (++Prediction->Corrections <= 5 || (Prediction->Corrections % 100) == 0)

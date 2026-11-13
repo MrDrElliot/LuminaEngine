@@ -27,9 +27,6 @@ namespace Lumina
 
         bool PassesFilter(FStringView Name, FStringView Hint) const;
 
-        char SearchBuffer[256] = {};
         FString SearchFilter;
-
-        THashMap<FString, FString> StringEditBuffers;
     };
 }

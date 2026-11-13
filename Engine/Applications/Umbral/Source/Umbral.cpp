@@ -134,14 +134,14 @@ int main(int ArgC, char** ArgV)
     Jobs::Initialize();
 
     FCommandLine ParsedCommandLine { ArgC, ArgV };
-    GCommandLine = &ParsedCommandLine;
+    Global::GCommandLine = &ParsedCommandLine;
 
     FWindow Window(FWindowSpecs{ .Title = "Umbral", .Extent = { 1600, 900 } });
 
     RHI::CreateDevice(RHI::FDeviceDesc{ .bValidation = !ParsedCommandLine.Has("novalidation") });
 
     FSpirVShaderCompiler ShaderCompiler;
-    GShaderCompiler = &ShaderCompiler;
+    Global::GShaderCompiler = &ShaderCompiler;
 
     RHI::FSwapchainTarget Target;
     Target.Initialize(RHI::CreateSurface(Window.GetWindow()), Window.GetExtent());
@@ -173,11 +173,11 @@ int main(int ArgC, char** ArgV)
     Renderer.Shutdown();
     Target.Shutdown();
 
-    GShaderCompiler = nullptr;
+    Global::GShaderCompiler = nullptr;
     RHI::FreeDevice();
 
     Jobs::Shutdown();
-    GCommandLine = nullptr;
+    Global::GCommandLine = nullptr;
 
     return bReady ? 0 : 1;
 }

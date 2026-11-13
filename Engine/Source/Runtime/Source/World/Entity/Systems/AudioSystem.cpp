@@ -14,19 +14,11 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::FrameEnd);
         RunsAfter<CCameraSystem>();
+        ExcludeFromHasWork(AllSources, Transforms);
     }
 
 	namespace AudioSystemInternal
 	{
-		float MoveTowards(float Current, float Target, float MaxDelta)
-		{
-			if (Math::Abs(Target - Current) <= MaxDelta)
-			{
-				return Target;
-			}
-			return Current + (Target > Current ? MaxDelta : -MaxDelta);
-		}
-
 		struct FVolumeGroupWinner
 		{
 			FName        Group;
@@ -101,7 +93,7 @@ namespace Lumina
 
 				const float Target = (Current.bListenerInside && bWinsGroup) ? Current.InsideWeight : 0.0f;
 				const float FadeTime = Target > Current.Gain ? Current.FadeInTime : Current.FadeOutTime;
-				Volume.SetIfChanged(&SAudioVolumeComponent::Gain, MoveTowards(Current.Gain, Target, FadeTime > 0.0f ? DeltaTime / FadeTime : 1.0f));
+				Volume.SetIfChanged(&SAudioVolumeComponent::Gain, Math::MoveTowards(Current.Gain, Target, FadeTime > 0.0f ? DeltaTime / FadeTime : 1.0f));
 
 				// A one-shot that played out stays quiet until the listener leaves and comes back.
 				if (Current.bPlaying && Audio::Context().GetVoiceState(Current.ActiveHandle) == EAudioVoiceState::Free)
@@ -164,11 +156,6 @@ namespace Lumina
 		}
 	}
 
-	bool CAudioSystem::HasWork(const SSystemContext& Context)
-	{
-		return AnyQueryHasRows(Listeners, Volumes, Sources, ProceduralSources);
-	}
-
 	void CAudioSystem::OnTeardown(const SExclusiveContext& Context)
 	{
 
@@ -229,6 +216,11 @@ namespace Lumina
 			{
 				const uint32 Index = (uint32)Math::Clamp(Listener.ListenerIndex, 0, 3);
 				const ECS::FEntity Ears = (Listener.bFollowActiveCamera && Index == 0 && bCameraHasTransform) ? ActiveCamera : Entity;
+				if (!Transforms.Contains(Ears))
+				{
+					return;
+				}
+
 				const STransformComponent& Transform = Transforms.Get<STransformComponent>(Ears);
 				const FVector3 Position = Transform.GetWorldLocation();
 
@@ -378,7 +370,7 @@ namespace Lumina
 
 				const float PreviousOcclusion = Audio.OcclusionCurrent;
 				const float Rate = Audio.Occlusion.InterpTime > 0.0f ? (DeltaTime / Audio.Occlusion.InterpTime) : 1.0f;
-				Source.SetIfChanged(&SAudioSourceComponent::OcclusionCurrent, MoveTowards(Audio.OcclusionCurrent, Audio.OcclusionTarget, Rate));
+				Source.SetIfChanged(&SAudioSourceComponent::OcclusionCurrent, Math::MoveTowards(Audio.OcclusionCurrent, Audio.OcclusionTarget, Rate));
 
 				if (Math::Abs(Audio.OcclusionCurrent - PreviousOcclusion) > 0.001f)
 				{
@@ -410,7 +402,7 @@ namespace Lumina
 
 				if (Audio.bPlaying && Audio.ActiveHandle.IsValid())
 				{
-					if (Audio.bSpatialized)
+					if (Audio.bSpatialized && Transforms.Contains(Entity))
 					{
 						const STransformComponent& Transform = Transforms.Get<STransformComponent>(Entity);
 						Audio::Context().SetPosition(Audio.ActiveHandle, Transform.GetWorldLocation());

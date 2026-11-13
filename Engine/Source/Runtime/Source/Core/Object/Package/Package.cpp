@@ -538,55 +538,61 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
 
         // A clamped read one byte past the limit returns a small package whole from a single open, so only a large one pays for a size query.
+        TVector<uint8> RawBinary;
         {
-            TVector<uint8> RawBinary;
+            LUMINA_PROFILE_SECTION("Package File Read");
+            if (!VFS::ReadFileRange(RawBinary, Path, 0, kWholeFileReadLimit + 1))
             {
-                LUMINA_PROFILE_SECTION("Package File Read");
-                if (!VFS::ReadFileRange(RawBinary, Path, 0, kWholeFileReadLimit + 1))
-                {
-                    return false;
-                }
-            }
-
-            if (static_cast<uint64>(RawBinary.Num()) <= kWholeFileReadLimit)
-            {
-                FBulkRegion Region;
-                if (ParseBulkTrailer(RawBinary.GetData(), RawBinary.Num(), (uint64)RawBinary.Num(), Region))
-                {
-                    // The bulk bytes and trailer are not part of the deflate stream, so trim to the container.
-                    RawBinary.SetNum(IntCastChecked<int32>(Region.FileOffset));
-                    if (OutBulkRegion)
-                    {
-                        *OutBulkRegion = Region;
-                    }
-                }
-
-                return DecompressPackageBinary(RawBinary, OutBinary);
+                return false;
             }
         }
 
-        const uint64 FileSize = (uint64)VFS::Size(Path);
-
-        // A large file checks for a bulk region before reading anything big.
-        uint64 ContainerSize = FileSize;
-
-        TVector<uint8> Tail;
-        if (VFS::ReadFileRange(Tail, Path, FileSize - sizeof(FPackageBulkTrailer), sizeof(FPackageBulkTrailer)))
+        if (static_cast<uint64>(RawBinary.Num()) <= kWholeFileReadLimit)
         {
             FBulkRegion Region;
-            if (ParseBulkTrailer(Tail.GetData(), Tail.Num(), FileSize, Region))
+            if (ParseBulkTrailer(RawBinary.GetData(), RawBinary.Num(), (uint64)RawBinary.Num(), Region))
             {
-                ContainerSize = (uint64)Region.FileOffset;
+                // The bulk bytes and trailer are not part of the deflate stream, so trim to the container.
+                RawBinary.SetNum(IntCastChecked<int32>(Region.FileOffset));
                 if (OutBulkRegion)
                 {
                     *OutBulkRegion = Region;
                 }
             }
+
+            return DecompressPackageBinary(RawBinary, OutBinary);
         }
 
-        TVector<uint8> RawBinary;
-        if (!VFS::ReadFileRange(RawBinary, Path, 0, ContainerSize))
+        // A size below what was already read means the file vanished or is still being written.
+        const int64 FileSize = VFS::Size(Path);
+        if (FileSize < RawBinary.Num())
         {
+            LOG_ERROR("ReadPackageFile: {} reports {} bytes after {} were read", Path, FileSize, RawBinary.Num());
+            return false;
+        }
+
+        // A large file checks for a bulk region before reading anything big.
+        TVector<uint8> Tail;
+        if (!VFS::ReadFileRange(Tail, Path, FileSize - sizeof(FPackageBulkTrailer), sizeof(FPackageBulkTrailer)))
+        {
+            LOG_ERROR("ReadPackageFile: failed to read the trailer of {}", Path);
+            return false;
+        }
+
+        int64       ContainerSize = FileSize;
+        FBulkRegion Region;
+        if (ParseBulkTrailer(Tail.GetData(), Tail.Num(), (uint64)FileSize, Region))
+        {
+            ContainerSize = Region.FileOffset;
+            if (OutBulkRegion)
+            {
+                *OutBulkRegion = Region;
+            }
+        }
+
+        if (!VFS::ReadFileRange(RawBinary, Path, 0, ContainerSize) || RawBinary.Num() != ContainerSize)
+        {
+            LOG_ERROR("ReadPackageFile: {} returned {} of {} container bytes", Path, RawBinary.Num(), ContainerSize);
             return false;
         }
 
@@ -612,6 +618,51 @@ namespace Lumina
         Ar.Seek(Resume);
 
         return !Ar.HasError();
+    }
+
+    bool CPackage::IsReadableHeader(const FPackageHeader& Header, FStringView Path, int64 ContainerSize)
+    {
+        if (Header.Tag != PACKAGE_FILE_TAG)
+        {
+            LOG_ERROR("{} is not a valid Lumina package (tag mismatch)", Path);
+            return false;
+        }
+
+        // Older files load fine since readers branch on the file version, but newer ones cannot be read.
+        if (Header.Version > Global::GPackageFileLuminaVersion.FileVersion)
+        {
+            LOG_ERROR("{} was saved with engine version {} (current {}); cannot load files from a newer engine", Path, Header.Version, Global::GPackageFileLuminaVersion.FileVersion);
+            return false;
+        }
+
+        // A table needs at least its count inside the container, and a zero thumbnail offset means none was written.
+        auto InRange = [ContainerSize](int64 Offset) { return Offset >= 0 && Offset < ContainerSize; };
+        if (!InRange(Header.ImportTableOffset) || !InRange(Header.ExportTableOffset) || !InRange(Header.ThumbnailDataOffset))
+        {
+            LOG_ERROR("{} has out-of-range header offsets (size={}, import={}, export={}, thumb={})",
+                Path, ContainerSize, Header.ImportTableOffset, Header.ExportTableOffset, Header.ThumbnailDataOffset);
+            return false;
+        }
+
+        return true;
+    }
+
+    bool CPackage::ReadPackageContainer(FStringView Path, TVector<uint8>& OutBinary, FPackageHeader& OutHeader, FBulkRegion* OutBulkRegion)
+    {
+        if (!ReadPackageFile(Path, OutBinary, OutBulkRegion))
+        {
+            return false;
+        }
+
+        if (static_cast<size_t>(OutBinary.Num()) < sizeof(FPackageHeader))
+        {
+            LOG_ERROR("{} is too small to be a valid package", Path);
+            return false;
+        }
+
+        FMemoryReader Reader(OutBinary);
+        Reader << OutHeader;
+        return IsReadableHeader(OutHeader, Path, OutBinary.Num());
     }
 
     bool CPackage::ReadBulkData(const FBulkDataRef& Ref, TVector<uint8>& OutBytes, uint32 ExpectedGeneration) const
@@ -812,15 +863,14 @@ namespace Lumina
         }
         
         TVector<uint8> PackageBlob;
-        if (!ReadPackageFile(Path, PackageBlob))
+        FPackageHeader Header;
+        if (!ReadPackageContainer(Path, PackageBlob, Header))
         {
             LOG_ERROR("Failed to load package file at path {}", Path);
             return false;
         }
 
-        FPackageHeader Header;
         FPackageContainerReader Reader(PackageBlob);
-        Reader << Header;
         Reader.SetFileVersion(Header.Version);
 
         // the export table's names are slots, so the table has to be standing before it is read
@@ -833,9 +883,15 @@ namespace Lumina
         Reader.SetNameTable(&Names);
 
         Reader.Seek(Header.ExportTableOffset);
-        
+
         TVector<FObjectExport> Exports;
         Reader << Exports;
+
+        if (Reader.HasError())
+        {
+            LOG_ERROR("DestroyPackage: {} has a corrupt export table", Path);
+            return false;
+        }
 
         FName PackageFileName = VFS::FileName(Path, true);
 
@@ -1138,40 +1194,23 @@ namespace Lumina
         {
             Package->SetBulkSource(LoadedBulkRegion, Path);
 
+            TSharedPtr<FPackageFileBytes> Bytes;
             {
                 LUMINA_PROFILE_SECTION("Create Package Loader");
-                Package->CreateLoader(FileBinary);
+                Bytes = Package->CreateLoader(FileBinary);
             }
 
-            FPackageLoader Reader(Package->LoaderBytes, Package);
-        
+            FPackageLoader Reader(Bytes, Package);
+
             FPackageHeader PackageHeader;
             Reader << PackageHeader;
-
-            const int64 LoaderSize = Reader.TotalSize();
-            auto OffsetInRange = [LoaderSize](int64 Off)
-            {
-                return Off >= 0 && Off <= LoaderSize;
-            };
 
             // both tables below name things through slots, so the table they index is read first
             TSharedPtr<FPackageNameTable> Names = MakeShared<FPackageNameTable>();
 
-            if (PackageHeader.Tag != PACKAGE_FILE_TAG)
+            if (!IsReadableHeader(PackageHeader, Path, Reader.TotalSize()))
             {
-                LOG_ERROR("LoadPackage: {} is not a valid Lumina package (tag mismatch)", Path);
-            }
-            else if (PackageHeader.Version > GPackageFileLuminaVersion.FileVersion)
-            {
-                // Older files load fine since readers branch on the file version, but newer ones cannot be read.
-                LOG_ERROR("LoadPackage: {} was saved with engine version {} (current {}); cannot load files from a newer engine", Path, PackageHeader.Version, GPackageFileLuminaVersion.FileVersion);
-            }
-            else if (!OffsetInRange(PackageHeader.ImportTableOffset) ||
-                     !OffsetInRange(PackageHeader.ExportTableOffset) ||
-                     !OffsetInRange(PackageHeader.ThumbnailDataOffset))
-            {
-                LOG_ERROR("LoadPackage: {} has out-of-range header offsets (size={}, import={}, export={}, thumb={})",
-                    Path, LoaderSize, PackageHeader.ImportTableOffset, PackageHeader.ExportTableOffset, PackageHeader.ThumbnailDataOffset);
+                // It logged why, and the failed state below is what refuses the load.
             }
             else if (!ReadNameTable(Reader, PackageHeader, *Names))
             {
@@ -1181,11 +1220,10 @@ namespace Lumina
             {
                 // Kept on the package so every later reader over these bytes branches for migration the same way.
                 Reader.SetFileVersion(PackageHeader.Version);
-                Package->LoaderFileVersion = PackageHeader.Version;
-
                 {
                     FScopeLock NamesLock(Package->LoaderBytesMutex);
-                    Package->LoaderNames = Names;
+                    Package->LoaderFileVersion = PackageHeader.Version;
+                    Package->LoaderNames       = Names;
                 }
                 Reader.SetNameTable(Names);
 
@@ -1195,13 +1233,18 @@ namespace Lumina
                 Reader.Seek(PackageHeader.ExportTableOffset);
                 Reader << Package->ExportTable;
 
-                if (Reader.HasError())
+                // A table cut short by truncation would hand out exports whose data is not there.
+                bSuccess = !Reader.HasError();
+                if (!bSuccess)
                 {
                     LOG_ERROR("LoadPackage: {} has a corrupt import or export table", Path);
                     Package->ImportTable.Reset();
                     Package->ExportTable.Reset();
                 }
+            }
 
+            if (bSuccess)
+            {
 #if USING(WITH_EDITOR)
                 // Non-editor saves encode no thumbnail (offset == 0).
                 if (PackageHeader.ThumbnailDataOffset != 0)
@@ -1215,15 +1258,14 @@ namespace Lumina
 #endif
 
                 const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - Start);
-                
-                bSuccess = true;
+
                 if (DurationMs >= kSlowPackageLoadMs)
                 {
-                    LOG_INFO("Slow package load: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.Num(), Package->ImportTable.Num(), Package->LoaderBytes->Size, DurationMs, Threading::GetThreadID());
+                    LOG_INFO("Slow package load: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.Num(), Package->ImportTable.Num(), Bytes->Size, DurationMs, Threading::GetThreadID());
                 }
                 else
                 {
-                    LOG_TRACE("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.Num(), Package->ImportTable.Num(), Package->LoaderBytes->Size, DurationMs, Threading::GetThreadID());
+                    LOG_TRACE("Loaded Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{}] Bytes | [{}] ms | Thread: [{}])", Package->GetName(), Package->ExportTable.Num(), Package->ImportTable.Num(), Bytes->Size, DurationMs, Threading::GetThreadID());
                 }
 
 #if USING(WITH_EDITOR)
@@ -1233,7 +1275,7 @@ namespace Lumina
                 Entry.Outcome     = EAssetLoadOutcome::Loaded;
                 Entry.DurationMs  = DurationMs;
                 Entry.CompletedAt = PlatformTime::Seconds();
-                Entry.Bytes       = Package->LoaderBytes->Size;
+                Entry.Bytes       = Bytes->Size;
                 Entry.Exports     = (uint32)Package->ExportTable.Num();
                 Entry.Imports     = (uint32)Package->ImportTable.Num();
                 Entry.ThreadId    = (uint32)Threading::GetThreadID();
@@ -1245,9 +1287,9 @@ namespace Lumina
         Package->LoadState.store(bSuccess ? ELoadState::Loaded : ELoadState::Failed, std::memory_order_release);
         
         std::atomic_notify_all(&Package->LoadState);
-        
+
         Package->AddToRoot();
-        return Package;
+        return bSuccess ? Package : nullptr;
     }
 
     namespace
@@ -1293,7 +1335,7 @@ namespace Lumina
 
             FPackageHeader Header;
             Header.Tag = PACKAGE_FILE_TAG;
-            Header.Version = (GForcedSaveVersion != 0) ? GForcedSaveVersion : GPackageFileLuminaVersion.FileVersion;
+            Header.Version = (GForcedSaveVersion != 0) ? GForcedSaveVersion : Global::GPackageFileLuminaVersion.FileVersion;
 
             // every encoding the writer branches on comes off this, so it has to agree with the header
             Writer.SetFileVersion(Header.Version);
@@ -1315,19 +1357,14 @@ namespace Lumina
             Header.ExportCount = Package->ExportTable.Num();
 
             // Cook output never carries thumbnails, they're editor-only.
-            if (bCooking)
-            {
-                Header.ThumbnailDataOffset = 0;
-            }
-            else
-            {
+            Header.ThumbnailDataOffset = 0;
 #if USING(WITH_EDITOR)
+            if (!bCooking)
+            {
                 Header.ThumbnailDataOffset = Writer.Tell();
                 Package->GetPackageThumbnail()->Serialize(Writer);
-#else
-                Header.ThumbnailDataOffset = 0;
-#endif
             }
+#endif
 
             // last, because every name above had to be seen before the table could be written
             if (Header.Version >= (int32)ELuminaEngineVersion::PACKAGE_NAME_TABLE)
@@ -1543,19 +1580,16 @@ namespace Lumina
 
         TVector<uint8> Binary;
         FBulkRegion    Bulk;
-        if (!ReadPackageFile(Path, Binary, &Bulk) || Bulk.Size > 0 || static_cast<size_t>(Binary.Num()) < sizeof(FPackageHeader))
+        FPackageHeader Header{};
+        if (!ReadPackageContainer(Path, Binary, Header, &Bulk) || Bulk.Size > 0)
         {
             return false;
         }
 
-        FPackageHeader Header{};
-        {
-            FMemoryReader Reader(Binary);
-            Reader << Header;
-        }
-
         // A save from this engine is what a load and resave would write, apart from the thumbnail.
-        if (Header.Tag != PACKAGE_FILE_TAG || Header.Version != GPackageFileLuminaVersion.FileVersion || Header.ExportCount != 1)
+        const int64 FileSize = Binary.Num();
+        if (Header.Version != Global::GPackageFileLuminaVersion.FileVersion || Header.ExportCount != 1
+            || Header.NameTableOffset <= 0 || Header.NameTableOffset > FileSize)
         {
             return false;
         }
@@ -1563,9 +1597,7 @@ namespace Lumina
         // The thumbnail sits between the import table and the name table, which is always last.
         if (Header.ThumbnailDataOffset != 0)
         {
-            const int64 FileSize = Binary.Num();
-            if (Header.ThumbnailDataOffset < Header.ImportTableOffset || Header.NameTableOffset < Header.ThumbnailDataOffset
-                || Header.NameTableOffset > FileSize)
+            if (Header.ThumbnailDataOffset < Header.ImportTableOffset || Header.NameTableOffset < Header.ThumbnailDataOffset)
             {
                 return false;
             }
@@ -1584,7 +1616,7 @@ namespace Lumina
         return CompressPackageBinary(Binary, OutCompressed, kZstdLevelCook);
     }
 
-    void CPackage::CreateLoader(const TVector<uint8>& FileBinary)
+    TSharedPtr<FPackageFileBytes> CPackage::CreateLoader(const TVector<uint8>& FileBinary)
     {
         void* HeapData = Memory::Malloc(FileBinary.Num());
         Memory::Memcpy(HeapData, FileBinary.GetData(), FileBinary.Num());
@@ -1593,36 +1625,83 @@ namespace Lumina
 
         // Publication only; a reader already walking the old bytes keeps them alive through its own reference.
         FScopeLock Lock(LoaderBytesMutex);
-        LoaderBytes = Move(NewBytes);
+        LoaderBytes = NewBytes;
 
         // whatever version the save stamped, overwritten by a caller that parsed an older header
-        LoaderFileVersion = (GForcedSaveVersion != 0) ? GForcedSaveVersion : GPackageFileLuminaVersion.FileVersion;
+        LoaderFileVersion = (GForcedSaveVersion != 0) ? GForcedSaveVersion : Global::GPackageFileLuminaVersion.FileVersion;
 
         // these bytes carry their own table, a reader still on the old ones keeps it through its reference
         LoaderNames.reset();
+        return NewBytes;
     }
 
     TSharedPtr<FPackageFileBytes> CPackage::AcquireLoaderBytes(int32& OutFileVersion, TSharedPtr<const FPackageNameTable>& OutNames)
     {
+        TSharedPtr<FPackageFileBytes> Bytes;
         {
             FScopeLock Lock(LoaderBytesMutex);
+            // a save republishes the bytes and drops the table with them, so resident bytes alone are not enough
             if (LoaderBytes && LoaderNames)
             {
                 OutFileVersion = LoaderFileVersion;
                 OutNames       = LoaderNames;
                 return LoaderBytes;
             }
+            Bytes = LoaderBytes;
         }
 
-        if (!EnsureLoader())
+        // Mid-rename the name points at a file not yet written, so resolving through it would fail.
+        const FFixedString Path = BulkSourcePath.IsEmpty() ? GetPackagePath() : BulkSourcePath;
+
+        if (!Bytes)
         {
+            if (IsTransientPackage() || !VFS::Exists(Path))
+            {
+                return nullptr;
+            }
+
+            TVector<uint8> FileBinary;
+            FBulkRegion    ReopenedRegion;
+            if (!ReadPackageFile(Path, FileBinary, &ReopenedRegion))
+            {
+                LOG_ERROR("AcquireLoaderBytes: failed to re-read package file {}", Path);
+                return nullptr;
+            }
+
+            SetBulkSource(ReopenedRegion, Path);
+            Bytes = CreateLoader(FileBinary);
+        }
+
+        FPackageLoader Reader(Bytes, this);
+
+        FPackageHeader Header;
+        Reader << Header;
+        Reader.SetFileVersion(Header.Version);
+
+        // The file can change on disk after the first load, and a newer engine's bytes would misparse against this export table.
+        TSharedPtr<FPackageNameTable> Names = MakeShared<FPackageNameTable>();
+        if (!IsReadableHeader(Header, Path, Reader.TotalSize()) || !ReadNameTable(Reader, Header, *Names))
+        {
+            FScopeLock Lock(LoaderBytesMutex);
+            if (LoaderBytes == Bytes)
+            {
+                LoaderBytes.reset();
+                LoaderNames.reset();
+            }
             return nullptr;
         }
 
+        OutFileVersion = Header.Version;
+        OutNames       = Names;
+
+        // Published only while these are still the resident bytes, so a table never pairs with a later save's or a reopened file's bytes.
         FScopeLock Lock(LoaderBytesMutex);
-        OutFileVersion = LoaderFileVersion;
-        OutNames       = LoaderNames;
-        return LoaderBytes;
+        if (LoaderBytes == Bytes)
+        {
+            LoaderFileVersion = Header.Version;
+            LoaderNames       = Move(Names);
+        }
+        return Bytes;
     }
 
     void CPackage::SetBulkSource(const FBulkRegion& Region, FStringView Path)
@@ -1647,87 +1726,6 @@ namespace Lumina
             && BulkRegion.IsValid()
             && !BulkSourcePath.IsEmpty()
             && VFS::Exists(BulkSourcePath);
-    }
-
-    bool CPackage::EnsureLoader()
-    {
-        // a save republishes the bytes and drops the table with them, so resident bytes are not enough
-        {
-            FScopeLock Lock(LoaderBytesMutex);
-            if (LoaderBytes && LoaderNames)
-            {
-                return true;
-            }
-        }
-
-        TSharedPtr<FPackageFileBytes> Bytes;
-        {
-            FScopeLock Lock(LoaderBytesMutex);
-            Bytes = LoaderBytes;
-        }
-
-        // Mid-rename the name points at a file not yet written, so resolving through it would fail.
-        const FFixedString Path = BulkSourcePath.IsEmpty() ? GetPackagePath() : BulkSourcePath;
-
-        if (!Bytes)
-        {
-            if (IsTransientPackage() || !VFS::Exists(Path))
-            {
-                return false;
-            }
-
-            TVector<uint8> FileBinary;
-            FBulkRegion    ReopenedRegion;
-            if (!ReadPackageFile(Path, FileBinary, &ReopenedRegion))
-            {
-                LOG_ERROR("EnsureLoader: failed to re-read package file {}", Path);
-                return false;
-            }
-
-            SetBulkSource(ReopenedRegion, Path);
-
-            CreateLoader(FileBinary);
-
-            FScopeLock Lock(LoaderBytesMutex);
-            Bytes = LoaderBytes;
-        }
-
-        if (!Bytes)
-        {
-            return false;
-        }
-
-        FPackageLoader Reader(Bytes, this);
-
-        FPackageHeader Header;
-        Reader << Header;
-
-        if (Header.Tag != PACKAGE_FILE_TAG)
-        {
-            LOG_ERROR("EnsureLoader: {} is not a valid Lumina package (tag mismatch)", Path);
-            FScopeLock Lock(LoaderBytesMutex);
-            LoaderBytes.reset();
-            LoaderNames.reset();
-            return false;
-        }
-
-        Reader.SetFileVersion(Header.Version);
-
-        TSharedPtr<FPackageNameTable> Names = MakeShared<FPackageNameTable>();
-        if (!ReadNameTable(Reader, Header, *Names))
-        {
-            LOG_ERROR("EnsureLoader: {} has an unreadable name table", Path);
-            FScopeLock Lock(LoaderBytesMutex);
-            LoaderBytes.reset();
-            LoaderNames.reset();
-            return false;
-        }
-
-        // A fresh archive defaults to the current version; stamp the file's own version or an older asset is parsed as if saved today.
-        FScopeLock Lock(LoaderBytesMutex);
-        LoaderFileVersion = Header.Version;
-        LoaderNames       = Move(Names);
-        return true;
     }
 
     void CPackage::ConditionalDropLoader()
@@ -2070,7 +2068,7 @@ namespace Lumina
         TVector<FFixedString>       NodePaths;
         TVector<THashSet<int32>>    NodeDeps;
 
-        auto GetOrAddNode = [&](const FGuid& Guid, const FAssetData* Data) -> int32
+        auto GetOrAddNode = [&](const FGuid& Guid, const FAssetDataPtr& Data) -> int32
         {
             auto It = GuidToNode.Find(Guid);
             if (It != nullptr)
@@ -2098,7 +2096,7 @@ namespace Lumina
                 continue;
             }
 
-            const FAssetData* Data = Registry.GetAssetByGUID(Guid);
+            const FAssetDataPtr Data = Registry.GetAssetByGUID(Guid);
             if (Data == nullptr)
             {
                 continue; // unresolvable ref; the inline fallback during serialize handles it
@@ -2114,7 +2112,7 @@ namespace Lumina
                     continue;
                 }
 
-                if (const FAssetData* DepData = Registry.GetAssetByGUID(Dep.TargetGUID))
+                if (const FAssetDataPtr DepData = Registry.GetAssetByGUID(Dep.TargetGUID))
                 {
                     const int32 DepIdx = GetOrAddNode(Dep.TargetGUID, DepData);
                     if (DepIdx != NodeIdx)
@@ -2261,7 +2259,7 @@ namespace Lumina
         {
             return Existing;
         }
-        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(GUID))
+        if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(GUID))
         {
             if (CPackage* Package = LoadPackage(Data->Path))
             {

@@ -289,6 +289,8 @@ namespace Lumina
 
         bool IsStreamable() const { return TextureResource && TextureResource->IsStreamable(); }
 
+        bool IsResidencyBlocked() const { return bResidencyBlocked; }
+
         bool IsSRGB() const { return ColorSpace == ETextureColorSpace::SRGB; }
 
         // True when sampling returns linear light, so a UI preview has to encode it before display.

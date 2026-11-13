@@ -11,7 +11,7 @@ namespace Lumina
     {
     public:
 
-        const char* GetTypeName() override { return "Delegate"; }
+        const char* GetTypeName() const override { return "Delegate"; }
 
         // Argument type spellings in declaration order, for the C# accessor.
         std::vector<std::string> ArgTypeNames;

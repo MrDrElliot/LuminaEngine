@@ -21,7 +21,7 @@ namespace Lumina::Object::Internal
     FObjectHandle AllocateObject(CObjectBase* Object) { return GObjectArray.AllocateObject(Object); }
     void DeallocateObject(int32 Index) { GObjectArray.DeallocateObject(Index); }
     CObjectBase* ResolveHandle(const FObjectHandle& Handle) { return GObjectArray.ResolveHandle(Handle); }
-    void AddReinstanceRedirect(const FObjectHandle& From, const FObjectHandle& To) { GObjectArray.AddReinstanceRedirect(From, To); }
+    void AddReinstanceRedirects(const THashMap<FObjectHandle, FObjectHandle>& Redirects) { GObjectArray.AddReinstanceRedirects(Redirects); }
     FObjectHandle GetHandleByObject(const CObjectBase* Object) { return GObjectArray.GetHandleByObject(Object); }
     FObjectHandle GetHandleByIndex(int32 Index) { return GObjectArray.GetHandleByIndex(Index); }
     FCObjectEntry* GetEntry(const CObjectBase* Object) { return GObjectArray.GetEntry(Object); }
@@ -317,15 +317,29 @@ namespace Lumina::Object::Internal
         Shard.QuarantineCursor = (Shard.QuarantineCursor + 1) % QuarantineCapacity;
     }
 
-    void FCObjectArray::AddReinstanceRedirect(const FObjectHandle& From, const FObjectHandle& To)
+    void FCObjectArray::AddReinstanceRedirects(const THashMap<FObjectHandle, FObjectHandle>& Redirects)
     {
-        if (!From.IsValid() || !To.IsValid() || From == To)
-        {
-            return;
-        }
-
         TScopeLock<FRecursiveMutex> Lock(Mutex);
-        ReinstanceRedirects.Add(From, To);
+
+        // Every entry stays one hop, and one whose target died without being reinstanced can never resolve again.
+        ReinstanceRedirects.RemoveAll([&](auto& Entry)
+        {
+            if (const FObjectHandle* Next = Redirects.Find(Entry.Value))
+            {
+                Entry.Value = *Next;
+                return false;
+            }
+            const FCObjectEntry* Item = ChunkedArray.GetItem(Entry.Value.Index);
+            return Item == nullptr || Item->GetGeneration() != Entry.Value.Generation;
+        });
+
+        for (const auto& [From, To] : Redirects)
+        {
+            if (From.IsValid() && To.IsValid() && From != To)
+            {
+                ReinstanceRedirects.Add(From, To);
+            }
+        }
     }
 
     CObjectBase* FCObjectArray::ResolveRedirect(const FObjectHandle& Handle) const
@@ -335,27 +349,20 @@ namespace Lumina::Object::Internal
             return nullptr;
         }
 
-        // An object reinstanced twice leaves a chain, and the bound keeps a cycle from hanging the resolve.
-        FObjectHandle Current = Handle;
-        for (int32 Hops = 0; Hops < 8; ++Hops)
+        const FObjectHandle* Target = ReinstanceRedirects.Find(Handle);
+        if (Target == nullptr)
         {
-            const auto Found = ReinstanceRedirects.Find(Current);
-            if (Found == nullptr)
-            {
-                return nullptr;
-            }
-
-            Current = (*Found);
-
-            const FCObjectEntry* Item = ChunkedArray.GetItem(Current.Index);
-            if (Item != nullptr && Item->GetGeneration() == Current.Generation)
-            {
-                CObjectBase* Object = Item->GetObj();
-                return (Object != nullptr && !Object->HasAnyFlag(OF_MarkedDestroy)) ? Object : nullptr;
-            }
+            return nullptr;
         }
 
-        return nullptr;
+        const FCObjectEntry* Item = ChunkedArray.GetItem(Target->Index);
+        if (Item == nullptr || Item->GetGeneration() != Target->Generation)
+        {
+            return nullptr;
+        }
+
+        CObjectBase* Object = Item->GetObj();
+        return (Object != nullptr && !Object->HasAnyFlag(OF_MarkedDestroy)) ? Object : nullptr;
     }
 
     CObjectBase* FCObjectArray::ResolveHandle(const FObjectHandle& Handle) const

@@ -15,7 +15,7 @@
 
 namespace Lumina
 {
-    RUNTIME_API FConfig* GConfig;
+    RUNTIME_API FConfig* Global::GConfig;
 
     namespace
     {
@@ -285,13 +285,18 @@ namespace Lumina
             {
                 RebuiltDefaults.Add(NewClass, NewSnapshot);
             }
+            else if (Snapshot != nullptr)
+            {
+                Snapshot->RemoveFromRoot();
+            }
         }
         SettingsDefaults = Move(RebuiltDefaults);
 
-        for (CClass*& Class : DiscoveredSettings)
+        DiscoveredSettings.RemoveAll([&](CClass*& Class)
         {
             Class = Cast<CClass>(Func(Class));
-        }
+            return Class == nullptr;
+        });
 
         THashSet<CClass*> RebuiltLoaded;
         RebuiltLoaded.Reserve(SettingsFileLoaded.Num());

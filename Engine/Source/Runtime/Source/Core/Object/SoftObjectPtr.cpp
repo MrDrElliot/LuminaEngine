@@ -13,7 +13,7 @@ namespace Lumina
 {
     namespace
     {
-        // Single global mutex for the rare first-resolve GUID write; hot reads skip it.
+        // Single global mutex guarding every read and write of the mutable Path and CachedGUID during a resolve.
         FMutex& ResolveMutex()
         {
             static FMutex M;
@@ -23,40 +23,57 @@ namespace Lumina
 
     bool FSoftObjectPath::TryResolve() const
     {
+        FGuid Unused;
+        return TryResolveInternal(Unused);
+    }
+
+    bool FSoftObjectPath::TryResolveInternal(FGuid& OutGUID) const
+    {
         LUMINA_PROFILE_SCOPE();
         FAssetRegistry& Registry = FAssetRegistry::Get();
 
-        if (CachedGUID.IsValid())
+        FString LocalPath;
+        FGuid LocalGUID;
+        {
+            FScopeLock Lock(ResolveMutex());
+            LocalPath = Path;
+            LocalGUID = CachedGUID;
+        }
+
+        if (LocalGUID.IsValid())
         {
             // A rename keeps the GUID and moves the file, so the registry is the only route back to a live path.
-            const FAssetData* Data = Registry.GetAssetByGUID(CachedGUID);
+            const FAssetDataPtr Data = Registry.GetAssetByGUID(LocalGUID);
             if (Data == nullptr)
             {
                 // An asset deleted and made again at the same path has a new GUID, so the authored path finds it.
-                if (const FAssetData* Recreated = Path.IsEmpty() ? nullptr : Registry.GetAssetByPath(FStringView(*Path, Path.Len())))
+                if (const FAssetDataPtr Recreated = LocalPath.IsEmpty() ? nullptr : Registry.GetAssetByPath(FStringView(*LocalPath, LocalPath.Len())))
                 {
                     FScopeLock Lock(ResolveMutex());
                     CachedGUID = Recreated->AssetGUID;
+                    LocalGUID = CachedGUID;
                 }
+                OutGUID = LocalGUID;
                 return true;
             }
 
             const FStringView Current(*Data->Path, Data->Path.Len());
 
             FScopeLock Lock(ResolveMutex());
-            if (VFS::RemoveExtension(FStringView(*Path, Path.Len())) != VFS::RemoveExtension(Current))
+            if (VFS::RemoveExtension(FStringView(*LocalPath, LocalPath.Len())) != VFS::RemoveExtension(Current))
             {
                 Path = FStringView(Current.GetData(), Current.Len());
             }
+            OutGUID = LocalGUID;
             return true;
         }
 
-        if (Path.IsEmpty())
+        if (LocalPath.IsEmpty())
         {
             return false;
         }
 
-        FAssetData* Data = Registry.GetAssetByPath(FStringView(*Path, Path.Len()));
+        FAssetDataPtr Data = Registry.GetAssetByPath(FStringView(*LocalPath, LocalPath.Len()));
         if (Data == nullptr)
         {
             return false;
@@ -68,30 +85,36 @@ namespace Lumina
         {
             CachedGUID = Data->AssetGUID;
         }
+        OutGUID = CachedGUID;
         return true;
     }
 
     CObject* FSoftObjectPath::LoadSynchronous() const
     {
-        return TryResolve() ? FAssetManager::Get().LoadSynchronous(CachedGUID) : nullptr;
+        FGuid GUID;
+        return TryResolveInternal(GUID) ? FAssetManager::Get().LoadSynchronous(GUID) : nullptr;
+    }
+
+    FAssetHandle FSoftObjectPath::Load() const
+    {
+        FGuid GUID;
+        return TryResolveInternal(GUID) ? FAssetManager::Get().Load(GUID) : FAssetHandle();
     }
 
     void FSoftObjectPath::LoadAsync(const TFunction<void(CObject*)>& Callback) const
     {
         LUMINA_PROFILE_SCOPE();
-        if (!TryResolve())
+        const FAssetHandle Handle = Load();
+        if (!Callback)
         {
-            if (Callback)
-            {
-                Callback(nullptr);
-            }
             return;
         }
-        FAssetHandle Handle = FAssetManager::Get().Load(CachedGUID);
-        if (Callback)
+        if (!Handle.IsValid())
         {
-            Handle.OnReady([Callback](const FAssetHandle& Loaded) { Callback(Loaded.Get()); });
+            Callback(nullptr);
+            return;
         }
+        Handle.OnReady([Callback](const FAssetHandle& Loaded) { Callback(Loaded.Get()); });
     }
 
     FArchive& operator<<(FArchive& Ar, FSoftObjectPath& Self)

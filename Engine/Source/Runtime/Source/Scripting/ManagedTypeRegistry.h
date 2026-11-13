@@ -9,6 +9,7 @@
 namespace Lumina
 {
     class CObject;
+    class FFunction;
 }
 
 namespace Lumina::Scripting
@@ -53,6 +54,14 @@ namespace Lumina::Scripting
     {
         FString OldName;
         FString NewName;
+    };
+
+    // One unit's last resolved script references, keyed by fingerprint so a restore can skip an unchanged unit.
+    struct FScriptReferenceResolution
+    {
+        FString          UnitName;
+        FString          Fingerprint;
+        TVector<FString> Assemblies;
     };
 
     // One stage of rebuilding the engine's view of the managed types after a script load, testable without a runtime.
@@ -148,10 +157,18 @@ namespace Lumina::Scripting
         // Drops every registered stage, for tests.
         void ResetForTesting() { Stages.Reset(); }
 
+        // Every function given a managed invoker, so a reload can drop them before the code they point at unloads.
+        NODISCARD TVector<const FFunction*>& GetPublishedInvokers() { return PublishedInvokers; }
+
+        // Each unit's last resolved script references, spared a re-read when its declared references are unchanged.
+        NODISCARD TVector<FScriptReferenceResolution>& GetScriptReferenceResolutions() { return ScriptReferenceResolutions; }
+
     private:
 
-        TVector<IManagedTypeCompiler*> Stages;
-        TVector<IScriptReloadListener*> Listeners;
-        THashMap<CObject*, CObject*>    PendingReplaced;
+        TVector<IManagedTypeCompiler*>        Stages;
+        TVector<IScriptReloadListener*>       Listeners;
+        THashMap<CObject*, CObject*>          PendingReplaced;
+        TVector<const FFunction*>             PublishedInvokers;
+        TVector<FScriptReferenceResolution>   ScriptReferenceResolutions;
     };
 }

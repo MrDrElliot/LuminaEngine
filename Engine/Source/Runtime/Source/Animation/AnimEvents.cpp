@@ -7,9 +7,11 @@
 namespace Lumina
 {
     void AnimEvents::CollectTriggeredNotifies(const CAnimation* Clip, float PrevTime, float CurTime,
-                                              bool bLooping, float Weight, TVector<FAnimNotifyEvent>& Out)
+                                              bool bLooping, float Weight, TVector<FAnimNotifyEvent>& Out,
+                                              int32 WholeLoops)
     {
-        if (Clip == nullptr || PrevTime == CurTime)
+        const int32 ExtraCrossings = bLooping ? WholeLoops : 0;
+        if (Clip == nullptr || (PrevTime == CurTime && ExtraCrossings == 0))
         {
             return;
         }
@@ -28,20 +30,20 @@ namespace Lumina
             const bool bCrossed = bWrapped
                 ? (T > PrevTime || T <= CurTime)
                 : (T > PrevTime && T <= CurTime);
-            if (!bCrossed)
-            {
-                continue;
-            }
 
-            FAnimNotifyEvent& Event = Out.EmplaceGetRef();
-            Event.Name      = Notify.NotifyName;
-            Event.Track     = Notify.NotifyTrack;
-            Event.Type      = EAnimNotifyEventType::Trigger;
-            Event.Weight    = Weight;
-            Event.Alpha     = 0.0f;
-            Event.Animation = Clip;
-            Event.Notify    = Notify.Notify.Get();
-            Event.Source    = Clip;
+            const int32 NumCrossings = ExtraCrossings + (bCrossed ? 1 : 0);
+            for (int32 Crossing = 0; Crossing < NumCrossings; ++Crossing)
+            {
+                FAnimNotifyEvent& Event = Out.EmplaceGetRef();
+                Event.Name      = Notify.NotifyName;
+                Event.Track     = Notify.NotifyTrack;
+                Event.Type      = EAnimNotifyEventType::Trigger;
+                Event.Weight    = Weight;
+                Event.Alpha     = 0.0f;
+                Event.Animation = Clip;
+                Event.Notify    = Notify.Notify.Get();
+                Event.Source    = Clip;
+            }
         }
     }
 }

@@ -48,6 +48,31 @@ namespace Lumina::EditorEntityUtils
               || Hash == ECS::GetComponentTypeID<FLastSelectedTag>());
     }
 
+    TVector<ECS::FEntity> GatherHierarchyRoots(const ECS::FHierarchy& Hierarchy, TSpan<const ECS::FEntity> Entities)
+    {
+        THashSet<ECS::FEntity> Candidates;
+        for (ECS::FEntity Entity : Entities)
+        {
+            Candidates.Add(Entity);
+        }
+
+        TVector<ECS::FEntity> Roots;
+        Roots.Reserve(Entities.Num());
+        for (ECS::FEntity Entity : Entities)
+        {
+            bool bAncestorInSet = false;
+            for (ECS::FEntity Walk = Hierarchy.GetParent(Entity); Walk != ECS::NullEntity && !bAncestorInSet; Walk = Hierarchy.GetParent(Walk))
+            {
+                bAncestorInSet = Candidates.Contains(Walk);
+            }
+            if (!bAncestorInSet)
+            {
+                Roots.Add(Entity);
+            }
+        }
+        return Roots;
+    }
+
     void CycleGizmoOp(ImGuizmo::OPERATION& InOutOp)
     {
         switch (InOutOp)

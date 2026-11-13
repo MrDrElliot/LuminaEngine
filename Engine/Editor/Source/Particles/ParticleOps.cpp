@@ -325,7 +325,7 @@ namespace Lumina::ParticleOps
             Out.Errors.Add("That emitter does not exist.");
             return false;
         }
-        if (GShaderCompiler == nullptr)
+        if (Global::GShaderCompiler == nullptr)
         {
             Out.Errors.Add("No shader compiler is running in this process.");
             return false;
@@ -360,7 +360,7 @@ namespace Lumina::ParticleOps
         // Without a template path the raw cache keys to zero and skips itself, so every save paid a full Slang compile.
         Options.TemplateVirtualPath = "/Engine/Resources/Shaders/Particles/ParticleSimulateTemplate.slang";
         Options.Priority = Priority;
-        GShaderCompiler->CompilerShaderRaw(Source, Options, [Binaries = Job.Binaries](const FShaderHeader& Header)
+        Global::GShaderCompiler->CompilerShaderRaw(Source, Options, [Binaries = Job.Binaries](const FShaderHeader& Header)
         {
             Binaries->Reset();
             Binaries->Append(Header.Binaries.begin(), Header.Binaries.end());

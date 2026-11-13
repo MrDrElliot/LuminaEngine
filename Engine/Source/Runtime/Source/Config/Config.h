@@ -15,7 +15,12 @@ namespace Lumina
     class CClass;
     class CObject;
 
-    RUNTIME_API extern class FConfig* GConfig;
+    class FConfig;
+
+    namespace Global
+    {
+        RUNTIME_API extern FConfig* GConfig;
+    }
 
     class RUNTIME_API FConfig : public IObjectReferenceProvider
     {

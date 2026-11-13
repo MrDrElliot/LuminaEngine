@@ -16,7 +16,7 @@ namespace Lumina
             }
         }
 
-        // Sorted descending; equal priorities keep registration order.
+        // Sorted descending, equal priorities keep registration order.
         FEntry NewEntry{ InHandler, Priority };
         int32 Index = 0;
         for (; Index < EventHandlers.Num(); ++Index)
@@ -27,6 +27,11 @@ namespace Lumina
             }
         }
         EventHandlers.Insert(NewEntry, Index);
+
+        if (Index <= DispatchCursor)
+        {
+            ++DispatchCursor;
+        }
     }
 
     void FEventProcessor::UnregisterEventHandler(IEventHandler* InHandler)
@@ -35,7 +40,13 @@ namespace Lumina
         {
             if (It->Handler == InHandler)
             {
-                EventHandlers.RemoveAt(static_cast<int32>(It - EventHandlers.begin()));
+                const int32 RemovedIndex = static_cast<int32>(It - EventHandlers.begin());
+                EventHandlers.RemoveAt(RemovedIndex);
+
+                if (RemovedIndex <= DispatchCursor)
+                {
+                    --DispatchCursor;
+                }
                 return;
             }
         }
@@ -48,14 +59,16 @@ namespace Lumina
 
     void FEventProcessor::DispatchEvent(FEvent& Event)
     {
-        // Handlers may unregister mid-dispatch; iterate a snapshot.
-        TVector<FEntry> Snapshot = EventHandlers;
-        for (const FEntry& Entry : Snapshot)
+        const int32 SavedCursor = DispatchCursor;
+
+        for (DispatchCursor = 0; DispatchCursor < EventHandlers.Num(); ++DispatchCursor)
         {
-            if (Entry.Handler->OnEvent(Event))
+            if (EventHandlers[DispatchCursor].Handler->OnEvent(Event))
             {
-                return;
+                break;
             }
         }
+
+        DispatchCursor = SavedCursor;
     }
 }

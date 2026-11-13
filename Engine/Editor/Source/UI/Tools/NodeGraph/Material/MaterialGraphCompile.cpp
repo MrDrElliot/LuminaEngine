@@ -337,6 +337,14 @@ namespace Lumina
             return false;
         }
 
+        IShaderCompiler* ShaderCompiler = Global::GShaderCompiler;
+        if (ShaderCompiler == nullptr)
+        {
+            Result.Errors.Add({ "No Shader Compiler", "No shader compiler is running in this process." });
+            Result.bSuccess = false;
+            return false;
+        }
+
         // BuildShaders yields both the pixel and vertex source with the $MATERIAL_INPUTS tokens substituted.
         Compiler.BuildShaders(Result.PixelSource, Result.VertexSource, Material->GetMaterialType());
         Result.Stats = Compiler.GetStats();
@@ -357,8 +365,6 @@ namespace Lumina
             Hash = Hash::GetHash64(Compiler.BuildVertexStageBody(Material->GetMaterialType()), Hash);
             Result.SourceHash = Hash != 0 ? Hash : 1;
         }
-
-        IShaderCompiler* ShaderCompiler = GShaderCompiler;
 
         // Crash-dump-friendly shader names, the material name plus its stage.
         const FString MatName = *Material->GetName();
@@ -613,7 +619,7 @@ namespace Lumina
 
                 // An empty path is unrecoverable, since the soft ref looks valid but resolves magenta forever.
                 FStringView Path;
-                if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Guid))
+                if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(Guid))
                 {
                     Path = FStringView(*Data->Path, Data->Path.Len());
                 }
@@ -736,7 +742,7 @@ namespace Lumina
 
         for (int32 Index = 0; Index < Functions.Num(); ++Index)
         {
-            for (const FAssetData* Referencer : Registry.GetReferencersOf(Functions[Index]))
+            for (const FAssetDataPtr& Referencer : Registry.GetReferencersOf(Functions[Index]))
             {
                 if (Referencer->AssetClass == FunctionClass)
                 {

@@ -117,6 +117,56 @@ float ThinningKeep(float DistSq, float ThinningStart)
     return max(ThinningStart * ThinningStart / DistSq, kMinThinningKeep);
 }
 
+// Keyed on the exact position bits, so an instance that has not moved keeps its answer every frame. Each Seed gives an independent answer.
+float PositionHash(float3 Position, uint Seed = 0u)
+{
+    const uint3 Bits = asuint(Position);
+    uint H = (Bits.x * 0x8da6b343u) ^ (Bits.y * 0xd8163841u) ^ (Bits.z * 0xcb1ab31fu) ^ Seed;
+    H ^= H >> 16u;
+    H *= 0x7feb352du;
+    H ^= H >> 15u;
+    H *= 0x846ca68bu;
+    H ^= H >> 16u;
+    return float(H >> 8u) * (1.0 / 16777216.0);
+}
+
+// The share of the keep threshold below it across which a thinned instance shrinks out instead of popping.
+static const float kThinningFadeBand = 0.25;
+
+// Full size for a hash at or below the band, zero above the keep threshold, so a thinned instance shrinks out instead of popping.
+float ThinningFade(float Keep, float Hash)
+{
+    // The band closes as the share nears one, so an instance is already full size where thinning starts.
+    const float Band = min(kThinningFadeBand * Keep, 1.0 - Keep);
+    return saturate((Keep - Hash) / Band);
+}
+
+// World axis scale about the pivot for a kept share, widened across the ground and faded toward zero, which means dropped.
+float3 ThinningScale(float Keep, float3 Pivot)
+{
+    if (Keep >= 1.0)
+    {
+        return 1.0;
+    }
+    const float Fade  = ThinningFade(Keep, PositionHash(Pivot));
+    const float Widen = rsqrt(Keep);
+    return float3(Widen, 1.0, Widen) * Fade;
+}
+
+// The share of the proxy threshold either side of it across which instances become splats one at a time instead of all at once.
+static const float kProxyTransitionBand = 0.25;
+
+// Seeded apart from thinning, whose survivors would otherwise all draw from the low end of the band.
+static const uint kProxyTransitionSeed = 0x9e3779b9u;
+
+// Whether the camera sees an instance as a splat, each instance crossing at its own size inside the band so no row of them swaps together.
+bool IsProxySized(float3 Center, float Radius, float3 Position)
+{
+    const float Dither    = 2.0 * PositionHash(Position, kProxyTransitionSeed) - 1.0;
+    const float Threshold = Scene().CullData.ProxyTransitionPixels * (1.0 + kProxyTransitionBand * Dither);
+    return ProjectedDiameterPixels(Center, Radius) < Threshold;
+}
+
 // The project's runtime toggle for the baked voxel levels.
 bool VoxelFarEnabled()
 {

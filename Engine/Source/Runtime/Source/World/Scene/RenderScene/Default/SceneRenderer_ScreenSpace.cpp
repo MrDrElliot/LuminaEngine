@@ -11,8 +11,6 @@ namespace Lumina
             return false;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("GTAO Pass", tracy::Color::Red);
-
         static const FShaderH PrefilterCS = FShaderLibrary::Get("GTAOPrefilterDepth.slang");
         static const FShaderH MainCS      = FShaderLibrary::Get("GTAOMain.slang");
         static const FShaderH DenoiseCS   = FShaderLibrary::Get("GTAODenoise.slang");
@@ -28,6 +26,7 @@ namespace Lumina
             return false;
         }
 
+        SCENE_GPU_SCOPE(CL, Stage == EGTAOStage::Prefilter ? "GTAO Prefilter" : "GTAO");
         if (Stage == EGTAOStage::Prefilter)
         {
             return GTAOPrefilterDepth(CL, Params, PrefilterCS);
@@ -168,9 +167,6 @@ namespace Lumina
             return false;
         }
 
-        // Rotating the noise only pays off once something downstream accumulates across frames.
-        const uint32 FrameIndex = (CurrentView != nullptr) ? CurrentView->TemporalFrameIndex : 0u;
-
         PC.ViewportSize[0]          = P.Width;
         PC.ViewportSize[1]          = P.Height;
         PC.WorkingDepthIndex        = (uint32)WorkingDepthSlot;
@@ -178,7 +174,7 @@ namespace Lumina
         PC.EdgesUAV                 = (uint32)EdgesSlot;
         PC.SliceCount               = GGTAOSliceCounts[P.QualityLevel];
         PC.StepsPerSlice            = GGTAOStepsPerSlice[P.QualityLevel];
-        PC.NoiseIndex               = (P.DenoisePasses > 0) ? (FrameIndex % 64u) : 0u;
+        PC.NoiseIndex               = GetScreenSpaceNoiseIndex(*CurrentView);
         PC.EffectRadius             = P.EffectRadius;
         PC.EffectFalloffRange       = P.FalloffRange;
         PC.SampleDistributionPower  = P.SampleDistributionPower;
@@ -397,8 +393,7 @@ namespace Lumina
         PC.SampleDistributionPower  = P.SampleDistributionPower;
         PC.ThinOccluderCompensation = P.ThinOccluderCompensation;
         PC.DepthMIPSamplingOffset   = P.DepthMipSamplingOffset;
-        // Only a temporal upscaler averages enough frames to hide rotating noise, and T2x's two-frame blend makes it crawl.
-        PC.NoiseIndex               = IsTemporalUpscalerFor(*CurrentView) ? (CurrentView->TemporalFrameIndex % 64u) : 0u;
+        PC.NoiseIndex               = GetScreenSpaceNoiseIndex(*CurrentView);
 
         DispatchCompute(CL, TraceCS, PC,
             RenderUtils::GetGroupCount(PC.OutputSize[0], 8u),
@@ -522,7 +517,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Screen Space Reflections", tracy::Color::Cyan3);
+        SCENE_GPU_SCOPE(CL, "Screen Space Reflections");
 
         FSSRParams P;
         P.ScreenW        = HDR.GetSizeX();

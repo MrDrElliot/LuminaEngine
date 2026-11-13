@@ -1,49 +1,11 @@
 #include "ReflectedProperty.h"
 
-#include "Reflector/CodeGeneration/CodeWriter.h"
 #include "Reflector/ReflectionSpecifiers.h"
-#include "Reflector/Types/PropertyFlags.h"
-#include "Reflector/Types/ReflectedType.h"
+#include "Reflector/Public/PropertyFlags.h"
 #include "Reflector/Utils/MetadataUtils.h"
 
 namespace Lumina
 {
-    void FReflectedProperty::EmitDescriptor(Reflection::FCodeWriter& Writer) const
-    {
-        const std::string Member = Outer + "::" + Name;
-        const std::string Value = ReflectedAsType.empty() ? ("decltype(" + Member + ")") : ReflectedAsType;
-
-        std::string Row = "{ .Name = \"" + Name + "\", .Offset = offsetof(" + Outer + ", " + Name + "), .Flags = "
-            + PropertyFlagsToString(PropertyFlags) + ", .Type = Lumina::PropertyTypeOf<" + Value + ">";
-
-        if (!GetterFunc.empty())
-        {
-            Row += ", .Getter = +[](const void* Container, void* Out) { *static_cast<" + Value + "*>(Out) = static_cast<" + Value
-                + ">(static_cast<const " + Outer + "*>(Container)->" + GetterFunc + "()); }";
-        }
-        if (!SetterFunc.empty())
-        {
-            Row += ", .Setter = +[](void* Container, const void* In) { static_cast<" + Outer + "*>(Container)->" + SetterFunc
-                + "(*static_cast<const " + Value + "*>(In)); }";
-        }
-        Row += Reflection::MetadataField(Name, Metadata, Reflection::ESpecifierTarget::Property);
-
-        std::string EditorFlags;
-        for (const FMetadataPair& Pair : Metadata)
-        {
-            if (Reflection::GetSpecifierStorage(Reflection::ESpecifierTarget::Property, Pair.Key) == Reflection::ESpecifierStorage::EditorFlag)
-            {
-                EditorFlags += (EditorFlags.empty() ? "" : " | ") + std::string("Lumina::EPropertyEditorFlags::") + Pair.Key;
-            }
-        }
-        if (!EditorFlags.empty())
-        {
-            Row += ", .EditorFlags = " + EditorFlags;
-        }
-
-        Writer.Line((Row + " },").c_str());
-    }
-
     void FReflectedProperty::GenerateMetadata(const std::string& InMetadata)
     {
         if (InMetadata.empty())

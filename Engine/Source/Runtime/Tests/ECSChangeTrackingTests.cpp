@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <thread>
+
 #include "Containers/Algorithm.h"
 #include "World/ECS/Registry.h"
 #include "World/Entity/Systems/SystemAccess.h"
@@ -186,6 +189,42 @@ TEST(ECSChangeTracking, ScheduledWriteMovesAnUntrackedEpoch)
     MarkDeclaredWrites(Registry, Writer);
     EXPECT_NE(Registry.GetWriteEpoch<FChangeTrackedValue>(), Before) << "an untracked pool cannot see its writes, so a scheduled writer moves it";
     EXPECT_EQ(Registry.GetWriteEpoch<FChangeTrackedNeverCreated>(), 0u);
+}
+
+TEST(ECSChangeTracking, ConcurrentScheduledWritesLoseNoIncrements)
+{
+    ECS::FRegistry Registry;
+    Registry.Emplace<FChangeTrackedValue>(Registry.Create());
+
+    FSystemAccess Writer;
+    Writer.Write<FChangeTrackedValue>();
+
+    constexpr uint32 kThreads = 8;
+    constexpr uint32 kCallsPerThread = 2000;
+
+    const uint64 Before = Registry.GetWriteEpoch<FChangeTrackedValue>();
+
+    std::atomic<bool> bGo = false;
+    std::thread Workers[kThreads];
+    for (uint32 ThreadIndex = 0; ThreadIndex < kThreads; ++ThreadIndex)
+    {
+        Workers[ThreadIndex] = std::thread([&Registry, &Writer, &bGo]
+        {
+            while (!bGo.load(std::memory_order_acquire)) {}
+            for (uint32 Call = 0; Call < kCallsPerThread; ++Call)
+            {
+                MarkDeclaredWrites(Registry, Writer);
+            }
+        });
+    }
+    bGo.store(true, std::memory_order_release);
+    for (std::thread& Worker : Workers)
+    {
+        Worker.join();
+    }
+
+    EXPECT_EQ(Registry.GetWriteEpoch<FChangeTrackedValue>() - Before, static_cast<uint64>(kThreads) * kCallsPerThread)
+        << "a torn store-of-load loses increments when two systems share an untracked pool with no ordering between them";
 }
 
 TEST(ECSChangeTracking, ExclusiveSystemMovesEveryUntrackedPool)

@@ -152,13 +152,13 @@ protected:
         EXPECT_EQ(FLifetimeProbe::GetLiveCount(), LiveBefore) << "constructions and destructions do not balance";
     }
 
-    // A minted type keeps a default value of its own for as long as it exists, superseded or not.
-    void PublishMintingOneDefault(std::initializer_list<Scripting::FManagedTypeDefinition> Definitions)
+    // A minted type keeps a default value of its own, and a reshape frees the old type's with it once no pool is laid out by it.
+    void PublishExpectingDefaults(std::initializer_list<Scripting::FManagedTypeDefinition> Definitions, int64 NetNewDefaults)
     {
         const int64 Before = FLifetimeProbe::GetLiveCount();
         ScriptTest::PublishStructs(Definitions);
-        EXPECT_EQ(FLifetimeProbe::GetLiveCount(), Before + 1) << "a reload leaked or double destroyed a migrated value";
-        LiveBefore += 1;
+        EXPECT_EQ(FLifetimeProbe::GetLiveCount(), Before + NetNewDefaults) << "a reload leaked or double destroyed a migrated value";
+        LiveBefore += NetNewDefaults;
     }
 
     int64 LiveBefore = 0;
@@ -371,7 +371,7 @@ TEST_F(FLifetimeProbeTest, ComponentStorageBalances)
 
 TEST_F(FLifetimeProbeTest, ScriptStructOpsBalance)
 {
-    PublishMintingOneDefault({ LifetimeProbeTestsInternal::ScriptDefinition("SComp_GTestLifetimeProbe", false) });
+    PublishExpectingDefaults({ LifetimeProbeTestsInternal::ScriptDefinition("SComp_GTestLifetimeProbe", false) }, 1);
     const FComponentOps* Ops = FindComponentOps("SComp_GTestLifetimeProbe");
     ASSERT_NE(Ops, nullptr);
     CStruct* Struct = Ops->StaticStruct();
@@ -404,7 +404,7 @@ TEST_F(FLifetimeProbeTest, ScriptStructOpsBalance)
 
 TEST_F(FLifetimeProbeTest, ScriptComponentsSurviveAReshapingReload)
 {
-    PublishMintingOneDefault({ LifetimeProbeTestsInternal::ScriptDefinition("SComp_GTestLifetimeReload", false) });
+    PublishExpectingDefaults({ LifetimeProbeTestsInternal::ScriptDefinition("SComp_GTestLifetimeReload", false) }, 1);
     const FComponentOps* Ops = FindComponentOps("SComp_GTestLifetimeReload");
     ASSERT_NE(Ops, nullptr);
     {
@@ -414,8 +414,8 @@ TEST_F(FLifetimeProbeTest, ScriptComponentsSurviveAReshapingReload)
             LifetimeProbeTestsInternal::FillScript(Ops->StaticStruct(), Ops->Emplace(Registry, Registry.Create()), 3);
         }
 
-        PublishMintingOneDefault({ LifetimeProbeTestsInternal::ScriptDefinition("SComp_GTestLifetimeReload", true) });
-        PublishMintingOneDefault({ LifetimeProbeTestsInternal::ScriptDefinition("SComp_GTestLifetimeReload", false) });
+        PublishExpectingDefaults({ LifetimeProbeTestsInternal::ScriptDefinition("SComp_GTestLifetimeReload", true) }, 0);
+        PublishExpectingDefaults({ LifetimeProbeTestsInternal::ScriptDefinition("SComp_GTestLifetimeReload", false) }, 0);
     }
     ScriptTest::PublishStructs({});
 }

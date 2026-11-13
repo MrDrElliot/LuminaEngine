@@ -80,6 +80,7 @@ namespace Lumina
         void SetOwnerHeading(const FName& InHeading) { OwnerHeading = InHeading; }
         void SetSearchText(FStringView Text);
         bool PrepareAndTestFilter();
+        bool MatchesSearch(FStringView Text, FStringView Title);
 
     private:
 
@@ -90,6 +91,7 @@ namespace Lumina
         void EnsureTreeBuilt();
         void RebuildTree();
         void ApplyFilterState();
+        const TSharedPtr<FPropertyHandle>& GetCustomizationHandle();
         void DrawCustomization(const FPropertyDrawArgs& Args);
         PropertyTableInternal::FCategoryPropertyRow* FindOrCreateCategoryRow(const FName& CategoryName);
 

@@ -5,6 +5,7 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
 #include "Log/Log.h"
+#include "LogCountTestHelpers.h"
 
 #include "Scripting/ScriptableTest.h"
 #include "World/ECS/Registry.h"
@@ -79,19 +80,7 @@ namespace
 
     int32 CountAmbiguityReports()
     {
-        Logging::Flush();
-        const Logging::FLogQueue& Messages = Logging::GetConsoleLogQueue();
-        int32 Count = 0;
-        for (int32 Index = 0; Index < Messages.Num(); ++Index)
-        {
-            const FStringView Text = Messages[Index].Message.View();
-            if (Messages[Index].Level == ELogLevel::Info && Text.Contains("CEntitySystemTest") && Text.Contains("CEntitySystemTransformReaderTest")
-                && Text.Contains("STransformComponent"))
-            {
-                ++Count;
-            }
-        }
-        return Count;
+        return CountLoggedMessages(ELogLevel::Info, "CEntitySystemTest", "CEntitySystemTransformReaderTest", "STransformComponent");
     }
 }
 

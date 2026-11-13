@@ -19,6 +19,12 @@ public static class ModuleManifest
 
     private static readonly ConcurrentDictionary<string, string> BuildIdByEngineRoot = new(StringComparer.OrdinalIgnoreCase);
 
+    private sealed class BuildIdRecord
+    {
+        public string Signature { get; set; } = string.Empty;
+        public string BuildId { get; set; } = string.Empty;
+    }
+
     public static string GetManifestPath(string BinariesDirectory, string OutputSuffix)
     {
         return Path.Combine(BinariesDirectory, $"Lumina{OutputSuffix}.modules");
@@ -27,7 +33,30 @@ public static class ModuleManifest
     // Changes exactly when a header a module can compile against does, which is when a module built earlier may disagree on a layout.
     public static string ComputeEngineBuildId(BuildDirectories Directories)
     {
-        return BuildIdByEngineRoot.GetOrAdd(Directories.EngineRoot, _ => HashEngineHeaders(Directories));
+        return BuildIdByEngineRoot.GetOrAdd(Directories.EngineRoot, _ => LoadOrHashEngineHeaders(Directories));
+    }
+
+    // Header bytes are read again only when a size or timestamp moved since the recorded BuildId, as DependencyCache treats staleness.
+    internal static string LoadOrHashEngineHeaders(BuildDirectories Directories)
+    {
+        FileInfo[] EngineHeaders = new[] { Directories.EngineRuntimeDirectory, Directories.EngineEditorDirectory, Directories.EnginePluginsDirectory }
+            .SelectMany(Root => EnumerateHeaders(Directories.EngineRoot, Root))
+            .ToArray();
+        FileInfo[] VendoredHeaders = EnumerateHeaders(Directories.EngineRoot, Directories.ThirdPartyDirectory).ToArray();
+
+        string Signature = ContentHash.OfStrings(EngineHeaders.Concat(VendoredHeaders)
+            .Select(Header => $"{RelativeKey(Directories.EngineRoot, Header.FullName)}|{Header.Length}|{Header.LastWriteTimeUtc.Ticks}")
+            .Prepend(BuildIdScheme));
+
+        string RecordPath = Path.Combine(Directories.EngineRoot, "Intermediates", "BuildTool", "EngineBuildId.json");
+        if (JsonStore.Load<BuildIdRecord>(RecordPath) is { } Record && Record.Signature == Signature && Record.BuildId.Length > 0)
+        {
+            return Record.BuildId;
+        }
+
+        string BuildId = HashEngineHeaders(Directories.EngineRoot, EngineHeaders, VendoredHeaders);
+        JsonStore.Save(RecordPath, new BuildIdRecord { Signature = Signature, BuildId = BuildId });
+        return BuildId;
     }
 
     public static void Write(BuildTarget Target, string BuildId)
@@ -39,6 +68,7 @@ public static class ModuleManifest
 
         IEnumerable<IGrouping<string, BuildModule>> ByDirectory = Target.Modules
             .Where(Module => Module.BinaryType == ModuleBinaryType.SharedLibrary && Module.OutputFile.Length > 0)
+            .Where(Module => Module.Rules.HostType != ModuleHostType.Reflection)
             .GroupBy(Module => Module.OutputDirectory, StringComparer.OrdinalIgnoreCase);
 
         foreach (IGrouping<string, BuildModule> Directory in ByDirectory)
@@ -89,41 +119,41 @@ public static class ModuleManifest
         return Modules;
     }
 
-    private static string HashEngineHeaders(BuildDirectories Directories)
+    private static string HashEngineHeaders(string EngineRoot, FileInfo[] EngineHeaders, FileInfo[] VendoredHeaders)
     {
         using IncrementalHash Hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         AppendText(Hash, BuildIdScheme);
 
-        string[] EngineRoots = { Directories.EngineRuntimeDirectory, Directories.EngineEditorDirectory, Directories.EnginePluginsDirectory };
-        foreach (string Header in EngineRoots.SelectMany(Root => EnumerateHeaders(Directories.EngineRoot, Root)))
+        foreach (FileInfo Header in EngineHeaders)
         {
-            AppendText(Hash, RelativeKey(Directories.EngineRoot, Header));
+            AppendText(Hash, RelativeKey(EngineRoot, Header.FullName));
 
             // Line endings come from the checkout, not the interface.
-            byte[] Contents = File.ReadAllBytes(Header);
+            byte[] Contents = File.ReadAllBytes(Header.FullName);
             Hash.AppendData(Contents.Where(Byte => Byte != (byte)'\r').ToArray());
         }
 
         // Vendored headers are large and change only with an upgrade, which a size change is enough to catch.
-        foreach (string Header in EnumerateHeaders(Directories.EngineRoot, Directories.ThirdPartyDirectory))
+        foreach (FileInfo Header in VendoredHeaders)
         {
-            AppendText(Hash, $"{RelativeKey(Directories.EngineRoot, Header)}|{new FileInfo(Header).Length}");
+            AppendText(Hash, $"{RelativeKey(EngineRoot, Header.FullName)}|{Header.Length}");
         }
 
         return Convert.ToHexString(Hash.GetHashAndReset(), 0, 12).ToLowerInvariant();
     }
 
-    private static IEnumerable<string> EnumerateHeaders(string EngineRoot, string Root)
+    // Enumerated as FileInfo so the size and timestamp come with the directory listing instead of a stat per header.
+    private static IEnumerable<FileInfo> EnumerateHeaders(string EngineRoot, string Root)
     {
         if (!Directory.Exists(Root))
         {
-            return Enumerable.Empty<string>();
+            return Enumerable.Empty<FileInfo>();
         }
 
-        return Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories)
-            .Where(File => HeaderExtensions.Contains(Path.GetExtension(File), StringComparer.OrdinalIgnoreCase))
-            .Where(File => !RelativeKey(Root, File).Split('/').Any(Segment => SkippedDirectoryNames.Contains(Segment, StringComparer.OrdinalIgnoreCase)))
-            .OrderBy(File => RelativeKey(EngineRoot, File), StringComparer.Ordinal);
+        return new DirectoryInfo(Root).EnumerateFiles("*", SearchOption.AllDirectories)
+            .Where(File => HeaderExtensions.Contains(File.Extension, StringComparer.OrdinalIgnoreCase))
+            .Where(File => !RelativeKey(Root, File.FullName).Split('/').Any(Segment => SkippedDirectoryNames.Contains(Segment, StringComparer.OrdinalIgnoreCase)))
+            .OrderBy(File => RelativeKey(EngineRoot, File.FullName), StringComparer.Ordinal);
     }
 
     private static string RelativeKey(string Root, string FilePath)

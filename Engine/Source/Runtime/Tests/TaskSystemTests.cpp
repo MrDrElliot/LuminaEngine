@@ -230,6 +230,25 @@ namespace
     }
 }
 
+TEST(TaskSystem, StartRuntime_ClampsSlotsToMax)
+{
+    Jobs::Shutdown();
+    Jobs::FRuntimeConfig Config;
+    Config.NumWorkers         = Jobs::kMaxThreadSlots * 2;
+    Config.NumExternalThreads = Jobs::kMaxThreadSlots;
+    Jobs::StartRuntime(Config);
+
+    const uint32 Slots   = Jobs::GetNumThreadSlots();
+    const uint32 Workers = Jobs::GetNumWorkers();
+    const int64 Result   = Jobs::SyncWait(&Fib, 20);
+    Jobs::Shutdown();
+    Jobs::Initialize();
+
+    EXPECT_EQ(Slots, Jobs::kMaxThreadSlots);
+    EXPECT_GE(Workers, 1u);
+    EXPECT_EQ(Result, 6765);
+}
+
 TEST(TaskSystem, ParallelFor_RunsEachIndexExactlyOnce)
 {
     constexpr uint32 N = 100000;

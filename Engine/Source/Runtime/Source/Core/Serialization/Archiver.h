@@ -91,7 +91,7 @@ namespace Lumina
 
         FORCEINLINE static FPackageFileVersion GetEngineVersion()
         {
-            return GPackageFileLuminaVersion;
+            return Global::GPackageFileLuminaVersion;
         }
 
         /** File version being read/written; LoadPackage sets it from the header so per-type
@@ -486,7 +486,7 @@ namespace Lumina
 
         size_t                      ArMaxSerializeSize = INT32_MAX;
 
-        int32                       FileVersion = GPackageFileLuminaVersion.FileVersion;
+        int32                       FileVersion = Global::GPackageFileLuminaVersion.FileVersion;
 
         TBitFlags<EArchiverFlags>   Flags;
         uint8                       bHasError:1 = false;

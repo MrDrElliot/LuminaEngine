@@ -11,9 +11,11 @@ namespace Lumina::MCP
 namespace Lumina
 {
     // Every MCP connection, request and tool call in one place, read from the server's log.
-    class FMCPHubEditorTool : public FEditorTool
+    class MCPEDITOR_API FMCPHubEditorTool : public FEditorTool
     {
     public:
+
+        friend struct FMCPHubEditorToolTestAccess;
 
         LUMINA_SINGLETON_EDITOR_TOOL(FMCPHubEditorTool)
 

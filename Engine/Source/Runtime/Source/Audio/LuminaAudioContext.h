@@ -100,6 +100,8 @@ namespace Lumina
 
 		TSharedPtr<FProceduralAudioStream> CreateProceduralStream(uint32 SampleRate, uint32 ChannelCount, uint32 BufferFrames) override;
 
+		int32 GetGraphInstanceCount() const;
+
 	private:
 
 		static constexpr uint32 MaxVoiceSlots = FAudioMixer::MaxVoices;

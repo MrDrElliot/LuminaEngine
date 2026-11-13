@@ -6,7 +6,7 @@
 #include "Containers/StringView.h"
 #include "Core/Json/Json.h"
 #include "Core/Templates/Optional.h"
-#include "Core/Threading/Sync.h"
+#include "Core/Threading/Mutex.h"
 #include "Platform/GenericPlatform.h"
 #include "Platform/Platform.h"
 
@@ -91,8 +91,6 @@ namespace Lumina::JsonRpc
         // Copied out rather than called under the lock, so a handler may register or unregister freely.
         NODISCARD TOptional<FMethodHandler> FindHandler(const FString& Method) const;
 
-        THashMap<FString, FEntry> Methods;
-
-        mutable FSharedMutex MethodsMutex;
+        TRwLock<THashMap<FString, FEntry>> Methods;
     };
 }

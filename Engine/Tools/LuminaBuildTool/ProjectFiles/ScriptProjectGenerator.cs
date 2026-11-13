@@ -34,7 +34,9 @@ public static class ScriptProjectGenerator
         List<ScriptProject> Discovered = new();
         List<string> PluginsWithScripts = new();
 
+        // A standalone tool loads no scripts, and the Reflector's target enables every plugin to build their generators.
         IEnumerable<PluginDescriptor> Plugins = Targets
+            .Where(Target => Target.PrimaryVariant.Rules.Type != TargetType.Program)
             .SelectMany(Target => Target.PrimaryVariant.EnabledPlugins)
             .DistinctBy(Plugin => Plugin.Name, StringComparer.OrdinalIgnoreCase)
             .OrderBy(Plugin => Plugin.Name, StringComparer.OrdinalIgnoreCase);
@@ -131,7 +133,7 @@ public static class ScriptProjectGenerator
         return Written;
     }
 
-    private static string BuildCsprojXml(
+    internal static string BuildCsprojXml(
         BuildDirectories Directories,
         ScriptProject Project,
         IReadOnlyList<ScriptProject> AllProjects,

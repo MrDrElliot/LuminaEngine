@@ -47,7 +47,7 @@ namespace Lumina
         FUNCTION()
         virtual void OnUpdate(const SSystemContext& Context) {}
 
-        // Asked on the main thread as each stage starts; by default a system has work when any query it holds matches or any event reader has unread events.
+        // Asked on the main thread as each stage starts; by default a system has work when any query it holds matches or any event reader has unread events, skipping members passed to ExcludeFromHasWork.
         FUNCTION()
         virtual bool HasWork(const SSystemContext& Context);
 
@@ -121,9 +121,9 @@ namespace Lumina
 
         CWorld* GetOwningWorld() const { return OwningWorld; }
 
-        // For a HasWork override whose system also holds lookup-only queries that must not count as work.
-        template<typename... TQueries>
-        static bool AnyQueryHasRows(const TQueries&... Queries) { return (!Queries.IsEmpty() || ...); }
+        // Called from Configure for lookup-only members, so the default HasWork asks only the members that drive the update.
+        template<typename... TParams>
+        void ExcludeFromHasWork(const TParams&... Members) { (ExcludeParamFromHasWork(&Members), ...); }
 
         // Set by CExclusiveSystem, so the system always runs alone.
         bool                bExclusiveClass = false;
@@ -132,10 +132,13 @@ namespace Lumina
 
         friend RUNTIME_API void RegisterSystemParam(void* Param, const FSystemParamOps& Ops);
 
+        void ExcludeParamFromHasWork(const void* Param);
+
         struct FRegisteredParam
         {
             void*                  Param = nullptr;
             const FSystemParamOps* Ops   = nullptr;
+            bool                   bCountsAsWork = true;
         };
 
         TVector<FRegisteredParam> Params;

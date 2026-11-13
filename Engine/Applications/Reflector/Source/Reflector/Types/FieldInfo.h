@@ -1,7 +1,7 @@
 #pragma once
 #include <clang-c/Index.h>
 #include <string>
-#include "Reflector/Types/PropertyFlags.h"
+#include "Reflector/Public/PropertyFlags.h"
 
 
 namespace Lumina

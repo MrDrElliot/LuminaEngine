@@ -23,9 +23,6 @@ namespace Lumina
 
         void Configure() override;
 
-        // Transforms is a lookup, so only the audio queries decide.
-        bool HasWork(const SSystemContext& Context) override;
-
         void OnUpdate(const SSystemContext& Context) override;
         void OnTeardown(const SExclusiveContext& Context) override;
 

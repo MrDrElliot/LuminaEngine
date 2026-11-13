@@ -11,6 +11,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Containers/StringFormat.h"
+#include "UI/Tools/Debug/DebugHistoryTimeline.h"
 
 namespace Lumina
 {
@@ -20,23 +21,14 @@ namespace Lumina
         constexpr uint32 kHistoryMax     = 240;     // ~60 s of history
         constexpr double kMB             = double(Constants::kMiB);
 
-        void PushCapped(TVector<float>& History, float Value)
-        {
-            History.Add(Value);
-            if (static_cast<uint32>(History.Num()) > kHistoryMax)
-            {
-                History.RemoveAt(0);
-            }
-        }
-
-        void Timeline(const char* Id, const TVector<float>& History, const char* Unit, float Last)
+        void Timeline(const char* Id, const TRingBuffer<float>& History, const char* Unit, float Last)
         {
             ImGui::TextDisabled("%s", Id + 2); // skip the "##"
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.66f, 0.78f, 0.95f, 1.0f), "%.1f %s", Last, Unit);
             if (!History.IsEmpty())
             {
-                ImGui::PlotLines(Id, History.GetData(), History.Num(), 0, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 46.0f));
+                ImGui::PlotLines(Id, HistorySampleAt, const_cast<TRingBuffer<float>*>(&History), History.Num(), 0, nullptr, 0.0f, FLT_MAX, ImVec2(-1.0f, 46.0f));
             }
         }
     }
@@ -100,9 +92,9 @@ namespace Lumina
                 const double Delta = (double)(New.TotalAllocatedBytes - PrevAllocBytes);
                 AllocRateMBs = (float)((Delta > 0.0 ? Delta : 0.0) / kMB / kScriptRefreshSeconds);
             }
-            PushCapped(HistHeapMB,       (float)(New.ManagedHeapBytes / kMB));
-            PushCapped(HistAllocRateMB,  AllocRateMBs);
-            PushCapped(HistWorkingSetMB, (float)(New.WorkingSetBytes / kMB));
+            PushHistorySample(HistHeapMB,       (float)(New.ManagedHeapBytes / kMB), kHistoryMax);
+            PushHistorySample(HistAllocRateMB,  AllocRateMBs, kHistoryMax);
+            PushHistorySample(HistWorkingSetMB, (float)(New.WorkingSetBytes / kMB), kHistoryMax);
         }
 
         PrevAllocBytes = New.TotalAllocatedBytes;
@@ -145,7 +137,7 @@ namespace Lumina
         }
 
         // ---- Throttled poll -----------------------------------------------------------------------
-        RefreshTimer += (float)GEngine->GetDeltaTime();
+        RefreshTimer += (float)Global::GEngine->GetDeltaTime();
         if (!bFrozen && (RefreshTimer >= kScriptRefreshSeconds || !bAvailable))
         {
             RefreshTimer = 0.0f;

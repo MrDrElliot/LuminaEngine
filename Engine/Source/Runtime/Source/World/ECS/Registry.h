@@ -77,6 +77,13 @@ namespace Lumina::ECS
 
         NODISCARD FORCEINLINE int32 NumEntities() const { return LiveEntityCount; }
 
+        // Rises with every create, so it orders live entities by creation even where a later one reused a lower slot.
+        NODISCARD FORCEINLINE uint64 GetCreationSerial(FEntity Entity) const
+        {
+            const uint32 Index = Entity.GetIndex();
+            return Index < static_cast<uint32>(CreationSerials.Num()) ? CreationSerials[Index] : 0u;
+        }
+
         // Destroys every entity and empties every pool. The pools themselves survive.
         RUNTIME_API void Clear();
 
@@ -595,8 +602,13 @@ namespace Lumina::ECS
         uint32 TakeSlotLocked(uint32& OutVersion);
         void EnsureRecordLocked(uint32 Index);
 
+        void NoteCreated(FEntity Entity);
+
         // A dead slot links the next free index, and a reserved one holds NoFreeSlot so it is neither live nor free.
         TVector<FEntity> EntityRecords;
+
+        TVector<uint64> CreationSerials;
+        uint64 LastCreationSerial = 0;
 
         // Behind a pointer so the registry stays movable.
         FEntityAllocHolder AllocState;

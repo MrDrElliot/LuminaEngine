@@ -269,7 +269,7 @@ namespace Lumina
         bool bAnySay = false;
         for (const FRegisteredParam& Registered : Params)
         {
-            if (Registered.Ops->HasWork != nullptr)
+            if (Registered.bCountsAsWork && Registered.Ops->HasWork != nullptr)
             {
                 bAnySay = true;
                 if (Registered.Ops->HasWork(Registered.Param))
@@ -279,6 +279,17 @@ namespace Lumina
             }
         }
         return !bAnySay;
+    }
+
+    void CEntitySystem::ExcludeParamFromHasWork(const void* Param)
+    {
+        for (FRegisteredParam& Registered : Params)
+        {
+            if (Registered.Param == Param)
+            {
+                Registered.bCountsAsWork = false;
+            }
+        }
     }
 
     void CExclusiveSystem::OnUpdate(const SSystemContext& Context)

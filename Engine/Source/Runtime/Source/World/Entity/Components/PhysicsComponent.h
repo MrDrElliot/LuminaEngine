@@ -586,6 +586,9 @@ namespace Lumina
         /** When true, this collider contributes its shape to NavMesh bakes. */
         PROPERTY(Editable, Category = "Navigation")
         bool bAffectsNavigation = true;
+
+        // Mesh geometry version the collision body was built from, left unreflected because a loaded mesh restarts its count.
+        uint32 GeometryVersion = 0;
     };
 
 }

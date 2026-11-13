@@ -8,6 +8,7 @@
 #include "ScriptableObject.h"
 #include "DotNet/DotNetHost.h"
 #include "Core/Object/Object.h"
+#include "ManagedTypeRegistry.h"
 
 namespace Lumina::Scripting
 {
@@ -119,27 +120,23 @@ namespace Lumina::Scripting
         Dispatch(Instance, &Function, Frame);
     }
 
-    namespace
-    {
-        // Every function given a managed invoker, so a reload can drop them before the code they point at unloads.
-        TVector<const FFunction*> GPublishedInvokers;
-    }
-
     void PublishManagedInvoker(const FFunction& Function, void* Invoker, const int32* Offsets)
     {
+        TVector<const FFunction*>& PublishedInvokers = FManagedTypeRegistry::Get().GetPublishedInvokers();
         if (Function.GetManagedInvoker() == nullptr)
         {
-            GPublishedInvokers.Add(&Function);
+            PublishedInvokers.Add(&Function);
         }
         Function.SetManagedInvoker(Invoker, Offsets);
     }
 
     void ClearManagedInvokers()
     {
-        for (const FFunction* Function : GPublishedInvokers)
+        TVector<const FFunction*>& PublishedInvokers = FManagedTypeRegistry::Get().GetPublishedInvokers();
+        for (const FFunction* Function : PublishedInvokers)
         {
             Function->SetManagedInvoker(nullptr, nullptr);
         }
-        GPublishedInvokers.Reset();
+        PublishedInvokers.Reset();
     }
 }

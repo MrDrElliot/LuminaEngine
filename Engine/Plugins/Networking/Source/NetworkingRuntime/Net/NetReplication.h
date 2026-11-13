@@ -48,15 +48,16 @@ namespace Lumina
         void   WriteNetGuid(FNetArchive& Ar, uint32 Guid);
         uint32 ReadNetGuid (FNetArchive& Ar);
 
-        // Block is the changed-field bitmask then each changed field's bytes in order, shared by every recipient.
+        // Block is the changed-field bitmask then each changed field's bytes in order, shared by every recipient, and empty for a removal.
         struct FComponentRepOut
         {
             uint32         WireIndex = 0;
+            bool           bRemoved = false;
             TVector<uint8> Block;
         };
 
-        // A baseline emits every component and field, otherwise only changed fields; a given DiffState is updated and Out's storage reused.
-        void CollectComponentFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
+        // A baseline emits every component and field, otherwise only changed fields and removed components; a given DiffState is updated and Out's storage reused.
+        NETWORKINGRUNTIME_API void CollectComponentFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
             bool bBaseline, FComponentRepState* DiffState, TVector<FComponentRepOut>& Out);
 
         // True when Parent is an entity that actually replicates to clients (SNetworkComponent + bReplicates +
@@ -67,7 +68,7 @@ namespace Lumina
         bool ParentReplicates(ECS::FRegistry& Registry, ECS::FEntity Parent);
 
         // Null Components writes an empty component block.
-        void WriteEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity,
+        NETWORKINGRUNTIME_API void WriteEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity,
             const TVector<FComponentRepOut>* Components = nullptr);
 
         // A spawn sends full state, since unreplicated configuration would otherwise arrive as defaults.
@@ -79,7 +80,7 @@ namespace Lumina
         void ReadScriptStates(FNetArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 Count);
 
         // Client, recreate/refresh components on Entity, then apply the replicated attachment link.
-        void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, const FNetWorldState& State, ECS::FEntity Entity);
+        NETWORKINGRUNTIME_API void ReadEntityComponents(FNetArchive& Ar, ECS::FRegistry& Registry, FNetWorldState& State, ECS::FEntity Entity);
 
         // One script's diff, keyed by its index on the entity. Block has the same layout as a component's.
         struct FScriptRepOut
@@ -90,7 +91,7 @@ namespace Lumina
 
         // Server, diff every script on Entity that declares replicated fields. Same contract as CollectComponentFieldsInto.
         // Returns true when a rate-limited field changed too soon and was held back, so the entity has to stay dirty.
-        bool CollectScriptFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
+        NETWORKINGRUNTIME_API bool CollectScriptFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
             bool bBaseline, FComponentRepState* DiffState, TVector<FScriptRepOut>& Out);
 
         // The class of every script on Entity, so a client can build a spawned entity's scripts before their fields arrive.
@@ -134,11 +135,14 @@ namespace Lumina
 
         // Bind both index caches on an archive. Writer uses the peer's outgoing maps, reader the sender's
         // incoming maps. Used for component + RPC-arg replication.
-        void BindWriters(FNetArchive& Ar, FNetWorldState& State);
-        void BindReaders(FNetArchive& Ar, FNetWorldState& State, uint32 SenderConn);
+        NETWORKINGRUNTIME_API void BindWriters(FNetArchive& Ar, FNetWorldState& State);
+        NETWORKINGRUNTIME_API void BindReaders(FNetArchive& Ar, FNetWorldState& State, uint32 SenderConn);
 
         // Entity ids alone, which every peer shares, for a payload that may be relayed past the peer that wrote it.
         void BindEntityIds(FNetArchive& Ar, FNetWorldState& State);
+
+        // Apply refuses indices at or past this, so a peer can never grow another's incoming maps or name table without bound.
+        inline constexpr uint32 MaxIncomingNetIndex = 1u << 16;
 
         // Build/apply the index-to-identity export messages (reliable). Build appends framed messages to a batch; Apply ingests one message into the sender's map.
         NETWORKINGRUNTIME_API void BuildObjectExport(const FNetObjectMap& Map, const TVector<uint32>& Indices, TVector<uint8>& Batch);

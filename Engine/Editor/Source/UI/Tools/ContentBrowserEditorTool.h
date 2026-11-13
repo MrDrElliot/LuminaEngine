@@ -3,6 +3,7 @@
 #include "EditorTool.h"
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
+#include "Containers/Queue.h"
 #include "Core/LuminaCommonTypes.h"
 #include "FileSystem/FileSystem.h"
 #include "Memory/SmartPtr.h"
@@ -44,7 +45,6 @@ namespace Lumina
 {
     class CImporter;
     class FPropertyTable;
-    struct FAssetData;
     struct FImportRequest;
     enum class EContentBrowserSortMode : uint8;
 
@@ -86,8 +86,10 @@ namespace Lumina
 
         void HandleContentBrowserDragDrop(FStringView DropPath, FStringView PayloadPath);
 
+        void MoveSelectedTilesInto(FStringView DropPath, FStringView SourcePath);
+
         // The single highlighted asset, or null for an empty selection, a multi-selection, a folder or a loose file.
-        NODISCARD const FAssetData* GetSelectedAsset() const;
+        NODISCARD FAssetDataPtr GetSelectedAsset() const;
 
         // The one selected file's virtual path, or empty when a folder, several items or nothing is selected.
         NODISCARD FFixedString GetSelectedFilePath() const;
@@ -227,7 +229,7 @@ namespace Lumina
         TUniquePtr<FPropertyTable>  ImportSettingsTable;
 
         // Files still waiting on an options window, drained one at a time by ProcessNextImport.
-        TVector<FFixedString>       PendingImports;
+        TQueue<FFixedString>        PendingImports;
         bool                        bImportWindowOpen = false;
         bool                        bApplyImportSettingsToAll = false;
         FString                     LastExportDirectory;

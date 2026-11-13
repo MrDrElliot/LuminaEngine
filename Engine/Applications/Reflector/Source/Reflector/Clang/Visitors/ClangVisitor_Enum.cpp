@@ -95,7 +95,7 @@ namespace Lumina::Reflection::Visitor
         ReflectedEnum->Type = FReflectedType::EType::Enum;
         ReflectedEnum->LineNumber = ClangUtils::GetCursorLineNumber(Cursor);
         ReflectedEnum->GenerateMetadata(Macro.MacroContents);
-        ValidateSpecifiers(Cursor, ESpecifierTarget::Reflect, ReflectedEnum->Metadata);
+        ValidateSpecifiers(*Context->Specifiers, Cursor, ESpecifierTarget::Reflect, ReflectedEnum->Metadata);
         if (std::string Comment = ClangUtils::GetBriefComment(Cursor); !Comment.empty() && !ReflectedEnum->HasMetadata("ToolTip"))
         {
             ReflectedEnum->Metadata.push_back({"ToolTip", ClangUtils::EscapeStringLiteral(Comment)});

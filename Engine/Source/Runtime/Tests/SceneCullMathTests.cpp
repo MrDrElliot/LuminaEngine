@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "Core/Math/Transform.h"
+#include "Renderer/ViewVolume.h"
 #include "World/Scene/RenderScene/SceneCullMath.h"
 
 #include <random>
@@ -66,6 +67,41 @@ namespace
         Transform.SetScale(FVector3(Scale(Rng), Scale(Rng), Scale(Rng)));
         return Transform.GetMatrix();
     }
+
+    FCullView MakeCameraCullView(const FVector3& Position, const FVector3& Facing)
+    {
+        FViewVolume Volume;
+        Volume.SetView(Position, Facing, FVector3(0.0f, 1.0f, 0.0f));
+        const FFrustum Frustum = FFrustum::FromViewProjection(Volume.GetViewProjectionMatrix());
+
+        FCullView View = {};
+        for (int32 Plane = 0; Plane < FFrustum::NUM; ++Plane)
+        {
+            View.FrustumPlanes[Plane] = Frustum.Planes[Plane];
+        }
+        View.ViewOriginAndFlags = FVector4(Position, 0.0f);
+        return View;
+    }
+
+    FVector3 FacingAtYaw(float Degrees)
+    {
+        const float Radians = Math::Radians(Degrees);
+        return FVector3(Math::Sin(Radians), 0.0f, -Math::Cos(Radians));
+    }
+}
+
+TEST(SceneCullMath, CameraCutCatchesARotationInPlace)
+{
+    const FVector3 Position(3.0f, 2.0f, -7.0f);
+    const FCullView Before = MakeCameraCullView(Position, FacingAtYaw(0.0f));
+
+    EXPECT_FALSE(SceneCull::IsCameraCut(Before, MakeCameraCullView(Position, FacingAtYaw(0.0f))));
+    EXPECT_FALSE(SceneCull::IsCameraCut(Before, MakeCameraCullView(Position, FacingAtYaw(30.0f))));
+    EXPECT_FALSE(SceneCull::IsCameraCut(Before, MakeCameraCullView(Position + FVector3(5.0f, 0.0f, 0.0f), FacingAtYaw(0.0f))));
+
+    EXPECT_TRUE(SceneCull::IsCameraCut(Before, MakeCameraCullView(Position, FacingAtYaw(90.0f))));
+    EXPECT_TRUE(SceneCull::IsCameraCut(Before, MakeCameraCullView(Position, FacingAtYaw(180.0f))));
+    EXPECT_TRUE(SceneCull::IsCameraCut(Before, MakeCameraCullView(Position + FVector3(0.0f, 0.0f, 20.0f), FacingAtYaw(0.0f))));
 }
 
 TEST(SceneCullMath, BlockBoundsMatchTheScalarLoopExactly)

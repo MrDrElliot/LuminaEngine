@@ -287,6 +287,7 @@ namespace Lumina
         void BeginPropertyEditTransaction(CStruct* ComponentType);
         void RecordPrefabOverrideSnapshot(const TVector<ECS::FEntity>& Entities);
         void PushRenameEntityModal(ECS::FEntity Entity);
+        void RenameEntityTransacted(ECS::FEntity Entity, FStringView NewName);
         void PushAddTagModal(ECS::FEntity Entity);
         void DrawTagSection(ECS::FEntity Entity);
 

@@ -45,20 +45,20 @@ namespace Lumina
         // The colliders and authored volumes that feed the navmesh, walked by the helpers in the .cpp.
         struct FSourceQueries
         {
-            template<typename T>
-            using TSource = ECS::TQuery<ECS::Read<T>, ECS::Read<STransformComponent>>;
+            template<typename T, typename... TBeside>
+            using TSource = ECS::TQuery<ECS::Read<T>, ECS::Read<STransformComponent>, ECS::Optional<ECS::Read<TBeside>>...>;
 
-            TSource<SBoxColliderComponent>          Boxes;
-            TSource<SSphereColliderComponent>       Spheres;
-            TSource<SMeshColliderComponent>         MeshColliders;
-            TSource<SDynamicMeshColliderComponent>  DynamicMeshColliders;
-            TSource<SCapsuleColliderComponent>      Capsules;
-            TSource<SCylinderColliderComponent>     Cylinders;
-            TSource<SCharacterPhysicsComponent>     Characters;
-            TSource<SCompoundColliderComponent>     Compounds;
-            TSource<SNavModifierComponent>          Modifiers;
-            TSource<SNavLinkComponent>              Links;
-            TSource<STerrainColliderComponent>      TerrainColliders;
+            TSource<SBoxColliderComponent>                                  Boxes;
+            TSource<SSphereColliderComponent>                               Spheres;
+            TSource<SMeshColliderComponent, SStaticMeshComponent>           MeshColliders;
+            TSource<SDynamicMeshColliderComponent, SDynamicMeshComponent>   DynamicMeshColliders;
+            TSource<SCapsuleColliderComponent>                              Capsules;
+            TSource<SCylinderColliderComponent>                             Cylinders;
+            TSource<SCharacterPhysicsComponent>                             Characters;
+            TSource<SCompoundColliderComponent>                             Compounds;
+            TSource<SNavModifierComponent>                                  Modifiers;
+            TSource<SNavLinkComponent>                                      Links;
+            TSource<STerrainColliderComponent, STerrainComponent>           TerrainColliders;
 
             ECS::TQuery<ECS::Read<SFoliageComponent>>               Foliage;
             ECS::TQuery<ECS::Read<STerrainColliderComponent>>       TerrainPool;
@@ -67,7 +67,6 @@ namespace Lumina
             // Lookups only, each strict to its one component, for what a source reads beside its collider.
             ECS::TQuery<ECS::Read<SRigidBodyComponent>>             RigidBodies;
             ECS::TQuery<ECS::Read<STerrainComponent>>               Terrains;
-            ECS::TQuery<ECS::Read<SStaticMeshComponent>>            StaticMeshes;
             ECS::TQuery<ECS::Read<SDynamicMeshComponent>>           DynamicMeshes;
 
             // Watched only, so a world of moving props never reaches the drain.

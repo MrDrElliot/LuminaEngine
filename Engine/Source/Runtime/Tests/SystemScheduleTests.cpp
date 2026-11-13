@@ -7,6 +7,12 @@
 #include "Log/Log.h"
 
 #include "Scripting/ScriptableTest.h"
+#include "World/Entity/Components/AIStimuliSourceComponent.h"
+#include "World/Entity/Components/CameraFollowComponent.h"
+#include "World/Entity/Components/NavMeshComponent.h"
+#include "World/Entity/Components/SkeletalMeshComponent.h"
+#include "World/Entity/Components/StaticMeshComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Systems/EntitySystem.h"
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/World.h"
@@ -344,6 +350,35 @@ TEST(SystemSchedule, ExclusiveSystemsAreNeverReportedAsAmbiguous)
     EXPECT_TRUE(SystemSchedule::FindAmbiguities(Stage).IsEmpty());
 }
 
+TEST(SystemSchedule, TheEngineTransformSystemsBeforePhysicsDeclareTheirOrder)
+{
+    RegisterPendingTypes();
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    EntitySystems::CreateMissing(*World, {}, World->Systems);
+
+    TVector<CEntitySystem*> InStage;
+    for (const TStrongObjectPtr<CEntitySystem>& System : World->Systems)
+    {
+        if (System->RunsInStage(EUpdateStage::PrePhysics))
+        {
+            InStage.Add(System.Get());
+        }
+    }
+
+    const FName Ordered[] = { "CMovementComponentSystem", "CProjectileSystem", "CPathFollowSystem", "CBuoyancySystem",
+        "CFoliageCollisionSystem", "CRagdollSystem", "CSocketAttachmentSystem", "CRVOAvoidanceSystem" };
+    const CWorld::FStageSchedule Stage = SystemSchedule::OrderStage(InStage, EUpdateStage::PrePhysics);
+    for (const SystemSchedule::FAmbiguity& Ambiguity : SystemSchedule::FindAmbiguities(Stage))
+    {
+        const FName First = Stage.Systems[Ambiguity.First]->GetClass()->GetName();
+        const FName Second = Stage.Systems[Ambiguity.Second]->GetClass()->GetName();
+        EXPECT_FALSE(Algo::Contains(Ordered, First) && Algo::Contains(Ordered, Second))
+            << *First.ToString() << " and " << *Second.ToString() << " race on " << *GetAccessTypeName(Ambiguity.ConflictId).ToString();
+    }
+    EntitySystems::DestroyAll(SSystemContext(), World->Systems);
+}
+
 TEST(SystemSchedule, TheEngineSystemSetReportsEverySystemItSchedules)
 {
     RegisterPendingTypes();
@@ -367,5 +402,39 @@ TEST(SystemSchedule, TheEngineSystemSetReportsEverySystemItSchedules)
         }
         EXPECT_TRUE(!bScheduled || Report.Contains(Name)) << *Name;
     }
+    EntitySystems::DestroyAll(SSystemContext(), World->Systems);
+}
+
+TEST(SystemSchedule, LookupOnlyQueriesDoNotGiveASystemWork)
+{
+    RegisterPendingTypes();
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    EntitySystems::CreateMissing(*World, {}, World->Systems);
+    ECS::FRegistry& Registry = World->GetEntityRegistry();
+    const ECS::FEntity Target = Registry.Create();
+    Registry.Emplace<STransformComponent>(Target);
+    Registry.Emplace<SSkeletalMeshComponent>(Target);
+    Registry.Emplace<SStaticMeshComponent>(Target);
+    Registry.Emplace<SNavMeshComponent>(Target);
+    Registry.Emplace<SAIStimuliSourceComponent>(Target);
+
+    const SSystemContext Context = FWorldTestAccess::SystemContext(*World);
+    auto FindSystem = [&](const char* Name) { return EntitySystems::Find(World->Systems, FindObject<CClass>(FName(Name))); };
+    const char* LookupOnly[] = { "CAnimationSystem", "CAudioSystem", "CCameraRigSystem", "CPathFollowSystem",
+        "CPerceptionSystem", "CRVOAvoidanceSystem", "CRagdollSystem", "CSocketAttachmentSystem" };
+    for (const char* Name : LookupOnly)
+    {
+        CEntitySystem* System = FindSystem(Name);
+        ASSERT_NE(System, nullptr) << Name;
+        EXPECT_FALSE(System->HasWork(Context)) << Name;
+    }
+
+    CEntitySystem* Rig = FindSystem("CCameraRigSystem");
+    const ECS::FEntity Follower = Registry.Create();
+    Registry.Emplace<STransformComponent>(Follower);
+    Registry.Emplace<SCameraFollowComponent>(Follower).Target = Target;
+    EXPECT_TRUE(Rig->HasWork(Context)) << "a rig is what drives the system";
+
     EntitySystems::DestroyAll(SSystemContext(), World->Systems);
 }

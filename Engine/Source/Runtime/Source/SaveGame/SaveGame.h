@@ -61,6 +61,6 @@ namespace Lumina
         THashMap<FString, TVector<uint8>> WorldStates;
 
         // Stored world states are read with the property format of the engine that wrote them.
-        int32 LoadedFileVersion = GPackageFileLuminaVersion.FileVersion;
+        int32 LoadedFileVersion = Global::GPackageFileLuminaVersion.FileVersion;
     };
 }

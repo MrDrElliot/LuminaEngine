@@ -45,7 +45,7 @@ namespace Lumina
     {
         uint32 Alignment = Math::Max<uint32>(16, InClass->GetAlignment());
 
-        return GCObjectAllocator.AllocateCObject(InClass->GetSize(), Alignment);
+        return Global::GCObjectAllocator.AllocateCObject(InClass->GetSize(), Alignment);
     }
 
     // Reuses the class name's table entry, since looking the string up again cost more than the rest of the name.
@@ -145,7 +145,7 @@ namespace Lumina
             return Existing;
         }
 
-        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(GUID))
+        if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(GUID))
         {
             if (CPackage* Package = CPackage::LoadPackage(Data->Path))
             {
@@ -158,7 +158,7 @@ namespace Lumina
 
     CObject* StaticLoadObject(FStringView Name)
     {
-        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Name))
+        if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Name))
         {
             return StaticLoadObject(Data->AssetGUID);
         }
@@ -173,7 +173,7 @@ namespace Lumina
 
     CObject* StaticLoadObjectGraph(FStringView Name)
     {
-        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(Name))
+        if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Name))
         {
             return CPackage::LoadAssetGraph(Data->AssetGUID);
         }

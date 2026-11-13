@@ -217,6 +217,11 @@ namespace Lumina::ECS
 
     uint32 FEventQueue::NumUnread(uint64 Cursor) const
     {
+        if (Math::Max(Info.Size, 1u) != Stride)
+        {
+            return 0;
+        }
+
         const uint64 Oldest = Buffers[1 - Newer].FirstIndex;
         return (uint32)(NextIndex - Math::Max(Cursor, Oldest));
     }

@@ -81,10 +81,10 @@ namespace Grain
             Options.EntryPoint = EntryPoint;
             Options.bGenerateReflectionData = false;
 
-            GShaderCompiler->CompilerShaderRaw(FString(Shaders::kVoxelCommon) + Module, Options,
+            Global::GShaderCompiler->CompilerShaderRaw(FString(Shaders::kVoxelCommon) + Module, Options,
                 [&Spirv](FShaderHeader Header) { Spirv = Move(Header.Binaries); });
 
-            GShaderCompiler->Flush();
+            Global::GShaderCompiler->Flush();
 
             if (Spirv.IsEmpty())
             {

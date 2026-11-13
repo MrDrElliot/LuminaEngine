@@ -173,6 +173,10 @@ namespace Lumina
         NODISCARD static FFixedString GetToolWindowName(char const* ToolWindowName, ImGuiID InDockspaceID);
         virtual void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const;
 
+        // Clears InDockspaceID's children and splits it into a left and right pane, with the right pane taking InRightFraction of the width.
+        static void SplitDockingLayoutLeftRight(ImGuiID InDockspaceID, float InRightFraction, ImGuiID& OutLeftDockID, ImGuiID& OutRightDockID);
+        static void SplitDockingLayoutLeftRight(ImGuiID InDockspaceID, const char* InLeftWindowName, const char* InRightWindowName, float InRightFraction);
+
         NODISCARD CWorld* GetWorld() const { return World.Get(); }
         NODISCARD bool HasWorld() const { return World != nullptr; }
         NODISCARD virtual FSceneEditorTool* AsSceneEditor() { return nullptr; }

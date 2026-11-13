@@ -66,7 +66,7 @@ namespace Lumina
         Spawners.ForEach([&](ECS::FEntity Entity, ECS::TMut<SPrefabSpawnerComponent> SpawnComponentMut, const STransformComponent& Transform)
         {
             const SPrefabSpawnerComponent& Current = SpawnComponentMut.Get();
-            if (Math::Max(Current.SpawnTimeRange.x, Current.SpawnTimeRange.y) <= 0.0f)
+            if (Current.SpawnTimeRange.x <= 0.0f)
             {
                 if (Current.TimeUntilNextSpawn != 0.0f)
                 {

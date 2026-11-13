@@ -1,8 +1,10 @@
 #pragma once
 
+#include "Containers/HashTable.h"
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
+#include "World/ECS/Entity.h"
 
 #include "MCPStressTools.generated.h"
 
@@ -220,6 +222,9 @@ namespace Lumina
 
     namespace MCP
     {
+        // Updates Cells for a Respawn cell whose replacement spawn finished with Entity; returns whether it succeeded.
+        MCPEDITOR_API bool StoreRespawnedCell(THashMap<int32, ECS::FEntity>& Cells, int32 Cell, ECS::FEntity Entity);
+
         void RegisterStressTools(FStringView Owner);
     }
 }

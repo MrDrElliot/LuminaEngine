@@ -26,6 +26,7 @@ namespace Lumina
 
 #include "Containers/Name.h"
 #include "Containers/HashTable.h"
+#include "Containers/RingBuffer.h"
 #include "Containers/Vector.h"
 #include "Core/Threading/Thread.h"
 #include "ModuleAPI.h"
@@ -80,7 +81,7 @@ namespace Lumina
 
         static FAssetLoadTracker& Get();
 
-        FAssetLoadTracker() = default;
+        FAssetLoadTracker() : Recent(MaxRecentRecords) {}
         ~FAssetLoadTracker() = default;
         FAssetLoadTracker(const FAssetLoadTracker&) = delete;
         FAssetLoadTracker& operator = (const FAssetLoadTracker&) = delete;
@@ -104,7 +105,7 @@ namespace Lumina
     private:
 
         mutable FMutex                  Mutex;
-        TVector<FAssetLoadRecord>       Recent;
+        TRingBuffer<FAssetLoadRecord>   Recent;
         // Kept apart rather than keyed together, so a request and the package under it never sum into one row.
         THashMap<FName, FAssetLoadStat> ByRequest;
         THashMap<FName, FAssetLoadStat> ByPackage;

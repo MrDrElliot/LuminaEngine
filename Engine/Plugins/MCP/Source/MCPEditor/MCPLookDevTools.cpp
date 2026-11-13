@@ -29,6 +29,32 @@
 
 namespace Lumina::MCP
 {
+    // Cleans up against the fixture's own recorded world, since the caller's current scene world can be a different one.
+    void ClearFixture(FLookDevFixtureState& State, int32& OutDestroyed)
+    {
+        if (CWorld* FixtureWorld = State.World.Get())
+        {
+            for (ECS::FEntity Entity : State.Entities)
+            {
+                if (FixtureWorld->IsValidEntity(Entity))
+                {
+                    FixtureWorld->DestroyEntity(Entity);
+                    ++OutDestroyed;
+                }
+            }
+            for (ECS::FEntity Sun : State.DisabledSuns)
+            {
+                if (FixtureWorld->IsValidEntity(Sun))
+                {
+                    FixtureWorld->GetEntityRegistry().Remove<SDisabledTag>(Sun);
+                }
+            }
+        }
+        State.World = nullptr;
+        State.Entities.Reset();
+        State.DisabledSuns.Reset();
+    }
+
     namespace MCPLookDevToolsInternal
     {
         // Well clear of the welcome and starter scenes, which keep their props around the world origin.
@@ -86,6 +112,11 @@ namespace Lumina::MCP
         constexpr float kLeafMeanOpacity = 0.317f;
         // The clip itself, which coverage-preserving mips fade it to so the alpha test keeps the leaves it passed up close.
         constexpr float kLeafCoverageOpacity = 0.333f;
+
+        // In the gap GrassGrazing sees between the 20 m and 30 m hedges, and in FarVista's view ahead of the 30 m pair.
+        const FVector3 kGlossyProbeCenter(-5.5f, 0.75f, 24.0f);
+        constexpr float kGlossyProbeScale = 1.5f;
+        const FVector3 kClearcoatProbeCenter(-3.0f, 0.75f, 24.0f);
 
         const FVector3 kPointLightOffset(1.2f, 1.2f, 1.0f);
         const FVector3 kSpotLightOffset(-1.5f, 2.5f, 1.5f);
@@ -186,10 +217,20 @@ namespace Lumina::MCP
             return Material;
         }
 
+        TStrongObjectPtr<CMaterial> MakeTransientMaterial(const char* Name, const FString& Inputs, EBlendMode BlendMode)
+        {
+            TStrongObjectPtr<CMaterial> Material(CMaterial::CreateBuiltinMaterial(Name, Inputs, {}, BlendMode));
+            if (Material.IsValid())
+            {
+                Material->RemoveFromRoot();
+            }
+            return Material;
+        }
+
         // Leaf blobs in UV whose contrast fades as a cell shrinks to two pixels, the way a texture's mips do, toward SettleOpacity.
         TStrongObjectPtr<CMaterial> MakeLeafMaterial(const char* Name, float SettleOpacity)
         {
-            const FString Inputs = Lumina::Format(R"(
+            return MakeTransientMaterial(Name, Lumina::Format(R"(
     FMaterialPixelInputs Material = DefaultMaterialInputs();
     float2 _LeafCells = UV0 * float2(160.0, 80.0);
     float2 _LeafFootprint = (abs(UV0_DDX) + abs(UV0_DDY)) * float2(160.0, 80.0);
@@ -198,36 +239,72 @@ namespace Lumina::MCP
     Material.Diffuse = float3(0.08, 0.25, 0.04);
     Material.Roughness = 0.7;
     Material.Opacity = lerp({:.3f}, _LeafAlpha, _LeafDetail);
-)", SettleOpacity);
-            TStrongObjectPtr<CMaterial> Material(CMaterial::CreateBuiltinMaterial(Name, Inputs, {}, EBlendMode::Masked));
-            if (Material.IsValid())
-            {
-                Material->RemoveFromRoot();
-            }
-            return Material;
+)", SettleOpacity), EBlendMode::Masked);
         }
 
-        void BuildHedges(FLookDevFixtureState& State, CWorld* World)
+        // Unfiltered ripples a few pixels wide at range, so the near-mirror highlight sparkles unless specular is anti-aliased.
+        TStrongObjectPtr<CMaterial> MakeGlossyRippleMaterial()
+        {
+            return MakeTransientMaterial("LookDevGlossyRipples", R"(
+    FMaterialPixelInputs Material = DefaultMaterialInputs();
+    float2 _RipplePhase = 6.2831853 * UV0 * float2(96.0, 48.0);
+    Material.Diffuse = float3(0.9, 0.9, 0.92);
+    Material.Metallic = 1.0;
+    Material.Roughness = 0.05;
+    Material.Normal = normalize(float3(0.6 * cos(_RipplePhase.x), 0.6 * cos(_RipplePhase.y), 1.0));
+)", EBlendMode::Opaque);
+        }
+
+        // Shares the ripple normal with MakeGlossyRippleMaterial, so the clearcoat lobe sparkles while the base lobe stays clean.
+        TStrongObjectPtr<CMaterial> MakeGlossyClearcoatMaterial()
+        {
+            return MakeTransientMaterial("LookDevGlossyClearcoat", R"(
+    FMaterialPixelInputs Material = DefaultMaterialInputs();
+    float2 _RipplePhase = 6.2831853 * UV0 * float2(96.0, 48.0);
+    Material.Diffuse = float3(0.02, 0.02, 0.03);
+    Material.Metallic = 0.0;
+    Material.Roughness = 0.4;
+    Material.Clearcoat = 1.0;
+    Material.ClearcoatRoughness = 0.05;
+    Material.Normal = normalize(float3(0.6 * cos(_RipplePhase.x), 0.6 * cos(_RipplePhase.y), 1.0));
+)", EBlendMode::Opaque);
+        }
+
+        void SpawnMesh(FLookDevFixtureState& State, CWorld* World, const char* Name, CStaticMesh* Mesh, const FTransform& Transform, CMaterial* Material = nullptr)
+        {
+            const ECS::FEntity Entity = World->ConstructEntity(Name, Transform);
+            SStaticMeshComponent& Component = World->EmplaceComponent<SStaticMeshComponent>(Entity);
+            Component.SetStaticMesh(Mesh);
+            if (Material != nullptr)
+            {
+                Component.SetMaterialAtSlot(Material, 0);
+            }
+            State.Entities.Add(Entity);
+        }
+
+        void BuildMaterialProbes(FLookDevFixtureState& State, CWorld* World)
         {
             if (!State.MippedLeaves.IsValid())
             {
-                State.MippedLeaves   = MakeLeafMaterial("LookDevLeavesMipped", kLeafMeanOpacity);
-                State.CoverageLeaves = MakeLeafMaterial("LookDevLeavesCoverage", kLeafCoverageOpacity);
+                State.MippedLeaves    = MakeLeafMaterial("LookDevLeavesMipped", kLeafMeanOpacity);
+                State.CoverageLeaves  = MakeLeafMaterial("LookDevLeavesCoverage", kLeafCoverageOpacity);
+                State.GlossyRipples   = MakeGlossyRippleMaterial();
+                State.GlossyClearcoat = MakeGlossyClearcoatMaterial();
             }
 
+            CPrimitiveManager& Primitives = CPrimitiveManager::Get();
             for (const FLookDevHedge& Hedge : kHedges)
             {
-                const auto Spawn = [&](const char* Name, float X, CMaterial* Material)
-                {
-                    const ECS::FEntity Entity = World->ConstructEntity(Name, FTransform(kOrigin + FVector3(X, kHedgeCenterY, Hedge.Depth), FVector3(0.0f), kHedgeScale));
-                    SStaticMeshComponent& Mesh = World->EmplaceComponent<SStaticMeshComponent>(Entity);
-                    Mesh.SetStaticMesh(CPrimitiveManager::Get().CubeMesh.Get());
-                    Mesh.SetMaterialAtSlot(Material, 0);
-                    State.Entities.Add(Entity);
-                };
-                Spawn("LookDev Leaves Mipped", -Hedge.HalfGap, State.MippedLeaves.Get());
-                Spawn("LookDev Leaves Coverage", Hedge.HalfGap, State.CoverageLeaves.Get());
+                const auto Card = [&Hedge](float X) { return FTransform(kOrigin + FVector3(X, kHedgeCenterY, Hedge.Depth), FVector3(0.0f), kHedgeScale); };
+                SpawnMesh(State, World, "LookDev Leaves Mipped", Primitives.CubeMesh.Get(), Card(-Hedge.HalfGap), State.MippedLeaves.Get());
+                SpawnMesh(State, World, "LookDev Leaves Coverage", Primitives.CubeMesh.Get(), Card(Hedge.HalfGap), State.CoverageLeaves.Get());
             }
+
+            SpawnMesh(State, World, "LookDev Glossy Ripples", Primitives.SphereMesh.Get(),
+                FTransform(kOrigin + kGlossyProbeCenter, FVector3(0.0f), FVector3(kGlossyProbeScale)), State.GlossyRipples.Get());
+
+            SpawnMesh(State, World, "LookDev Glossy Clearcoat", Primitives.SphereMesh.Get(),
+                FTransform(kOrigin + kClearcoatProbeCenter, FVector3(0.0f), FVector3(kGlossyProbeScale)), State.GlossyClearcoat.Get());
         }
 
         ECS::FEntity BuildTerrainPatch(CWorld* World, CMaterial* GrassMaterial)
@@ -270,31 +347,6 @@ namespace Lumina::MCP
             return World->ConstructEntity(Name, Transform);
         }
 
-        void ClearFixture(FLookDevFixtureState& State, CWorld* World, int32& OutDestroyed)
-        {
-            if (State.World.Get() == World)
-            {
-                for (ECS::FEntity Entity : State.Entities)
-                {
-                    if (World->IsValidEntity(Entity))
-                    {
-                        World->DestroyEntity(Entity);
-                        ++OutDestroyed;
-                    }
-                }
-                for (ECS::FEntity Sun : State.DisabledSuns)
-                {
-                    if (World->IsValidEntity(Sun))
-                    {
-                        World->GetEntityRegistry().Remove<SDisabledTag>(Sun);
-                    }
-                }
-            }
-            State.World = nullptr;
-            State.Entities.Reset();
-            State.DisabledSuns.Reset();
-        }
-
         void BuildFixture(const SLookDevBuildParams& In, FLookDevFixtureState& State, CWorld* World, CMaterial* GrassMaterial)
         {
             ECS::FRegistry& Registry = World->GetEntityRegistry();
@@ -314,13 +366,11 @@ namespace Lumina::MCP
 
             for (const FLookDevProbe& Probe : kProbes)
             {
-                const ECS::FEntity Entity = World->ConstructEntity(Probe.Name, FTransform(kOrigin + Probe.Center, FVector3(0.0f), Probe.Scale));
-                World->EmplaceComponent<SStaticMeshComponent>(Entity).SetStaticMesh((CPrimitiveManager::Get().*Probe.Mesh).Get());
-                State.Entities.Add(Entity);
+                SpawnMesh(State, World, Probe.Name, (CPrimitiveManager::Get().*Probe.Mesh).Get(), FTransform(kOrigin + Probe.Center, FVector3(0.0f), Probe.Scale));
             }
 
             State.Entities.Add(BuildTerrainPatch(World, GrassMaterial));
-            BuildHedges(State, World);
+            BuildMaterialProbes(State, World);
 
             const ECS::FEntity Sun = World->ConstructEntity("LookDev Sun", FTransform(kOrigin + FVector3(0.0f, 5.0f, 0.0f)));
             World->EmplaceComponent<SDirectionalLightComponent>(Sun).Direction = SunDirection(In.SunElevationDegrees, In.SunAzimuthDegrees);
@@ -366,7 +416,7 @@ namespace Lumina::MCP
             int32 Cleared = 0;
             SessionOps::RunTransacted("Build Look-dev Fixture (agent)", [&]()
             {
-                ClearFixture(*State, World, Cleared);
+                ClearFixture(*State, Cleared);
                 BuildFixture(In, *State, World, GrassMaterial.Get());
             }, SceneError);
 
@@ -393,13 +443,13 @@ namespace Lumina::MCP
                 return Agent::FToolResult::Error(SceneError.IsEmpty() ? FString("The MCP editor module is not running.") : SceneError);
             }
 
-            SessionOps::RunTransacted("Clear Look-dev Fixture (agent)", [&]() { ClearFixture(*State, World, Out.Destroyed); }, SceneError);
+            SessionOps::RunTransacted("Clear Look-dev Fixture (agent)", [&]() { ClearFixture(*State, Out.Destroyed); }, SceneError);
             return Agent::FToolResult::Ok(Lumina::Format("Removed {} look-dev entities.", Out.Destroyed));
         }
 
         uint64 CurrentFrame()
         {
-            return GEngine->GetUpdateContext().GetFrame();
+            return Global::GEngine->GetUpdateContext().GetFrame();
         }
 
         // Fails only when the editor stops presenting frames, so a long warmup on a slow machine still finishes.
@@ -511,7 +561,7 @@ namespace Lumina::MCP
         Registry.Register<SLookDevBuildParams, SLookDevBuildResult>(
             Owner, "lookdev.build_scene",
             "Build a transient shadow and grass test bed far from the origin: ground, small and tall probes, an overhang, a grass "
-            "terrain patch, a sun and shadowing point and spot lights. Replaces the last one; nothing is saved.",
+            "terrain patch, alpha-tested leaf cards, a glossy normal-mapped sphere, a sun and shadowing point and spot lights. Replaces the last one; nothing is saved.",
             Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread, &BuildLookDevScene);
 
         Registry.Register<SPackageEmptyParams, SDestroyEntitiesResult>(

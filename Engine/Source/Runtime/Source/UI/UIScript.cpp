@@ -632,11 +632,11 @@ namespace Lumina::UIScripts
     // The script can outlive its world, so its world pointer is only followed while that world is still live.
     void Forget(CEntityScript* Script)
     {
-        if (Script == nullptr || GWorldManager == nullptr)
+        if (Script == nullptr || Global::GWorldManager == nullptr)
         {
             return;
         }
-        GWorldManager->ForEachWorld([Script](CWorld& World)
+        Global::GWorldManager->ForEachWorld([Script](CWorld& World)
         {
             if (&World == Script->GetWorld())
             {
@@ -725,11 +725,11 @@ namespace Lumina::UIScripts
 
     void DocumentChanged(FStringView Path)
     {
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             return;
         }
-        GWorldManager->ForEachWorld([Path](CWorld& World)
+        Global::GWorldManager->ForEachWorld([Path](CWorld& World)
         {
             if (TVector<FOpenUI>* UIs = OpenUIsOf(&World))
             {

@@ -6,7 +6,7 @@
 
 #include "Reflector/Types/Functions/ReflectedFunction.h"
 #include "Reflector/Types/Properties/ReflectedProperty.h"
-#include "Reflector/Types/PropertyFlags.h"
+#include "Reflector/Public/PropertyFlags.h"
 #include "Reflector/ReflectionSpecifiers.h"
 #include "Reflector/Utils/MetadataUtils.h"
 
@@ -14,16 +14,9 @@ namespace Lumina::Reflection
 {
     class FReflectedHeader;
     class FReflectedProject;
-    class FCodeWriter;
 
     // Maps a source-level C++ type name onto EPropertyTypeFlags; used by the clang visitors classifying a field.
     EPropertyTypeFlags GetCoreTypeFromName(std::string_view Name);
-
-    // A static FMetadataEntry array named <SymbolBase>_Metadata holding what Target stores as metadata, entries every build keeps first.
-    void EmitMetadataArray(FCodeWriter& Writer, std::string_view SymbolBase, const std::vector<FMetadataPair>& Metadata, ESpecifierTarget Target);
-
-    // The trailing LUMINA_METADATA field of a descriptor, or nothing when Target stores no metadata.
-    std::string MetadataField(std::string_view SymbolBase, const std::vector<FMetadataPair>& Metadata, ESpecifierTarget Target);
 
     // Everything the reflector emits, an enum, struct or class.
     class FReflectedType
@@ -42,26 +35,6 @@ namespace Lumina::Reflection
         // "CClass", "CStruct" or "CEnum", the runtime type that describes this one.
         virtual std::string GetTypeName() const = 0;
 
-        virtual void DefineInitialHeader(FCodeWriter& Writer, const std::string& FileID) = 0;
-        virtual void DefineSecondaryHeader(FCodeWriter& Writer, const std::string& FileID) = 0;
-        virtual void DeclareImplementation(FCodeWriter& Writer) = 0;
-
-        // The struct holding this type's descriptor, declared in the type's own namespace so a class can befriend it.
-        std::string TypeInfoName() const { return "FTypeInfo_" + DisplayName; }
-        std::string TypeInfoQualifiedName() const { return Namespace.empty() ? ("::" + TypeInfoName()) : ("::" + Namespace + "::" + TypeInfoName()); }
-
-        // The function that builds this type, named without the type so a module table can list it by declaration alone.
-        std::string GetTypeFunctionName() const;
-
-        // The accessor generated code and traits reach the type through, StaticClass, StaticStruct or StaticEnum.
-        const char* AccessorName() const;
-
-        void OpenNamespace(FCodeWriter& Writer) const;
-        void CloseNamespace(FCodeWriter& Writer) const;
-
-        // GetType_<Name> and the accessor specialization that forwards to it. ExtraConstruction runs once, after the descriptor is built.
-        void EmitTypeFunctions(FCodeWriter& Writer, const std::string& ExtraConstruction = {}) const;
-
         /// The identifier emitted declarations must use; DisplayName unless ReflectedName aliased it.
         const std::string& EmittedCppName() const { return CppName.empty() ? DisplayName : CppName; }
 
@@ -69,9 +42,6 @@ namespace Lumina::Reflection
         const std::string& EmittedCppQualifiedName() const { return CppQualifiedName.empty() ? QualifiedName : CppQualifiedName; }
 
         bool HasMetadata(std::string_view Meta) const;
-
-        /// Value for Key, or nullptr when absent.
-        const std::string* TryGetMetadata(std::string_view Key) const;
         void GenerateMetadata(const std::string& InMetadata);
 
         std::vector<std::unique_ptr<FReflectedProperty>>    Props;
@@ -122,10 +92,6 @@ namespace Lumina::Reflection
 
         std::string GetTypeName() const override { return "CEnum"; }
 
-        void DefineInitialHeader(FCodeWriter& Writer, const std::string& FileID) override;
-        void DefineSecondaryHeader(FCodeWriter& Writer, const std::string& FileID) override;
-        void DeclareImplementation(FCodeWriter& Writer) override;
-
         void AddConstant(const FConstant& Constant) { Constants.push_back(Constant); }
 
         std::vector<FConstant> Constants;
@@ -156,32 +122,6 @@ namespace Lumina::Reflection
 
         std::string GetTypeName() const override { return "CStruct"; }
 
-        void DefineInitialHeader(FCodeWriter& Writer, const std::string& FileID) override;
-        void DefineSecondaryHeader(FCodeWriter& Writer, const std::string& FileID) override;
-        void DeclareImplementation(FCodeWriter& Writer) override;
-
-        // The type offsetof is taken against, aliased when the real spelling carries template arguments.
-        std::string OffsetBaseTypeName() const;
-
-        // Shared with FReflectedClass, whose descriptor differs only in what registers it.
-        void EmitMetadataArrays(FCodeWriter& Writer) const;
-        void EmitPropertyTable(FCodeWriter& Writer) const;
-        void DefinePropertyTable(FCodeWriter& Writer) const;
-
-        // Holds the real compiler to the clang layout the C# bindings bake in as constants.
-        void EmitLayoutAsserts(FCodeWriter& Writer) const;
-
-        // The descriptor fields naming the tables above, empty for a table that was not emitted.
-        std::string MemberTableFields() const;
-
-        bool HasNativeFunctions() const;
-
-        // The frame struct and thunk for each function, at file scope since offsetof is taken against them.
-        void EmitFunctionFrames(FCodeWriter& Writer) const;
-        void EmitFunctionTable(FCodeWriter& Writer) const;
-        void DefineFunctionParameterTables(FCodeWriter& Writer) const;
-        void DefineFunctionTable(FCodeWriter& Writer) const;
-
         std::string Parent;
     };
 
@@ -193,8 +133,5 @@ namespace Lumina::Reflection
 
         std::string GetTypeName() const override { return "CClass"; }
 
-        void DefineInitialHeader(FCodeWriter& Writer, const std::string& FileID) override;
-        void DefineSecondaryHeader(FCodeWriter& Writer, const std::string& FileID) override;
-        void DeclareImplementation(FCodeWriter& Writer) override;
     };
 }

@@ -22,11 +22,11 @@ namespace
 {
     FEditorUI* GetEditorUI()
     {
-        if (GEditorEngine == nullptr)
+        if (Global::GEditorEngine == nullptr)
         {
             return nullptr;
         }
-        return static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI());
+        return static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI());
     }
 }
 

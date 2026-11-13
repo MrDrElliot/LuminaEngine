@@ -76,6 +76,7 @@ namespace Lumina
             const char*           Names[kMaxDepth] = {};
             double                OpenMs = 0.0;
             uint32                Depth  = 0;
+            uint32                Overflow = 0; // Nesting past kMaxDepth, popped before Depth so the two stay matched.
             double                IdleStartMs = 0.0;
             bool                  bIdle  = false;
         };

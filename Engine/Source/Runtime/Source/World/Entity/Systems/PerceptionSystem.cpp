@@ -14,6 +14,9 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RunsBefore<CPathFollowSystem, CEntityScriptSystem>();
+
+        // Sources alone would only drain stimuli no perceiver can hear, so the perceivers decide.
+        ExcludeFromHasWork(Sources, Instigators);
     }
 
     namespace PerceptionSystemInternal
@@ -199,11 +202,6 @@ namespace Lumina
                 Context.DrawDebugLine(Eye, T.LastKnownLocation, Color, 2.0f, OneFrame);
             }
         }
-    }
-
-    bool CPerceptionSystem::HasWork(const SSystemContext& Context)
-    {
-        return AnyQueryHasRows(Perceivers);
     }
 
     void CPerceptionSystem::OnUpdate(const SSystemContext& Context)

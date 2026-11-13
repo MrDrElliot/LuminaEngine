@@ -3,7 +3,13 @@
 #include "SocketAttachmentSystem.h"
 #include "AnimationSystem.h"
 #include "EntityScriptSystem.h"
+#include "MovementComponentSystem.h"
+#include "ProjectileSystem.h"
+#include "PathFollowSystem.h"
+#include "BuoyancySystem.h"
+#include "RagdollSystem.h"
 
+#include "Animation/BindPose.h"
 #include "Animation/SkeletalMeshUtils.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "World/Entity/Components/EntityTags.h"
@@ -32,9 +38,7 @@ namespace Lumina
             {
                 return false;
             }
-            const FMatrix4 BindGlobal = Skeleton.HasBindGlobalMatrices()
-                ? Skeleton.BindGlobalMatrices[Bone]
-                : Math::Inverse(Skeleton.GetBone(Bone).InvBindMatrix);
+            const FMatrix4 BindGlobal = AnimPose::GetBindGlobalMatrix(&Skeleton, Bone);
             Entry.Bone = Bone;
             Entry.Post = BindGlobal * SocketOffset * Attachment.RelativeTransform.GetMatrix();
             return true;
@@ -57,12 +61,11 @@ namespace Lumina
     {
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
-        RunsAfter<CAnimationSystem, CEntityScriptSystem>();
-    }
+        // Last of the transform writers before physics, so an attachment follows its parent's final pose for the frame.
+        RunsAfter<CAnimationSystem, CEntityScriptSystem, CMovementComponentSystem, CProjectileSystem, CPathFollowSystem, CBuoyancySystem, CRagdollSystem>();
 
-    bool CSocketAttachmentSystem::HasWork(const SSystemContext& Context)
-    {
-        return AnyQueryHasRows(Attachments);
+        // Only the attachments, since the parent lookups match almost every mesh.
+        ExcludeFromHasWork(SkeletalParents, StaticParents);
     }
 
     void CSocketAttachmentSystem::OnUpdate(const SSystemContext& Context)

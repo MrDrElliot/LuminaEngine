@@ -79,6 +79,69 @@ namespace Lumina
         };
     }
 
+    void FEntityScriptComponentCustomization::BindView(FSlotView& View, CEntityScript* Script)
+    {
+        // The class is compared too, since a new script can land at a destroyed one's address.
+        if (View.BoundScript == Script && View.BoundClass == Script->GetClass())
+        {
+            return;
+        }
+
+        View.ValueTable = MakeUnique<FPropertyTable>(static_cast<void*>(Script), static_cast<CStruct*>(Script->GetClass()));
+        View.ValueTable->SetShowSearchBar(false);
+
+        // Routed out as this customization's op, so a script edit shares the panel's transaction handling.
+        View.ValueTable->SetStartEditCallback ([this](const FPropertyChangedEvent&) { NestedChangeOp = EPropertyChangeOp::Started; });
+        View.ValueTable->SetPostEditCallback  ([this](const FPropertyChangedEvent&)
+        {
+            if (NestedChangeOp == EPropertyChangeOp::None) { NestedChangeOp = EPropertyChangeOp::Updated; }
+        });
+        View.ValueTable->SetFinishEditCallback([this](const FPropertyChangedEvent&) { NestedChangeOp = EPropertyChangeOp::Finished; });
+
+        View.Buttons.Reset();
+        for (const FFunction* Function : Script->GetClass()->GetFunctions())
+        {
+            if (Function->HasMetadata("Button") && Function->GetArguments().IsEmpty())
+            {
+                View.Buttons.Add(Function);
+            }
+        }
+        View.SourceFile = Script->GetClass()->HasMeta("SourceFile")
+            ? Script->GetClass()->GetMeta("SourceFile")
+            : DotNet::FindScriptSourceFile(Script->GetClass()->GetName().ToString());
+
+        View.BoundScript = Script;
+        View.BoundClass = Script->GetClass();
+    }
+
+    bool FEntityScriptComponentCustomization::ApplySearch(const TSharedPtr<FPropertyHandle>& Property, FStringView Text)
+    {
+        const auto* Component = static_cast<SEntityScriptComponent*>(Property->ContainerPtr);
+        SlotViews.SetNum(Component->Scripts.Num());
+
+        bool bAnyPasses = false;
+        for (int32 Index = 0; Index < Component->Scripts.Num(); ++Index)
+        {
+            CEntityScript* Script = Component->Scripts[Index].Get();
+            FSlotView& View = SlotViews[Index];
+            if (Text.IsEmpty() || Script == nullptr || Script->GetClass() == nullptr)
+            {
+                View.bPassesSearch = Text.IsEmpty();
+                if (View.ValueTable)
+                {
+                    View.ValueTable->SetSearchText(FStringView());
+                }
+            }
+            else
+            {
+                BindView(View, Script);
+                View.bPassesSearch = View.ValueTable->MatchesSearch(Text, *Script->GetClass()->GetName().ToString());
+            }
+            bAnyPasses |= View.bPassesSearch;
+        }
+        return Text.IsEmpty() || bAnyPasses;
+    }
+
     EPropertyChangeOp FEntityScriptComponentCustomization::DrawProperty(const TSharedPtr<FPropertyHandle>& Property, const FPropertyDrawArgs& Args)
     {
         bool bWasChanged = false;
@@ -92,6 +155,10 @@ namespace Lumina
         {
             CEntityScript* Script = Component->Scripts[Index].Get();
             FSlotView& View = SlotViews[Index];
+            if (!View.bPassesSearch)
+            {
+                continue;
+            }
             ImGui::PushID(Index);
 
             const bool bValid = Script != nullptr && Script->GetClass() != nullptr;
@@ -208,37 +275,9 @@ namespace Lumina
                 bWasChanged = true;
             }
 
-            if (bOpen && Script != nullptr && Script->GetClass() != nullptr)
+            if (bOpen && bValid)
             {
-                // The class is compared too, since a new script can land at a destroyed one's address.
-                if (View.BoundScript != Script || View.BoundClass != Script->GetClass())
-                {
-                    View.ValueTable = MakeUnique<FPropertyTable>(static_cast<void*>(Script), static_cast<CStruct*>(Script->GetClass()));
-                    View.ValueTable->SetShowSearchBar(false);
-
-                    // Routed out as this customization's op, so a script edit shares the panel's transaction handling.
-                    View.ValueTable->SetStartEditCallback ([this](const FPropertyChangedEvent&) { NestedChangeOp = EPropertyChangeOp::Started; });
-                    View.ValueTable->SetPostEditCallback  ([this](const FPropertyChangedEvent&)
-                    {
-                        if (NestedChangeOp == EPropertyChangeOp::None) { NestedChangeOp = EPropertyChangeOp::Updated; }
-                    });
-                    View.ValueTable->SetFinishEditCallback([this](const FPropertyChangedEvent&) { NestedChangeOp = EPropertyChangeOp::Finished; });
-
-                    View.Buttons.Reset();
-                    for (const FFunction* Function : Script->GetClass()->GetFunctions())
-                    {
-                        if (Function->HasMetadata("Button") && Function->GetArguments().IsEmpty())
-                        {
-                            View.Buttons.Add(Function);
-                        }
-                    }
-                    View.SourceFile = Script->GetClass()->HasMeta("SourceFile")
-                        ? Script->GetClass()->GetMeta("SourceFile")
-                        : DotNet::FindScriptSourceFile(Script->GetClass()->GetName().ToString());
-
-                    View.BoundScript = Script;
-                    View.BoundClass = Script->GetClass();
-                }
+                BindView(View, Script);
                 if (View.ValueTable)
                 {
                     View.ValueTable->DrawTree(Args);

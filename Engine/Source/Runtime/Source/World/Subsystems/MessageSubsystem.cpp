@@ -26,11 +26,6 @@ namespace Lumina
         Bus = MakeUnique<FGameplayMessageBus>(World->GetEntityRegistry(), World->GetCommandBus());
     }
 
-    void CMessageSubsystem::OnUpdate(float DeltaTime)
-    {
-        Bus->PruneDeadOwners();
-    }
-
     void CMessageSubsystem::OnTeardown()
     {
         Bus->Clear();

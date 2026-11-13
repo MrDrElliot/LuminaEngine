@@ -20,10 +20,18 @@ namespace Lumina::MCP
 {
     namespace MCPTerrainToolsInternal
     {
+        constexpr int32 GTerrainMinResolution = 33;
+        constexpr int32 GTerrainMaxResolution = 8193;
+        static_assert(int64(GTerrainMaxResolution) * GTerrainMaxResolution * GTerrainMaxLayers <= INT32_MAX, "Layer weights must stay int32-indexable.");
+
         bool IsValidTerrainResolution(int32 Value)
         {
+            if (Value < GTerrainMinResolution || Value > GTerrainMaxResolution)
+            {
+                return false;
+            }
             const int32 Quads = Value - 1;
-            return Quads >= 32 && (Quads & (Quads - 1)) == 0;
+            return (Quads & (Quads - 1)) == 0;
         }
 
         // Nearest-sampled onto the terrain grid, so any image size works and a matching size is exact.
@@ -132,7 +140,13 @@ namespace Lumina::MCP
                 {
                     if (!IsValidTerrainResolution(In.Resolution))
                     {
-                        return Agent::FToolResult::Error("Resolution must be a power of two plus one, at least 33.");
+                        return Agent::FToolResult::Error(Lumina::Format("Resolution must be a power of two plus one, from {} to {}.",
+                            GTerrainMinResolution, GTerrainMaxResolution));
+                    }
+                    if (In.LayerWeightmapPaths.Num() > (int32)GTerrainMaxLayers)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("LayerWeightmapPaths has {} entries; terrain supports at most {} layers.",
+                            In.LayerWeightmapPaths.Num(), GTerrainMaxLayers));
                     }
                     if (In.TileWorldSize <= 0.0f || In.MaxHeight <= 0.0f)
                     {

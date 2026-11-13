@@ -45,8 +45,6 @@ namespace Lumina
             Done,
         };
 
-        // Shared between UI and worker threads via shared_ptr so the worker keeps it
-        // alive even if the tool closes mid-build.
         struct FBuildSession
         {
             std::atomic<bool>           bDone{false};
@@ -75,6 +73,7 @@ namespace Lumina
 
         FString             OutputDir;          // editable; defaults set on first draw
         int32               ConfigIndex     = 0; // 0=Shipping, 1=Development, 2=Debug
+        int32               PlatformIndex   = 0; // EPackagePlatform
         bool                bExtractScriptsLoose = false;
         bool                bServer              = false;
         TVector<FString>    ExtraFiles;

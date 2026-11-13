@@ -9,7 +9,7 @@ namespace Lumina
     class FAssetRegistry;
 
     // Finds asset paths and content folders named in string literals of C# scripts and the JSON they read, since scripts load by path and nothing imports those assets.
-    class FCSharpAssetScan
+    class EDITOR_API FCSharpAssetScan
     {
     public:
         struct FResult
@@ -27,7 +27,7 @@ namespace Lumina
         static FResult ScanRoots(const TVector<FString>& VirtualRoots, const FAssetRegistry& Registry,
                                  const TFunction<void(FStringView)>& LogFunc = {});
 
-        // Every string literal starting with a slash, with comments skipped and an interpolated literal cut at its first hole.
+        // Every string literal starting with a slash, with comments skipped and an interpolated literal cut back to the folder holding its first hole.
         static TVector<FString> ExtractCandidates(FStringView Contents);
     };
 }

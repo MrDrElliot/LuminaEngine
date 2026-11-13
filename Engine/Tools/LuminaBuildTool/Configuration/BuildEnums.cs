@@ -56,6 +56,9 @@ public enum ModuleHostType
 
     /// <summary>Belongs to a single Program target.</summary>
     Program,
+
+    // A generator the Reflector loads, built only by the Program target hosting reflection generators and never shipped.
+    Reflection,
 }
 
 /// <summary>Which half of a profile guided optimization cycle a build is.</summary>
@@ -163,7 +166,7 @@ public static class BuildEnumExtensions
             ModuleHostType.Runtime => true,
             ModuleHostType.Editor => Target == TargetType.Editor,
             ModuleHostType.Developer => Target != TargetType.Game && Target != TargetType.Server,
-            ModuleHostType.Program => Target == TargetType.Program,
+            ModuleHostType.Program or ModuleHostType.Reflection => Target == TargetType.Program,
             _ => true,
         };
     }

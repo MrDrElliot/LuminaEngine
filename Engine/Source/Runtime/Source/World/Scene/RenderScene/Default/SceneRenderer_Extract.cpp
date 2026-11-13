@@ -363,6 +363,7 @@ namespace Lumina
     // Every view and storage the tasks read is built here on the main thread, since building one can create a pool.
     void FDefaultSceneRenderer::LaunchExtracts(ECS::FRegistry& Registry, FFrameData& Frame)
     {
+        LUMINA_PROFILE_SCOPE();
         ExtractLatch.Reset(1);
         LightsReady.Reset();
 
@@ -401,6 +402,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::FinalizeLighting(ECS::FRegistry& Registry, FFrameData& Frame)
     {
+        LUMINA_PROFILE_SCOPE();
         // After the waits, so the streamer walks CMaterial state with no gather in flight.
         PublishStreamingFeedback();
 
@@ -530,6 +532,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ScheduleLineBatching(ECS::FRegistry& Registry)
     {
+        LUMINA_PROFILE_SCOPE();
         auto LineBatcherView = Registry.View<FLineBatcherComponent>();
 
         FLineBatcherComponent* LineBatcher = nullptr;

@@ -2,6 +2,7 @@
 #include "Core/Http/HttpServer.h"
 
 #include "Log/Log.h"
+#include "Platform/Time/PlatformTime.h"
 
 namespace Lumina::Http
 {
@@ -10,6 +11,7 @@ namespace Lumina::Http
         constexpr int32 GAcceptTimeoutMs   = 25;
         constexpr int32 GReceiveChunkBytes = 8 * 1024;
         constexpr int32 GIdleSleepMs       = 2;
+        constexpr int32 GSendTimeoutMs     = 5000;
     }
 
     FServer::~FServer()
@@ -78,6 +80,8 @@ namespace Lumina::Http
         int32 Sent = 0;
         const int32 Total = Text.Len();
 
+        PlatformTime::FStopwatch StallTimer;
+
         while (Sent < Total)
         {
             Platform::ESocketResult Result = Platform::ESocketResult::Ok;
@@ -86,6 +90,11 @@ namespace Lumina::Http
             if (Result == Platform::ESocketResult::WouldBlock)
             {
                 // The kernel buffer filled, so yield rather than spinning on a socket that cannot take more.
+                if (StallTimer.ElapsedMilliseconds() >= GSendTimeoutMs)
+                {
+                    return false;
+                }
+
                 Threading::Sleep(GIdleSleepMs);
                 continue;
             }
@@ -94,6 +103,8 @@ namespace Lumina::Http
             {
                 return false;
             }
+
+            StallTimer.Restart();
         }
 
         return true;

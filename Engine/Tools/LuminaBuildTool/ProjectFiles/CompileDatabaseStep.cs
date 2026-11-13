@@ -120,7 +120,7 @@ public static class CompileDatabaseStep
     }
 
     /// <summary>Adjusts the compiler's own arguments for a tool that is not that compiler.</summary>
-    private static IEnumerable<string> Translate(IEnumerable<string> Arguments)
+    internal static IEnumerable<string> Translate(IEnumerable<string> Arguments)
     {
         // A module force-includes its own PCH header already, so translating /Yu would name it a second time.
         HashSet<string> ForcedIncludes = new(StringComparer.OrdinalIgnoreCase);

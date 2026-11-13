@@ -2,43 +2,15 @@
 
 #include <clang-c/Index.h>
 #include <cstdint>
-#include <span>
 #include <string_view>
 #include <vector>
-#include "Reflector/Types/PropertyFlags.h"
+#include "Reflector/Public/PropertyFlags.h"
+#include "Reflector/Public/SpecifierRegistry.h"
 #include "Reflector/Utils/MetadataUtils.h"
 
 namespace Lumina::Reflection
 {
-    // Which reflection macro a specifier may appear inside.
-    enum class ESpecifierTarget : uint8_t
-    {
-        Reflect,
-        Property,
-        Function,
-        ScriptExport,
-        Size,
-    };
-
-    // How a specifier is written at the call site.
-    enum class ESpecifierForm : uint8_t
-    {
-        Flag,   // bare keyword, PROPERTY(Editable)
-        Value,  // key and value, PROPERTY(Category = "Rendering")
-        Either, // legal both ways, PROPERTY(Getter) or PROPERTY(Getter = "GetFoo")
-        Number, // key and numeric value, PROPERTY(ClampMin = 0.5f)
-    };
-
-    // Which layer reads the specifier after the Reflector has parsed it.
-    enum class ESpecifierConsumer : uint8_t
-    {
-        Reflector, // changes the generated C++
-        Runtime,   // read through CStruct/FProperty metadata at runtime
-        Editor,    // drives the property grid or another editor surface only
-        Script,    // shapes the generated C# binding
-    };
-
-    // Rows are Name, Form, Consumer, Doc; a specifier absent from its table warns LRT1009 at its call site.
+    // Rows are Name, Form, Consumer, Doc; the built-in generators claim them, and one nobody claims fails with LRT1009 at its call site.
 
 #define LUMINA_REFLECT_SPECIFIERS(X) \
     X(ReflectedName,        Value,  Reflector, "Registers the type under this name instead of its C++ spelling. Required on a REFLECT'd alias or template instantiation.") \
@@ -136,37 +108,13 @@ namespace Lumina::Reflection
     X(ScriptTypeName,     Value, Runtime, "The C# type name behind a script struct, which it keeps when a reshape renames it aside.") \
     X(UpdatePhase,        Value, Runtime, "PrePhysics or PostPhysics, from a C# [Reflect(UpdatePhase)], the side of the physics step a minted script class ticks on.")
 
-    struct FSpecifierInfo
-    {
-        std::string_view   Name;
-        ESpecifierForm     Form;
-        ESpecifierConsumer Consumer;
-        std::string_view   Documentation;
-    };
-
     const char* SpecifierTargetToString(ESpecifierTarget Target);
 
-    // The specifier table for one macro, sorted by name.
-    std::span<const FSpecifierInfo> GetSpecifiers(ESpecifierTarget Target);
+    // Claims every built-in row read by Consumer, for each macro.
+    void ClaimBuiltinSpecifiers(FSpecifierRegistry& Registry, ESpecifierConsumer Consumer);
 
-    const FSpecifierInfo* FindSpecifier(ESpecifierTarget Target, std::string_view Key);
-
-    // Nearest known specifier within a small edit distance, or nullptr. Turns a typo into a suggestion.
-    const FSpecifierInfo* SuggestSpecifier(ESpecifierTarget Target, std::string_view Key);
-
-    // Warns LRT1009 for each specifier missing from the target's table, naming the nearest known one, and LRT1011 for one written in the wrong form.
-    void ValidateSpecifiers(const CXCursor& Cursor, ESpecifierTarget Target, const std::vector<FMetadataPair>& Metadata);
-
-    // Where a specifier lands in generated code.
-    enum class ESpecifierStorage : uint8_t
-    {
-        None,           // consumed by the Reflector or turned into an EPropertyFlags bit
-        Metadata,       // a metadata entry every build keeps
-        EditorMetadata, // a metadata entry only the editor keeps
-        EditorFlag,     // an EPropertyEditorFlags bit
-    };
-
-    ESpecifierStorage GetSpecifierStorage(ESpecifierTarget Target, std::string_view Key);
+    // Errors LRT1009 for each specifier no generator claimed, naming the nearest claimed one, and LRT1011 for one written in the wrong form.
+    void ValidateSpecifiers(const FSpecifierRegistry& Registry, const CXCursor& Cursor, ESpecifierTarget Target, const std::vector<FMetadataPair>& Metadata);
 
     // The EPropertyFlags bit a PROPERTY specifier sets, None for one that sets nothing.
     EPropertyFlags PropertyFlagForSpecifier(std::string_view Key);

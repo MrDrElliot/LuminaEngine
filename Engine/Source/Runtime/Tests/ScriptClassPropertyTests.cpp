@@ -6,6 +6,7 @@
 #include "Containers/Name.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/InstancedStruct.h"
 #include "Core/Object/ObjectArray.h"
 #include "Core/Object/ObjectBase.h"
 #include "Core/Object/ObjectCore.h"
@@ -932,6 +933,92 @@ TEST(ScriptClassReload, EditingAStructShapeSupersedesTheOldType)
         FProperty* Property = Sub->GetProperty(FName("Nested"));
         ASSERT_NE(Property, nullptr);
         EXPECT_EQ(static_cast<FStructProperty*>(Property)->GetStruct(), Current);
+    }
+}
+
+// An enum deleted or renamed without an alias must stop resolving once a reload leaves it out.
+TEST(ScriptClassReload, ReloadWithoutAnEnumRetiresIt)
+{
+    ScriptTest::PublishEnum("EnumChurn_Dropped", EPropertyTypeFlags::Int32, { { FName("Off"), 0 } });
+    // Pinned, since a retired enum nothing else holds is freed by the next reload.
+    TStrongObjectPtr<CEnum> Dropped(FindObject<CEnum>(FName("EnumChurn_Dropped")));
+    ASSERT_TRUE(Dropped.IsValid());
+
+    for (int32 Pass = 0; Pass < 2; ++Pass)
+    {
+        ScriptTest::PublishEnum("EnumChurn_Kept", EPropertyTypeFlags::Int32, { { FName("On"), 1 } });
+        EXPECT_EQ(FindObject<CEnum>(FName("EnumChurn_Dropped")), nullptr) << "a dropped enum must not resolve by its old name";
+        EXPECT_NE(FindObject<CEnum>(FName("EnumChurn_Kept")), nullptr);
+    }
+    EXPECT_TRUE(Dropped->GetName().ToString().StartsWith("REPLACED_"));
+}
+
+// A superseded struct is freed once no value or field is laid out by it, and kept while one still is.
+TEST(ScriptClassReload, SupersededStructIsFreedOnceNothingIsLaidOutByIt)
+{
+    auto Publish = [](int32 FieldCount)
+    {
+        Scripting::FScriptExportSchema Item;
+        for (int32 Index = 0; Index < FieldCount; ++Index)
+        {
+            Item.Fields.Add(ScriptTest::ScalarField(*Format("Field{}", Index), EPropertyTypeFlags::Float));
+        }
+        ScriptTest::PublishStructs({ ScriptTest::StructDefinition("ShapeRetire_Item", std::move(Item)) });
+        return FScriptStructRegistry::Get().Find(FName("ShapeRetire_Item"));
+    };
+
+    FScriptStructRegistry& Registry = FScriptStructRegistry::Get();
+    CScriptStruct* First = Publish(1);
+    ASSERT_NE(First, nullptr);
+    const int32 Baseline = Registry.NumSuperseded();
+
+    FInstancedStruct Value(First);
+    Publish(2);
+    EXPECT_EQ(Registry.NumSuperseded(), Baseline + 1) << "a value still laid out by the old shape must keep it";
+    Value.Reset();
+    Publish(2);
+    EXPECT_EQ(Registry.NumSuperseded(), Baseline) << "nothing is laid out by the old shape any more";
+
+    for (int32 Pass = 3; Pass <= 6; ++Pass)
+    {
+        ASSERT_NE(Publish(Pass), nullptr);
+        EXPECT_EQ(Registry.NumSuperseded(), Baseline) << "an unreferenced reshape must not accumulate, pass " << Pass;
+    }
+
+    Scripting::FScriptExportSchema Schema;
+    TSharedPtr<Scripting::FScriptExportType> Nested = MakeType(EPropertyTypeFlags::Struct);
+    Nested->NativeName = FName("ShapeRetire_Item");
+    Schema.Fields.Add(MakeField("Nested", Nested));
+    uint32 ShimSize = 0;
+    ASSERT_NE(MintWithSchema("ScriptReload_ShapeRetire", Schema, ShimSize), nullptr);
+
+    Publish(7);
+    Publish(7);
+    EXPECT_EQ(Registry.NumSuperseded(), Baseline + 1) << "a class field typed by the old shape must keep it";
+}
+
+// A retired enum is freed once no field is typed by it, and kept while one still is.
+TEST(ScriptClassReload, RetiredEnumIsFreedOnceNoFieldIsTypedByIt)
+{
+    FScriptEnumRegistry& Registry = FScriptEnumRegistry::Get();
+    ScriptTest::PublishEnum("EnumRetire_Dropped", EPropertyTypeFlags::Int32, { { FName("Off"), 0 } });
+    const int32 Baseline = Registry.NumSuperseded();
+
+    ScriptTest::PublishEnum("EnumRetire_Held", EPropertyTypeFlags::Int32, { { FName("On"), 1 } });
+    EXPECT_EQ(Registry.NumSuperseded(), Baseline) << "an enum nothing is typed by must go with the reload that dropped it";
+
+    Scripting::FScriptExportSchema Schema;
+    TSharedPtr<Scripting::FScriptExportType> Mode = MakeType(EPropertyTypeFlags::Enum);
+    Mode->EnumName = FName("EnumRetire_Held");
+    Mode->EnumUnderlying = EPropertyTypeFlags::Int32;
+    Schema.Fields.Add(MakeField("Mode", Mode));
+    uint32 ShimSize = 0;
+    ASSERT_NE(MintWithSchema("ScriptReload_EnumRetire", Schema, ShimSize), nullptr);
+
+    for (int32 Pass = 0; Pass < 2; ++Pass)
+    {
+        ScriptTest::PublishEnum("EnumRetire_Other", EPropertyTypeFlags::Int32, { { FName("Off"), 0 } });
+        EXPECT_EQ(Registry.NumSuperseded(), Baseline + 1) << "a class field typed by the enum must keep it";
     }
 }
 

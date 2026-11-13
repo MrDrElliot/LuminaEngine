@@ -50,6 +50,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ScheduleSplineExtract(ECS::FRegistry& Registry, FFrameData& Frame)
     {
+        LUMINA_PROFILE_SCOPE();
         const bool bDataMayHaveChanged = PoolMayHaveChanged(Registry, ECS::GetComponentTypeID<SSplineComponent>(), SplinePoolWatch);
 
         auto SplineView = Registry.View<ECS::Read<SSplineComponent>, ECS::Read<STransformComponent>, ECS::Without<SDisabledTag>>();
@@ -194,8 +195,14 @@ namespace Lumina
         int32 Visited  = 0;
         ProbeView.ForEach([&](ECS::FEntity Entity, const SReflectionProbeComponent& Probe, const STransformComponent& Transform)
         {
-            if (!Probe.bEnabled || static_cast<uint32>(Visited) >= MaxReflectionProbes)
+            if (!Probe.bEnabled)
             {
+                return;
+            }
+
+            if (static_cast<uint32>(Visited) >= MaxReflectionProbes)
+            {
+                LOG_WARN_ONCE("[Rendering] More than {} reflection probes reach the view (entity {} is dropped), so raise MaxReflectionProbes or disable the extra probes.", MaxReflectionProbes, Entity.GetPacked());
                 return;
             }
 

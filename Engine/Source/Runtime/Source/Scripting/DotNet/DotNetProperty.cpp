@@ -32,16 +32,7 @@ using namespace Lumina;
 
 namespace
 {
-    // The caller sizes its buffer from the length returned here, so a reserved terminator costs a character.
-    int32 CopyOut(FStringView Text, char* Buf, int Cap)
-    {
-        const int32 Length = Text.Len();
-        if (Buf != nullptr && Cap > 0 && Length > 0)
-        {
-            Memory::Memcpy(Buf, Text.GetData(), (size_t)Math::Min(Length, Cap));
-        }
-        return Length;
-    }
+    using DotNet::CopyOut;
 
     // operator* hands back a ring-buffer pointer, so the copy happens before anything can intern a name.
     int32 CopyOut(const FName& Name, char* Buf, int Cap)

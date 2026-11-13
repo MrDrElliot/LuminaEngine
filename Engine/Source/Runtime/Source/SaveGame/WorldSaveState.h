@@ -12,7 +12,4 @@ namespace Lumina::SaveGame
 
     // Writes the registry's save game state, or reads one into the live registry, by the archive's direction.
     RUNTIME_API bool SerializeRegistry(FArchive& Ar, ECS::FRegistry& Registry);
-
-    // The key a runtime-built entity is found by when it has no SaveKey, its names from the root down.
-    RUNTIME_API FString GetEntityNamePath(ECS::FRegistry& Registry, ECS::FEntity Entity);
 }

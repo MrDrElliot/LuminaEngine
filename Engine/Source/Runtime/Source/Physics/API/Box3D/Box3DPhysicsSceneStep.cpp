@@ -778,7 +778,7 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        RebuildStaleDynamicMeshBodies(World->GetEntityRegistry());
+        RebuildStaleMeshBodies(World->GetEntityRegistry());
         SynchronizeBodies();
 
         const Lumina::SDefaultWorldSettings& WorldSettings = World->GetDefaultWorldSettings();

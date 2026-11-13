@@ -116,18 +116,16 @@ namespace Lumina
             Flags = ~Flags;
         }
 
-        constexpr FBitFlags& operator | (uint8 Flag)
+        constexpr FBitFlags operator | (uint8 Flag) const
         {
             DEBUG_ASSERT(Flag < MaxFlags);
-            Flags |= GetFlagMask(Flag);
-            return *this;
+            return FBitFlags(Flags | GetFlagMask(Flag));
         }
 
-        constexpr FBitFlags& operator & (uint8 Flag)
+        constexpr FBitFlags operator & (uint8 Flag) const
         {
             DEBUG_ASSERT(Flag < MaxFlags);
-            Flags &= GetFlagMask(Flag);
-            return *this;
+            return FBitFlags(Flags & GetFlagMask(Flag));
         }
         
         uint32 Flags = 0;
@@ -144,8 +142,8 @@ namespace Lumina
 
         using FBitFlags::FBitFlags;
 
-        explicit constexpr TBitFlags(T Value) 
-            : FBitFlags(static_cast<uint32>(Value))
+        explicit constexpr TBitFlags(T Value)
+            : FBitFlags(GetFlagMask((uint8)Value))
         {
             DEBUG_ASSERT((uint32)Value < MaxFlags);
         }
@@ -182,18 +180,16 @@ namespace Lumina
             return (Flags & Mask) != 0;
         }
 
-        constexpr TBitFlags& operator | (T Flag)
+        constexpr TBitFlags operator | (T Flag) const
         {
             DEBUG_ASSERT((uint8) Flag < MaxFlags);
-            Flags |= GetFlagMask(Flag);
-            return *this;
+            return TBitFlags(Flags | GetFlagMask((uint8) Flag));
         }
 
-        constexpr TBitFlags& operator & (T Flag)
+        constexpr TBitFlags operator & (T Flag) const
         {
             DEBUG_ASSERT((uint8) Flag < MaxFlags);
-            Flags &= GetFlagMask(Flag);
-            return *this;
+            return TBitFlags(Flags & GetFlagMask((uint8) Flag));
         }
         
     };

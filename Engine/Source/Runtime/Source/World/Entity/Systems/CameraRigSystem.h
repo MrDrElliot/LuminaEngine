@@ -18,9 +18,6 @@ namespace Lumina
 
         void Configure() override;
 
-        // The rigs decide, since the target lookup matches nearly every entity.
-        bool HasWork(const SSystemContext& Context) override;
-
         void OnUpdate(const SSystemContext& Context) override;
 
     private:

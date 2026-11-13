@@ -171,6 +171,7 @@ public static class Program
 
             Options:
               -Platform=<name>          Windows64 | Linux64 (default: host platform)
+                                        A Windows host builds Linux64 inside WSL, see Package options
               -Configuration=<name>     Debug | Development | Shipping (default: Development)
               -TargetType=<name>        Editor | Game | Program (default: from the target rules)
               -EngineRoot=<path>        Engine installation root (default: the tree this tool lives in)
@@ -208,11 +209,14 @@ public static class Program
 
             Package options (output in Saved/Packages unless -Output is given):
               -Configuration=<name>     Development (default) or Shipping
-              -Output=<dir>             Where the staged folder and the .zip are written
+              -Platform=<name>          Windows64 (zip) or Linux64 (.tar.gz), default is the host
+                                        On Windows, Linux64 builds inside WSL's default distribution from a
+                                        mirror under ~/.lumina/wsl, fetching the Linux dependencies on first use
+              -Output=<dir>             Where the staged folder and the archive are written
               -NoBuild                  Package what is already built
               -NoGame                   Leave out the standalone game binaries that Play Standalone runs
               -NoZip                    Stage the folder without compressing it
-              -Symbols                  Include .pdb files beside the binaries
+              -Symbols                  Include .pdb or .debug symbol files beside the binaries
 
             Setup options:
               -Force                    Re-download the dependency bundle even if External/ exists

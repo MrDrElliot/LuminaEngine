@@ -29,6 +29,12 @@ namespace Lumina
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void DrawHelpMenu() override;
 
+        // A staged toggle wins, else the plugin's current state from FPluginManager.
+        EDITOR_API static bool IsEffectivelyEnabled(const FPlugin* Plugin, const THashMap<FName, bool>& Pending);
+
+        // One message per required dependency that the staged toggles leave disabled or missing under an enabled plugin.
+        EDITOR_API static TVector<FString> FindBrokenDependencies(const TVector<const FPlugin*>& Plugins, const THashMap<FName, bool>& Pending);
+
     private:
 
         void DrawBrowserWindow(bool bIsFocused);
@@ -36,10 +42,6 @@ namespace Lumina
         void DrawTable(const TVector<FPlugin*>& Plugins);
         void DrawDetailPanel(FPlugin* Plugin);
         void DrawFooter();
-
-        // Desired-enabled state: a staged toggle wins, else the plugin's
-        // current state from FPluginManager.
-        bool IsEffectivelyEnabled(const FPlugin* Plugin) const;
 
         // Stage / clear a pending toggle.
         void SetPendingEnabled(FName PluginName, bool bEnabled);

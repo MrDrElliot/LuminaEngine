@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "ProjectileSystem.h"
+#include "MovementComponentSystem.h"
 
 #include "Physics/PhysicsScene.h"
 
@@ -8,6 +9,7 @@ namespace Lumina
     void CProjectileSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
+        RunsAfter<CMovementComponentSystem>();
     }
 
     void CProjectileSystem::OnUpdate(const SSystemContext& Context)

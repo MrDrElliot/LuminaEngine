@@ -6,6 +6,7 @@
 #include "Core/Serialization/NetQuantize.h"
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
+#include "Components/RepTransformComponent.h"
 
 namespace Lumina
 {
@@ -26,16 +27,19 @@ namespace Lumina
         NETREC_None           = 0,
         NETREC_AlwaysRelevant = 1 << 0,
         NETREC_Dynamic        = 1 << 1, // dynamic (runtime-spawned) NetGUID -> needs per-client spawn/despawn
-        NETREC_Changed        = 1 << 2, // pose changed since last extract (global "did it move at all" gate)
-        NETREC_ScaleChanged   = 1 << 3, // scale changed since last sent
         NETREC_Movement       = 1 << 4, // replicates a streamed transform (has FRepTransform); else spawn/relevancy only
         NETREC_HasPitch       = 1 << 5, // a character whose view pitch rides with its pose
     };
 
+    inline float ClampViewPitch(float Degrees)
+    {
+        return Math::Clamp(Degrees, -90.0f, 90.0f);
+    }
+
     // A view pitch in degrees to and from the signed byte the wire carries.
     inline int8 QuantizeViewPitch(float Degrees)
     {
-        const float Clamped = Degrees < -90.0f ? -90.0f : (Degrees > 90.0f ? 90.0f : Degrees);
+        const float Clamped = ClampViewPitch(Degrees);
         return static_cast<int8>(Clamped * (127.0f / 90.0f) + (Clamped >= 0.0f ? 0.5f : -0.5f));
     }
 
@@ -55,10 +59,11 @@ namespace Lumina
         TVector<uint32>                      OwnerConn;
         TVector<uint8>                       Flags;
         TVector<int8>                        Pitch;
+        TVector<FNetChangeSeq>               Seq;
 
         void Reset()
         {
-            Guid.Reset(); Pos.Reset(); WorldPos.Reset(); Rot.Reset(); Scale.Reset(); OwnerConn.Reset(); Flags.Reset(); Pitch.Reset();
+            Guid.Reset(); Pos.Reset(); WorldPos.Reset(); Rot.Reset(); Scale.Reset(); OwnerConn.Reset(); Flags.Reset(); Pitch.Reset(); Seq.Reset();
         }
     };
 
@@ -74,12 +79,13 @@ namespace Lumina
         TVector<uint32>                        OwnerConn; // 0 = server/unowned
         TVector<uint8>                         Flags;     // ENetRecordFlags
         TVector<int8>                          Pitch;     // QuantizeViewPitch, meaningful with NETREC_HasPitch
+        TVector<FNetChangeSeq>                 Seq;       // meaningful with NETREC_Movement
 
         TVector<FNetExtractThread>             Threads;   // reused per-thread scratch
 
         void Reset()
         {
-            Guid.Reset(); Pos.Reset(); WorldPos.Reset(); Rot.Reset(); Scale.Reset(); OwnerConn.Reset(); Flags.Reset(); Pitch.Reset();
+            Guid.Reset(); Pos.Reset(); WorldPos.Reset(); Rot.Reset(); Scale.Reset(); OwnerConn.Reset(); Flags.Reset(); Pitch.Reset(); Seq.Reset();
         }
         uint32 Num() const { return static_cast<uint32>(Guid.Num()); }
     };
@@ -133,6 +139,7 @@ namespace Lumina
         bool        bDynamic         = false;  // runtime-spawned -> per-client spawn/despawn applies
         bool        bBaselinePending = false;  // dynamic entity spawned this tick; hold its transform one tick (spawn carried the pose)
         bool        bNeedsBaseline   = false;  // stable entity newly relevant -> send its current pose once even if unchanged
+        FNetChangeSeq SentSeq;                 // the entity's change sequence as of the last transform sent to this client
     };
 
     // Per-connection relevancy view. Keyed by NetGUID. Never touches the global GuidTable.
@@ -153,14 +160,18 @@ namespace Lumina
     {
         // Build the SoA extract (parallel) from movement-replicating entities, plus a connId->record map for
         // O(1) viewpoint lookup. Server-owned entities use their STransformComponent local pose; client-owned
-        // relay the newest received ring sample. Also updates each entity's FRepTransform global send baseline
-        // and flags whether it changed (the "did it move at all" gate that applies to every client).
-        void BuildExtract(ECS::FRegistry& Registry, FNetExtract& OutExtract, THashMap<uint32, uint32>& OutOwnerToRecord);
+        // relay the newest received ring sample. Also bumps each entity's FRepTransform change sequence when it moved.
+        // A connection owning several entities gets the NETREC_HasPitch one as its viewpoint anchor, or else the lowest NetGUID, never extract order.
+        NETWORKINGRUNTIME_API void BuildExtract(ECS::FRegistry& Registry, FNetExtract& OutExtract, THashMap<uint32, uint32>& OutOwnerToRecord);
+
+        // Whether a serviced client is owed a transform record for Entry, and whether scale must ride along.
+        NETWORKINGRUNTIME_API bool IsTransformDue(const FRelevantEntry& Entry, const FNetChangeSeq& Current, bool bForceBaseline,
+            const SDefaultWorldSettings& Settings, bool& bOutScale);
 
         // Build the CSR grid from the extract (counting sort) using the settings' world extent + cell size.
-        void BuildGrid(const FNetExtract& Extract, const SDefaultWorldSettings& Settings, FNetGrid& OutGrid);
+        NETWORKINGRUNTIME_API void BuildGrid(const FNetExtract& Extract, const SDefaultWorldSettings& Settings, FNetGrid& OutGrid);
 
         // Assign a tier from XZ distance to the viewpoint, using the settings' tier distances + leave radius.
-        ENetLODTier TierForDistanceSq(float DistSq, const SDefaultWorldSettings& Settings);
+        NETWORKINGRUNTIME_API ENetLODTier TierForDistanceSq(float DistSq, const SDefaultWorldSettings& Settings);
     }
 }

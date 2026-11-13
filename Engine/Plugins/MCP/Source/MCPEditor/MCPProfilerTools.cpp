@@ -395,10 +395,10 @@ namespace Lumina::MCP
                 {
                     (void)Agent::FGameThreadGate::Run([&PreviousCap, &bCapLifted]()
                         {
-                            if (GEngine != nullptr)
+                            if (Global::GEngine != nullptr)
                             {
-                                PreviousCap = GEngine->GetFrameRateCapOverride();
-                                GEngine->SetFrameRateCapOverride(0);
+                                PreviousCap = Global::GEngine->GetFrameRateCapOverride();
+                                Global::GEngine->SetFrameRateCapOverride(0);
                                 bCapLifted = true;
                             }
                         }, GateTimeout);
@@ -420,9 +420,9 @@ namespace Lumina::MCP
                 {
                     (void)Agent::FGameThreadGate::Run([PreviousCap]()
                         {
-                            if (GEngine != nullptr)
+                            if (Global::GEngine != nullptr)
                             {
-                                GEngine->SetFrameRateCapOverride(PreviousCap);
+                                Global::GEngine->SetFrameRateCapOverride(PreviousCap);
                             }
                         }, GateTimeout);
                 }

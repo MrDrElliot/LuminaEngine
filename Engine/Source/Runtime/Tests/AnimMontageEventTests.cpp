@@ -101,6 +101,35 @@ TEST(AnimMontageEvents, MontageTakingTheSlotInterruptsTheOldOne)
     EXPECT_TRUE(Player.IsPlaying(Other));
 }
 
+TEST(AnimMontageEvents, SectionJumpDispatchesNotifyInsideTheOvershootWindow)
+{
+    CAnimationMontage* Montage = MakeMontage("DefaultSlot", 2.0f);
+
+    SAnimMontageSection& SectionA = Montage->Sections.EmplaceGetRef();
+    SectionA.Name        = "A";
+    SectionA.StartTime   = 0.0f;
+    SectionA.NextSection = "B";
+
+    SAnimMontageSection& SectionB = Montage->Sections.EmplaceGetRef();
+    SectionB.Name      = "B";
+    SectionB.StartTime = 1.0f;
+
+    SAnimMontageNotify& Notify = Montage->Notifies.EmplaceGetRef();
+    Notify.Name = "Hit";
+    Notify.Time = 1.03f;
+
+    FAnimMontagePlayer Player;
+    Player.Play(Montage);
+    Advance(Player, 0.9f);
+
+    TVector<FAnimNotifyEvent> Events;
+    Player.Update(0.15f, &Events);
+
+    ASSERT_EQ(Events.Num(), 1);
+    EXPECT_EQ(Events[0].Name, FName("Hit"));
+    EXPECT_EQ(Events[0].Type, EAnimNotifyEventType::Trigger);
+}
+
 TEST(AnimMontageEvents, ResetEndsActiveMontagesAsInterrupted)
 {
     CAnimationMontage* Montage = MakeMontage("DefaultSlot", 1.0f);

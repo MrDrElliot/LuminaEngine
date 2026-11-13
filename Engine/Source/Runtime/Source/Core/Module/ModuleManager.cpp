@@ -51,6 +51,25 @@ namespace Lumina
         return Instance;
     }
 
+    bool FModuleManager::AddDLLSearchPath(const FString& Directory)
+    {
+        return DLLSearchPaths.WithLock([&](TVector<FString>& Paths)
+        {
+            if (Paths.Contains(Directory))
+            {
+                return false;
+            }
+
+            Paths.Add(Directory);
+            return true;
+        });
+    }
+
+    TVector<FString> FModuleManager::GetDLLSearchPaths() const
+    {
+        return DLLSearchPaths.WithLock([](const TVector<FString>& Paths) { return Paths; });
+    }
+
     IModuleInterface* FModuleManager::LoadModule(FStringView ModulePath)
     {
         LastLoadError.Reset();
@@ -235,24 +254,20 @@ namespace Lumina
         StaticModuleFactories.Emplace(Name, Factory);
     }
 
-    // Called lazily on first use, by which point the allocators and FName pool are up.
-    static void DrainStaticRegistrationsOnce(FModuleManager& Mgr)
-    {
-        static bool bDrained = false;
-        if (bDrained) return;
-        bDrained = true;
-
-        FStaticModuleRegistration* Node = FStaticModuleRegistration::Head;
-        while (Node != nullptr)
-        {
-            Mgr.AddStaticModuleFactory(FName(Node->Name), Node->Factory);
-            Node = Node->Next;
-        }
-    }
-
     ModuleInitFunc FModuleManager::FindStaticFactory(const FName& Name) const
     {
-        DrainStaticRegistrationsOnce(const_cast<FModuleManager&>(*this));
+        // Drained lazily on first use, by which point the allocators and FName pool are up.
+        if (!bStaticFactoriesDrained)
+        {
+            bStaticFactoriesDrained = true;
+
+            FStaticModuleRegistration* Node = FStaticModuleRegistration::Head;
+            while (Node != nullptr)
+            {
+                const_cast<FModuleManager&>(*this).AddStaticModuleFactory(FName(Node->Name), Node->Factory);
+                Node = Node->Next;
+            }
+        }
         for (const auto& [FactoryName, Factory] : StaticModuleFactories)
         {
             if (FactoryName == Name)

@@ -84,7 +84,7 @@ public static class CleanMode
     }
 
     /// <summary>Deletes compiled output but keeps Binaries/DotNet, which this tool is running out of.</summary>
-    private static bool DeleteBinaries(string BinariesDirectory, bool bDryRun)
+    internal static bool DeleteBinaries(string BinariesDirectory, bool bDryRun)
     {
         if (!Directory.Exists(BinariesDirectory))
         {
@@ -107,7 +107,7 @@ public static class CleanMode
     }
 
     /// <summary>Matches on the exact extension, so a sibling .sln.DotSettings.user is left alone.</summary>
-    private static bool DeleteSolutionFiles(string Root, bool bDryRun)
+    internal static bool DeleteSolutionFiles(string Root, bool bDryRun)
     {
         bool bDeleted = true;
 
@@ -182,20 +182,8 @@ public static class CleanMode
 
         StartInfo.ArgumentList.Add("GenerateProjectFiles");
 
-        foreach (string Argument in OwnArguments.Skip(1))
+        foreach (string Argument in ForwardedOptions(OwnArguments.Skip(1)))
         {
-            if (Argument == "--")
-            {
-                break;
-            }
-
-            string? Option = OptionName(Argument);
-
-            if (Option is null || CleanOnlyOptions.Contains(Option))
-            {
-                continue;
-            }
-
             StartInfo.ArgumentList.Add(Argument);
         }
 
@@ -209,8 +197,16 @@ public static class CleanMode
         return Child.ExitCode;
     }
 
+    // Drops positionals, clean-only options and everything after '--'.
+    internal static IEnumerable<string> ForwardedOptions(IEnumerable<string> Arguments)
+    {
+        return Arguments
+            .TakeWhile(Argument => Argument != "--")
+            .Where(Argument => OptionName(Argument) is string Option && !CleanOnlyOptions.Contains(Option));
+    }
+
     /// <summary>Option name as CommandLine parses it, or null for a positional.</summary>
-    private static string? OptionName(string Argument)
+    internal static string? OptionName(string Argument)
     {
         if (Argument.Length == 0 || Argument[0] is not ('-' or '/'))
         {

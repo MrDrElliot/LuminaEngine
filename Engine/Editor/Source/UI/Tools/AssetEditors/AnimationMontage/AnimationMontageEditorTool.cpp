@@ -33,6 +33,8 @@ namespace Lumina
     {
     }
 
+    FAnimationMontageEditorTool::~FAnimationMontageEditorTool() = default;
+
     void FAnimationMontageEditorTool::OnInitialize()
     {
         CreateToolWindow(MontageDetailsName, [&](bool bFocused)
@@ -700,7 +702,9 @@ namespace Lumina
                     MarkMontageDirty();
                     ImGui::EndPopup();
                     ImGui::PopID();
-                    break;
+                    ImGui::PopClipRect();
+                    ImGui::EndChild();
+                    return;
                 }
                 ImGui::EndPopup();
             }
@@ -779,7 +783,9 @@ namespace Lumina
                     MarkMontageDirty();
                     ImGui::EndPopup();
                     ImGui::PopID();
-                    break;
+                    ImGui::PopClipRect();
+                    ImGui::EndChild();
+                    return;
                 }
                 ImGui::EndPopup();
             }

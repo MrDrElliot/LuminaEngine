@@ -14,7 +14,7 @@ namespace Lumina::Agent
         TOptional<FGuid> Parsed = FGuid::TryParse(GuidOrPath);
         if (!Parsed.IsSet())
         {
-            if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(GuidOrPath))
+            if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(GuidOrPath))
             {
                 Parsed = Data->AssetGUID;
             }

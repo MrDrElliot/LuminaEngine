@@ -33,12 +33,12 @@ namespace Lumina
 
             FScopedShaderLibrary()
             {
-                Previous       = GShaderLibrary;
-                GShaderLibrary = &Library;
+                Previous       = Global::GShaderLibrary;
+                Global::GShaderLibrary = &Library;
             }
             ~FScopedShaderLibrary()
             {
-                GShaderLibrary = Previous;
+                Global::GShaderLibrary = Previous;
             }
         };
 

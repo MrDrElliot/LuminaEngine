@@ -14,7 +14,7 @@ public static partial class TidyMode
     private sealed record Finding(string File, int Line, int Column, string Severity, string Check);
 
     [GeneratedRegex(@"^(?<File>.+?):(?<Line>\d+):(?<Column>\d+): (?<Severity>warning|error): (?<Message>.*?) \[(?<Check>[^\]]+)\]$")]
-    private static partial Regex DiagnosticPattern();
+    internal static partial Regex DiagnosticPattern();
 
     public static async Task<int> RunAsync(CommandLine Arguments, BuildDirectories Directories, CancellationToken Cancellation)
     {
@@ -99,7 +99,7 @@ public static partial class TidyMode
         return Arguments.HasFlag("WarningsAsErrors") && Sorted.Count > 0 ? 1 : 0;
     }
 
-    private static List<string> ReadSources(string Database, BuildDirectories Directories, string PathFilter)
+    internal static List<string> ReadSources(string Database, BuildDirectories Directories, string PathFilter)
     {
         using FileStream Stream = File.OpenRead(Database);
         using JsonDocument Document = JsonDocument.Parse(Stream);

@@ -49,5 +49,6 @@ namespace Lumina
         uint32 AudioChannels = 0;
         uint64 AudioFramesWritten = 0;
         bool   bStartedMediaFoundation = false;
+        bool   bInitializedCom = false;
     };
 }

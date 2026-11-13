@@ -287,6 +287,7 @@ namespace Lumina
 						{
 							LOG_ERROR("[Audio] ALSA write failed ({0})", Alsa.StrError((int)Written));
 							bNeedsRestart.store(true, Atomic::MemoryOrderRelease);
+							bRunning.store(false, Atomic::MemoryOrderRelease);
 							return;
 						}
 						break;

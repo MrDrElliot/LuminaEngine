@@ -147,6 +147,8 @@ public sealed class DependencyCache
 
         if (Includes is null)
         {
+            Forget(OutputFile);
+            Log.Warning("No header dependencies recorded for '{0}'; could not parse '{1}'", OutputFile, DependencyListFile);
             return;
         }
 

@@ -166,9 +166,9 @@ namespace Lumina::Screenshot
 
     FString GetScreenshotDirectory()
     {
-        if (GEngine != nullptr && GEngine->HasLoadedProject())
+        if (Global::GEngine != nullptr && Global::GEngine->HasLoadedProject())
         {
-            const FStringView ProjectPath = GEngine->GetProjectPath();
+            const FStringView ProjectPath = Global::GEngine->GetProjectPath();
             return FString(ProjectPath.GetData(), ProjectPath.Len()) + "/Saved/Screenshots";
         }
 
@@ -262,13 +262,13 @@ namespace Lumina::Screenshot
 
     IRenderScene* FindActiveRenderScene()
     {
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             return nullptr;
         }
 
         FWorldContext* Fallback = nullptr;
-        for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
+        for (const TUniquePtr<FWorldContext>& Ctx : Global::GWorldManager->GetContexts())
         {
             if (!Ctx || !Ctx->World.IsValid())
             {
@@ -316,7 +316,7 @@ namespace Lumina::Screenshot
     {
         FCaptureResult Out;
 
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             Out.ErrorMessage = "WorldManager is not initialized.";
             return Out;

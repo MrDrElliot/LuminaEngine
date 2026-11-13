@@ -63,7 +63,7 @@ namespace Lumina
         const FGuid G = GetGuid();
         if (G.IsValid())
         {
-            if (FTextAssetData* Data = Registry.GetTextAssetByGUID(G))
+            if (FTextAssetDataPtr Data = Registry.GetTextAssetByGUID(G))
             {
                 const FStringView Current(*Data->Path, Data->Path.Len());
                 if (Current != GetPath())
@@ -77,7 +77,7 @@ namespace Lumina
         // Back-fills the GUID from the record, so legacy path-only data self-heals once a sidecar exists.
         if (!Path.IsEmpty())
         {
-            if (FTextAssetData* Data = Registry.GetTextAssetByPath(GetPath()))
+            if (FTextAssetDataPtr Data = Registry.GetTextAssetByPath(GetPath()))
             {
                 const_cast<SUIDocumentRef*>(this)->Guid = Data->Guid.ToString();
             }

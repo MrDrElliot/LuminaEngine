@@ -20,8 +20,8 @@ namespace Lumina::RHI
 
     RUNTIME_API void FlushUploadsAndWait();
 
-    // Submits every queued upload now on the graphics queue, so work submitted after this call sees them.
-    RUNTIME_API void FlushUploads();
+    // Submits every queued upload now on the graphics queue and returns that timeline value, 0 when nothing was queued.
+    RUNTIME_API uint64 FlushUploads();
 
     namespace Upload
     {

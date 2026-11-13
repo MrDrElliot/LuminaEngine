@@ -89,6 +89,7 @@ namespace Lumina::Physics
         return Handle;
     }
 
+    // Caller holds ConstraintsMutex, reached from SynchronizeConstraints.
     bool FBox3DPhysicsScene::CommitConstraint(uint32 Handle, const SConstraintDesc& Desc)
     {
         LUMINA_PROFILE_SCOPE();
@@ -268,10 +269,9 @@ namespace Lumina::Physics
         }
     }
 
+    // Caller holds ConstraintsMutex, reached from SynchronizeConstraints.
     void FBox3DPhysicsScene::ApplyConstraintEnabled(uint32 ConstraintID, bool bEnabled)
     {
-        FScopeLock Lock(ConstraintsMutex);
-
         auto It = Constraints.Find(ConstraintID);
         if (It == nullptr || !b3Joint_IsValid(It->JointId))
         {
@@ -284,10 +284,9 @@ namespace Lumina::Physics
         b3Joint_SetConstraintTuning(Constraint.JointId, bEnabled ? 60.0f : 0.0f, bEnabled ? 2.0f : 0.0f);
     }
 
+    // Caller holds ConstraintsMutex, reached from SynchronizeConstraints.
     void FBox3DPhysicsScene::ApplyConstraintMotor(uint32 ConstraintID, EConstraintMotorMode Mode, float Target)
     {
-        FScopeLock Lock(ConstraintsMutex);
-
         auto It = Constraints.Find(ConstraintID);
         if (It == nullptr || !b3Joint_IsValid(It->JointId))
         {
@@ -505,6 +504,8 @@ namespace Lumina::Physics
             const FBodyRecord* Record = FindBodyRecord(Entity);
             return Record != nullptr && Record->Revision == Revision;
         };
+
+        FScopeLock Lock(ConstraintsMutex);
         TVector<uint32> Removed;
         for (auto& [Handle, Constraint] : Constraints)
         {
@@ -625,7 +626,7 @@ namespace Lumina::Physics
         auto& Handles = (*It);
         for (const FRigidBodyBuildResult& Build : Builds)
         {
-            if (static_cast<uint32>(BodyHandles.Num() - FreeBodyHandles.Num()) >= MaxBodies) { break; }
+            if (!HasBodyCapacity(1)) { break; }
             const b3BodyId Body = b3CreateBody(WorldId, &Build.BodyDef);
             if (!b3Body_IsValid(Body)) { continue; }
             const uint32 Handle = RegisterBody(Body);

@@ -19,13 +19,13 @@ namespace Lumina
 
         FString ProjectDirectory()
         {
-            const FStringView Path = GEngine != nullptr ? GEngine->GetProjectPath() : FStringView();
+            const FStringView Path = Global::GEngine != nullptr ? Global::GEngine->GetProjectPath() : FStringView();
             return FString(Path.GetData(), Path.Len());
         }
 
         FString ProjectName()
         {
-            const FStringView Name = GEngine != nullptr ? GEngine->GetProjectName() : FStringView();
+            const FStringView Name = Global::GEngine != nullptr ? Global::GEngine->GetProjectName() : FStringView();
             return FString(Name.GetData(), Name.Len());
         }
 
@@ -79,7 +79,7 @@ namespace Lumina
                 return false;
             }
 
-            const FStringView ProjectFile = GEngine->GetProjectFile();
+            const FStringView ProjectFile = Global::GEngine->GetProjectFile();
             if (ProjectFile.IsEmpty())
             {
                 OutError = "No .lproject file for the loaded project, so the game has nothing to open.";
@@ -148,7 +148,7 @@ namespace Lumina
 
     void FStandaloneLauncher::Request(const FStandaloneLaunchOptions& Options)
     {
-        if (GEngine == nullptr || !GEngine->HasLoadedProject())
+        if (Global::GEngine == nullptr || !Global::GEngine->HasLoadedProject())
         {
             ImGuiX::Notifications::NotifyError("Open a project before launching standalone.");
             return;

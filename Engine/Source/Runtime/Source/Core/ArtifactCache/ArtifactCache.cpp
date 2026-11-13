@@ -78,14 +78,14 @@ namespace Lumina
 
         FString GetLocalDirectory()
         {
-            const FStringView Project = GEngine != nullptr ? GEngine->GetProjectPath() : FStringView();
+            const FStringView Project = Global::GEngine != nullptr ? Global::GEngine->GetProjectPath() : FStringView();
             const FString Base = !Project.IsEmpty() ? FString(Project.GetData(), Project.Len()) : Paths::GetEngineInstallDirectory();
             return FString(*Paths::Combine(Base, "Saved", "ArtifactCache"));
         }
 
         FString GetSharedDirectory()
         {
-            if (GConfig == nullptr)
+            if (Global::GConfig == nullptr)
             {
                 return {};
             }
@@ -96,7 +96,7 @@ namespace Lumina
                 return {};
             }
 
-            const FStringView Project = GEngine != nullptr ? GEngine->GetProjectPath() : FStringView();
+            const FStringView Project = Global::GEngine != nullptr ? Global::GEngine->GetProjectPath() : FStringView();
             const bool bRelative = Setting[0] != '/' && Setting[0] != '\\' && Setting.Find(':') == Constants::kIndexNone;
             if (bRelative && !Project.IsEmpty())
             {

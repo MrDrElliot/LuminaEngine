@@ -40,6 +40,7 @@ namespace Lumina::Reflection
         DriverClangParseFailure     = 9003,  // libclang returned a non-success CXErrorCode.
         DriverTranslationUnitWalk   = 9004,  // clang_visitChildren reported a problem.
         DriverClangDiagnostic       = 9005,  // clang reported an error/fatal in the parsed headers.
+        GeneratorDiagnostic         = 9006,  // a reflection generator reported a problem, or was refused.
     };
 
     struct FDiagLocation

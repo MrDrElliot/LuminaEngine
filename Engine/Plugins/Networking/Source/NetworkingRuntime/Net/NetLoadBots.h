@@ -3,6 +3,7 @@
 #include "Containers/String.h"
 #include "Containers/Vector.h"
 #include "Core/Math/Math.h"
+#include "Core/Math/Random.h"
 #include "Memory/SmartPtr.h"
 #include "Networking/INetworkTransport.h"
 #include "Net/NetPrediction.h"
@@ -60,7 +61,7 @@ namespace Lumina
             double   NextTurn   = 0.0;
             double   NextChat   = 0.0;
             double   NextAttack = 0.0;
-            uint32   Rng        = 1;
+            FRandomStream Rng;
 
             uint64  BytesIn     = 0;
             uint64  BytesOut    = 0;

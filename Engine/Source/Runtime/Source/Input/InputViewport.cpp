@@ -10,6 +10,7 @@
 #include "Input/InputActionMap.h"
 #include "Input/InputContext.h"
 #include "UI/RmlUiBridge.h"
+#include "World/Entity/Systems/SystemSingletons.h"
 #include "World/World.h"
 
 #include <RmlUi/Core/Context.h>
@@ -562,6 +563,40 @@ namespace Lumina
         }
 
         RawInput->EndFrame();
+        LateLookWorld = nullptr;
+    }
+
+    bool FInputViewportRegistry::PumpLateMouseLook()
+    {
+        LateLookWorld = nullptr;
+
+        FWindow* Window = Windowing::TryGetPrimaryWindowHandle();
+        const CWorld* World = ActiveViewport != nullptr ? ActiveViewport->GetWorld() : nullptr;
+        const FResolvedSceneView* View = World != nullptr ? World->GetResolvedView() : nullptr;
+        if (Window == nullptr || View == nullptr || View->MouseLookDegreesPerCount <= 0.0f || !IsActiveCursorCaptured())
+        {
+            return false;
+        }
+
+        // Only the primary window holds its events, so a viewport in a window of its own keeps the update's view.
+        const void* NativeWindow = ActiveViewport->GetNativeWindowHandle();
+        if (NativeWindow != nullptr && NativeWindow != Window->GetWindow())
+        {
+            return false;
+        }
+
+        Window->PumpLateMessages();
+        LateLookWorld = World;
+        return true;
+    }
+
+    FVector2 FInputViewportRegistry::GetLateMouseLook(const CWorld* World) const
+    {
+        if (World == nullptr || World != LateLookWorld)
+        {
+            return FVector2(0.0f);
+        }
+        return Windowing::GetPrimaryWindowHandle()->GetLateMouseDelta() * World->GetResolvedView()->MouseLookDegreesPerCount;
     }
 
     void FInputViewportRegistry::OnWindowFocusLost()

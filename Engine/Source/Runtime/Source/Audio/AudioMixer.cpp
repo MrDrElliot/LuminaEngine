@@ -608,15 +608,13 @@ namespace Lumina
 		}
 	}
 
-	float FAudioMixer::ComputeVoicePitch(const FVoice& Voice) const
+	float FAudioMixer::ComputeVoicePitch(const FVoice& Voice, const FMixerListener& Listener, const FVector3& ToVoice) const
 	{
 		float Pitch = Voice.Pitch * BusPitches[(uint32)Voice.Bus].load(Atomic::MemoryOrderRelaxed);
 
 		const float Doppler = Voice.Attenuation.DopplerFactor * DopplerScale.load(Atomic::MemoryOrderRelaxed);
 		if (Voice.bSpatialized && Doppler > 0.0f)
 		{
-			FMixerListener Listener;
-			const FVector3 ToVoice = SelectVoiceListener(Voice, Listener);
 			const float Distance = Math::Length(ToVoice);
 			if (Distance > 0.0001f)
 			{
@@ -645,15 +643,13 @@ namespace Lumina
 			: Voice.Position - OutListener.Position;
 	}
 
-	void FAudioMixer::ComputeVoiceGains(const FVoice& Voice, float* OutGains) const
+	void FAudioMixer::ComputeVoiceGains(const FVoice& Voice, const FMixerListener& Listener, const FVector3& ToVoice, float* OutGains) const
 	{
 		float Gain = Voice.BaseVolume * Voice.OcclusionGain * Voice.FadeGain;
 		float Pan  = Math::Clamp(Voice.Attenuation.Pan, -1.0f, 1.0f);
 
 		if (Voice.bSpatialized)
 		{
-			FMixerListener Listener;
-			const FVector3 ToVoice = SelectVoiceListener(Voice, Listener);
 			const float Distance = Math::Length(ToVoice);
 			Gain *= AttenuationGain(Voice.Attenuation, Distance);
 			Gain *= ConeGain(Voice.Attenuation, Voice.Direction, -ToVoice);
@@ -814,8 +810,11 @@ namespace Lumina
 			return;
 		}
 
+		FMixerListener Listener;
+		const FVector3 ToVoice = Voice.bSpatialized ? SelectVoiceListener(Voice, Listener) : FVector3();
+
 		const float Ratio = Math::Clamp(
-			(float)SourceRate / (float)SampleRate * ComputeVoicePitch(Voice), MinRatio, MaxRatio);
+			(float)SourceRate / (float)SampleRate * ComputeVoicePitch(Voice, Listener, ToVoice), MinRatio, MaxRatio);
 
 		const uint32 Produced = ResampleVoice(Voice, Frames, Ratio);
 		if (Produced == 0)
@@ -824,7 +823,7 @@ namespace Lumina
 		}
 
 		float TargetGains[MaxChannels] = {};
-		ComputeVoiceGains(Voice, TargetGains);
+		ComputeVoiceGains(Voice, Listener, ToVoice, TargetGains);
 
 		if (!Voice.bGainPrimed)
 		{
@@ -896,10 +895,13 @@ namespace Lumina
 		}
 
 		uint32 Active = 0;
+		uint32 RenderedVoices = 0;
 		const uint32 VoiceBudget = MaxActiveVoices.load(Atomic::MemoryOrderRelaxed);
+		uint32 FirstSkippedStep = MaxVoices;
 
-		for (uint32 Slot = 0; Slot < MaxVoices; ++Slot)
+		for (uint32 Step = 0; Step < MaxVoices; ++Step)
 		{
+			const uint32 Slot = (RenderStartSlot + Step) % MaxVoices;
 			FVoice& Voice = Voices[Slot];
 			if (!Voice.bActive)
 			{
@@ -919,13 +921,15 @@ namespace Lumina
 				continue;
 			}
 
-			if (Active >= VoiceBudget)
+			if (RenderedVoices >= VoiceBudget)
 			{
+				FirstSkippedStep = Math::Min(FirstSkippedStep, Step);
 				continue;
 			}
 
 			RenderVoice(Voice, Frames);
 			++Active;
+			++RenderedVoices;
 
 			const bool bFadedOut = Voice.bStopAfterFade && Voice.FadeGain <= 0.0f;
 			const bool bEnded    = !Voice.bGenerated && Voice.bSourceDrained && Voice.Source->IsAtEnd();
@@ -942,6 +946,8 @@ namespace Lumina
 			}
 		}
 
+		// Voices the budget skipped this block go first next block, so no slot starves.
+		RenderStartSlot = (RenderStartSlot + FirstSkippedStep) % MaxVoices;
 		ActiveVoices.store(Active, Atomic::MemoryOrderRelaxed);
 
 		Memory::Memzero(MasterAccum.GetData(), BlockSamples * sizeof(float));

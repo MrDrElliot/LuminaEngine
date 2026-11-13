@@ -319,7 +319,6 @@ namespace Lumina
             const int32 NextIndex = Next.IsNone() ? Constants::kIndexNone : Montage->FindSectionIndex(Next);
             if (NextIndex != Constants::kIndexNone)
             {
-                // Fire only up to the seam; the overshoot belongs to the section being entered.
                 const float Overshoot = Instance.Position - SectionEnd;
                 Instance.Position = SectionEnd;
                 DispatchNotifies(Instance, Advance > 0.0f, OutEvents);
@@ -328,6 +327,7 @@ namespace Lumina
                 Instance.QueuedSection  = FName();
                 Instance.PrevPosition   = Montage->Sections[NextIndex].StartTime;
                 Instance.Position       = Montage->Sections[NextIndex].StartTime + Overshoot;
+                DispatchNotifies(Instance, Advance > 0.0f, OutEvents);
                 return;
             }
 
@@ -379,8 +379,7 @@ namespace Lumina
             }
         }
 
-        thread_local TVector<int32> NowActive;
-        NowActive.Reset();
+        NotifyScratch.Reset();
 
         if (bAdvanced)
         {
@@ -389,7 +388,7 @@ namespace Lumina
                 const SAnimMontageNotifyState& State = Montage->NotifyStates[i];
                 if (Cur >= State.StartTime && Cur <= State.EndTime)
                 {
-                    NowActive.Add(i);
+                    NotifyScratch.Add(i);
                 }
             }
         }
@@ -409,7 +408,7 @@ namespace Lumina
             Event.Alpha  = Span > 0.0f ? Math::Clamp((Cur - State.StartTime) / Span, 0.0f, 1.0f) : 0.0f;
         };
 
-        for (int32 Index : NowActive)
+        for (int32 Index : NotifyScratch)
         {
             const bool bWasActive = Algo::Contains(Instance.ActiveNotifyStates, Index);
             Emit(Index, bWasActive ? EAnimNotifyEventType::Tick : EAnimNotifyEventType::Begin);
@@ -417,14 +416,14 @@ namespace Lumina
 
         for (int32 Index : Instance.ActiveNotifyStates)
         {
-            if (!Algo::Contains(NowActive, Index))
+            if (!Algo::Contains(NotifyScratch, Index))
             {
                 Emit(Index, EAnimNotifyEventType::End);
             }
         }
 
         Instance.ActiveNotifyStates.Reset();
-        Instance.ActiveNotifyStates.Append(NowActive.begin(), NowActive.end());
+        Instance.ActiveNotifyStates.Append(NotifyScratch.begin(), NotifyScratch.end());
     }
 
     void FAnimMontagePlayer::EndActiveNotifyStates(FAnimMontageInstance& Instance, TVector<FAnimNotifyEvent>* OutEvents)

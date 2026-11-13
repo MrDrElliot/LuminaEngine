@@ -37,7 +37,9 @@ namespace Lumina::MCP
             return Names;
         }
 
-        bool ResolveDataTableRow(const FString& Guid, const FString& RowName, FDataTableRowTarget& Out, FString& OutError)
+        // bRequireMemory is false for Remove/Rename, which only touch the row's name and never read its memory.
+        bool ResolveDataTableRow(const FString& Guid, const FString& RowName, FDataTableRowTarget& Out, FString& OutError,
+            bool bRequireMemory = true)
         {
             if (!ResolveEditableAsset(FStringView(Guid), Out.Table, OutError))
             {
@@ -59,7 +61,17 @@ namespace Lumina::MCP
                 return false;
             }
 
-            Out.Memory = Out.Table->Rows[Out.Index].Value.GetMutableMemory();
+            if (bRequireMemory)
+            {
+                Out.Memory = const_cast<void*>(Out.Table->GetRowMemoryAt(Out.Index));
+                if (Out.Memory == nullptr)
+                {
+                    OutError = Lumina::Format(
+                        "'{}' no longer matches {}'s row struct; re-set RowStructName or re-import.", RowName, Out.Table->GetName());
+                    return false;
+                }
+            }
+
             return true;
         }
 
@@ -223,6 +235,12 @@ namespace Lumina::MCP
                     In.CopyFrom, DataTableRowNameHint(Table)));
             }
 
+            if (SourceIndex != Constants::kIndexNone && Table->GetRowMemoryAt(SourceIndex) == nullptr)
+            {
+                return Agent::FToolResult::Error(Lumina::Format(
+                    "'{}' no longer matches {}'s row struct; re-set RowStructName or re-import.", In.CopyFrom, Table->GetName()));
+            }
+
             FJsonValue Value = FJsonValue::MakeObject();
             if (!In.Value.IsEmpty())
             {
@@ -245,7 +263,7 @@ namespace Lumina::MCP
 
             if (SourceIndex != Constants::kIndexNone)
             {
-                RowType->CopyStruct(Memory, Table->Rows[SourceIndex].Value.GetMemory());
+                RowType->CopyStruct(Memory, Table->GetRowMemoryAt(SourceIndex));
             }
 
             FString Applied;
@@ -266,7 +284,7 @@ namespace Lumina::MCP
         {
             FDataTableRowTarget Target;
             FString Error;
-            if (!ResolveDataTableRow(In.Asset, In.Row, Target, Error))
+            if (!ResolveDataTableRow(In.Asset, In.Row, Target, Error, /*bRequireMemory*/ false))
             {
                 return Agent::FToolResult::Error(Error);
             }
@@ -284,7 +302,7 @@ namespace Lumina::MCP
         {
             FDataTableRowTarget Target;
             FString Error;
-            if (!ResolveDataTableRow(In.Asset, In.Row, Target, Error))
+            if (!ResolveDataTableRow(In.Asset, In.Row, Target, Error, /*bRequireMemory*/ false))
             {
                 return Agent::FToolResult::Error(Error);
             }

@@ -317,6 +317,45 @@ namespace Lumina
             return EnumHasAnyFlags(Flags, EFunctionFlags::RpcOwner) ? ERpcTarget::Owner : ERpcTarget::Broadcast;
         }
 
+        struct FRpcRoute
+        {
+            const FFunction* Function = nullptr;
+            FProperty* SyncField = nullptr;
+            bool bCorrection = false;
+        };
+
+        FRpcRoute FindRpcRoute(const CEntityScript* Script, uint32 RpcId)
+        {
+            const CClass* Class = Script->GetClass();
+            for (const FFunction* Function : Class->GetFunctions())
+            {
+                if (Function->IsRpc() && RpcIdOf(Class, *Function) == RpcId)
+                {
+                    return { Function, nullptr, false };
+                }
+            }
+
+            TVector<FProperty*> Fields;
+            Class->GetNetReplicatedProperties(Fields);
+            for (FProperty* Field : Fields)
+            {
+                if (!CEntityScript::IsSyncFromOwner(Field))
+                {
+                    continue;
+                }
+                if (RpcId == Script->SyncFieldId(Field, true))
+                {
+                    return { nullptr, Field, true };
+                }
+                if (RpcId == Script->SyncFieldId(Field, false))
+                {
+                    return { nullptr, Field, false };
+                }
+            }
+
+            return {};
+        }
+
         // One value of a property outside any container, for a write that has not been accepted yet.
         struct FValueBuffer
         {
@@ -565,13 +604,11 @@ namespace Lumina
 
     void CEntityScript::ReceiveRpc(uint32 RpcId, uint32 CallerId, const uint8* Payload, uint32 PayloadSize)
     {
-        INetworkRuntime* Net = GetNetworkRuntime();
-        for (const FFunction* Function : GetClass()->GetFunctions())
+        const FRpcRoute Route = FindRpcRoute(this, RpcId);
+        if (Route.Function != nullptr)
         {
-            if (!Function->IsRpc() || RpcIdOf(GetClass(), *Function) != RpcId)
-            {
-                continue;
-            }
+            const FFunction* Function = Route.Function;
+            INetworkRuntime* Net = GetNetworkRuntime();
 
             // Owner-only calls are refused unless they came from the entity's owner or from the host.
             if (EnumHasAnyFlags(Function->GetFunctionFlags(), EFunctionFlags::NetOwnerOnly) && CallerId != 0
@@ -600,20 +637,10 @@ namespace Lumina
             return;
         }
 
-        TVector<FProperty*> Fields;
-        GetClass()->GetNetReplicatedProperties(Fields);
-        for (FProperty* Field : Fields)
+        if (Route.SyncField != nullptr)
         {
-            if (!IsSyncFromOwner(Field))
-            {
-                continue;
-            }
-            const bool bCorrection = RpcId == SyncFieldId(Field, true);
-            if (bCorrection || RpcId == SyncFieldId(Field, false))
-            {
-                ReceiveSync(Field, bCorrection, CallerId, Payload, PayloadSize);
-                return;
-            }
+            ReceiveSync(Route.SyncField, Route.bCorrection, CallerId, Payload, PayloadSize);
+            return;
         }
 
         LOG_WARN("[Net] {} has no RPC or Sync field with id {}; the peers are running different builds.", *GetClass()->GetName(), RpcId);
@@ -625,33 +652,17 @@ namespace Lumina
         {
             return false;
         }
-        for (const FFunction* Function : Script->GetClass()->GetFunctions())
-        {
-            if (Function->IsRpc() && RpcIdOf(Script->GetClass(), *Function) == RpcId)
-            {
-                OutTarget = TargetOf(*Function);
-                return true;
-            }
-        }
 
-        TVector<FProperty*> Fields;
-        Script->GetClass()->GetNetReplicatedProperties(Fields);
-        for (FProperty* Field : Fields)
+        const FRpcRoute Route = FindRpcRoute(Script, RpcId);
+        if (Route.Function != nullptr)
         {
-            if (!CEntityScript::IsSyncFromOwner(Field))
-            {
-                continue;
-            }
-            if (RpcId == Script->SyncFieldId(Field, true))
-            {
-                OutTarget = ERpcTarget::Owner;
-                return true;
-            }
-            if (RpcId == Script->SyncFieldId(Field, false))
-            {
-                OutTarget = ERpcTarget::Host;
-                return true;
-            }
+            OutTarget = TargetOf(*Route.Function);
+            return true;
+        }
+        if (Route.SyncField != nullptr)
+        {
+            OutTarget = Route.bCorrection ? ERpcTarget::Owner : ERpcTarget::Host;
+            return true;
         }
         return false;
     }
@@ -1596,7 +1607,8 @@ namespace Lumina
 
             // A callback that spawns scripted entities queues another round, so they join this frame in the same order.
             constexpr int32 kMaxRounds = 8;
-            for (int32 Round = 0; Round < kMaxRounds; ++Round)
+            int32 Round = 0;
+            for (; Round < kMaxRounds; ++Round)
             {
                 bool bAnyWork = false;
 
@@ -1649,6 +1661,16 @@ namespace Lumina
                 if (!bAnyWork)
                 {
                     break;
+                }
+            }
+
+            if (Round == kMaxRounds)
+            {
+                GatherPending(Registry, Scratch, Pending, [](const CEntityScript* Script) { return NeedsAttach(Script) || NeedsReady(Script); });
+                if (!Pending.IsEmpty())
+                {
+                    LOG_WARN_ONCE("Entity scripts spawned past the {} lifecycle rounds a frame allows, so the {} still pending run OnAttach or OnReady out of tree order or a frame late",
+                                  kMaxRounds, Pending.Num());
                 }
             }
             Scripts.Reset();
@@ -2609,7 +2631,7 @@ namespace Lumina
             // A reload may change a class's phase or promise in place, which every cached claim was built on.
             NoteStructureChange();
 
-            if (GWorldManager == nullptr)
+            if (Global::GWorldManager == nullptr)
             {
                 return;
             }
@@ -2622,7 +2644,7 @@ namespace Lumina
                 RestoreHeldValues(Prefab->VariantDelta);
             }
 
-            GWorldManager->ForEachWorld([&](CWorld& World)
+            Global::GWorldManager->ForEachWorld([&](CWorld& World)
             {
                 ECS::FRegistry& Registry = World.GetEntityRegistry();
 

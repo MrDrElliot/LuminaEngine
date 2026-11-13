@@ -166,8 +166,8 @@ namespace Lumina
 
 		void RenderVoice(FVoice& Voice, uint32 Frames);
 		uint32 ResampleVoice(FVoice& Voice, uint32 Frames, float Ratio);
-		void ComputeVoiceGains(const FVoice& Voice, float* OutGains) const;
-		float ComputeVoicePitch(const FVoice& Voice) const;
+		void ComputeVoiceGains(const FVoice& Voice, const FMixerListener& Listener, const FVector3& ToVoice, float* OutGains) const;
+		float ComputeVoicePitch(const FVoice& Voice, const FMixerListener& Listener, const FVector3& ToVoice) const;
 		FVector3 SelectVoiceListener(const FVoice& Voice, FMixerListener& OutListener) const;
 
 		void StopVoice(FVoice& Voice, uint32 Slot, const FAudioCommand& Cmd);
@@ -181,6 +181,7 @@ namespace Lumina
 		uint32 NumChannels = 2;
 
 		FVoice Voices[MaxVoices];
+		uint32 RenderStartSlot = 0;
 
 		// A stereo-linked peak limiter on the master, so a pile of explosions ducks the mix instead of hard clipping it.
 		static constexpr float LimiterCeiling = 0.89f;

@@ -52,5 +52,34 @@ namespace Lumina
         RUNTIME_API void SerializeObjectState(FArchive& Ar, CObject* Object);
 
         RUNTIME_API bool HasSaveGameProperties(const CStruct* Struct);
+
+        // Patched in after the payload, so the count and every length cost nothing to know up front.
+        template<typename TBody>
+        void WriteSized(FArchive& Ar, TBody&& Body)
+        {
+            const int64 SizePosition = Ar.Tell();
+            int64 Size = 0;
+            Ar << Size;
+            const int64 Start = Ar.Tell();
+            Body();
+            const int64 End = Ar.Tell();
+            Size = End - Start;
+            Ar.Seek(SizePosition);
+            Ar << Size;
+            Ar.Seek(End);
+        }
+
+        template<typename TBody>
+        void WriteCounted(FArchive& Ar, TBody&& Body)
+        {
+            const int64 CountPosition = Ar.Tell();
+            uint32 Count = 0;
+            Ar << Count;
+            Count = Body();
+            const int64 End = Ar.Tell();
+            Ar.Seek(CountPosition);
+            Ar << Count;
+            Ar.Seek(End);
+        }
     }
 }

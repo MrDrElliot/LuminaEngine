@@ -764,12 +764,7 @@ namespace Lumina
 
     void FPhysicsAssetEditorTool::CloseOpenDragTransaction()
     {
-        if (HandleState.bHandleTransactionOpen || HandleState.bGizmoTransactionOpen)
-        {
-            HandleState.bHandleTransactionOpen = false;
-            HandleState.bGizmoTransactionOpen = false;
-            EndAssetTransaction();
-        }
+        ShapeHandles::CloseOpenDragTransaction(*this, HandleState);
     }
 
     void FPhysicsAssetEditorTool::ApplyGizmoMatrix(const FMatrix4& NewBodyMatrix)

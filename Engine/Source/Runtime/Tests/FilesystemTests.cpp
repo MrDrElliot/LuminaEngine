@@ -4,6 +4,7 @@
 #include "Containers/String.h"
 #include "Containers/StringFormat.h"
 #include "GUID/GUID.h"
+#include "Platform/Filesystem/FileHelper.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include <chrono>
 #include <thread>
@@ -542,6 +543,22 @@ TEST_F(FilesystemTest, SetReadOnlyIsReflectedInStat)
     EXPECT_FALSE(Stat(Path).IsReadOnly());
 }
 
+TEST_F(FilesystemTest, LoadFileIntoStringSucceedsOnAnEmptyFile)
+{
+    const FString Path = Under("Empty.txt");
+    ASSERT_TRUE(WriteFile(Path, TSpan<const uint8>()));
+
+    FString Text;
+    EXPECT_TRUE(FileHelper::LoadFileIntoString(Text, Path));
+    EXPECT_TRUE(Text.IsEmpty());
+}
+
+TEST_F(FilesystemTest, LoadFileIntoStringFailsOnAMissingFile)
+{
+    FString Text;
+    EXPECT_FALSE(FileHelper::LoadFileIntoString(Text, Under("NoSuchFile.txt")));
+}
+
 TEST_F(FilesystemTest, RemoveFileClearsAReadOnlyFlagFirst)
 {
     const FString Path = Under("ReadOnly.txt");
@@ -552,7 +569,73 @@ TEST_F(FilesystemTest, RemoveFileClearsAReadOnlyFlagFirst)
     EXPECT_FALSE(Exists(Path));
 }
 
+#include "Containers/Algorithm.h"
+#include "Core/Threading/Mutex.h"
+#include "Paths/Paths.h"
+#include "Platform/Filesystem/DirectoryWatcher.h"
+
+TEST_F(FilesystemTest, DirectoryWatcherReportsARenameAsOneEventWithBothPaths)
+{
+    FString From = Under("Before.txt");
+    FString To = Under("After.txt");
+    FString Sentinel = Under("Sentinel");
+    Paths::Normalize(From);
+    Paths::Normalize(To);
+    Paths::Normalize(Sentinel);
+    ASSERT_TRUE(WriteFile(From, Bytes("x")));
+
+    TMutex<TVector<FFileEvent>> Events;
+    FDirectoryWatcher Watcher;
+    ASSERT_TRUE(Watcher.Watch(FFixedString(*Root, Root.Len()), [&Events](const FFileEvent& Event)
+    {
+        Events.Lock()->Add(Event);
+    }, false));
+
+    auto WaitFor = [&Events](const FString& EventPath, int32 Polls)
+    {
+        for (int32 Poll = 0; Poll < Polls; ++Poll)
+        {
+            if (Algo::AnyOf(*Events.Lock(), [&EventPath](const FFileEvent& Event) { return Event.Path == EventPath; }))
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
+    };
+
+    // A sentinel seen by the watcher proves its read is pending before the rename happens.
+    bool bWatchLive = false;
+    for (int32 Attempt = 0; Attempt < 50 && !bWatchLive; ++Attempt)
+    {
+        ASSERT_TRUE(MakeDirectoryTree(Sentinel));
+        bWatchLive = WaitFor(Sentinel, 10);
+        RemoveTree(Sentinel);
+    }
+    ASSERT_TRUE(bWatchLive);
+
+    ASSERT_TRUE(Move(From, To, false));
+    ASSERT_TRUE(WaitFor(To, 500));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Watcher.Stop();
+
+    TVector<FFileEvent> RenameEvents;
+    for (const FFileEvent& Event : *Events.Lock())
+    {
+        if (Event.Path == From || Event.Path == To)
+        {
+            RenameEvents.Add(Event);
+        }
+    }
+
+    ASSERT_EQ(RenameEvents.Num(), 1);
+    EXPECT_EQ(RenameEvents[0].Action, EFileAction::Renamed);
+    EXPECT_EQ(RenameEvents[0].Path, To);
+    EXPECT_EQ(RenameEvents[0].OldPath, From);
+}
+
 #include "FileSystem/NativeFileSystem.h"
+#include "ScopedTempMountTestUtil.h"
 #include "Containers/StringFormat.h"
 
 TEST(NativeFileSystemTest, ResolveVirtualPathMapsUnderTheAlias)
@@ -591,4 +674,15 @@ TEST(NativeFileSystemTest, ResolveVirtualPathHandlesPathsPastTheFixedStringLimit
     ASSERT_GT(Resolved.Len(), 260);
     EXPECT_TRUE(FStringView(Resolved.GetData(), Resolved.Len()).StartsWith("C:/Projects/Demo/Game/Segment"));
     EXPECT_TRUE(FStringView(Resolved.GetData(), Resolved.Len()).EndsWith("SegmentOfMeaningfulLength"));
+}
+
+TEST(VFSTest, RemoveAllDeletesANonEmptyDirectory)
+{
+    TestUtil::FScopedTempMount Mount("/Game", "VFSRemoveAll");
+
+    ASSERT_TRUE(VFS::WriteFile("/Game/Tree/A/1.txt", FStringView("a")));
+    ASSERT_TRUE(VFS::WriteFile("/Game/Tree/B/C/2.txt", FStringView("b")));
+
+    EXPECT_TRUE(VFS::RemoveAll("/Game/Tree"));
+    EXPECT_FALSE(VFS::Exists("/Game/Tree"));
 }

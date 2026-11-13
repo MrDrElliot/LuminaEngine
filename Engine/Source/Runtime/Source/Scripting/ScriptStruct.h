@@ -3,6 +3,7 @@
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
 #include "Containers/ContainerOps.h"
+#include "Containers/FunctionRef.h"
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "Core/LuminaMacros.h"
@@ -212,6 +213,9 @@ namespace Lumina::Scripting
 
     // What differs between Target's block and Schema, a layout change needing a new class and a metadata one reapplied in place.
     RUNTIME_API EScriptTypeDirty DiffScriptClassLayout(const CScriptClass* Target, const FScriptExportSchema& Schema);
+
+    // True when Property, or an element or key inside it, is typed by a struct or enum Match accepts.
+    RUNTIME_API bool PropertyReferencesType(const FProperty* Property, TFunctionRef<bool(const CField*)> Match);
 
     // What changed between a block laid out from Applied, whose properties are Emitted, and Schema.
     RUNTIME_API EScriptTypeDirty DiffScriptLayout(const FScriptExportSchema& Applied, TSpan<FProperty* const> Emitted, const FScriptExportSchema& Schema);

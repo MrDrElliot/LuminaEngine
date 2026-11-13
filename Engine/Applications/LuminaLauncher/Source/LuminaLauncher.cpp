@@ -100,4 +100,65 @@ int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ wchar_t*, _In_ int)
     return 0;
 }
 
+#else
+
+#include <dirent.h>
+#include <unistd.h>
+
+#include <cstdio>
+#include <string>
+
+namespace
+{
+    std::string GetOwnDirectory()
+    {
+        std::string Buffer(4096, '\0');
+        const ssize_t Length = readlink("/proc/self/exe", Buffer.data(), Buffer.size());
+        Buffer.resize(Length > 0 ? (size_t)Length : 0);
+        return Buffer.substr(0, Buffer.find_last_of('/'));
+    }
+
+    // A package carries one editor configuration, so whichever one is present is the one to start.
+    std::string FindEditor(const std::string& BinariesDirectory)
+    {
+        std::string Editor;
+        if (DIR* Directory = opendir(BinariesDirectory.c_str()))
+        {
+            while (const dirent* Entry = readdir(Directory))
+            {
+                // The .modules manifest and symbol files share the prefix, and only the executable has no extension.
+                const std::string Name(Entry->d_name);
+                if (Name.rfind("Lumina-Editor-", 0) == 0 && Name.find('.') == std::string::npos)
+                {
+                    Editor = BinariesDirectory + "/" + Entry->d_name;
+                    break;
+                }
+            }
+            closedir(Directory);
+        }
+        return Editor;
+    }
+}
+
+int main(int, char** Arguments)
+{
+    const std::string BinariesDirectory = GetOwnDirectory() + "/Binaries/Linux64";
+    std::string Editor = FindEditor(BinariesDirectory);
+    if (Editor.empty())
+    {
+        std::fprintf(stderr, "The Lumina editor was not found in %s\nExtract the whole package and run this launcher from the extracted folder.\n",
+            BinariesDirectory.c_str());
+        return 1;
+    }
+
+    // The editor replaces this process, keeping every argument after the launcher's own name.
+    Arguments[0] = Editor.data();
+    if (chdir(BinariesDirectory.c_str()) == 0)
+    {
+        execv(Editor.c_str(), Arguments);
+    }
+    std::fprintf(stderr, "The Lumina editor could not be started.\n%s\n", Editor.c_str());
+    return 1;
+}
+
 #endif

@@ -296,6 +296,25 @@ namespace Lumina
         return Action.Type == EInputActionType::Digital ? bAnyKeyDown : (bAnyKeyDown || X != 0.0f || Y != 0.0f);
     }
 
+    bool FInputActionMap::IsChordHeld(const SInputAction& Action, const FInputContext& Context) const
+    {
+        const SInputAction* Current = &Action;
+        for (int32 Depth = 0; Depth < Actions.Num(); ++Depth)
+        {
+            if (Current->ChordAction.IsNone())
+            {
+                return true;
+            }
+            const SInputAction* Chord = FindAction(Current->ChordAction);
+            if (Chord == nullptr || Chord == Current || !IsRawDown(*Chord, Context))
+            {
+                return false;
+            }
+            Current = Chord;
+        }
+        return false;
+    }
+
     void FInputActionMap::UpdateContext(FInputContext& Context, float DeltaSeconds) const
     {
         TVector<SInputActionState>& States = Context.GetMutableActionStates();
@@ -327,15 +346,11 @@ namespace Lumina
             // A continuous action is down while its shaped value is non-zero, past the dead zone.
             bool bRawDown = (Action.Type == EInputActionType::Digital) ? bAnyKeyDown : (bAnyKeyDown || X != 0.0f || Y != 0.0f);
 
-            if (!Action.ChordAction.IsNone())
+            if (!IsChordHeld(Action, Context))
             {
-                const SInputAction* Chord = FindAction(Action.ChordAction);
-                if (Chord == nullptr || Chord == &Action || !IsRawDown(*Chord, Context))
-                {
-                    bRawDown = false;
-                    X = 0.0f;
-                    Y = 0.0f;
-                }
+                bRawDown = false;
+                X = 0.0f;
+                Y = 0.0f;
             }
 
             const bool bRawPressed = bRawDown && !Trigger.bRawDown;

@@ -20,13 +20,6 @@ namespace Lumina::Physics
 {
     namespace
     {
-        FQuat RagdollAxisAngle(const FVector3& Axis, float Angle)
-        {
-            const float Half = Angle * 0.5f;
-            const FVector3 Scaled = Math::Normalize(Axis) * Math::Sin(Half);
-            return FQuat(Math::Cos(Half), Scaled.x, Scaled.y, Scaled.z);
-        }
-
         // Rotation taking local +Y onto Dir, which is the axis a capsule is built along.
         FQuat RagdollYToDir(const FVector3& Dir)
         {
@@ -38,9 +31,9 @@ namespace Lumina::Physics
             }
             if (D < -0.9999f)
             {
-                return RagdollAxisAngle(FVector3(0.0f, 0.0f, 1.0f), Math::Pi<float>());
+                return Math::AngleAxis(Math::Pi<float>(), FVector3(0.0f, 0.0f, 1.0f));
             }
-            return RagdollAxisAngle(Math::Normalize(Math::Cross(Y, Dir)), Math::Acos(D));
+            return Math::AngleAxis(Math::Acos(D), Math::Normalize(Math::Cross(Y, Dir)));
         }
 
         FVector3 RagdollPerpendicular(const FVector3& Axis)
@@ -257,7 +250,7 @@ namespace Lumina::Physics
         }
 
         TSharedPtr<FPhysicsRagdollHandle> Handle = Request.Handle;
-        if (static_cast<uint32>(BodyHandles.Num() - FreeBodyHandles.Num() + Defs.Num()) > MaxBodies) { return nullptr; }
+        if (!HasBodyCapacity(static_cast<uint32>(Defs.Num()))) { return nullptr; }
         Handle->WorldId = WorldId;
         Handle->Bodies.Reserve(Defs.Num());
         Handle->BodyHandles.Reserve(Defs.Num());
@@ -270,8 +263,13 @@ namespace Lumina::Physics
         ShapeDef.enableContactEvents = true;
         ShapeDef.updateBodyMass = false;
 
-        for (const FRagdollBodyDef& Def : Defs)
+        TVector<int32> DefIndexToBodyIndex;
+        DefIndexToBodyIndex.SetNum(Defs.Num(), -1);
+
+        for (int32 DefIndex = 0; DefIndex < Defs.Num(); ++DefIndex)
         {
+            const FRagdollBodyDef& Def = Defs[DefIndex];
+
             b3BodyDef BodyDef = b3DefaultBodyDef();
             BodyDef.type = b3_dynamicBody;
             BodyDef.position = Box3DUtils::ToB3Vec3(Def.WorldPos);
@@ -306,6 +304,7 @@ namespace Lumina::Physics
                 b3Body_SetMassData(BodyId, MassData);
             }
 
+            DefIndexToBodyIndex[DefIndex] = Handle->Bodies.Num();
             Handle->Bodies.Add(BodyId);
             Handle->BodyHandles.Add(BodyHandle);
             Handle->JointToBone.Add(Def.BoneIndex);
@@ -316,10 +315,10 @@ namespace Lumina::Physics
             return nullptr;
         }
 
-        for (int32 i = 0; i < Defs.Num(); ++i)
+        for (int32 DefIndex = 0; DefIndex < Defs.Num(); ++DefIndex)
         {
-            const FRagdollBodyDef& Def = Defs[i];
-            if (Def.ParentBodyIndex < 0 || i >= Handle->Bodies.Num() || Def.ParentBodyIndex >= Handle->Bodies.Num())
+            const FRagdollBodyDef& Def = Defs[DefIndex];
+            if (Def.ParentBodyIndex < 0 || DefIndexToBodyIndex[DefIndex] < 0 || DefIndexToBodyIndex[Def.ParentBodyIndex] < 0)
             {
                 continue;
             }
@@ -357,16 +356,16 @@ namespace Lumina::Physics
                         Twist = C.TwistLimitDegrees;
                         Swing1 = C.Swing1LimitDegrees;
                         Swing2 = C.Swing2LimitDegrees;
-                        Defs[i].MotorFrequency = C.MotorFrequency;
-                        Defs[i].MotorDamping = C.MotorDamping;
-                        Defs[i].MotorStrength = C.MotorStrength;
+                        Defs[DefIndex].MotorFrequency = C.MotorFrequency;
+                        Defs[DefIndex].MotorDamping = C.MotorDamping;
+                        Defs[DefIndex].MotorStrength = C.MotorStrength;
                         break;
                     }
                 }
             }
 
-            const b3BodyId ChildBody = Handle->Bodies[i];
-            const b3BodyId ParentBody = Handle->Bodies[Def.ParentBodyIndex];
+            const b3BodyId ChildBody = Handle->Bodies[DefIndexToBodyIndex[DefIndex]];
+            const b3BodyId ParentBody = Handle->Bodies[DefIndexToBodyIndex[Def.ParentBodyIndex]];
 
             // Box3D centers the swing cone and the twist on the frame's Z axis, so Z is aimed along the limb.
             const FVector3 Perp = RagdollPerpendicular(TwistAxis);
@@ -408,11 +407,19 @@ namespace Lumina::Physics
         TVector<float> SubtreeMass;
         SubtreeMass.SetNum(NumBodies, 0.0f);
         float TotalMass = 0.0f;
-        for (int32 i = 0; i < NumBodies; ++i)
+        for (int32 DefIndex = 0; DefIndex < Defs.Num(); ++DefIndex)
         {
-            Handle->ParentBody[i] = Defs[i].ParentBodyIndex < NumBodies ? Defs[i].ParentBodyIndex : -1;
-            SubtreeMass[i] = b3Body_IsValid(Handle->Bodies[i]) ? b3Body_GetMass(Handle->Bodies[i]) : 0.0f;
-            TotalMass += SubtreeMass[i];
+            const int32 BodyIndex = DefIndexToBodyIndex[DefIndex];
+            if (BodyIndex < 0)
+            {
+                continue;
+            }
+
+            const int32 ParentDefIndex = Defs[DefIndex].ParentBodyIndex;
+            Handle->ParentBody[BodyIndex] = (ParentDefIndex >= 0 && DefIndexToBodyIndex[ParentDefIndex] >= 0)
+                ? DefIndexToBodyIndex[ParentDefIndex] : -1;
+            SubtreeMass[BodyIndex] = b3Body_IsValid(Handle->Bodies[BodyIndex]) ? b3Body_GetMass(Handle->Bodies[BodyIndex]) : 0.0f;
+            TotalMass += SubtreeMass[BodyIndex];
         }
         for (int32 i = NumBodies - 1; i >= 0; --i)
         {
@@ -423,22 +430,29 @@ namespace Lumina::Physics
         }
 
         // Every jointed body gets a muscle, left slack until the ragdoll is powered so a limp ragdoll behaves as it always did.
-        for (int32 i = 0; i < NumBodies; ++i)
+        for (int32 DefIndex = 0; DefIndex < Defs.Num(); ++DefIndex)
         {
-            const int32 Parent = Handle->ParentBody[i];
+            const int32 BodyIndex = DefIndexToBodyIndex[DefIndex];
+            if (BodyIndex < 0)
+            {
+                continue;
+            }
+
+            const int32 Parent = Handle->ParentBody[BodyIndex];
             if (Parent < 0)
             {
                 continue;
             }
 
-            const b3BodyId ChildBody = Handle->Bodies[i];
+            const int32 ParentDefIndex = Defs[DefIndex].ParentBodyIndex;
+            const b3BodyId ChildBody = Handle->Bodies[BodyIndex];
             const b3BodyId ParentBody = Handle->Bodies[Parent];
-            const FQuat RestRelative = Math::Normalize(Math::Inverse(Defs[Parent].WorldRot) * Defs[i].WorldRot);
+            const FQuat RestRelative = Math::Normalize(Math::Inverse(Defs[ParentDefIndex].WorldRot) * Defs[DefIndex].WorldRot);
 
             b3MotorJointDef MuscleDef = b3DefaultMotorJointDef();
             MuscleDef.base.bodyIdA = ParentBody;
             MuscleDef.base.bodyIdB = ChildBody;
-            MuscleDef.base.localFrameA = b3Transform{ b3Body_GetLocalPoint(ParentBody, Box3DUtils::ToB3Vec3(Defs[i].WorldPos)), b3Quat_identity };
+            MuscleDef.base.localFrameA = b3Transform{ b3Body_GetLocalPoint(ParentBody, Box3DUtils::ToB3Vec3(Defs[DefIndex].WorldPos)), b3Quat_identity };
             MuscleDef.base.localFrameB = b3Transform{ b3Vec3_zero, Box3DUtils::ToB3Quat(Math::Inverse(RestRelative)) };
             MuscleDef.base.collideConnected = false;
             MuscleDef.linearVelocity = b3Vec3_zero;
@@ -461,11 +475,11 @@ namespace Lumina::Physics
 
             FRagdollMuscle& Muscle = Handle->Muscles.EmplaceGetRef();
             Muscle.Joint = MuscleId;
-            Muscle.Body = i;
+            Muscle.Body = BodyIndex;
             Muscle.ParentBody = Parent;
-            Muscle.TorqueScale = Math::Clamp(kMuscleShareGain * Math::Sqrt(SubtreeMass[i] / Math::Max(TotalMass, 1e-3f)), kMinMuscleShare, 1.0f) * Defs[i].MotorStrength;
-            Muscle.HertzOverride = Defs[i].MotorFrequency;
-            Muscle.DampingOverride = Defs[i].MotorDamping;
+            Muscle.TorqueScale = Math::Clamp(kMuscleShareGain * Math::Sqrt(SubtreeMass[BodyIndex] / Math::Max(TotalMass, 1e-3f)), kMinMuscleShare, 1.0f) * Defs[DefIndex].MotorStrength;
+            Muscle.HertzOverride = Defs[DefIndex].MotorFrequency;
+            Muscle.DampingOverride = Defs[DefIndex].MotorDamping;
         }
 
         // Limbs that are not directly jointed still must not collide, which is what a filter joint is for.

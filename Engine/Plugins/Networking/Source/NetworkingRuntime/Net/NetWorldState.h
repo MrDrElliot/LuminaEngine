@@ -11,11 +11,16 @@
 #include "Networking/INetworkTransport.h"
 #include "World/Net/NetGUID.h"
 #include "Net/NetReplicationGraph.h"
+#include "Net/NetReplication.h"
+#include "Net/NetPrediction.h"
+#include "Systems/NetworkSystem.h"
 
 namespace Lumina
 {
     class CObject;
     class CStruct;
+    class CClass;
+    class FProperty;
     class FNetCountingTransport;
 
     // Where a server tick's network time goes, for the -netstats breakdown.
@@ -57,6 +62,7 @@ namespace Lumina
         THashSet<uint32>           FailedIndices;  // incoming, GUIDs that did not load
         TVector<uint32>            PendingExports; // outgoing, assigned but not yet sent
         uint32                     NextIndex = 1;  // 0 is null
+        bool                       bLoggedRefusal = false; // an out-of-range index was reported, incoming refusal or outgoing exhaustion
     };
 
     // SUIDocumentRef net-index cache. Same export-once model as FNetObjectMap, keyed by GUID else Path.
@@ -66,6 +72,7 @@ namespace Lumina
         THashMap<uint32, SUIDocumentRef> IndexToRef;     // outgoing on assign, incoming from export
         TVector<uint32>             PendingExports; // outgoing, assigned but not yet sent
         uint32                      NextIndex = 1;  // 0 is null
+        bool                        bLoggedRefusal = false; // an out-of-range index was reported, incoming refusal or outgoing exhaustion
     };
     
     // FName net-index cache. FName IDs are an XXHash64 of the string (deterministic across peers), but a peer
@@ -78,6 +85,7 @@ namespace Lumina
         THashMap<uint32, FName> IndexToName;    // outgoing on assign, incoming from export
         TVector<uint32>         PendingExports; // outgoing, assigned but not yet sent
         uint32                  NextIndex = 1;  // 0 is NAME_None
+        bool                    bLoggedRefusal = false; // an out-of-range index was reported, incoming refusal or outgoing exhaustion
     };
 
     // Replication-layer instrumentation for the network debug tool. Per-tick fields are refreshed by the
@@ -121,6 +129,49 @@ namespace Lumina
         // Sorted by name hash, so the same build gives the same order and the wire carries an index, not the hash.
         TVector<FEntry> ByIndex;
         TVector<int32>  TypeIdToIndex;
+    };
+
+    // Ownership-table entry, as sent in an OwnershipUpdate message.
+    struct FNetOwnerRecord
+    {
+        uint32 Guid  = 0;
+        uint32 Owner = 0;
+    };
+
+    // One grid-gathered candidate for a client's relevancy pass, copied out of the grid's cell-ordered arrays.
+    struct FNetGatheredRecord
+    {
+        uint32      Rec   = 0;
+        uint32      Guid  = 0;
+        uint8       Flags = 0;
+        ENetLODTier Tier  = ENetLODTier::Near;
+        float       Score = 0.0f;
+    };
+
+    // A transform record waiting on the per-client send budget, ranked by Priority.
+    struct FNetDueRecord
+    {
+        NetworkSystemInternal::FTransformSendRecord Record;
+        float                                       Priority = 0.0f;
+        FNetChangeSeq                               Seq;
+    };
+
+    // Reused by the serial replication and prediction paths, which never overlap in a tick.
+    struct FNetReplicationScratch
+    {
+        TVector<Net::FComponentRepOut> Comps;
+        TVector<Net::FScriptRepOut>    Scripts;
+        TVector<uint8>                 Buffer;
+        TVector<uint8>                 HookBytes;
+        TVector<uint8>                 FieldBytes;
+        TVector<uint32>                FieldOffsets;
+        TVector<uint8>                 Mask;
+        TVector<FProperty*>            Fields;
+        TVector<uint8>                 Held;
+        TVector<uint8>                 Merged;
+        TVector<uint32>                MergedOffsets;
+        TVector<char>                  Names;
+        TVector<FNetMoveCommand>       MoveCommands;
     };
 
     // Per-world networking state.
@@ -273,5 +324,17 @@ namespace Lumina
         // map needs no custom hasher), value = desired parent NetGUID. Drained when that parent spawns
         // (ApplySpawnEntity), since relevancy spawn order isn't guaranteed.
         THashMap<uint32, uint32> PendingAttach;
+
+        FNetReplicationScratch ReplicationScratch;
+
+        // One slot per Jobs::GetThreadSlot(), sized to Jobs::GetNumThreadSlots() before each client-parallel pass.
+        TVector<TVector<FNetGatheredRecord>>      GatheredScratch;
+        TVector<TVector<FNetDueRecord>>           DueScratch;
+        mutable TVector<TVector<FNetOwnerRecord>> OwnershipPickedScratch;
+
+        // Snapshot scratch and per-class Sync-field cache for PollNativeSyncFields.
+        TVector<FProperty*>           SyncFieldScratch;
+        TVector<ECS::FEntity>         SyncEntityScratch;
+        THashMap<const CClass*, bool> SyncFieldClassCache;
     };
 }

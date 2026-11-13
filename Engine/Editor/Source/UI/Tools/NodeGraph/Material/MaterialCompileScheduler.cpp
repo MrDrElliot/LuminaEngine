@@ -55,7 +55,7 @@ namespace Lumina
     void FMaterialCompileScheduler::Tick()
     {
         FRenderManager* Renderer = TryRender();
-        if (Renderer == nullptr || GShaderCompiler == nullptr)
+        if (Renderer == nullptr || Global::GShaderCompiler == nullptr)
         {
             return;
         }

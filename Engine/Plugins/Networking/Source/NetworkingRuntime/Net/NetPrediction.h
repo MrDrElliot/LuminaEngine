@@ -43,6 +43,7 @@ namespace Lumina
     {
         uint32                        OwningConnectionId = 0;
         uint32                        LastProcessed = 0;
+        uint32                        SkippedMoves  = 0;
         float                         Budget        = 0.0f;
         Physics::FCharacterNetState   AckState;
         uint32                        AckSeq        = 0;
@@ -73,20 +74,26 @@ namespace Lumina
         // Quantized exactly as a client's own step records it, from a world-space move and a yaw in degrees.
         NETWORKINGRUNTIME_API FNetMoveCommand MakeMoveCommand(uint32 Seq, const FVector3& Move, float YawDegrees, uint32 Buttons);
 
+        // The view pitch the host applies for a command, held to the range its replication can carry.
+        NETWORKINGRUNTIME_API float PitchDegrees(int16 Pitch);
+
         // After roles refresh, decides who simulates each networked character.
         void RefreshDrives(CWorld* World, ECS::FRegistry& Registry, bool bServer);
 
         // Host only. A new owner starts its sequence at 1, so its server state restarts too; owner 0 removes it.
         NETWORKINGRUNTIME_API void RefreshServerPrediction(ECS::FRegistry& Registry, ECS::FEntity Entity, uint32 OwningConnectionId);
 
+        NETWORKINGRUNTIME_API float FixedStepOf(CWorld* World);
+
         // Physics calls this around every fixed character step. The client records its own moves here.
-        void OnCharacterStep(CWorld* World, float FixedDt, bool bAfter);
+        NETWORKINGRUNTIME_API void OnCharacterStep(ECS::FRegistry& Registry, Physics::IPhysicsScene& Scene, bool bAfter);
 
-        void SendCommands(ECS::FRegistry& Registry, FNetWorldState& State);
-        void ReceiveCommands(CWorld* World, ECS::FRegistry& Registry, uint32 Sender, const uint8* Data, SIZE_T Size);
+        NETWORKINGRUNTIME_API void SendCommands(ECS::FRegistry& Registry, FNetWorldState& State);
+        NETWORKINGRUNTIME_API void ReceiveCommands(ECS::FRegistry& Registry, Physics::IPhysicsScene& Scene, float FixedDt, uint32 Sender, const uint8* Data, SIZE_T Size);
 
-        void TickBudgets(CWorld* World, ECS::FRegistry& Registry, float DeltaTime);
-        void SendAcks(ECS::FRegistry& Registry, FNetWorldState& State, float DeltaTime);
-        void ReceiveAck(CWorld* World, ECS::FRegistry& Registry, FNetWorldState& State, const uint8* Data, SIZE_T Size);
+        NETWORKINGRUNTIME_API void TickBudgets(ECS::FRegistry& Registry, float FixedDt, float DeltaTime);
+        NETWORKINGRUNTIME_API void WriteMoveAck(TVector<uint8>& Buffer, uint32 Guid, uint32 Seq, const Physics::FCharacterNetState& State);
+        NETWORKINGRUNTIME_API void SendAcks(ECS::FRegistry& Registry, FNetWorldState& State, float DeltaTime);
+        NETWORKINGRUNTIME_API void ReceiveAck(ECS::FRegistry& Registry, FNetWorldState& State, Physics::IPhysicsScene& Scene, float FixedDt, const uint8* Data, SIZE_T Size);
     }
 }

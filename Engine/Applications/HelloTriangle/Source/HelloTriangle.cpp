@@ -52,11 +52,11 @@ namespace
         Options.EntryPoint = EntryPoint;
         Options.bGenerateReflectionData = false;
 
-        GShaderCompiler->CompilerShaderRaw(FString(Source), Options,
+        Global::GShaderCompiler->CompilerShaderRaw(FString(Source), Options,
             [&Spirv](FShaderHeader Header) { Spirv = Move(Header.Binaries); });
 
         // The join. Nothing reads Spirv until the compile task has landed.
-        GShaderCompiler->Flush();
+        Global::GShaderCompiler->Flush();
 
         if (Spirv.IsEmpty())
         {
@@ -156,7 +156,7 @@ int main(int ArgC, char** ArgV)
     Jobs::Initialize();
 
     FCommandLine ParsedCommandLine { ArgC, ArgV };
-    GCommandLine = &ParsedCommandLine;
+    Global::GCommandLine = &ParsedCommandLine;
 
     // The Vulkan instance asks GLFW for its surface extensions, and only a window brings GLFW up.
     FWindow Window(FWindowSpecs{ .Title = "Lumina Hello Triangle", .Extent = { 1280, 720 } });
@@ -164,7 +164,7 @@ int main(int ArgC, char** ArgV)
     RHI::CreateDevice(RHI::FDeviceDesc{ .bValidation = !ParsedCommandLine.Has("novalidation") });
 
     FSpirVShaderCompiler ShaderCompiler;
-    GShaderCompiler = &ShaderCompiler;
+    Global::GShaderCompiler = &ShaderCompiler;
 
     RHI::FSwapchainTarget Target;
     Target.Initialize(RHI::CreateSurface(Window.GetWindow()), Window.GetExtent());
@@ -186,11 +186,11 @@ int main(int ArgC, char** ArgV)
         RHI::Retire(Pipeline);
     }
 
-    GShaderCompiler = nullptr;
+    Global::GShaderCompiler = nullptr;
     RHI::FreeDevice();
 
     Jobs::Shutdown();
-    GCommandLine = nullptr;
+    Global::GCommandLine = nullptr;
 
     return bCompiled ? 0 : 1;
 }

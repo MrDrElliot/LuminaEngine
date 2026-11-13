@@ -75,12 +75,9 @@
 
 namespace Lumina
 {
-    RUNTIME_API FEngine* GEngine;
+    RUNTIME_API FEngine* Global::GEngine;
 
-    RUNTIME_API bool GIsHeadless = false;
-
-    static FUIntVector2 EngineViewportSize = FUIntVector2(0, 0);
-
+    RUNTIME_API bool Global::GIsHeadless = false;
 
     // Offline rendering steps the game a fixed amount per frame however long each frame takes to draw.
     static TConsoleVar CVarFixedDeltaTime("Core.FixedDeltaTime", 0.0f, "Seconds every frame advances the game by, whatever it took to draw; 0 uses the real frame time");
@@ -226,7 +223,7 @@ namespace Lumina
         #if USING(WITH_DEV_UI)
         DeveloperToolUI.Reset(CreateDevelopmentTools());
         DeveloperToolUI->Initialize(UpdateContext);
-        GApp->GetEventProcessor().RegisterEventHandler(DeveloperToolUI.Get(), (int32)Layer);
+        Global::GApp->GetEventProcessor().RegisterEventHandler(DeveloperToolUI.Get(), (int32)Layer);
         #endif
     }
 
@@ -242,7 +239,7 @@ namespace Lumina
     struct FEngine::FBootTimer
     {
         // Startup is a long serial chain, so -boottimings attributes it without attaching a profiler.
-        const bool bEnabled = GCommandLine->Has("boottimings");
+        const bool bEnabled = Global::GCommandLine->Has("boottimings");
         const double Start = PlatformTime::Seconds();
         double Last = Start;
 
@@ -274,9 +271,9 @@ namespace Lumina
         FBootTimer Boot;
 
         // Before anything can build an object, so a reinstance always sees every holder.
-        if (GConfig != nullptr)
+        if (Global::GConfig != nullptr)
         {
-            FObjectReferenceProviders::Register(GConfig);
+            FObjectReferenceProviders::Register(Global::GConfig);
         }
 
         FStartupProject Startup = ResolveStartupProject(Boot);
@@ -304,7 +301,7 @@ namespace Lumina
 
         // Falls back to the stored startup project, so a bare launch respects plugin enable and disable.
         FStartupProject Startup;
-        if (TOptional<FFixedString> ProjectArg = GCommandLine->Get("Project"))
+        if (TOptional<FFixedString> ProjectArg = Global::GCommandLine->Get("Project"))
         {
             const FFixedString& V = ProjectArg.GetValue();
             Startup.Path = FStringView(*V, V.Len());
@@ -426,7 +423,7 @@ namespace Lumina
         });
 
         FThread AudioThread;
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             AudioThread = FThread(FThreadOptions{ "Audio Init" }, []
             {
@@ -434,7 +431,7 @@ namespace Lumina
             });
         }
 
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             Internal::SetRenderManager(Memory::New<FRenderManager>());
             Render().Initialize();
@@ -472,13 +469,13 @@ namespace Lumina
         CPrimitiveManager::Get();
         Boot.Mark("CPrimitiveManager");
 
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             CFontManager::Get();
         }
         Boot.Mark("CFontManager");
 
-        GWorldManager = Memory::New<FWorldManager>();
+        Global::GWorldManager = Memory::New<FWorldManager>();
         Boot.Mark("WorldManager");
 
         FPluginManager::Get().LoadModulesForPhase(EPluginLoadingPhase::EngineInit);
@@ -489,7 +486,7 @@ namespace Lumina
     void FEngine::InitializeEditorTools([[maybe_unused]] FBootTimer& Boot)
     {
         #if USING(WITH_EDITOR)
-        GConfig->DiscoverAndLoadSettings();
+        Global::GConfig->DiscoverAndLoadSettings();
 
         // Applied as soon as the setting is readable, so a crash during startup still carries it.
         if (const CEditorSettings* EditorSettings = GetDefault<CEditorSettings>();
@@ -509,7 +506,7 @@ namespace Lumina
 
     void FEngine::InitializeUserInterface(FBootTimer& Boot)
     {
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             RmlUi::Initialize();
             Boot.Mark("RmlUi::Initialize");
@@ -517,7 +514,7 @@ namespace Lumina
 
         // The editor built its UI above; a game build has no window to draw an overlay into when headless.
         #if USING(WITH_DEV_UI) && !USING(WITH_EDITOR)
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             StartDevelopmentTools(EInputLayer::DevOverlay);
             Boot.Mark("DeveloperToolUI");
@@ -554,7 +551,7 @@ namespace Lumina
         
         Jobs::WaitForSpawned();
 
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             RHI::WaitDeviceIdle();
             RmlUi::Shutdown();
@@ -568,8 +565,8 @@ namespace Lumina
         }
         #endif
 
-        Memory::Delete(GWorldManager);
-		GWorldManager = nullptr;
+        Memory::Delete(Global::GWorldManager);
+		Global::GWorldManager = nullptr;
         
         Jobs::WaitForSpawned();
 
@@ -587,7 +584,7 @@ namespace Lumina
         }
 
         Physics::Shutdown();
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             Audio::Shutdown();
         }
@@ -611,9 +608,9 @@ namespace Lumina
         {
             return FrameRateCapOverride;
         }
-        if (GIsHeadless)
+        if (Global::GIsHeadless)
         {
-            static const int32 TickRate = GCommandLine->GetInt("tickrate").Get(GetDefault<CProjectSettings>()->HeadlessTickRate);
+            static const int32 TickRate = Global::GCommandLine->GetInt("tickrate").Get(GetDefault<CProjectSettings>()->HeadlessTickRate);
             return Math::Max(TickRate, 1);
         }
         return UserFrameRateLimit >= 0 ? UserFrameRateLimit : GetDefault<CRendererSettings>()->MaxFPS;
@@ -636,7 +633,7 @@ namespace Lumina
     // FIFO shows each frame on a refresh boundary however unevenly the loop runs, so time advances by whole intervals.
     void FEngine::PaceDeltaToDisplay(double Now)
     {
-        if (!CVarPaceToDisplay.GetValue() || GIsHeadless || GetDefault<CRendererSettings>()->PresentMode != EPresentMode::FIFO
+        if (!CVarPaceToDisplay.GetValue() || Global::GIsHeadless || GetDefault<CRendererSettings>()->PresentMode != EPresentMode::FIFO
             || GetMaxFrameRate() > 0)
         {
             PacedClock = 0.0;
@@ -708,7 +705,7 @@ namespace Lumina
         FJobProfiler::Get().BeginFrame();
         #endif
 
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             Audio::Update();
         }
@@ -721,7 +718,7 @@ namespace Lumina
         // Drained even while minimized, since a tool request or an import queued here would otherwise wait for the window to come back.
         MainThread::ProcessQueue();
 
-        if (GIsHeadless || !Windowing::GetPrimaryWindowHandle()->IsWindowMinimized())
+        if (Global::GIsHeadless || !Windowing::GetPrimaryWindowHandle()->IsWindowMinimized())
         {
             {
                 LUMINA_PROFILE_SECTION_COLORED("FrameStart", tracy::Color::Red);
@@ -739,7 +736,7 @@ namespace Lumina
                 // Unloads assemblies and destroys objects.
                 DotNet::ProcessPendingScriptReload();
 
-                if (!GIsHeadless)
+                if (!Global::GIsHeadless)
                 {
                     Render().FrameStart(UpdateContext);
 
@@ -756,15 +753,15 @@ namespace Lumina
                     DevTools->Update(UpdateContext);
                 }
 
-                if (!GIsHeadless)
+                if (!Global::GIsHeadless)
                 {
-                    GWorldManager->ReclaimIdleRenderers(UpdateContext.GetFrameStartTime());
+                    Global::GWorldManager->ReclaimIdleRenderers(UpdateContext.GetFrameStartTime());
                 }
 
                 // After the editor UI sets the per-tool intervals and before the seven UpdateWorlds calls read them.
-                GWorldManager->BeginFrame(UpdateContext.GetFrameStartTime());
+                Global::GWorldManager->BeginFrame(UpdateContext.GetFrameStartTime());
 
-                GWorldManager->UpdateWorlds(UpdateContext);
+                Global::GWorldManager->UpdateWorlds(UpdateContext);
 
                 OnUpdateStage(UpdateContext);
             }
@@ -778,7 +775,7 @@ namespace Lumina
                     DevTools->Update(UpdateContext);
                 }
 
-                GWorldManager->UpdateWorlds(UpdateContext);
+                Global::GWorldManager->UpdateWorlds(UpdateContext);
 
                 OnUpdateStage(UpdateContext);
             }
@@ -792,7 +789,7 @@ namespace Lumina
                     DevTools->Update(UpdateContext);
                 }
 
-                GWorldManager->UpdateWorlds(UpdateContext);
+                Global::GWorldManager->UpdateWorlds(UpdateContext);
 
                 OnUpdateStage(UpdateContext);
             }
@@ -800,7 +797,7 @@ namespace Lumina
             {
                 // Synchronous, so PostPhysics reads THIS frame's results and contact events fire before it.
                 LUMINA_PROFILE_SECTION_COLORED("Physics", tracy::Color::DarkOliveGreen);
-                GWorldManager->TickPhysics();
+                Global::GWorldManager->TickPhysics();
             }
 
             {
@@ -812,7 +809,7 @@ namespace Lumina
                     DevTools->Update(UpdateContext);
                 }
 
-                GWorldManager->UpdateWorlds(UpdateContext);
+                Global::GWorldManager->UpdateWorlds(UpdateContext);
 
                 OnUpdateStage(UpdateContext);
             }
@@ -827,19 +824,25 @@ namespace Lumina
                 }
 
                 // Final world update stage runs on the main thread.
-                GWorldManager->UpdateWorlds(UpdateContext);
+                Global::GWorldManager->UpdateWorlds(UpdateContext);
 
                 if (IDevelopmentToolUI* DevTools = GetActiveDevelopmentTools())
                 {
                     DevTools->EndFrame(UpdateContext);
                 }
                 
-                if (!GIsHeadless)
+                if (!Global::GIsHeadless)
                 {
                     RmlUi::TickEditorContexts();
-                    GWorldManager->ExtractWorlds();
+
+                    // The latched view is built from this read, so the latency plots start here.
+                    if (FInputViewportRegistry::Get().PumpLateMouseLook())
+                    {
+                        Render().MarkInputRead();
+                    }
+                    Global::GWorldManager->ExtractWorlds();
                     
-                    GWorldManager->BeginImmediateLines();
+                    Global::GWorldManager->BeginImmediateLines();
 
                     Render().FrameEnd();
                 }
@@ -860,9 +863,9 @@ namespace Lumina
         int32 MaxFrameRate = GetMaxFrameRate();
         
         // The editor also slows down when another app has focus, while a game only slows down minimized, since two game windows side by side are a normal way to test.
-        bool bInBackground = !GIsHeadless && Windowing::GetPrimaryWindowHandle()->IsWindowMinimized();
+        bool bInBackground = !Global::GIsHeadless && Windowing::GetPrimaryWindowHandle()->IsWindowMinimized();
         #if USING(WITH_EDITOR)
-        bInBackground |= !GIsHeadless && !Platform::IsProcessForeground();
+        bInBackground |= !Global::GIsHeadless && !Platform::IsProcessForeground();
         #endif
         // A capture or benchmark set its own rate on purpose, so it keeps it with the window in the background.
         if (bInBackground && FrameRateCapOverride < 0)
@@ -920,7 +923,7 @@ namespace Lumina
     {
     }
 
-    FUIntVector2 FEngine::GetEngineViewportSize()
+    FUIntVector2 FEngine::GetEngineViewportSize() const
     {
         return EngineViewportSize;
     }
@@ -935,7 +938,7 @@ namespace Lumina
         TVector<FCookRoot> Result;
 
         // Each entry is an asset path with an implicit Main chunk, since advanced chunking is plugin-only.
-        if (GConfig != nullptr)
+        if (Global::GConfig != nullptr)
         {
             const CProjectSettings* Settings = GetDefault<CProjectSettings>();
             const TVector<TSoftObjectPtr<CWorld>>& Roots = Settings->CookRoots;
@@ -1053,7 +1056,7 @@ namespace Lumina
         VFS::Mount<VFS::FNativeFileSystem>("/Game", GameRootDir);
         VFS::Mount<VFS::FNativeFileSystem>("/Config", ConfigDir);
 
-        GConfig->LoadPath("/Config");
+        Global::GConfig->LoadPath("/Config");
 
         FPluginManager::Get().DiscoverProjectPlugins(ProjectPath);
 
@@ -1080,7 +1083,7 @@ namespace Lumina
     static bool OfferProjectRebuild(FStringView Name, FStringView ProjectFile, FStringView Reason)
     {
         const FString Script = Paths::GetBuildToolScript();
-        if (Script.IsEmpty() || GIsHeadless || GCommandLine->Has("benchmark"))
+        if (Script.IsEmpty() || Global::GIsHeadless || Global::GCommandLine->Has("benchmark"))
         {
             return false;
         }
@@ -1112,7 +1115,7 @@ namespace Lumina
 
     void FEngine::StartProject()
     {
-        GConfig->DiscoverAndLoadSettings();
+        Global::GConfig->DiscoverAndLoadSettings();
 
         CProjectSettings* ProjectSettings = GetMutableDefault<CProjectSettings>();
         if (ProjectSettings->CookRoots.IsEmpty() && !LegacyCookRoots.IsEmpty())
@@ -1125,7 +1128,7 @@ namespace Lumina
             }
             LOG_INFO("LoadProject: migrating {} cook root(s) from .lproject to Project settings", Migrated.Num());
             ProjectSettings->CookRoots = Move(Migrated);
-            GConfig->SaveSettings(CProjectSettings::StaticClass());
+            Global::GConfig->SaveSettings(CProjectSettings::StaticClass());
         }
         LegacyCookRoots.Reset();
 
@@ -1217,9 +1220,9 @@ namespace Lumina
 
     void FEngine::LoadBotWorlds(FStringView MapName)
     {
-        const int32 Count = Math::Clamp(GCommandLine->GetInt("bots").Get(1), 1, 512);
+        const int32 Count = Math::Clamp(Global::GCommandLine->GetInt("bots").Get(1), 1, 512);
         FURL Target;
-        if (TOptional<FFixedString> ConnectArg = GCommandLine->Get("connect"))
+        if (TOptional<FFixedString> ConnectArg = Global::GCommandLine->Get("connect"))
         {
             Target = FURL::Parse(FStringView(*ConnectArg.GetValue(), ConnectArg.GetValue().Len()));
         }
@@ -1241,7 +1244,7 @@ namespace Lumina
             {
                 continue;
             }
-            FWorldContext* Context = GWorldManager->CreateWorldContext(BotWorld, EWorldType::Game, ENetMode::Client, true);
+            FWorldContext* Context = Global::GWorldManager->CreateWorldContext(BotWorld, EWorldType::Game, ENetMode::Client, true);
             if (Context == nullptr)
             {
                 continue;
@@ -1258,7 +1261,7 @@ namespace Lumina
     void FEngine::LoadStartupMap()
     {
         FString RawMapName;
-        if (TOptional<FFixedString> MapArg = GCommandLine->Get("map"))
+        if (TOptional<FFixedString> MapArg = Global::GCommandLine->Get("map"))
         {
             RawMapName = FStringView(*MapArg.GetValue(), MapArg.GetValue().Len());
         }
@@ -1291,23 +1294,23 @@ namespace Lumina
         const FFixedString MapName = VFS::ResolveToVirtualPath(RawMapName);
         LOG_DISPLAY("LoadStartupMap: loading '{}' (resolved '{}').", *RawMapName, *MapName);
 
-        if (GCommandLine->Has("bots"))
+        if (Global::GCommandLine->Has("bots"))
         {
             LoadBotWorlds(FStringView(*MapName, MapName.Len()));
             return;
         }
 
         // Wire-level load bots run inside the network runtime and never need a world of their own.
-        if (GCommandLine->Has("netbots"))
+        if (Global::GCommandLine->Has("netbots"))
         {
             LOG_DISPLAY("LoadStartupMap: skipped, this process only runs network load bots.");
             return;
         }
 
-        if (GIsHeadless)
+        if (Global::GIsHeadless)
         {
             uint16 Port = 7777;
-            if (TOptional<int> PortArg = GCommandLine->GetInt("port"))
+            if (TOptional<int> PortArg = Global::GCommandLine->GetInt("port"))
             {
                 Port = static_cast<uint16>(PortArg.GetValue());
             }
@@ -1331,7 +1334,7 @@ namespace Lumina
             return;
         }
 
-        FWorldContext* Context = GWorldManager->CreateWorldContext(StartupWorld, EWorldType::Game, ENetMode::Standalone);
+        FWorldContext* Context = Global::GWorldManager->CreateWorldContext(StartupWorld, EWorldType::Game, ENetMode::Standalone);
         if (Context == nullptr)
         {
             LOG_ERROR("LoadStartupMap: CreateWorldContext returned null; world won't tick.");
@@ -1339,7 +1342,7 @@ namespace Lumina
         }
         Context->SourceWorld  = SourceWorld;
 
-        if (FInputViewport* Primary = GApp ? GApp->GetPrimaryViewport() : nullptr)
+        if (FInputViewport* Primary = Global::GApp ? Global::GApp->GetPrimaryViewport() : nullptr)
         {
             Primary->SetWorld(StartupWorld);
         }
@@ -1387,7 +1390,7 @@ namespace Lumina
             return;
         }
 
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             LOG_ERROR("FEngine::Travel: WorldManager not initialized.");
             return;
@@ -1412,12 +1415,12 @@ namespace Lumina
             return;
         }
 
-        FWorldContext* OldContext = FromWorld != nullptr ? GWorldManager->FindContext(FromWorld) : nullptr;
+        FWorldContext* OldContext = FromWorld != nullptr ? Global::GWorldManager->FindContext(FromWorld) : nullptr;
 
         // Prefer a PIE Game context so Travel replaces the running world, not the editor proxy world.
         if (OldContext == nullptr)
         {
-            for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
+            for (const TUniquePtr<FWorldContext>& Ctx : Global::GWorldManager->GetContexts())
             {
                 if (Ctx->Type == EWorldType::Game)
                 {
@@ -1444,7 +1447,7 @@ namespace Lumina
             {
                 ColdNetMode = bPendingHostDedicated ? ENetMode::DedicatedServer : ENetMode::ListenServer;
             }
-            FWorldContext* NewContext = GWorldManager->CreateWorldContext(ColdWorld, EWorldType::Game, ColdNetMode);
+            FWorldContext* NewContext = Global::GWorldManager->CreateWorldContext(ColdWorld, EWorldType::Game, ColdNetMode);
             if (NewContext != nullptr)
             {
                 NewContext->SourceWorld  = WorldAsset;
@@ -1455,7 +1458,7 @@ namespace Lumina
                 }
             }
 
-            if (FInputViewport* Primary = GApp ? GApp->GetPrimaryViewport() : nullptr)
+            if (FInputViewport* Primary = Global::GApp ? Global::GApp->GetPrimaryViewport() : nullptr)
             {
                 Primary->SetWorld(ColdWorld);
             }
@@ -1509,9 +1512,9 @@ namespace Lumina
         FPersistentCarry Carry;
         Carry.Lift(OldWorld);
 
-        GWorldManager->DestroyWorldContext(OldWorld);
+        Global::GWorldManager->DestroyWorldContext(OldWorld);
 
-        FWorldContext* NewContext = GWorldManager->CreateWorldContext(NewWorld, Type, NetMode);
+        FWorldContext* NewContext = Global::GWorldManager->CreateWorldContext(NewWorld, Type, NetMode);
         if (NewContext != nullptr)
         {
             NewContext->bPIE         = bPIE;
@@ -1523,7 +1526,7 @@ namespace Lumina
 
         // Every PIE preview has its own viewport, so only the ones showing the traveling world follow it.
         FInputViewportRegistry::Get().ReplaceWorld(OldWorld, NewWorld);
-        if (FInputViewport* Primary = GApp ? GApp->GetPrimaryViewport() : nullptr; Primary != nullptr && OldWorld == nullptr)
+        if (FInputViewport* Primary = Global::GApp ? Global::GApp->GetPrimaryViewport() : nullptr; Primary != nullptr && OldWorld == nullptr)
         {
             Primary->SetWorld(NewWorld);
         }
@@ -1585,7 +1588,7 @@ namespace Lumina
         CWorld* const FromWorld = PendingOpenWorld.Get();
         PendingOpenWorld.Reset();
 
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             LOG_ERROR("FEngine::OpenLevel: WorldManager not initialized.");
             return;
@@ -1593,10 +1596,10 @@ namespace Lumina
 
         if (URL.IsClient())
         {
-            FWorldContext* Ctx = FromWorld != nullptr ? GWorldManager->FindContext(FromWorld) : nullptr;
+            FWorldContext* Ctx = FromWorld != nullptr ? Global::GWorldManager->FindContext(FromWorld) : nullptr;
             if (Ctx == nullptr)
             {
-                Ctx = GWorldManager->GetPrimaryGameContext();
+                Ctx = Global::GWorldManager->GetPrimaryGameContext();
             }
             if (Ctx == nullptr)
             {
@@ -1695,7 +1698,7 @@ namespace Lumina
 
         if (ConfigArchive)
         {
-            GConfig->LoadPath("/Config");
+            Global::GConfig->LoadPath("/Config");
             // At this phase the Runtime CObjects are not registered, so a call here would load into nothing.
         }
         else
@@ -1746,12 +1749,12 @@ namespace Lumina
         }
 
         // Without this a cooked game sees empty project settings and finds no startup map.
-        GConfig->DiscoverAndLoadSettings();
+        Global::GConfig->DiscoverAndLoadSettings();
 
         FInputActionMap::Get().RebuildFromSettings();
 
         // The cooker stashes the project name in config so the DLL beside the exe can be resolved.
-        ProjectName = GConfig->Get<FString>("Project.Name");
+        ProjectName = Global::GConfig->Get<FString>("Project.Name");
         if (!ProjectName.IsEmpty())
         {
             const FFixedString DLLPath = Paths::Combine(ExeDir, Paths::MakeModuleFileName(ProjectName));
@@ -1786,7 +1789,7 @@ namespace Lumina
     {
         // The editor draws its own title bar, so only a game window carries the game's name.
         #if !USING(WITH_EDITOR)
-        FWindow* Window = GIsHeadless ? nullptr : Windowing::GetPrimaryWindowHandle();
+        FWindow* Window = Global::GIsHeadless ? nullptr : Windowing::GetPrimaryWindowHandle();
         if (Window == nullptr)
         {
             return;

@@ -1,12 +1,12 @@
 #include <gtest/gtest.h>
 
 #include "ImGuiTestHarness.h"
+#include "ScopedTempMountTestUtil.h"
 #include "Containers/Algorithm.h"
 #include "Core/Math/Math.h"
 #include "Paths/Paths.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include <chrono>
-#include <filesystem>
 #include <thread>
 #include "FileSystem/FileSystem.h"
 #include "Settings/EditorSettings.h"
@@ -402,29 +402,6 @@ namespace
         SShortcut  Saved;
     };
 
-    // A scratch folder mounted where the editor's resources live, so theme files can be written and read.
-    class FScopedEditorFolder
-    {
-    public:
-
-        FScopedEditorFolder()
-        {
-            Root = std::filesystem::temp_directory_path() / "LuminaCodeThemeTests";
-            std::filesystem::remove_all(Root);
-            std::filesystem::create_directories(Root / "Resources" / "CodeThemes");
-            VFS::Mount<VFS::FNativeFileSystem>("/Editor", FStringView(Root.string().c_str()));
-        }
-
-        ~FScopedEditorFolder()
-        {
-            VFS::Unmount("/Editor");
-            std::error_code Error;
-            std::filesystem::remove_all(Root, Error);
-        }
-
-        std::filesystem::path Root;
-    };
-
     void Chord(FCodeEditorHarness& Harness, ImGuiKeyChord Mods, ImGuiKey Key)
     {
         for (const ImGuiKey Mod : { ImGuiMod_Ctrl, ImGuiMod_Shift, ImGuiMod_Alt })
@@ -480,7 +457,7 @@ TEST(CodeEditor, AlternateChordsAndKeypadEnterAnswer)
 
 TEST(CodeEditorThemes, MissingColorsKeepTheBuiltInOnes)
 {
-    FScopedEditorFolder Folder;
+    TestUtil::FScopedTempMount Folder("/Editor", "LuminaCodeThemeTests");
     ASSERT_TRUE(VFS::WriteFile(CodeEditorThemes::PathOf("Partial").View(), R"({ "Syntax": { "Keyword": "#FF0000" }, "Editor": { "Background": "#00000080" } })"));
 
     FCodeEditorPalette Palette = FCodeEditorPalette::Dark();
@@ -500,10 +477,9 @@ TEST(CodeEditorThemes, MissingColorsKeepTheBuiltInOnes)
 
 TEST(CodeEditorThemes, ShippedThemesGiveEveryColor)
 {
-    FScopedEditorFolder Folder;
+    TestUtil::FScopedTempMount Folder("/Editor", "LuminaCodeThemeTests");
     Paths::InitializePaths();
-    const std::filesystem::path Shipped = std::filesystem::path(*Paths::GetEngineDirectory()) / "Editor" / "Resources" / "CodeThemes";
-    std::filesystem::copy(Shipped, Folder.Root / "Resources" / "CodeThemes");
+    ASSERT_TRUE(Filesystem::CopyTree(Format("{}/Editor/Resources/CodeThemes", Paths::GetEngineDirectory()), Folder.Dir + "/Resources/CodeThemes"));
 
     const TVector<FString> Themes = CodeEditorThemes::List();
     EXPECT_GE(Themes.Num(), 10);

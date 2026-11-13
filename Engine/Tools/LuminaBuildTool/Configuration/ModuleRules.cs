@@ -193,6 +193,9 @@ public abstract class ModuleRules
     // Send reflected-type bindings to CSharpBindingsDirectory too, not just SCRIPT_EXPORT free functions.
     public bool bRouteCSharpTypeBindings { get; set; }
 
+    // Key and value pairs a Reflection module's generator receives, read in the target whose reflection step loads it.
+    public SortedDictionary<string, string> ReflectionGeneratorOptions { get; } = new(StringComparer.Ordinal);
+
     /// <summary>Compile this module's sources as C rather than C++.</summary>
     public bool bCompileAsC { get; set; }
 

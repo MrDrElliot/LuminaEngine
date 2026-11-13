@@ -477,15 +477,7 @@ namespace Lumina
 
     void FSocketHierarchy::CloseOpenDragTransaction()
     {
-        if (HandleState.bHandleTransactionOpen || HandleState.bGizmoTransactionOpen)
-        {
-            HandleState.bHandleTransactionOpen = false;
-            HandleState.bGizmoTransactionOpen = false;
-            if (Transactions != nullptr)
-            {
-                Transactions->CommitTransaction();
-            }
-        }
+        ShapeHandles::CloseOpenDragTransaction(*this, HandleState);
     }
 
     void FSocketHierarchy::EndShapeTransaction()

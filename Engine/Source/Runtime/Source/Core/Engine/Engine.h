@@ -53,7 +53,7 @@ namespace Lumina
         RUNTIME_API bool Update(bool bApplicationWantsExit);
         RUNTIME_API virtual void OnUpdateStage(const FUpdateContext& Context);
 
-        RUNTIME_API static FUIntVector2 GetEngineViewportSize();
+        RUNTIME_API FUIntVector2 GetEngineViewportSize() const;
 
         RUNTIME_API void SetEngineViewportSize(const FUIntVector2& InSize);
         
@@ -255,12 +255,15 @@ namespace Lumina
         void InitializeUserInterface(FBootTimer& Boot);
         bool FinishBoot(bool bStartupSucceeded, FBootTimer& Boot);
         bool LoadProjectModule();
+
+        FUIntVector2 EngineViewportSize = FUIntVector2(0, 0);
     };
     
-    RUNTIME_API extern FEngine* GEngine;
+    namespace Global
+    {
+        RUNTIME_API extern FEngine* GEngine;
 
-    // True for a packaged dedicated-server process (-server): no window, no RHI, no audio, no UI.
-    // Set in LuminaMain before the window/engine exist. Always false in WITH_EDITOR builds; the
-    // in-editor dedicated server is gated per-world by NetMode, not by this flag.
-    RUNTIME_API extern bool GIsHeadless;
+        // Set by LuminaMain for a dedicated server process, which runs without window, RHI, audio or UI.
+        RUNTIME_API extern bool GIsHeadless;
+    }
 }

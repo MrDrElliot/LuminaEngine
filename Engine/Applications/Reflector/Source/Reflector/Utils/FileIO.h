@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <system_error>
 
@@ -25,5 +26,27 @@ namespace Lumina::Reflection
 
         std::fclose(File);
         return true;
+    }
+
+    // Rewriting a generated file recompiles every TU that includes it, so an unchanged write is skipped.
+    inline void WriteFileIfChanged(const std::string& PathUtf8, const std::string& Contents)
+    {
+        const std::filesystem::path OutputPath(PathUtf8.c_str());
+
+        std::error_code Ec;
+        if (std::filesystem::file_size(OutputPath, Ec) == Contents.size() && !Ec)
+        {
+            std::string Current;
+            if (ReadWholeFile(PathUtf8, Current) && Current == Contents)
+            {
+                return;
+            }
+        }
+
+        std::filesystem::create_directories(OutputPath.parent_path(), Ec);
+
+        // Binary mode, since text mode turns every newline into a pair and defeats the unchanged-file skip.
+        std::ofstream Stream(OutputPath, std::ios::binary);
+        Stream.write(Contents.data(), static_cast<std::streamsize>(Contents.size()));
     }
 }

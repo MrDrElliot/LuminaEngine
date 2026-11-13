@@ -4,6 +4,7 @@
 #include "Containers/Name.h"
 #include "Containers/String.h"
 #include "GUID/GUID.h"
+#include "Memory/SmartPtr.h"
 #include "Platform/GenericPlatform.h"
 
 namespace Lumina
@@ -106,4 +107,7 @@ namespace Lumina
         // The class it was saved as is no longer registered, so it can never load and is only good for deleting.
         NODISCARD RUNTIME_API bool IsClassMissing() const;
     };
+
+    // The registry never changes an entry once listed, so a holder keeps a stable snapshot however the registry moves on.
+    using FAssetDataPtr = TSharedPtr<const FAssetData>;
 }

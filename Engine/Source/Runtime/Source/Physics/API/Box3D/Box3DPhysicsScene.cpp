@@ -520,13 +520,13 @@ namespace Lumina::Physics
         }
 
         // Box3D carries conveyor motion on the surface material, so it is set per shape rather than per body.
-        b3ShapeId Shapes[16];
-        const int32 Count = b3Body_GetShapes(Body, Shapes, 16);
-        for (int32 i = 0; i < Count; ++i)
+        FBodyShapes Shapes;
+        GatherShapes(Body, Shapes);
+        for (b3ShapeId Shape : Shapes)
         {
-            b3SurfaceMaterial Material = b3Shape_GetSurfaceMaterial(Shapes[i]);
+            b3SurfaceMaterial Material = b3Shape_GetSurfaceMaterial(Shape);
             Material.tangentVelocity = Box3DUtils::ToB3Vec3(Linear);
-            b3Shape_SetSurfaceMaterial(Shapes[i], Material);
+            b3Shape_SetSurfaceMaterial(Shape, Material);
         }
 
         if (Math::LengthSquared(Angular) > 0.0f)

@@ -764,20 +764,12 @@ namespace Lumina
         {
             if (bFiltering)
             {
-                // A name match shows the component in full, since that is what searching for it means.
-                const bool bTitleMatches = ImGuiX::PassSearchFilter(DetailsFilter, *Entry.Title);
-
-                if (Entry.Table)
-                {
-                    Entry.Table->SetSearchText(bTitleMatches ? FStringView() : FStringView(DetailsFilter.InputBuf));
-
-                    // Drawing an empty header leaves sections to scroll past, which is what a search removes.
-                    if (!bTitleMatches && !Entry.Table->PrepareAndTestFilter())
-                    {
-                        continue;
-                    }
-                }
-                else if (!bTitleMatches)
+                // Drawing an empty header leaves sections to scroll past, which is what a search removes.
+                const FStringView Text(DetailsFilter.InputBuf);
+                const bool bVisible = Entry.Table
+                    ? Entry.Table->MatchesSearch(Text, *Entry.Title)
+                    : ImGuiX::PassSearchFilter(Text, *Entry.Title);
+                if (!bVisible)
                 {
                     continue;
                 }
@@ -1154,13 +1146,19 @@ namespace Lumina
     {
         BeginCreationTransaction();
 
-        TInlineVector<ECS::FEntity, 64> Duplicates;
+        // Filtered before gathering roots, so a selected but unduplicable parent (the prefab root) still lets its children copy.
+        TVector<ECS::FEntity> Duplicable;
         for (ECS::FEntity Entity : Entities)
         {
-            if (!GetSceneRegistry().IsValid(Entity) || !CanDuplicateEntity(Entity))
+            if (GetSceneRegistry().IsValid(Entity) && CanDuplicateEntity(Entity))
             {
-                continue;
+                Duplicable.Add(Entity);
             }
+        }
+
+        TInlineVector<ECS::FEntity, 64> Duplicates;
+        for (ECS::FEntity Entity : EditorEntityUtils::GatherHierarchyRoots(GetSceneRegistry().GetHierarchy(), Duplicable))
+        {
             const ECS::FEntity New = DuplicateEntityForScene(Entity);
             if (New != ECS::NullEntity)
             {
@@ -2367,25 +2365,41 @@ namespace Lumina
             return;
         }
 
+        TVector<ECS::FEntity> Contents;
         if (bDeleteContents)
         {
-            TVector<ECS::FEntity> Contents;
             CollectFolderEntities(FolderID, Contents, true);
-            for (ECS::FEntity Entity : Contents)
-            {
-                EntityDestroyRequests.Enqueue(Entity);
-            }
         }
 
         TVector<uint32> Doomed;
         Doomed.Add(FolderID);
         Folders->CollectDescendants(FolderID, Doomed);
 
-        BeginFolderTransaction();
+        // The contents die in the folder's own transaction, so one undo brings back both.
+        if (Contents.IsEmpty())
+        {
+            BeginFolderTransaction();
+        }
+        else
+        {
+            BeginDestroyTransaction(Contents);
+            RecordSceneFolderSnapshot();
+        }
+
         // Deepest first, so each folder's survivors land in a parent that is still there.
         for (int32 i = Doomed.Num() - 1; i >= 0; --i)
         {
             Folders->RemoveFolder(Doomed[i]);
+        }
+
+        ECS::FRegistry& Registry = World->GetEntityRegistry();
+        for (ECS::FEntity Entity : Contents)
+        {
+            // A member nested under another member already went with its parent.
+            if (Registry.IsValid(Entity))
+            {
+                World->DestroyEntity(Entity);
+            }
         }
         EndTransaction("Delete Folder");
 
@@ -4049,14 +4063,18 @@ namespace Lumina
     {
         ToolContext->PushModal("Rename Entity", ImVec2(450.0f, 0.0f), [this, Entity]() -> bool
         {
-            auto& NameComponent = GetSceneRegistry().Get<SNameComponent>(Entity);
+            ECS::FRegistry& Registry = GetSceneRegistry();
+            if (!Registry.IsValid(Entity))
+            {
+                return true;
+            }
 
             // Per modal rather than process-wide, so two rename dialogs cannot share a buffer.
             FFixedString& InputBuffer = TextModalBuffer;
 
             if (ImGui::IsWindowAppearing())
             {
-                InputBuffer = *NameComponent.Name;
+                InputBuffer = *Registry.Get<SNameComponent>(Entity).Name;
             }
     
             ImGui::Text("Enter new name:");
@@ -4079,22 +4097,12 @@ namespace Lumina
     
             if (ImGui::Button("OK", ImVec2(ButtonWidth, 0.0f)) || bShouldClose)
             {
-                NameComponent.Name = FName(*InputBuffer);
-
-                // Without this the next prefab refresh would replace the component and revert the rename.
-                CPrefab::RecaptureComponentOverrides(GetSceneRegistry(), Entity, SNameComponent::StaticStruct());
-
-                // Update just this entity's row label rather than rebuilding the whole tree.
-                auto It = EntityToTreeNode.Find(Entity);
-                if (It != nullptr)
-                {
-                    EditorEntityUtils::RenameOutlinerRow(OutlinerListView.Get<FTreeNodeDisplay>(*It), *NameComponent.Name);
-                }
+                RenameEntityTransacted(Entity, *InputBuffer);
                 return true;
             }
-    
+
             ImGui::SameLine();
-    
+
             if (ImGui::Button("Cancel", ImVec2(ButtonWidth, 0.0f)))
             {
                 return true;
@@ -4102,6 +4110,30 @@ namespace Lumina
 
             return false;
         });
+    }
+
+    void FSceneEditorTool::RenameEntityTransacted(ECS::FEntity Entity, FStringView NewName)
+    {
+        ECS::FRegistry& Registry = GetSceneRegistry();
+        if (!Registry.IsValid(Entity))
+        {
+            return;
+        }
+
+        BeginComponentTransaction({ Entity }, SNameComponent::StaticStruct());
+        Registry.Get<SNameComponent>(Entity).Name = NewName;
+
+        // Without this the next prefab refresh would replace the component and revert the rename.
+        CPrefab::RecaptureComponentOverrides(Registry, Entity, SNameComponent::StaticStruct());
+        EndTransaction("Rename");
+
+        MarkSceneDirty();
+
+        // Update just this entity's row label rather than rebuilding the whole tree.
+        if (auto* Node = EntityToTreeNode.Find(Entity))
+        {
+            EditorEntityUtils::RenameOutlinerRow(OutlinerListView.Get<FTreeNodeDisplay>(*Node), NewName);
+        }
     }
 
     void FSceneEditorTool::PushAddTagModal(ECS::FEntity Entity)
@@ -4333,7 +4365,7 @@ namespace Lumina
                 if (bMultiSelect)
                 {
                     if (Dialogs::Confirmation("Confirm Deletion",
-                        "Are you sure you want to delete {0} selected entities?\n\nThis action cannot be undone.",
+                        "Are you sure you want to delete {0} selected entities?",
                         (uint32)SelectedEntities.Num()))
                     {
                         for (ECS::FEntity Selected : SelectedEntities)
@@ -4346,7 +4378,7 @@ namespace Lumina
                     }
                 }
                 else if (Dialogs::Confirmation("Confirm Deletion",
-                    "Are you sure you want to delete entity \"{0}\"?\n\nThis action cannot be undone.",
+                    "Are you sure you want to delete entity \"{0}\"?",
                     (uint32)Entity))
                 {
                     EntityDestroyRequests.Enqueue(Entity);
@@ -4649,7 +4681,7 @@ namespace Lumina
                 if (Entity == ECS::NullEntity)
                 {
                     static const FName PrefabClassName = FName("CPrefab");
-                    TVector<FAssetData*> PrefabAssets = FAssetRegistry::Get().FindByPredicate([](const FAssetData& Data)
+                    TVector<FAssetDataPtr> PrefabAssets = FAssetRegistry::Get().FindByPredicate([](const FAssetData& Data)
                     {
                         return Data.AssetClass == PrefabClassName;
                     });
@@ -4659,9 +4691,9 @@ namespace Lumina
                         // A prefab editor's own asset would place a stale copy of itself inside itself.
                         const CObject* EditedAsset = Asset.Get();
 
-                        TVector<FAssetData*> FilteredPrefabs;
+                        TVector<FAssetDataPtr> FilteredPrefabs;
                         FilteredPrefabs.Reserve(PrefabAssets.Num());
-                        for (FAssetData* Data : PrefabAssets)
+                        for (const FAssetDataPtr& Data : PrefabAssets)
                         {
                             if (EditedAsset != nullptr && Data->AssetGUID == EditedAsset->GetGUID())
                             {
@@ -4674,7 +4706,7 @@ namespace Lumina
                             }
                         }
 
-                        Algo::Sort(FilteredPrefabs, [](FAssetData* LHS, FAssetData* RHS)
+                        Algo::Sort(FilteredPrefabs, [](const FAssetDataPtr& LHS, const FAssetDataPtr& RHS)
                         {
                             return LHS->AssetName.ToString() < RHS->AssetName.ToString();
                         });
@@ -4688,14 +4720,14 @@ namespace Lumina
                                 ImGui::TableSetupColumn("##Icon", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight());
                                 ImGui::TableSetupColumn("##Name", ImGuiTableColumnFlags_WidthStretch);
 
-                                for (FAssetData* Data : FilteredPrefabs)
+                                for (const FAssetDataPtr& Data : FilteredPrefabs)
                                 {
                                     const TFunction<void()> SetDragPayload = [Data, &bDraggingOut]
                                     {
                                         DragDrop::SetAssetPayload(*Data);
                                         bDraggingOut = true;
                                     };
-                                    if (SceneEditorToolInternal::DrawPickerRow(Data, LE_ICON_PACKAGE_VARIANT_CLOSED, *Data->AssetName, SetDragPayload))
+                                    if (SceneEditorToolInternal::DrawPickerRow(Data.Get(), LE_ICON_PACKAGE_VARIANT_CLOSED, *Data->AssetName, SetDragPayload))
                                     {
                                         HandlePrefabContentDrop(FStringView(*Data->Path), ECS::NullEntity, /*bAttachToTarget*/ false);
                                         ImGui::CloseCurrentPopup();

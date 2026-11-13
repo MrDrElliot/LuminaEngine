@@ -81,6 +81,9 @@ namespace Lumina
 
     namespace ShapeHandles
     {
+        /** Commits whichever drag left a transaction open, if either flag is set. */
+        void CloseOpenDragTransaction(IShapeHandleHost& Host, FShapeHandleState& State);
+
         /** Cursor to world ray through an explicit viewport rect. False when it cannot be built. */
         bool BuildViewportRay(CWorld* World, const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,
                               const ImVec2& ScreenPos, FVector3& OutOrigin, FVector3& OutDirection);

@@ -604,7 +604,7 @@ namespace Lumina
         EngineSubsystems = {};
 
         // No render phase / RHI / audio device in a headless process.
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             RHI::WaitDeviceIdle();
         }
@@ -784,7 +784,10 @@ namespace Lumina
         if (View.bHasView)
         {
             RenderScene->SetActivePostProcessMaterials(View.PostProcessMaterials);
-            RenderScene->Extract(View.ViewVolume, View.bHasPostProcess ? &View.PostProcess : nullptr, View.Layers);
+            // Only the rendered view turns, since the next update still receives the motion and turns the camera itself.
+            const FVector2 LateLook = FInputViewportRegistry::Get().GetLateMouseLook(this);
+            const FViewVolume ViewVolume = LateLook == FVector2(0.0f) ? View.ViewVolume : AddMouseLook(View.ViewVolume, LateLook);
+            RenderScene->Extract(ViewVolume, View.bHasPostProcess ? &View.PostProcess : nullptr, View.Layers);
             return;
         }
 
@@ -1031,6 +1034,11 @@ namespace Lumina
             }
         }
 
+        if (Spawned == 0)
+        {
+            return false;
+        }
+
         Destructible->bFractured = true;
 
         // Strip render and physics now so it vanishes this frame; the lifetime system reaps it.
@@ -1044,7 +1052,7 @@ namespace Lumina
             EntityRegistry.EmplaceOrReplace<SLifetimeComponent>(Entity).Lifetime = 0.01f;
         }
 
-        return Spawned > 0;
+        return true;
     }
 
     void CWorld::SetEntityLifetime(ECS::FEntity Entity, float Seconds)
@@ -1418,7 +1426,7 @@ namespace Lumina
         if (RenderScene)
         {
             // Submitted GPU work can still name the scene's resources.
-            if (!GIsHeadless)
+            if (!Global::GIsHeadless)
             {
                 RHI::WaitDeviceIdle();
             }
@@ -1522,13 +1530,13 @@ namespace Lumina
 
     bool CWorld::HasPresentation() const
     {
-        return !GIsHeadless && GetNetMode() != ENetMode::DedicatedServer && !IsBotWorld();
+        return !Global::GIsHeadless && GetNetMode() != ENetMode::DedicatedServer && !IsBotWorld();
     }
 
     bool CWorld::ShouldRender() const
     {
         // CreateWorldContext sets OwningContext before InitializeWorld, so keep that ordering.
-        return !GIsHeadless && GetNetMode() != ENetMode::DedicatedServer;
+        return !Global::GIsHeadless && GetNetMode() != ENetMode::DedicatedServer;
     }
 
     CWorld* CWorld::DuplicateWorld(CWorld* OwningWorld)
@@ -2004,7 +2012,7 @@ namespace Lumina
             "Logs each world's last frame per stage, its system batches, their widths and the critical path in batches.",
             []
             {
-                GWorldManager->ForEachWorld([](CWorld& World)
+                Global::GWorldManager->ForEachWorld([](CWorld& World)
                 {
                     LOG_INFO("World {}:\n{}", World.GetName(), World.DescribeSystemParallelism(false));
                 });

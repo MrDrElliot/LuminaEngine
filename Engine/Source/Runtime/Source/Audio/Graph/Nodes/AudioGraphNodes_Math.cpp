@@ -178,7 +178,7 @@ namespace Lumina
 
             void Execute(const FAudioGraphBlockContext&) override
             {
-                *Out = Math::Pow(10.0f, *Decibels * 0.05f);
+                *Out = DecibelsToLinear(*Decibels);
             }
 
         private:
@@ -198,8 +198,7 @@ namespace Lumina
 
             void Execute(const FAudioGraphBlockContext&) override
             {
-                const float Value = Math::Max(Math::Abs(*Linear), 1.0e-6f);
-                *Out = 20.0f * Math::Log(Value) * 0.4342944819f;
+                *Out = LinearToDecibels(Math::Abs(*Linear));
             }
 
         private:

@@ -6,9 +6,12 @@
 #include "Core/Object/Package/Package.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/Package/PackageSaver.h"
+#include "Platform/Time/PlatformTime.h"
 #include "TaskSystem/CoroutineAssets.h"
 #include "TaskSystem/ThreadedCallback.h"
 #include "World/World.h"
+#include <atomic>
+#include <thread>
 
 using namespace Lumina;
 
@@ -133,6 +136,61 @@ TEST(AssetHandles, WhatResolvesToNothingIsAnInvalidHandleWhoseCallbackStillRuns)
     ByPath.OnReady([&bCalled](const FAssetHandle& Loaded) { bCalled = Loaded.Get() == nullptr; });
     MainThread::ProcessQueue();
     EXPECT_TRUE(bCalled) << "a failure still completes, so an awaiting caller is never left hanging";
+}
+
+// Requests from several threads race the drain deciding to stop, so a waiter queued just as it stops must still be loaded.
+TEST(AssetHandles, EveryRequestRacingTheDrainCompletes)
+{
+    constexpr int32 kThreads = 4;
+    constexpr int32 kRounds = 200;
+    constexpr int32 kShared = 3;
+    constexpr double kSecondsThatOnlyCatchAHang = 60.0;
+
+    // Unregistered ids still run through the queue and complete with null, and shared ones make requests join loads in flight.
+    TVector<FGuid> Shared;
+    for (int32 Index = 0; Index < kShared; ++Index)
+    {
+        Shared.Add(FGuid::New());
+    }
+
+    TVector<FAssetHandle> Handles[kThreads];
+    std::atomic<int32> Started { 0 };
+    std::thread Workers[kThreads];
+    for (int32 Thread = 0; Thread < kThreads; ++Thread)
+    {
+        Workers[Thread] = std::thread([&, Thread]
+        {
+            Started.fetch_add(1);
+            while (Started.load() < kThreads)
+            {
+                PlatformTime::YieldThread();
+            }
+            for (int32 Round = 0; Round < kRounds; ++Round)
+            {
+                Handles[Thread].Add(FAssetManager::Get().Load(FGuid::New()));
+                Handles[Thread].Add(FAssetManager::Get().Load(Shared[Round % kShared]));
+            }
+        });
+    }
+    for (std::thread& Worker : Workers)
+    {
+        Worker.join();
+    }
+
+    const double Deadline = PlatformTime::Seconds() + kSecondsThatOnlyCatchAHang;
+    for (const TVector<FAssetHandle>& ThreadHandles : Handles)
+    {
+        for (const FAssetHandle& Handle : ThreadHandles)
+        {
+            while (!Handle.IsReady() && PlatformTime::Seconds() < Deadline)
+            {
+                PlatformTime::YieldThread();
+            }
+            ASSERT_TRUE(Handle.IsReady()) << "a queued waiter was never loaded";
+            EXPECT_EQ(Handle.Get(), nullptr);
+        }
+    }
+    MainThread::ProcessQueue();
 }
 
 TEST(AssetCoroutines, AResidentObjectLoadsWithoutSuspendingAndStaysWhileHeld)

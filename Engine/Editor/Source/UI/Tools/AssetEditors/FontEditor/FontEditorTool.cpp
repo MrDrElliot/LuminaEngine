@@ -142,12 +142,6 @@ namespace Lumina
 
     void FFontEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const
     {
-        ImGui::DockBuilderRemoveNodeChildNodes(InDockspaceID);
-
-        ImGuiID LeftDockID = 0, RightDockID = 0;
-        ImGui::DockBuilderSplitNode(InDockspaceID, ImGuiDir_Right, 0.3f, &RightDockID, &LeftDockID);
-
-        ImGui::DockBuilderDockWindow(*GetToolWindowName(FontPreviewName), LeftDockID);
-        ImGui::DockBuilderDockWindow(*GetToolWindowName(FontDetailsName), RightDockID);
+        SplitDockingLayoutLeftRight(InDockspaceID, FontPreviewName, FontDetailsName, 0.3f);
     }
 }

@@ -66,9 +66,35 @@ namespace Lumina::Reflection
                 bEnded = true;
                 continue;
             }
-            if (Keyword == "Generation" || Keyword == "ReflectorFingerprint" || Keyword == "CoreFingerprint")
+            if (Keyword == "Generation" || Keyword == "ReflectorFingerprint" || Keyword == "CoreFingerprint" || Keyword == "GeneratorFingerprint")
             {
                 // Present so a generator change alters the build tool's command key; nothing here needs them.
+                continue;
+            }
+            if (Keyword == "Generator")
+            {
+                Out.Generators.emplace_back().Library = Value;
+                continue;
+            }
+            if (Keyword == "GeneratorRules" || Keyword == "GeneratorOption")
+            {
+                if (Out.Generators.empty())
+                {
+                    return Fail("'" + std::string(Keyword) + "' appears before any Generator");
+                }
+                const size_t Equals = Value.find('=');
+                if (Keyword == "GeneratorRules")
+                {
+                    Out.Generators.back().RulesFile = Value;
+                }
+                else if (Equals == std::string::npos)
+                {
+                    return Fail("GeneratorOption '" + Value + "' is not written as key=value");
+                }
+                else
+                {
+                    Out.Generators.back().Options.emplace_back(Value.substr(0, Equals), Value.substr(Equals + 1));
+                }
                 continue;
             }
             if (Keyword == "Workspace")

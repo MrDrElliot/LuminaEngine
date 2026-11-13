@@ -37,6 +37,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::SchedulePrimitiveExtracts(ECS::FRegistry& Registry, FFrameData& Frame)
     {
+        LUMINA_PROFILE_SCOPE();
         auto Transforms   = Registry.GetStorage<STransformComponent>();
         auto TriangleView = Registry.View<FTriangleBatcherComponent>();
         auto WidgetView   = Registry.View<ECS::Write<SWidgetComponent>, ECS::Without<SDisabledTag>>();
@@ -466,6 +467,7 @@ namespace Lumina
     // In the draw tasks, since the editor icons reuse what the light pass read instead of walking the lights again.
     void FDefaultSceneRenderer::ScheduleBillboardExtract(ECS::FRegistry& Registry, FFrameData& Frame)
     {
+        LUMINA_PROFILE_SCOPE();
         auto Transforms    = Registry.GetStorage<STransformComponent>();
         auto BillboardView = Registry.View<ECS::Read<SBillboardComponent>, ECS::Without<SDisabledTag>>();
 

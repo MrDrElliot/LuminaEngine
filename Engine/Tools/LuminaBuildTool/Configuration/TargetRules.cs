@@ -202,6 +202,9 @@ public abstract class TargetRules
     /// <summary>Publish this target's reflected modules as the engine manifest that project builds read.</summary>
     public bool bPublishesEngineReflectionManifest { get; set; } = true;
 
+    // Build the Reflection modules of every plugin and of the project, which only the Reflector's target does.
+    public bool bHostsReflectionGenerators { get; set; }
+
     /// <summary>Plugins to enable by name on top of the ones marked enabled by default.</summary>
     public List<string> EnabledPlugins { get; } = new();
 

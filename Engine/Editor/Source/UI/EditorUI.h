@@ -69,6 +69,8 @@ namespace Lumina
 
         void DestroyTool(const FUpdateContext& UpdateContext, FEditorTool* Tool);
 
+        void AddPendingTools();
+
         void PushModal(const FString& Title, ImVec2 Size, TMoveOnlyFunction<bool()> DrawFunction) override;
 
         void OpenScriptEditor(FStringView ScriptPath) override;
@@ -83,7 +85,7 @@ namespace Lumina
         FCodeWorkspaceTool* OpenCodeWorkspace();
         void BrowseToAsset(FStringView VirtualPath) override;
         bool BrowseToFolder(FStringView Folder, FStringView Search);
-        const FAssetData* GetContentBrowserSelectedAsset() const override;
+        FAssetDataPtr GetContentBrowserSelectedAsset() const override;
 
         // The one file selected in the Content Browser, asset or not, for slots that take loose files.
         NODISCARD FFixedString GetContentBrowserSelectedFilePath() const;
@@ -203,6 +205,10 @@ namespace Lumina
         void QuitWithoutPrompt();
 
         FStandaloneLauncher& GetStandaloneLauncher() { return StandaloneLauncher; }
+
+        // Empty targets the world editor; otherwise the tab name of another scene editor, such as a prefab.
+        const FString& GetSceneTargetTab() const { return SceneTargetTab; }
+        void SetSceneTargetTab(FString InTab) { SceneTargetTab = std::move(InTab); }
 
         // Re-entry guard for the dirty-packages prompt; true while the dialog is open.
         // A member (not a function-local static) so Cancel can re-arm it.
@@ -370,7 +376,6 @@ namespace Lumina
         ImGuiX::FApplicationTitleBar                    TitleBar;
         ImGuiWindowClass                                EditorWindowClass;
 
-        FGamePreviewTool*                               GamePreviewTool = nullptr;
         FWorldEditorTool*                               WorldEditorTool = nullptr;
 
         // Tracks the game-owns-input state so the ImGui stand-down flags are reasserted while the game owns
@@ -399,6 +404,8 @@ namespace Lumina
         FMaterialCompileScheduler                       MaterialCompiles;
         FParticleCompileScheduler                       ParticleCompiles;
         FStandaloneLauncher                             StandaloneLauncher;
+
+        FString                                         SceneTargetTab;
 
         TVector<FFooterDrawer>                          FooterDrawers;
         FEditorTool*                                    OpenDrawer = nullptr;   // tool whose drawer is open (nullptr = none)

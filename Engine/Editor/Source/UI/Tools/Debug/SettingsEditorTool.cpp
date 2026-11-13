@@ -131,14 +131,14 @@ namespace Lumina
         }
 
         // Edits the CDO where the live values are, and diffs against the pristine code-default snapshot.
-        void* Snapshot = GConfig->GetSettingsDefault(SettingsClass);
+        void* Snapshot = Global::GConfig->GetSettingsDefault(SettingsClass);
         TUniquePtr<FPropertyTable> Table = MakeUnique<FPropertyTable>((void*)CDO, SettingsClass, Snapshot);
 
         CClass* Captured = SettingsClass;
         // PostEdit fires on Started too, which wrote the pre-edit state to disk on every array mutation.
         Table->SetFinishEditCallback([Captured](const FPropertyChangedEvent&)
         {
-            GConfig->SaveSettings(Captured);
+            Global::GConfig->SaveSettings(Captured);
         });
 
         FPropertyTable* Raw = Table.get();
@@ -148,7 +148,7 @@ namespace Lumina
 
     void FSettingsEditorTool::DrawWindow(bool bIsFocused)
     {
-        if (GConfig == nullptr)
+        if (Global::GConfig == nullptr)
         {
             ImGui::TextDisabled("Config system not initialized.");
             return;
@@ -156,7 +156,7 @@ namespace Lumina
 
         // Gather discovered classes once per frame.
         TVector<CClass*> Classes;
-        GConfig->ForEachSettingsClass([&](CClass* Class)
+        Global::GConfig->ForEachSettingsClass([&](CClass* Class)
         {
             Classes.Add(Class);
         });

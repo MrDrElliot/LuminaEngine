@@ -769,8 +769,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ParticleSimulatePass(RHI::FCmdListH CL)
     {
-        LUMINA_PROFILE_SECTION_COLORED("Particle Simulate", tracy::Color::Orange);
-
         const FFrameData& Frame = *RenderFrame;
 
         bParticlePoolReuseBarrierIssued = false;
@@ -785,6 +783,7 @@ namespace Lumina
             return;
         }
 
+        SCENE_GPU_SCOPE(CL, "Particles Simulate");
         FParticleSimFrame Sim;
         PrepareParticleSimFrame(Sim);
 
@@ -1496,17 +1495,16 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ParticleSortPass(RHI::FCmdListH CL)
     {
-        LUMINA_PROFILE_SECTION_COLORED("Particle Sort", tracy::Color::Orange);
-
         const FFrameData& Frame = *RenderFrame;
 
         static const FShaderH SortShader = FShaderLibrary::Get("ParticleSortCompact.slang");
         const FShaderEntry* SortEntry = FShaderLibrary::Resolve(SortShader);
-        if (SortEntry == nullptr || !SortEntry->IsValid())
+        if (SortEntry == nullptr || !SortEntry->IsValid() || Frame.Extracts.ParticleExtracts.IsEmpty())
         {
             return;
         }
 
+        SCENE_GPU_SCOPE(CL, "Particles Sort");
         // Mirrors FParticleSortEmitter in ParticleSortCompact.slang, one per workgroup of the single dispatch below.
         struct FParticleSortEmitter
         {
@@ -1717,8 +1715,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ParticleRenderPass(RHI::FCmdListH CL)
     {
-        LUMINA_PROFILE_SECTION_COLORED("Particle Render", tracy::Color::OrangeRed);
-
         const FFrameData& Frame = *RenderFrame;
         const auto& DrawCommands = Frame.Geometry.DrawCommands;
 
@@ -1727,6 +1723,7 @@ namespace Lumina
             return;
         }
 
+        SCENE_GPU_SCOPE(CL, "Particles Render");
         static const FShaderH SpritePixelShader = FShaderLibrary::Get("ParticlePixel.slang");
         static const FShaderH DrawArgsShader    = FShaderLibrary::Get("ParticleDrawArgs.slang");
         if (!SpritePixelShader || !DrawArgsShader)

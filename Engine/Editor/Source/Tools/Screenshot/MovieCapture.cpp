@@ -128,9 +128,9 @@ namespace Lumina::MovieCapture
             S.WavSamples.Shrink();
 
             WriteVariable(FixedDeltaVariable, S.PreviousFixedDelta.IsEmpty() ? FString("0") : S.PreviousFixedDelta);
-            if (GEngine != nullptr)
+            if (Global::GEngine != nullptr)
             {
-                GEngine->SetFrameRateCapOverride(S.PreviousFrameRateCap);
+                Global::GEngine->SetFrameRateCapOverride(S.PreviousFrameRateCap);
             }
 
             S.Status.bActive = false;
@@ -214,10 +214,10 @@ namespace Lumina::MovieCapture
         // Every frame advances the game by exactly one video frame, however long it takes to draw and encode.
         S.PreviousFixedDelta = ReadVariable(FixedDeltaVariable);
         FConsoleRegistry::Get().SetValueFromString(FixedDeltaVariable, Lumina::Format("{}", 1.0 / (double)Settings.FrameRate));
-        if (GEngine != nullptr)
+        if (Global::GEngine != nullptr)
         {
-            S.PreviousFrameRateCap = GEngine->GetFrameRateCapOverride();
-            GEngine->SetFrameRateCapOverride(0);
+            S.PreviousFrameRateCap = Global::GEngine->GetFrameRateCapOverride();
+            Global::GEngine->SetFrameRateCapOverride(0);
         }
 
         S.Settings = Move(Settings);

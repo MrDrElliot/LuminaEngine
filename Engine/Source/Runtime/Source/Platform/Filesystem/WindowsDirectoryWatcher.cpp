@@ -74,6 +74,8 @@ namespace Lumina
         OVERLAPPED Overlapped = {};
         Overlapped.hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 
+        // A rename's old and new names can arrive in separate reads.
+        FString PendingRenameOldPath;
         bool bReadPending = false;
         while (!Stop.ShouldStop())
         {
@@ -132,8 +134,7 @@ namespace Lumina
                 FullPathStr.Append(FileNameUtf8);
                 Paths::Normalize(FullPathStr);
                 FFileEvent Event;
-                Event.Path = FullPathStr;
-                
+                Event.Path = Move(FullPathStr);
 
                 switch (Info->Action)
                 {
@@ -147,15 +148,16 @@ namespace Lumina
                         Event.Action = EFileAction::Modified;
                         break;
                     case FILE_ACTION_RENAMED_OLD_NAME:
-                        Event.Action = EFileAction::Renamed;
-                        Event.OldPath = Move(FullPathStr);
+                        PendingRenameOldPath = Move(Event.Path);
                         break;
                     case FILE_ACTION_RENAMED_NEW_NAME:
-                        Event.Action = EFileAction::Renamed;
+                        Event.Action = PendingRenameOldPath.IsEmpty() ? EFileAction::Added : EFileAction::Renamed;
+                        Event.OldPath = Move(PendingRenameOldPath);
+                        PendingRenameOldPath.Reset();
                         break;
                 }
 
-                if (Callback)
+                if (Callback && Info->Action != FILE_ACTION_RENAMED_OLD_NAME)
                 {
                     Callback(Event);
                 }

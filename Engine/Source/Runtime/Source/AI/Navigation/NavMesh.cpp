@@ -970,7 +970,15 @@ namespace Lumina
                     continue;
                 }
                 RemoveTileLocked(Swaps[i].X, Swaps[i].Y);
-                Landed += Owned[i] == nullptr || AddTileLocked(Owned[i], Swaps[i].Blob->Num()) ? 1 : 0;
+                if (Owned[i] == nullptr || AddTileLocked(Owned[i], Swaps[i].Blob->Num()))
+                {
+                    ++Landed;
+                }
+                else
+                {
+                    LOG_ERROR("FNavMesh::RebuildTiles: tile ({}, {}) was removed but Detour rejected its rebuilt blob; the area is now unpathable until it is retried.",
+                        Swaps[i].X, Swaps[i].Y);
+                }
                 RecordTileChangeLocked(Swaps[i].X, Swaps[i].Y);
             }
         }

@@ -1,4 +1,4 @@
-#include "CodeWriter.h"
+#include "Reflector/Public/CodeWriter.h"
 
 #include <cstdio>
 
@@ -13,11 +13,6 @@ namespace Lumina::Reflection
     FCodeWriter::FCodeWriter()
     {
         Buffer.reserve(kDefaultCapacity);
-    }
-
-    FCodeWriter::FCodeWriter(size_t InitialCapacity)
-    {
-        Buffer.reserve(InitialCapacity);
     }
 
     void FCodeWriter::Clear()

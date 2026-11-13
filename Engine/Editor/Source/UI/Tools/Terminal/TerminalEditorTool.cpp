@@ -59,7 +59,7 @@ namespace Lumina
         ImFont* TerminalFont(bool bBold)
         {
             const ImGuiX::Font::EFont Wanted = bBold ? ImGuiX::Font::EFont::MonoBold : ImGuiX::Font::EFont::Mono;
-            ImFont* Font = ImGuiX::Font::GFonts[static_cast<int32>(Wanted)];
+            ImFont* Font = Global::GFonts[static_cast<int32>(Wanted)];
             return Font != nullptr ? Font : ImGui::GetFont();
         }
 
@@ -94,9 +94,9 @@ namespace Lumina
 
     FString FTerminalEditorTool::GetStartDirectory() const
     {
-        if (GEngine != nullptr && GEngine->HasLoadedProject())
+        if (Global::GEngine != nullptr && Global::GEngine->HasLoadedProject())
         {
-            const FStringView ProjectPath = GEngine->GetProjectPath();
+            const FStringView ProjectPath = Global::GEngine->GetProjectPath();
             return FString(ProjectPath.GetData(), ProjectPath.Len());
         }
 
@@ -174,6 +174,7 @@ namespace Lumina
         Tab.Screen.Initialize(Math::Max(Tab.Columns, 1), Math::Max(Tab.Rows, 1), Settings.ScrollbackLimit);
         Tab.ScrollOffset = 0;
         Tab.Selection    = FTerminalSelection();
+        Tab.Label        = ShortenPath(Tab.WorkingDirectory);
 
         Platform::FPtyLaunchParams Params;
         Params.WorkingDirectory = Tab.WorkingDirectory;

@@ -8,6 +8,11 @@ public class ReflectorTarget : LuminaTargetRules
         Type = TargetType.Program;
         LaunchModuleName = "Reflector";
 
+        bHostsReflectionGenerators = true;
+
+        // The fixture ReflectorTests loads, small enough to build with every Reflector.
+        ExtraModuleNames.Add("ReflectorTestGenerator");
+
         OutputSuffix = string.Empty;
         
         if (Target.Configuration == BuildConfiguration.Debug)

@@ -21,8 +21,8 @@ namespace Lumina
     class FRmlUiRenderer final : public Rml::RenderInterface
     {
     public:
-        FRmlUiRenderer();
-        ~FRmlUiRenderer() override;
+        RUNTIME_API FRmlUiRenderer();
+        RUNTIME_API ~FRmlUiRenderer() override;
         FRmlUiRenderer(const FRmlUiRenderer&) = delete;
         FRmlUiRenderer& operator = (const FRmlUiRenderer&) = delete;
         FRmlUiRenderer(FRmlUiRenderer&&) = delete;
@@ -52,7 +52,7 @@ namespace Lumina
         void                        NoteTargetStable(RHI::FTextureH Target, bool bStable);
         uint32                      GetTargetStableFrames(RHI::FTextureH Target);
 
-        Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> Vertices, Rml::Span<const int> Indices) override;
+        RUNTIME_API Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex> Vertices, Rml::Span<const int> Indices) override;
         void                        RenderGeometry(Rml::CompiledGeometryHandle Geometry, Rml::Vector2f Translation, Rml::TextureHandle Texture) override;
         void                        ReleaseGeometry(Rml::CompiledGeometryHandle Geometry) override;
 
@@ -66,8 +66,8 @@ namespace Lumina
         void                        EnableScissorRegion(bool bEnable) override;
         void                        SetScissorRegion(Rml::Rectanglei Region) override;
 
-        void                        EnableClipMask(bool bEnable) override;
-        void                        RenderToClipMask(Rml::ClipMaskOperation Operation, Rml::CompiledGeometryHandle Geometry,
+        RUNTIME_API void            EnableClipMask(bool bEnable) override;
+        RUNTIME_API void            RenderToClipMask(Rml::ClipMaskOperation Operation, Rml::CompiledGeometryHandle Geometry,
                                                      Rml::Vector2f Translation) override;
 
         void                        SetTransform(const Rml::Matrix4f* Transform) override;
@@ -92,6 +92,10 @@ namespace Lumina
         // Count in the low 8 bits, first PendingClipMasks index above them. Zero means unclipped.
         static constexpr uint32 kMaxClipMasksPerDraw = 8;
         static constexpr uint32 kNoLayer    = Constants::kIndexNoneU32;
+        // A push the layer budget refused, whose draws and composites replay as nothing.
+        static constexpr uint32 kDroppedLayer = kNoLayer - 1;
+
+        friend struct FRmlUiRendererTestAccess;
 
         // CPU bytes cached per element, concatenated at EndFrame into the target's resident vertex and index buffers.
         struct FGeometry

@@ -19,14 +19,14 @@
 
 namespace Lumina
 {
-    RUNTIME_API FApplication* GApp;
+    RUNTIME_API FApplication* Global::GApp;
 
     namespace
     {
         // Takes -cvars=Name=Value,Name=Value after every module has registered its variables.
         void ApplyCommandLineConsoleVariables()
         {
-            const TOptional<FFixedString> List = GCommandLine != nullptr ? GCommandLine->Get("cvars") : NullOpt;
+            const TOptional<FFixedString> List = Global::GCommandLine != nullptr ? Global::GCommandLine->Get("cvars") : NullOpt;
             if (!List.IsSet())
             {
                 return;
@@ -61,14 +61,14 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        ASSERT(GEngine);
+        ASSERT(Global::GEngine);
 
         LOG_TRACE("Initializing Lumina");
 
         PreInitStartup();
 
         // A headless dedicated server has no window, no input viewport and no rendering surface.
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             CreateApplicationWindow();
         }
@@ -76,7 +76,7 @@ namespace Lumina
         EventProcessor.RegisterEventHandler(&FInputViewportRegistry::Get(), (int32)EInputLayer::Viewport);
 
         #if !WITH_EDITOR
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             PrimaryViewport = MakeUnique<FInputViewport>();
             const FUIntVector2 WinExtent = MainWindow->GetExtent();
@@ -91,7 +91,7 @@ namespace Lumina
 
         auto ShutdownApplication = [this]
         {
-            GEngine->Shutdown();
+            Global::GEngine->Shutdown();
 
             if (PrimaryViewport)
             {
@@ -102,7 +102,7 @@ namespace Lumina
             Shutdown();
         };
 
-        if (!GEngine->Init())
+        if (!Global::GEngine->Init())
         {
             LOG_ERROR("Engine startup failed.");
             ShutdownApplication();
@@ -117,9 +117,9 @@ namespace Lumina
         {
             LUMINA_PROFILE_FRAME();
 
-            GEngine->MarkLoopStart();
+            Global::GEngine->MarkLoopStart();
 
-            if (!GIsHeadless)
+            if (!Global::GIsHeadless)
             {
                 // Ahead of the event pump, so the mouse position this frame acts on is sampled after the
                 // block rather than before it. Waiting later costs a whole frame of input latency.
@@ -140,20 +140,20 @@ namespace Lumina
             bool bApplicationWantsExit = ShouldExit();
 
             // Evaluate input actions from the events just pumped, before anything reads them this frame.
-            if (!GIsHeadless)
+            if (!Global::GIsHeadless)
             {
-                FInputViewportRegistry::Get().BeginFrame(GEngine->GetDeltaTime());
+                FInputViewportRegistry::Get().BeginFrame(Global::GEngine->GetDeltaTime());
             }
 
-            bEngineWantsExit = !GEngine->Update(bApplicationWantsExit);
+            bEngineWantsExit = !Global::GEngine->Update(bApplicationWantsExit);
 
             // A timed run ends itself, so the loop exits on the frame count rather than on a kill.
-            if (Benchmark::IsActive() && !Benchmark::Tick(GEngine->GetDeltaTime()))
+            if (Benchmark::IsActive() && !Benchmark::Tick(Global::GEngine->GetDeltaTime()))
             {
                 bEngineWantsExit = true;
             }
 
-            if (!GIsHeadless)
+            if (!Global::GIsHeadless)
             {
                 FInputViewportRegistry::Get().EndFrame();
             }
@@ -175,7 +175,7 @@ namespace Lumina
     {
         if (!Window->IsWindowMinimized())
         {
-            GEngine->SetEngineViewportSize(Extent);
+            Global::GEngine->SetEngineViewportSize(Extent);
 
             if (PrimaryViewport)
             {
@@ -187,23 +187,23 @@ namespace Lumina
 
     void FApplication::RequestExit()
     {
-        if (GApp != nullptr)
+        if (Global::GApp != nullptr)
         {
-            GApp->bExitRequested = true;
+            Global::GApp->bExitRequested = true;
         }
     }
 
     void FApplication::CancelExit()
     {
-        if (GApp == nullptr)
+        if (Global::GApp == nullptr)
         {
             return;
         }
 
-        GApp->bExitRequested = false;
-        if (GApp->MainWindow)
+        Global::GApp->bExitRequested = false;
+        if (Global::GApp->MainWindow)
         {
-            GApp->MainWindow->CancelClose();
+            Global::GApp->MainWindow->CancelClose();
         }
     }
 
@@ -287,7 +287,7 @@ namespace Lumina
 
     bool FApplication::ShouldExit() const
     {
-        if (GIsHeadless)
+        if (Global::GIsHeadless)
         {
             return bExitRequested;
         }

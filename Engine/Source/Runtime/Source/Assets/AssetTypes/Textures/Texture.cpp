@@ -212,7 +212,7 @@ namespace Lumina
         TextureResource->ResidentFirstMip = TextureResource->ImageDescription.FirstInlineMip;
 
         // A headless process has no RHI, so there is nothing to upload or stream.
-        if (!GIsHeadless)
+        if (!Global::GIsHeadless)
         {
             (void)ApplyMipResidency(TextureResource->ResidentFirstMip);
 
@@ -527,6 +527,9 @@ namespace Lumina
                 // Clearing bActive alone would leave the swap staged and unarmed, refusing this texture forever.
                 bResidencyBlocked = true;
                 AbandonResidencyFill();
+
+                // A blocked texture never retries, so the promotion's bytes would otherwise stay in RAM for good.
+                ReleaseUploadedBulkMips();
                 return false;
             }
 

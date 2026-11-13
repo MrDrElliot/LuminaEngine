@@ -108,6 +108,8 @@ namespace Lumina
         // Repointing an original's last holder drops it to zero, so each one is held until the walk is done with it.
         TVector<TStrongObjectPtr<CObject>> Pins(Originals.begin(), Originals.end());
 
+        // A weak reference is not a property, so no walk can reach it, and only a handle redirect makes it follow the instance.
+        THashMap<FObjectHandle, FObjectHandle> Redirects;
         for (CObject* Old : Originals)
         {
             CClass* const NewClass = ClassMap.FindChecked(Old->GetClass());
@@ -115,13 +117,11 @@ namespace Lumina
             if (CObject* New = BuildReplacement(Old, NewClass))
             {
                 ObjectMap.Add(Old, New);
-
-                // A weak reference is not a property, so no walk can reach it. Redirecting the handle is what
-                // makes one follow the instance instead of reading as destroyed.
-                Object::Internal::AddReinstanceRedirect(OldHandle, Object::Internal::GetHandleByObject(New));
+                Redirects.Add(OldHandle, Object::Internal::GetHandleByObject(New));
                 ++Result.InstancesReplaced;
             }
         }
+        Object::Internal::AddReinstanceRedirects(Redirects);
 
         // The classes go in the same table, so a TSubclassOf or a TSubStructOf naming the retired class is
         // repointed by the very same walk that repoints the instances.

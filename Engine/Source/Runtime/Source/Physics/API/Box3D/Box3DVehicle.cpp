@@ -21,6 +21,7 @@ namespace Lumina::Physics
         // Short of canceling all sideways speed in one step, which would ring against the next step's correction.
         constexpr float LateralResponse = 0.9f;
 
+        // Sized for the per-step ray array on the stack, and SVehicleComponent::Wheels documents the same limit.
         constexpr int32 MaxWheels = 16;
 
         struct FWheelRay
@@ -138,6 +139,13 @@ namespace Lumina::Physics
             const float TargetSteer = Vehicle.Steer * SteerLimit(Vehicle, Speed);
             const float SteerStep = Vehicle.SteerSpeed * FixedDt;
             const float YawRate = Vehicle.Steering == EVehicleSteering::Skid ? Math::Radians(Vehicle.Steer * Vehicle.SkidTurnRate) : 0.0f;
+
+            if (Vehicle.Wheels.Num() > MaxWheels && !Vehicle.bExcessWheelsWarned)
+            {
+                LOG_WARN("Vehicle on entity {} has {} wheels, past the physics limit of {}; wheels {}..{} are dropped.",
+                    Entity.Value, Vehicle.Wheels.Num(), MaxWheels, MaxWheels, Vehicle.Wheels.Num() - 1);
+                Vehicle.bExcessWheelsWarned = true;
+            }
 
             const int32 WheelCount = Math::Min(Vehicle.Wheels.Num(), MaxWheels);
             const float SuspensionMass = Mass / (float)WheelCount;
@@ -303,8 +311,10 @@ namespace Lumina::Physics
 
         Registry.View<SVehicleComponent>().ForEach([&](ECS::FEntity, const SVehicleComponent& Vehicle)
         {
-            for (const SVehicleWheel& Wheel : Vehicle.Wheels)
+            const int32 WheelCount = Math::Min(Vehicle.Wheels.Num(), MaxWheels);
+            for (int32 Index = 0; Index < WheelCount; ++Index)
             {
+                const SVehicleWheel& Wheel = Vehicle.Wheels[Index];
                 const ECS::FEntity Visual = Wheel.Visual;
                 STransformComponent* Transform = Visual != ECS::NullEntity ? Registry.TryGet<STransformComponent>(Visual) : nullptr;
                 if (Transform == nullptr)

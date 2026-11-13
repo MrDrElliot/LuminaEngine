@@ -250,6 +250,6 @@ namespace Lumina
 
     namespace MCP
     {
-        void RegisterMaterialTools(FStringView Owner);
+        MCPEDITOR_API void RegisterMaterialTools(FStringView Owner);
     }
 }

@@ -14,7 +14,7 @@ namespace Lumina
     namespace
     {
         // The id an asset has, or an invalid one when its class is in no group or not the one the field wants.
-        SAssetId IdOf(const FAssetData* Data, FName RequiredGroup)
+        SAssetId IdOf(const FAssetDataPtr& Data, FName RequiredGroup)
         {
             if (Data == nullptr)
             {
@@ -53,7 +53,7 @@ namespace Lumina
 
         const bool        bHasId   = Id->IsValid();
         const FGuid       Resolved = bHasId ? Manager.Resolve(*Id) : FGuid();
-        const FAssetData* Data     = Resolved.IsValid() ? FAssetRegistry::Get().GetAssetByGUID(Resolved) : nullptr;
+        const FAssetDataPtr Data     = Resolved.IsValid() ? FAssetRegistry::Get().GetAssetByGUID(Resolved) : nullptr;
         const bool        bMissing = bHasId && Data == nullptr;
 
         bool bWasChanged = false;
@@ -63,7 +63,7 @@ namespace Lumina
             bWasChanged = true;
         };
 
-        FEditorUI* EditorUI = static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI());
+        FEditorUI* EditorUI = static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI());
 
         ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
         ImGui::PushID(this);

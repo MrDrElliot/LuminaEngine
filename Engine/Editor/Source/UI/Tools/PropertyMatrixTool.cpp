@@ -240,6 +240,19 @@ namespace Lumina
     void FPropertyMatrixTool::VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func)
     {
         FEditorTool::VisitObjectReferences(Func);
+        if (Edit.IsSet())
+        {
+            for (CObject*& Target : Edit->Targets)
+            {
+                Target = Func(Target);
+            }
+            Edit->Targets.Remove(nullptr);
+            Edit->Source = Func(Edit->Source);
+            if (Edit->Source == nullptr)
+            {
+                AbortEdit();
+            }
+        }
         for (FRow& Row : Rows)
         {
             Row.Object = Func(Row.Object.Get());
@@ -662,6 +675,14 @@ namespace Lumina
         RecookAfterEdit(Targets, Property);
 
         // A container another row received has new elements, and the details rows were built over the old ones.
+        Details.MarkDirty();
+    }
+
+    void FPropertyMatrixTool::AbortEdit()
+    {
+        Edit->Command->Undo();
+        Edit.Reset();
+        TransactionManager.AbortTransaction();
         Details.MarkDirty();
     }
 

@@ -10,6 +10,7 @@ namespace Lumina
 {
     class CObject;
     class FArchive;
+    class FAssetHandle;
 
     // Serializable asset reference by path; resolves on demand, never force-loads.
     struct RUNTIME_API FSoftObjectPath
@@ -60,6 +61,9 @@ namespace Lumina
         // Populates CachedGUID from Path, or repoints Path at the GUID's current location after a rename.
         bool TryResolve() const;
 
+        // Starts the load through FAssetManager, handing back an invalid handle when the path resolves to nothing.
+        FAssetHandle Load() const;
+
         // Blocking load through FAssetManager, returning nullptr on a miss.
         CObject* LoadSynchronous() const;
 
@@ -76,6 +80,9 @@ namespace Lumina
         friend RUNTIME_API FArchive& operator<<(FArchive& Ar, FSoftObjectPath& Self);
 
     private:
+        // Resolves under ResolveMutex and reports the resolved GUID, so loads never reread CachedGUID unlocked.
+        bool TryResolveInternal(FGuid& OutGUID) const;
+
         // Mutable because TryResolve heals a stale path in place; see the hash specialization below.
         mutable FString Path;
         mutable FGuid   CachedGUID;

@@ -221,6 +221,7 @@ namespace Lumina
     {
         SelectedKind  = ENotifyKind::None;
         SelectedIndex = -1;
+        SelectedTrack = -1;
     }
 
     void FAnimationEditorTool::EnsureNotifyTracks(FAnimationResource* Resource)

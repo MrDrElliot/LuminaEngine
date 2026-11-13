@@ -73,9 +73,9 @@ namespace Lumina::MCP
             Out.LiveObjects = Object::Internal::GetNumAliveObjects();
             Out.ManagedBindings = (int32)GetLiveManagedBindingCount();
 
-            if (GWorldManager != nullptr)
+            if (Global::GWorldManager != nullptr)
             {
-                GWorldManager->ForEachWorld([&Out](CWorld& World)
+                Global::GWorldManager->ForEachWorld([&Out](CWorld& World)
                 {
                     SEngineWorldStats& Stats = Out.Worlds.EmplaceGetRef();
                     Stats.Name = World.GetName().ToString();
@@ -239,7 +239,7 @@ namespace Lumina::MCP
         CClass* FindEngineSettingsClass(FStringView Wanted)
         {
             CClass* Found = nullptr;
-            GConfig->ForEachSettingsClass([&](CClass* Class)
+            Global::GConfig->ForEachSettingsClass([&](CClass* Class)
             {
                 const FString Name(*Class->GetName().ToString());
                 const FString Display = Class->HasMeta("DisplayName") ? Class->GetMeta("DisplayName") : FString();
@@ -266,7 +266,7 @@ namespace Lumina::MCP
         {
             if (In.Class.IsEmpty())
             {
-                GConfig->ForEachSettingsClass([&](CClass* Class) { Out.Classes.Add(DescribeEngineSettingsClass(Class)); });
+                Global::GConfig->ForEachSettingsClass([&](CClass* Class) { Out.Classes.Add(DescribeEngineSettingsClass(Class)); });
                 return Agent::FToolResult::Ok(Lumina::Format("{} settings classes.", Out.Classes.Num()));
             }
 
@@ -310,7 +310,7 @@ namespace Lumina::MCP
                 return Agent::FToolResult::Error(Edit.Error);
             }
 
-            GConfig->SaveSettings(Class);
+            Global::GConfig->SaveSettings(Class);
             Out.Previous = Edit.Previous;
             Out.Current  = Edit.Current;
             return Agent::FToolResult::Ok(Lumina::Format("{}.{} is now {}, was {}.", Class->GetName(), In.Path, Out.Current, Out.Previous));

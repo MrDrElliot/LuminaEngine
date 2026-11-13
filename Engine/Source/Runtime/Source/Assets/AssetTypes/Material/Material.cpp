@@ -103,14 +103,14 @@ namespace Lumina
         bool LoadStageBlobs(uint64 Key, TVector<SMaterialStageBlob>& OutBlobs)
         {
             TVector<uint8> Bytes;
-            return GEngine != nullptr && GEngine->GetArtifactCache().Load(Key, Bytes) && UnpackStageBlobs(Bytes, OutBlobs);
+            return Global::GEngine != nullptr && Global::GEngine->GetArtifactCache().Load(Key, Bytes) && UnpackStageBlobs(Bytes, OutBlobs);
         }
 
         void StoreStageBytes(uint64 Key, const TVector<uint8>& Bytes)
         {
-            if (GEngine != nullptr)
+            if (Global::GEngine != nullptr)
             {
-                GEngine->GetArtifactCache().Store(Key, Bytes);
+                Global::GEngine->GetArtifactCache().Store(Key, Bytes);
             }
         }
         constexpr const char* kPixelInputsToken        = "$MATERIAL_INPUTS";
@@ -303,10 +303,10 @@ namespace Lumina
         // Builtins are rebuilt in place, so a compile still in flight lands before the old one is unrooted. Null when there is no compiler.
         IShaderCompiler* BeginBuiltinRebuild(CMaterial*& Slot, const char* What)
         {
-            IShaderCompiler* Compiler = GShaderCompiler;
+            IShaderCompiler* Compiler = Global::GShaderCompiler;
             if (Compiler == nullptr)
             {
-                if (!GIsHeadless)
+                if (!Global::GIsHeadless)
                 {
                     LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); the {} was not created.", What);
                 }
@@ -739,6 +739,15 @@ namespace Lumina
     {
         FRecursiveScopeLock Lock(TextureSlotMutex);
         return Algo::AnyOf(ResolvedTextures, [ChangedTexture](const TStrongObjectPtr<CTexture>& Texture) { return Texture.Get() == ChangedTexture; });
+    }
+
+    void CMaterial::WarnMissingParameterOnce(const char* Kind, const FName& Name)
+    {
+        if (!ReportedMissingParameters.Lock()->TryAdd(Name))
+        {
+            return;
+        }
+        LOG_WARN("Material '{}': no {} parameter named '{}'.", GetName(), Kind, Name);
     }
 
     bool CMaterial::RefreshTextureBindings(const CTexture* ChangedTexture)
@@ -1322,10 +1331,10 @@ namespace Lumina
 
     CMaterial* CMaterial::CreateBuiltinMaterial(const FName& Name, const FString& PixelInputs, TSpan<const SMaterialParameter> InParameters, EBlendMode InBlendMode)
     {
-        IShaderCompiler* Compiler = GShaderCompiler;
+        IShaderCompiler* Compiler = Global::GShaderCompiler;
         if (Compiler == nullptr)
         {
-            if (!GIsHeadless)
+            if (!Global::GIsHeadless)
             {
                 LOG_WARN("CMaterial: no shader compiler (the renderer is not initialized); the built-in material '{}' was not created.", *Name);
             }

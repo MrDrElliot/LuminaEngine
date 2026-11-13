@@ -18,11 +18,6 @@ namespace Lumina
             const double N = 0.6 * Math::Sin(TwoPi * T) + 0.3 * Math::Sin(TwoPi * 2.71 * T + 1.3) + 0.1 * Math::Sin(TwoPi * 6.13 * T + 0.4);
             return (float)N;
         }
-
-        float MoveToward(float Value, float Target, float MaxStep)
-        {
-            return Value < Target ? Math::Min(Value + MaxStep, Target) : Math::Max(Value - MaxStep, Target);
-        }
     }
 
     void CWeatherSystem::Configure()
@@ -104,11 +99,11 @@ namespace Lumina
         }
         else if (Snow.Intensity > kSnowingThreshold)
         {
-            State->SnowCover = MoveToward(State->SnowCover, Snow.MaxCover, Snow.AccumulationRate * Snow.Intensity * DeltaTime);
+            State->SnowCover = Math::MoveTowards(State->SnowCover, Snow.MaxCover, Snow.AccumulationRate * Snow.Intensity * DeltaTime);
         }
         else
         {
-            State->SnowCover = MoveToward(State->SnowCover, 0.0f, Snow.MeltRate * DeltaTime);
+            State->SnowCover = Math::MoveTowards(State->SnowCover, 0.0f, Snow.MeltRate * DeltaTime);
         }
 
         const FRainParams& Rain = State->Params.Rain;
@@ -125,13 +120,13 @@ namespace Lumina
         if (Rain.Intensity > kRainingThreshold)
         {
             const float Soak = Rain.WettingRate * Rain.Intensity * DeltaTime;
-            State->Wetness     = MoveToward(State->Wetness, Rain.MaxWetness, Soak);
-            State->PuddleLevel = MoveToward(State->PuddleLevel, Rain.MaxWetness * Rain.Intensity, Soak * kPuddleFillShare);
+            State->Wetness     = Math::MoveTowards(State->Wetness, Rain.MaxWetness, Soak);
+            State->PuddleLevel = Math::MoveTowards(State->PuddleLevel, Rain.MaxWetness * Rain.Intensity, Soak * kPuddleFillShare);
         }
         else
         {
-            State->Wetness     = MoveToward(State->Wetness, 0.0f, Rain.DryingRate * DeltaTime);
-            State->PuddleLevel = MoveToward(State->PuddleLevel, 0.0f, Rain.DryingRate * kPuddleDrainShare * DeltaTime);
+            State->Wetness     = Math::MoveTowards(State->Wetness, 0.0f, Rain.DryingRate * DeltaTime);
+            State->PuddleLevel = Math::MoveTowards(State->PuddleLevel, 0.0f, Rain.DryingRate * kPuddleDrainShare * DeltaTime);
         }
     }
 }

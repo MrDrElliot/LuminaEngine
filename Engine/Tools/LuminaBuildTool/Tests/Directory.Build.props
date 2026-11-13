@@ -1,0 +1,8 @@
+<Project>
+
+  <!-- Must be set before Microsoft.Common.props is imported, keeping this project's obj separate from LuminaBuildTool's own. -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)..\..\..\..\Intermediates\BuildTool\obj.tests\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+
+</Project>

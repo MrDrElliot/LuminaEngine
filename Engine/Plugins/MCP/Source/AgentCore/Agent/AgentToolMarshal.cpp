@@ -134,7 +134,7 @@ namespace Lumina::Agent
                         return true;
                     }
 
-                    const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(*Guid);
+                    const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(*Guid);
                     if (Data == nullptr)
                     {
                         OutError = Lumina::Format("'{}' names no asset with GUID {}.", Path, Given);

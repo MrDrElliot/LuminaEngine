@@ -3,6 +3,9 @@
 #include "World/ECS/Entity.h"
 
 #include "Platform/GenericPlatform.h"
+#include "Containers/StringView.h"
+#include "Core/Math/Scalar.h"
+#include "Memory/Memcpy.h"
 
 namespace Lumina { class CWorld; }
 
@@ -22,4 +25,15 @@ namespace Lumina::DotNet
     FORCEINLINE CWorld*      AsWorld (uint64 Handle)        { return reinterpret_cast<CWorld*>(Handle); }
     FORCEINLINE ECS::FEntity AsEntity(uint32 Entity)        { return static_cast<ECS::FEntity>(Entity); }
     FORCEINLINE uint32       ToId    (ECS::FEntity Entity)  { return static_cast<uint32>(Entity); }
+
+    // The caller sizes its buffer from the length returned here, so a reserved terminator costs a character.
+    FORCEINLINE int32 CopyOut(FStringView Text, char* Buf, int Cap)
+    {
+        const int32 Length = Text.Len();
+        if (Buf != nullptr && Cap > 0 && Length > 0)
+        {
+            Memory::Memcpy(Buf, Text.GetData(), (size_t)Math::Min(Length, Cap));
+        }
+        return Length;
+    }
 }

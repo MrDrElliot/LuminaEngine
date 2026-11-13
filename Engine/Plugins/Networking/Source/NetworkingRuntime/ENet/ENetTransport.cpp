@@ -22,7 +22,7 @@ namespace Lumina
 
     static void EnablePacketCompression(ENetHost* Host)
     {
-        if (Host == nullptr || !CVarCompression.GetValue() || GCommandLine->Has("netnocompress"))
+        if (Host == nullptr || !CVarCompression.GetValue() || Global::GCommandLine->Has("netnocompress"))
         {
             return;
         }
@@ -53,19 +53,10 @@ namespace Lumina
         }
     }
 
-    // Cheap xorshift for drop decisions; deterministic seed is fine for a debug tool.
-    float FNetSimQueue::Rand01()
-    {
-        RandState ^= RandState << 13;
-        RandState ^= RandState >> 17;
-        RandState ^= RandState << 5;
-        return static_cast<float>(RandState & 0xFFFFFFu) / static_cast<float>(0x1000000);
-    }
-
     bool FNetSimQueue::Submit(uint32 Peer, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size, uint32 NowMs, int32 LatencyMs, float LossPct)
     {
         // ENet retransmits a dropped reliable packet, so for reliable only the added latency is observable.
-        if (LossPct > 0.0f && Mode != ESendMode::Reliable && Rand01() * 100.0f < LossPct)
+        if (LossPct > 0.0f && Mode != ESendMode::Reliable && Rng.NextFloat() * 100.0f < LossPct)
         {
             return true;
         }

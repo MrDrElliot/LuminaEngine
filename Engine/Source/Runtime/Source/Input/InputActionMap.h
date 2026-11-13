@@ -62,6 +62,9 @@ namespace Lumina
         // Gated and evaluated, which is all a chord needs to know about its partner.
         bool IsRawDown(const SInputAction& Action, const FInputContext& Context) const;
 
+        // Every action up the ChordAction chain is raw down; a missing, self or cyclic link never holds.
+        bool IsChordHeld(const SInputAction& Action, const FInputContext& Context) const;
+
         TVector<SInputAction>  Actions;
         TVector<SInputMappingContext> MappingContexts;
         THashMap<FName, int32> Lookup;

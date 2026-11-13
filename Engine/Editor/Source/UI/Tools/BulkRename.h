@@ -44,6 +44,9 @@ namespace Lumina
     // Names and checks every entry in order, where Exists answers whether a path is already taken on disk.
     EDITOR_API void PlanBulkRename(const FBulkRenameRule& Rule, TVector<FBulkRenameEntry>& Entries, const TFunction<bool(FStringView)>& Exists);
 
+    // Orders the ready entries so every target is free when its move runs, parking one entry of each cycle under a free name first.
+    EDITOR_API TVector<FBulkRenameEntry> OrderBulkRename(TVector<FBulkRenameEntry> Ready, const TFunction<bool(FStringView)>& Exists);
+
     // Previews the batch under a rule the user edits, then moves every ready entry once its files are writable.
     EDITOR_API void OpenBulkRenameModal(IEditorToolContext* Context, TVector<FFixedString> Paths, TFunction<void()> OnRenamed);
 }

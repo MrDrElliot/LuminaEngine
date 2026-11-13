@@ -17,6 +17,7 @@
 
 #include "Containers/Vector.h"
 #include "Containers/String.h"
+#include "Core/Module/ModuleManager.h"
 #include "Log/Log.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
@@ -30,8 +31,6 @@ namespace Lumina::Platform
 {
     namespace
     {
-        TVector<FString> GDLLSearchPaths;
-
         FString ReadWholeFile(const char* Path)
         {
             FString Contents;
@@ -425,7 +424,7 @@ namespace Lumina::Platform
             return nullptr;
         }
 
-        return LoadLibraryWithSearchPaths(FString(Filename), GDLLSearchPaths);
+        return LoadLibraryWithSearchPaths(FString(Filename), FModuleManager::Get().GetDLLSearchPaths());
     }
 
     bool FreeDLLHandle(void* DLLHandle)
@@ -435,15 +434,7 @@ namespace Lumina::Platform
 
     void AddDLLDirectory(const FString& Directory)
     {
-        for (const FString& Existing : GDLLSearchPaths)
-        {
-            if (Existing == Directory)
-            {
-                return;
-            }
-        }
-
-        GDLLSearchPaths.Add(Directory);
+        FModuleManager::Get().AddDLLSearchPath(Directory);
     }
 
     void PushDLLDirectory(const TCHAR* Directory)
@@ -453,7 +444,7 @@ namespace Lumina::Platform
             return;
         }
 
-        GDLLSearchPaths.Emplace(Directory);
+        FModuleManager::Get().AddDLLSearchPath(FString(Directory));
         LOG_INFO("Pushing DLL Search Path: {0}", Directory);
     }
 

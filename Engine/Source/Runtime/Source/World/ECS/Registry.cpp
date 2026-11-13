@@ -213,6 +213,18 @@ namespace Lumina::ECS
         }
     }
 
+    void FRegistry::NoteCreated(FEntity Entity)
+    {
+        const uint32 Index = Entity.GetIndex();
+        if (Index >= static_cast<uint32>(CreationSerials.Num()))
+        {
+            CreationSerials.SetNum(Index + 1u, 0u);
+        }
+        CreationSerials[Index] = ++LastCreationSerial;
+        ++LiveEntityCount;
+        EntityCreated.Broadcast(*this, Entity);
+    }
+
     FEntity FRegistry::Create()
     {
         FEntity Created;
@@ -225,8 +237,7 @@ namespace Lumina::ECS
             EntityRecords[Index] = Created;
         }
 
-        ++LiveEntityCount;
-        EntityCreated.Broadcast(*this, Created);
+        NoteCreated(Created);
         return Created;
     }
 
@@ -243,8 +254,7 @@ namespace Lumina::ECS
             EntityRecords[Index] = Created;
         }
 
-        ++LiveEntityCount;
-        EntityCreated.Broadcast(*this, Created);
+        NoteCreated(Created);
         return Created;
     }
 
@@ -269,8 +279,7 @@ namespace Lumina::ECS
             EntityRecords[Index] = Entity;
         }
 
-        ++LiveEntityCount;
-        EntityCreated.Broadcast(*this, Entity);
+        NoteCreated(Entity);
     }
 
     void FRegistry::ReleaseReserved(FEntity Entity)
@@ -296,54 +305,60 @@ namespace Lumina::ECS
         const uint32 Index = Hint.GetIndex();
         ASSERT(Index <= FEntity::MaxIndex);
 
-        if (Index >= static_cast<uint32>(EntityRecords.Num()))
+        bool bSlotLive = false;
         {
             TScopeLock<FMutex> Lock(AllocState->Mutex);
 
-            // Everything between the end and the hint becomes free, linked head-first so Create reuses it.
-            const uint32 FirstNew = static_cast<uint32>(EntityRecords.Num());
-            EntityRecords.SetNum(Index + 1u);
-
-            for (uint32 Slot = FirstNew; Slot < Index; ++Slot)
+            if (Index >= static_cast<uint32>(EntityRecords.Num()))
             {
-                EntityRecords[Slot] = FEntity(FreeEntityHead, 0);
-                FreeEntityHead = Slot;
-            }
+                // Everything between the end and the hint becomes free, linked head-first so Create reuses it.
+                const uint32 FirstNew = static_cast<uint32>(EntityRecords.Num());
+                EntityRecords.SetNum(Index + 1u);
 
-            EntityRecords[Index] = Hint;
-            AllocState->NextAppendIndex = Math::Max(AllocState->NextAppendIndex, Index + 1u);
-            ++LiveEntityCount;
-            EntityCreated.Broadcast(*this, Hint);
-            return Hint;
+                for (uint32 Slot = FirstNew; Slot < Index; ++Slot)
+                {
+                    EntityRecords[Slot] = FEntity(FreeEntityHead, 0);
+                    FreeEntityHead = Slot;
+                }
+
+                EntityRecords[Index] = Hint;
+                AllocState->NextAppendIndex = Math::Max(AllocState->NextAppendIndex, Index + 1u);
+            }
+            else if (EntityRecords[Index].GetIndex() == Index)
+            {
+                bSlotLive = true;
+            }
+            else
+            {
+                // Unlink the slot from wherever it sits in the free chain, then stamp the requested version.
+                if (FreeEntityHead == Index)
+                {
+                    FreeEntityHead = EntityRecords[Index].GetIndex();
+                }
+                else
+                {
+                    uint32 Previous = FreeEntityHead;
+                    while (Previous != NoFreeSlot && EntityRecords[Previous].GetIndex() != Index)
+                    {
+                        Previous = EntityRecords[Previous].GetIndex();
+                    }
+                    if (Previous != NoFreeSlot)
+                    {
+                        EntityRecords[Previous] = FEntity(EntityRecords[Index].GetIndex(), EntityRecords[Previous].GetVersion());
+                    }
+                }
+
+                EntityRecords[Index] = Hint;
+            }
         }
 
-        if (EntityRecords[Index].GetIndex() == Index)
+        if (bSlotLive)
         {
             // The slot is live, so the caller gets a fresh handle instead of a collision.
             return Create();
         }
 
-        // Unlink the slot from wherever it sits in the free chain, then stamp the requested version.
-        if (FreeEntityHead == Index)
-        {
-            FreeEntityHead = EntityRecords[Index].GetIndex();
-        }
-        else
-        {
-            uint32 Previous = FreeEntityHead;
-            while (Previous != NoFreeSlot && EntityRecords[Previous].GetIndex() != Index)
-            {
-                Previous = EntityRecords[Previous].GetIndex();
-            }
-            if (Previous != NoFreeSlot)
-            {
-                EntityRecords[Previous] = FEntity(EntityRecords[Index].GetIndex(), EntityRecords[Previous].GetVersion());
-            }
-        }
-
-        EntityRecords[Index] = Hint;
-        ++LiveEntityCount;
-        EntityCreated.Broadcast(*this, Hint);
+        NoteCreated(Hint);
         return Hint;
     }
 
@@ -490,6 +505,7 @@ namespace Lumina::ECS
 
         Hierarchy.Reset();
         EntityRecords.Reset();
+        CreationSerials.Reset();
         FreeEntityHead = NoFreeSlot;
         LiveEntityCount = 0;
         AllocState->NextAppendIndex = 0u;
@@ -514,6 +530,8 @@ namespace Lumina::ECS
     void FRegistry::Swap(FRegistry& Other) noexcept
     {
         swap(EntityRecords, Other.EntityRecords);
+        swap(CreationSerials, Other.CreationSerials);
+        ElementOps::SwapElements(LastCreationSerial, Other.LastCreationSerial);
         swap(OwnedStorages, Other.OwnedStorages);
         swap(Groups, Other.Groups);
         swap(StoragesByTypeID, Other.StoragesByTypeID);

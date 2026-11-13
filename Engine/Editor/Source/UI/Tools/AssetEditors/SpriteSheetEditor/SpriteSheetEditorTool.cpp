@@ -220,7 +220,7 @@ namespace Lumina
         if (ImGui::Button(LE_ICON_MINUS " Remove"))
         {
             Sheet->Animations.RemoveAt(SelectedAnimation);
-            SelectedAnimation = Math::Max(SelectedAnimation - 1, 0);
+            SelectedAnimation = Math::Min(SelectedAnimation, Sheet->Animations.Num() - 1);
             SelectedFrameSlot = -1;
             MarkEdited();
         }

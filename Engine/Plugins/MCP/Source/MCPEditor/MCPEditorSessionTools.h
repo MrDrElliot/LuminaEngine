@@ -329,7 +329,7 @@ namespace Lumina
         PROPERTY()
         bool bAlt = false;
 
-        // How long a Tap stays down so a polling game sees it. Zero uses 40 for Mouse and 100 for Key.
+        // How long a Tap stays down so a polling game sees it. Zero uses 40 for Mouse and 100 for Key. Rejected above 5000.
         PROPERTY()
         int32 HoldMilliseconds = 0;
     };
@@ -439,7 +439,7 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        // Seconds to wait for the reload to land. Zero queues it and returns.
+        // Seconds to wait for the reload to land. Zero queues it and returns. Rejected above 300 or non-finite.
         PROPERTY()
         float TimeoutSeconds = 30.0f;
     };

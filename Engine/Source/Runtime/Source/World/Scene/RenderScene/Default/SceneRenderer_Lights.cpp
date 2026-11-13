@@ -96,7 +96,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Light Function Pass", tracy::Color::Gold);
+        SCENE_GPU_SCOPE(CL, "Light Functions");
 
         // Cleared to white, so a tile whose pipeline is still compiling leaves its light unmasked.
         RHI::FRenderAttachment Color;

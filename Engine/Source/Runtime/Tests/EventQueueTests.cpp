@@ -127,6 +127,25 @@ TEST(EventQueue, UnreadCountsWhatAReaderHasNotSeen)
     EXPECT_FALSE(ECS::HasUnreadEvents(F.Queues, Reader));
 }
 
+TEST(EventQueue, UnreadGoesFalseWhenAReloadResizesTheEventMidFrame)
+{
+    FQueueFixture F;
+
+    const ECS::FComponentTypeID TypeID = ECS::AcquireScriptEventType("LuminaEventQueueTests_ReloadedEvent", sizeof(int32), alignof(int32));
+    ECS::FEventQueue& Queue = F.Queues.Get(TypeID);
+
+    const int32 Payload = 9;
+    Queue.Send(&Payload);
+    F.Queues.Commit();
+
+    const uint64 Cursor = 0;
+    EXPECT_NE(Queue.NumUnread(Cursor), 0u);
+
+    // A reload mid-frame changes the type's size, so the queue's stride no longer matches until the next Advance.
+    ECS::AcquireScriptEventType("LuminaEventQueueTests_ReloadedEvent", sizeof(int64), alignof(int64));
+    EXPECT_EQ(Queue.NumUnread(Cursor), 0u) << "NumUnread must agree with Read, which refuses the mismatched buffer";
+}
+
 TEST(EventQueue, EventsThatOwnMemoryAreCopiedAndReleased)
 {
     FQueueFixture F;

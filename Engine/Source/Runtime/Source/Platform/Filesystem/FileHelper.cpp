@@ -8,7 +8,7 @@
 
 namespace Lumina::FileHelper
 {
-    bool SaveArrayToFile(const TVector<uint8>& Array, FStringView Path, uint32 WriteFlags)
+    bool SaveArrayToFile(const TVector<uint8>& Array, FStringView Path)
     {
         const TSpan<const uint8> Data(Array.GetData(), Array.Num());
 
@@ -32,34 +32,7 @@ namespace Lumina::FileHelper
         return true;
     }
 
-    FString FileFinder(const FString& FileName, FStringView IteratorPath, bool bRecursive)
-    {
-        FString Result;
-
-        auto Visit = [&FileName, &Result](const Filesystem::FDirectoryEntry& Entry) -> Filesystem::EVisit
-        {
-            if (Entry.IsDirectory() || Entry.Name != FStringView(FileName.GetData(), FileName.Len()))
-            {
-                return Filesystem::EVisit::Continue;
-            }
-
-            Result = FStringView(Entry.FullPath.GetData(), Entry.FullPath.Len());
-            return Filesystem::EVisit::Stop;
-        };
-
-        if (bRecursive)
-        {
-            Filesystem::IterateDirectoryRecursive(IteratorPath, Visit);
-        }
-        else
-        {
-            Filesystem::IterateDirectory(IteratorPath, Visit);
-        }
-
-        return Result;
-    }
-
-    bool LoadFileIntoString(FString& OutString, FStringView Path, uint32 ReadFlags)
+    bool LoadFileIntoString(FString& OutString, FStringView Path)
     {
         if (!Filesystem::ReadFile(OutString, Path))
         {
@@ -67,10 +40,10 @@ namespace Lumina::FileHelper
             return false;
         }
 
-        return !OutString.IsEmpty();
+        return true;
     }
 
-    bool SaveStringToFile(FStringView String, FStringView Path, uint32 WriteFlags)
+    bool SaveStringToFile(FStringView String, FStringView Path)
     {
         const TSpan<const uint8> Data(reinterpret_cast<const uint8*>(String.GetData()), String.Len());
 
@@ -81,30 +54,5 @@ namespace Lumina::FileHelper
         }
 
         return true;
-    }
-
-    bool DoesDirectoryExist(FStringView FilePath)
-    {
-        return Filesystem::Exists(FilePath);
-    }
-
-    bool CreateNewFile(FStringView FilePath, bool bBinary)
-    {
-        Filesystem::MakeParentDirectoryTree(FilePath);
-
-        const Filesystem::FFileHandle Handle = Filesystem::Open(FilePath, Filesystem::EAccess::Write,
-                                                                Filesystem::ECreateMode::CreateNew);
-        if (!Handle.IsValid())
-        {
-            LOG_ERROR("Failed to create file: {0}", FilePath);
-            return false;
-        }
-
-        return true;
-    }
-
-    uint64 GetFileSize(FStringView FilePath)
-    {
-        return Filesystem::FileSize(FilePath);
     }
 }

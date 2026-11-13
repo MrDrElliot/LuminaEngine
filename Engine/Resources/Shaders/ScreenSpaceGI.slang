@@ -26,21 +26,21 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-// Last frame's color at the view space position ViewPos, or black where that surface was off screen or behind the eye.
-float3 HitRadiance(float4x4 ViewToHistoryClip, float3 ViewPos)
+// Last frame's color at the view space position ViewPos with a = 1, or zero where that surface was off screen or behind the eye.
+float4 HitRadiance(float4x4 ViewToHistoryClip, float3 ViewPos)
 {
     const float4 PrevClip = mul(ViewToHistoryClip, float4(ViewPos, 1.0));
     if (PrevClip.w <= 0.0)
     {
-        return float3(0.0, 0.0, 0.0);
+        return float4(0.0, 0.0, 0.0, 0.0);
     }
 
     const float2 PrevUV = (PrevClip.xy / PrevClip.w) * 0.5 + 0.5;
     if (any(PrevUV != saturate(PrevUV)))
     {
-        return float3(0.0, 0.0, 0.0);
+        return float4(0.0, 0.0, 0.0, 0.0);
     }
-    return Pass().SceneColorHistory.SampleLevel(Samplers::LinearClamp, PrevUV, 0.0).rgb;
+    return float4(Pass().SceneColorHistory.SampleLevel(Samplers::LinearClamp, PrevUV, 0.0).rgb, 1.0);
 }
 
 [shader("compute")]
@@ -126,10 +126,10 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
                 const float Covered = max(Arc[Side] - NewArc, 0.0);
 
                 // Weighting by 1 / (1 + luma) keeps one hit on a specular highlight from becoming a firefly.
-                const float3 Hit       = HitRadiance(ViewToHistoryClip, SamplePos);
-                const float  HitWeight = Covered / (1.0 + Luminance(Hit));
+                const float4 Hit       = HitRadiance(ViewToHistoryClip, SamplePos);
+                const float  HitWeight = Hit.a * Covered / (1.0 + Luminance(Hit.rgb));
 
-                SliceBounce       += HitWeight * Hit;
+                SliceBounce       += HitWeight * Hit.rgb;
                 SliceBounceWeight += HitWeight;
                 SliceCoverage     += Covered;
                 HorizonCos[Side] = SampleCos;
@@ -142,7 +142,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         Coverage     += S.ProjNLen * SliceCoverage;
     }
 
-    // The weighted mean radiance of the hits, scaled by how much of the hemisphere they cover.
+    // The weighted mean radiance of the hits with history, scaled by how much of the hemisphere every hit covers.
     const float CoveredFraction = saturate(Coverage / float(SliceCount));
     Pass().Output[PixCoord] = float4(Bounce / max(BounceWeight, 1e-6) * CoveredFraction, CoveredFraction);
 }

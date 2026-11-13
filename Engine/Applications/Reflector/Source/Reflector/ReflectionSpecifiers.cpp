@@ -106,35 +106,50 @@ namespace Lumina::Reflection
         }
     }
 
-    std::span<const FSpecifierInfo> GetSpecifiers(ESpecifierTarget Target)
+    void ClaimBuiltinSpecifiers(FSpecifierRegistry& Registry, ESpecifierConsumer Consumer)
     {
-        switch (Target)
+        auto ClaimRows = [&](ESpecifierTarget Target, std::span<const FSpecifierInfo> Rows)
         {
-            case ESpecifierTarget::Reflect:      return GReflectSpecifiers;
-            case ESpecifierTarget::Property:     return GPropertySpecifiers;
-            case ESpecifierTarget::Function:     return GFunctionSpecifiers;
-            case ESpecifierTarget::ScriptExport: return GScriptExportSpecifiers;
-            default:                             return {};
-        }
+            for (const FSpecifierInfo& Info : Rows)
+            {
+                if (Info.Consumer == Consumer)
+                {
+                    Registry.Claim(Target, Info);
+                }
+            }
+        };
+        ClaimRows(ESpecifierTarget::Reflect, GReflectSpecifiers);
+        ClaimRows(ESpecifierTarget::Property, GPropertySpecifiers);
+        ClaimRows(ESpecifierTarget::Function, GFunctionSpecifiers);
+        ClaimRows(ESpecifierTarget::ScriptExport, GScriptExportSpecifiers);
     }
 
-    const FSpecifierInfo* FindSpecifier(ESpecifierTarget Target, std::string_view Key)
+    bool FSpecifierRegistry::Claim(ESpecifierTarget Target, const FSpecifierInfo& Info)
     {
-        const std::span<const FSpecifierInfo> Table = GetSpecifiers(Target);
+        std::vector<FSpecifierInfo>& Table = Claimed[static_cast<size_t>(Target)];
+        const auto Found = std::ranges::lower_bound(Table, Info.Name, {}, &FSpecifierInfo::Name);
+        if (Found != Table.end() && Found->Name == Info.Name)
+        {
+            return false;
+        }
+        Table.insert(Found, Info);
+        return true;
+    }
 
+    const FSpecifierInfo* FSpecifierRegistry::Find(ESpecifierTarget Target, std::string_view Key) const
+    {
+        const std::vector<FSpecifierInfo>& Table = Claimed[static_cast<size_t>(Target)];
         const auto Found = std::ranges::lower_bound(Table, Key, {}, &FSpecifierInfo::Name);
         return Found != Table.end() && Found->Name == Key ? &*Found : nullptr;
     }
 
-    const FSpecifierInfo* SuggestSpecifier(ESpecifierTarget Target, std::string_view Key)
+    const FSpecifierInfo* FSpecifierRegistry::Suggest(ESpecifierTarget Target, std::string_view Key) const
     {
         // Loose enough to catch a plausible misspelling, tight enough that unrelated names never match.
         const uint32_t MaxDistance = Key.length() <= 4 ? 1u : (Key.length() <= 8 ? 2u : 3u);
-
         const FSpecifierInfo* Best = nullptr;
         uint32_t BestDistance = MaxDistance + 1;
-
-        for (const FSpecifierInfo& Candidate : GetSpecifiers(Target))
+        for (const FSpecifierInfo& Candidate : Claimed[static_cast<size_t>(Target)])
         {
             const uint32_t Distance = EditDistance(Key, Candidate.Name);
             if (Distance < BestDistance)
@@ -143,7 +158,6 @@ namespace Lumina::Reflection
                 Best = &Candidate;
             }
         }
-
         return BestDistance <= MaxDistance ? Best : nullptr;
     }
 
@@ -174,9 +188,9 @@ namespace Lumina::Reflection
         return EPropertyFlags::None;
     }
 
-    ESpecifierStorage GetSpecifierStorage(ESpecifierTarget Target, std::string_view Key)
+    ESpecifierStorage FSpecifierRegistry::GetStorage(ESpecifierTarget Target, std::string_view Key) const
     {
-        const FSpecifierInfo* Info = FindSpecifier(Target, Key);
+        const FSpecifierInfo* Info = Find(Target, Key);
         if (Info == nullptr)
         {
             return ESpecifierStorage::Metadata;
@@ -202,7 +216,7 @@ namespace Lumina::Reflection
         return ESpecifierStorage::Metadata;
     }
 
-    void ValidateSpecifiers(const CXCursor& Cursor, ESpecifierTarget Target, const std::vector<FMetadataPair>& Metadata)
+    void ValidateSpecifiers(const FSpecifierRegistry& Registry, const CXCursor& Cursor, ESpecifierTarget Target, const std::vector<FMetadataPair>& Metadata)
     {
         const char* MacroName = SpecifierTargetToString(Target);
 
@@ -213,7 +227,7 @@ namespace Lumina::Reflection
                 continue;
             }
 
-            if (const FSpecifierInfo* Info = FindSpecifier(Target, Pair.Key))
+            if (const FSpecifierInfo* Info = Registry.Find(Target, Pair.Key))
             {
                 double Number = 0.0;
                 if (Info->Form == ESpecifierForm::Flag && !Pair.Value.empty())
@@ -237,16 +251,16 @@ namespace Lumina::Reflection
                 continue;
             }
 
-            if (const FSpecifierInfo* Suggestion = SuggestSpecifier(Target, Pair.Key))
+            if (const FSpecifierInfo* Suggestion = Registry.Suggest(Target, Pair.Key))
             {
-                LRT_WARNING(Cursor, EDiagId::UnknownSpecifier,
-                    "%s specifier '%s' is not recognized and will be ignored. Did you mean '%s'?",
+                LRT_ERROR(Cursor, EDiagId::UnknownSpecifier,
+                    "%s specifier '%s' is not recognized. Did you mean '%s'?",
                     MacroName, Pair.Key.c_str(), std::string(Suggestion->Name).c_str());
             }
             else
             {
-                LRT_WARNING(Cursor, EDiagId::UnknownSpecifier,
-                    "%s specifier '%s' is not recognized and will be ignored. Add it to ReflectionSpecifiers.h if it is intentional.",
+                LRT_ERROR(Cursor, EDiagId::UnknownSpecifier,
+                    "%s specifier '%s' is not recognized. Add it to ReflectionSpecifiers.h, or claim it from a generator, if it is intentional.",
                     MacroName, Pair.Key.c_str());
             }
         }

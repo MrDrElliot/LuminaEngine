@@ -89,9 +89,9 @@ namespace Lumina::ImGuiX
 
     // Never hand ImGui a string's max_size(); that is the type's theoretical limit, not its writable bytes.
     template <typename TString>
-    bool InputText(const char* Label, TString& String, ImGuiInputTextFlags Flags = ImGuiInputTextFlags_None)
+    bool InputText(const char* Label, TString& String, ImGuiInputTextFlags Flags = ImGuiInputTextFlags_None, const char* Hint = nullptr)
     {
-        return ImGui::InputText(Label, String.GetData(), String.GetCapacity() + 1,
+        return ImGui::InputTextWithHint(Label, Hint, String.GetData(), String.GetCapacity() + 1,
             Flags | ImGuiInputTextFlags_CallbackResize, &StringInputResizeCallback<TString>, &String);
     }
 

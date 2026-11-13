@@ -31,6 +31,7 @@ namespace Lumina::Platform
         /** Appends everything readable without blocking, bounded by MaxBytes, and returns the count. */
         virtual int32 Read(TVector<uint8>& OutBytes, int32 MaxBytes) = 0;
 
+        /** All-or-nothing, blocks until every byte is sent or a real error occurs. */
         virtual bool Write(const uint8* Bytes, int32 Count) = 0;
 
         virtual void Resize(uint16 Columns, uint16 Rows) = 0;

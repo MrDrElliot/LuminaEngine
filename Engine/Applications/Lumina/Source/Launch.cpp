@@ -41,7 +41,7 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     CrashReporting::LogStatus();
 
     FCommandLine Parsed{ArgC, ArgV};
-    GCommandLine = &Parsed;
+    Global::GCommandLine = &Parsed;
 
     // A package keeps third-party DLLs in its data folder, and slang is delay-loaded so its first load comes after this.
     if (const FString PluginsDir = Paths::GetGameDataDirectory() + "/Plugins"; Filesystem::Exists(PluginsDir))
@@ -57,21 +57,21 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
 #endif
 
     FApplication Application{};
-    GApp = &Application;
+    Global::GApp = &Application;
 
     FConfig Config{};
-    GConfig = &Config;
+    Global::GConfig = &Config;
 
     #if WITH_EDITOR
     FEditorEngine EdEngine{};
-    GEditorEngine = &EdEngine;
-    GEngine = GEditorEngine;
+    Global::GEditorEngine = &EdEngine;
+    Global::GEngine = Global::GEditorEngine;
     #else
     // Bots are client worlds nobody watches, so a bot process draws and plays nothing either.
-    GIsHeadless = USING(WITH_SERVER) || Parsed.Has("server") || Parsed.Has("bots") || Parsed.Has("netbots");
+    Global::GIsHeadless = USING(WITH_SERVER) || Parsed.Has("server") || Parsed.Has("bots") || Parsed.Has("netbots");
 
     FEngine Engine{};
-    GEngine = &Engine;
+    Global::GEngine = &Engine;
     if (!Parsed.Has("project"))
     {
         Engine.EnableCookedRuntimeStartup();
@@ -90,7 +90,7 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     }
     #endif
 
-    CrashHandler::SetAllowModalDialog(!GIsHeadless);
+    CrashHandler::SetAllowModalDialog(!Global::GIsHeadless);
 
     // A second editor on a project already open hands focus to the first and leaves before opening a window.
     #if WITH_EDITOR
@@ -101,11 +101,12 @@ int LuminaMain(int ArgC, char** ArgV)  // NOLINT(misc-use-internal-linkage)
     }
 
     #if WITH_EDITOR
-    GEditorEngine   = nullptr;
+    Global::GEditorEngine   = nullptr;
     #endif
-    GApp            = nullptr;
-    GCommandLine    = nullptr;
-    GConfig         = nullptr;
+    Global::GEngine         = nullptr;
+    Global::GApp            = nullptr;
+    Global::GCommandLine    = nullptr;
+    Global::GConfig         = nullptr;
 
     HangWatchdog::Stop();
     CrashHandler::Shutdown();

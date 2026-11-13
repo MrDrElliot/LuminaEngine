@@ -14,6 +14,18 @@
 
 namespace Lumina::NetGraph
 {
+    // Deterministic viewpoint anchor pick for a connection owning more than one record, independent of extract order.
+    static bool IsBetterViewpointAnchor(const FNetExtract& Out, uint32 CandidateRec, uint32 CurrentRec)
+    {
+        const bool bCandidatePitch = (Out.Flags[CandidateRec] & NETREC_HasPitch) != 0;
+        const bool bCurrentPitch   = (Out.Flags[CurrentRec]   & NETREC_HasPitch) != 0;
+        if (bCandidatePitch != bCurrentPitch)
+        {
+            return bCandidatePitch;
+        }
+        return Out.Guid[CandidateRec] < Out.Guid[CurrentRec];
+    }
+
     void BuildExtract(ECS::FRegistry& Registry, FNetExtract& Out, THashMap<uint32, uint32>& OutOwnerToRecord)
     {
         LUMINA_PROFILE_SCOPE();
@@ -79,6 +91,7 @@ namespace Lumina::NetGraph
                         L.OwnerConn.Add(Net.OwningConnectionId);
                         L.Flags.Add(Flags);
                         L.Pitch.Add(0);
+                        L.Seq.Emplace();
                         continue;
                     }
 
@@ -118,13 +131,15 @@ namespace Lumina::NetGraph
                     }
 
                     // A non-movement entity's pose only ever rides the spawn baseline, so it skips this gate.
+                    FNetChangeSeq Seq;
                     if (bMovement)
                     {
                         FRepTransform& Rep = RepStorage.Get(E);
-                        if (!Rep.bSendCacheValid || QPos != Rep.LastSentPos || QRot != Rep.LastSentRot) { Flags |= NETREC_Changed; }
-                        if ((Flags & NETREC_HasPitch) && Pitch != Rep.LastSentPitch)                     { Flags |= NETREC_Changed; }
+                        const bool bPitchChanged = (Flags & NETREC_HasPitch) && Pitch != Rep.LastSentPitch;
+                        if (!Rep.bSendCacheValid || QPos != Rep.LastSentPos || QRot != Rep.LastSentRot || bPitchChanged) { ++Rep.ChangeSeq.Pose; }
+                        if (!Rep.bSendCacheValid || QScale != Rep.LastSentScale)                                         { ++Rep.ChangeSeq.Scale; }
+                        Seq = Rep.ChangeSeq;
                         Rep.LastSentPitch   = Pitch;
-                        if (!Rep.bSendCacheValid || QScale != Rep.LastSentScale)                        { Flags |= NETREC_ScaleChanged; }
                         Rep.LastSentPos     = QPos;
                         Rep.LastSentRot     = QRot;
                         Rep.LastSentScale   = QScale;
@@ -140,6 +155,7 @@ namespace Lumina::NetGraph
                     L.OwnerConn.Add(Net.OwningConnectionId);
                     L.Flags.Add(Flags);
                     L.Pitch.Add(Pitch);
+                    L.Seq.Add(Seq);
                 }
             }, 256);
         }
@@ -155,6 +171,7 @@ namespace Lumina::NetGraph
         Out.OwnerConn.Reserve(Total);
         Out.Flags.Reserve(Total);
         Out.Pitch.Reserve(Total);
+        Out.Seq.Reserve(Total);
 
         for (uint32 t = 0; t < NumThreads; ++t)
         {
@@ -171,9 +188,14 @@ namespace Lumina::NetGraph
                 Out.OwnerConn.Add(L.OwnerConn[i]);
                 Out.Flags.Add(L.Flags[i]);
                 Out.Pitch.Add(L.Pitch[i]);
+                Out.Seq.Add(L.Seq[i]);
                 if (L.OwnerConn[i] != 0)
                 {
-                    OutOwnerToRecord[L.OwnerConn[i]] = Rec; // a client owns one pawn; last wins
+                    uint32* Existing = OutOwnerToRecord.Find(L.OwnerConn[i]);
+                    if (!Existing || IsBetterViewpointAnchor(Out, Rec, *Existing))
+                    {
+                        OutOwnerToRecord[L.OwnerConn[i]] = Rec;
+                    }
                 }
             }
         }
@@ -234,6 +256,26 @@ namespace Lumina::NetGraph
             Grid.SortedFlags[Dst]    = Extract.Flags[i];
             Grid.SortedGuid[Dst]     = Extract.Guid[i];
         }
+    }
+
+    bool IsTransformDue(const FRelevantEntry& Entry, const FNetChangeSeq& Current, bool bForceBaseline,
+        const SDefaultWorldSettings& Settings, bool& bOutScale)
+    {
+        const bool bScaleChanged = Current.Scale != Entry.SentSeq.Scale;
+        const bool bChanged      = bScaleChanged || Current.Pose != Entry.SentSeq.Pose;
+        const bool bBaseline     = bForceBaseline || Entry.bNeedsBaseline;
+
+        // A pose not sent for a whole keyframe interval goes again, which heals a lost final update.
+        const bool bRefresh = Settings.TransformKeyframeInterval > 0.0f && Entry.TimeSinceSent >= Settings.TransformKeyframeInterval;
+
+        // Near sends every changed tick, Mid and Far throttle to tier rate, and a baseline bypasses.
+        float Period = 0.0f;
+        if (Entry.Tier == ENetLODTier::Mid)      { Period = (Settings.TierMidRate > 0.0f) ? 1.0f / Settings.TierMidRate : 0.0f; }
+        else if (Entry.Tier == ENetLODTier::Far) { Period = (Settings.TierFarRate > 0.0f) ? 1.0f / Settings.TierFarRate : 0.0f; }
+        const bool bCadence = (Period <= 0.0f) || (Entry.TimeSinceSent >= Period);
+
+        bOutScale = bScaleChanged || bBaseline || bRefresh;
+        return bBaseline || bRefresh || (bChanged && bCadence);
     }
 
     ENetLODTier TierForDistanceSq(float DistSq, const SDefaultWorldSettings& Settings)

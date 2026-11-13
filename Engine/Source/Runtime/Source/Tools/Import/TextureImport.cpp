@@ -143,6 +143,18 @@ namespace Lumina::Import::Textures
             Math::Max(1u, (uint32)std::lround(Size.y * Scale)));
     }
 
+    TOptional<EFormat> GetHDRChannelFormat(int Channels)
+    {
+        switch (Channels)
+        {
+            case 1: return EFormat::R32_FLOAT;
+            case 2: return EFormat::RG32_FLOAT;
+            case 3: return EFormat::RGB32_FLOAT;
+            case 4: return EFormat::RGBA32_FLOAT;
+            default: return NullOpt;
+        }
+    }
+
     // A source "path" can be a data URI, and the whole payload in a log line or a GPU label is dead weight.
     static FFixedString ClipPathForLabel(FStringView Path)
     {
@@ -175,27 +187,25 @@ namespace Lumina::Import::Textures
                 return NullOpt;
             }
             
-            switch (channels)
+            TOptional<EFormat> HDRFormat = GetHDRChannelFormat(channels);
+            if (!HDRFormat.IsSet())
             {
-                case 1: Result.Format = EFormat::R32_FLOAT; break;
-                case 2: Result.Format = EFormat::RG32_FLOAT; break;
-                case 3: Result.Format = EFormat::RGB32_FLOAT; break;
-                case 4: Result.Format = EFormat::RGBA32_FLOAT; break;
-                default:
-                    stbi_image_free(data);
-                    LOG_WARN("Unsupported channel count for HDR: {0}", channels);
-                    return Result;
+                stbi_image_free(data);
+                LOG_WARN("Unsupported channel count for HDR: {0}", channels);
+                return NullOpt;
             }
-            
+            Result.Format = HDRFormat.GetValue();
+
             size_t dataSize = static_cast<size_t>(x) * y * channels * sizeof(float);
             Result.Pixels.Reset();
             Result.Pixels.Append(reinterpret_cast<uint8*>(data), reinterpret_cast<uint8*>(data) + dataSize);
             stbi_image_free(data);
-            
+
             Result.Dimensions = {x, y};
+            ResizeImportResult(Result, Size);
             return Result;
         }
-        
+
         if (stbi_is_16_bit(RawFilePath.GetData()))
         {
             uint16* data = stbi_load_16(RawFilePath.GetData(), &x, &y, &channels, 0);
@@ -236,9 +246,10 @@ namespace Lumina::Import::Textures
             
             stbi_image_free(data);
             Result.Dimensions = {x, y};
+            ResizeImportResult(Result, Size);
             return Result;
         }
-        
+
         // Standard 8-bit image
         uint8* data = stbi_load(RawFilePath.GetData(), &x, &y, &channels, 0);
         if (data == nullptr)
@@ -278,10 +289,7 @@ namespace Lumina::Import::Textures
         
         Result.Dimensions = FUIntVector2(x, y);
         
-        if (Size.x > 0 && Size.y > 0)
-        {
-            ResizeImportResult(Result, Size);
-        }
+        ResizeImportResult(Result, Size);
         
         stbi_image_free(data);
         return Result;
@@ -307,17 +315,14 @@ namespace Lumina::Import::Textures
                 return NullOpt;
             }
             
-            switch (channels)
+            TOptional<EFormat> HDRFormat = GetHDRChannelFormat(channels);
+            if (!HDRFormat.IsSet())
             {
-                case 1: Result.Format = EFormat::R32_FLOAT; break;
-                case 2: Result.Format = EFormat::RG32_FLOAT; break;
-                case 3: Result.Format = EFormat::RGB32_FLOAT; break;
-                case 4: Result.Format = EFormat::RGBA32_FLOAT; break;
-                default:
-                    stbi_image_free(Data);
-                    LOG_WARN("Unsupported channel count for HDR: {0}", channels);
-                    return Result;
+                stbi_image_free(Data);
+                LOG_WARN("Unsupported channel count for HDR: {0}", channels);
+                return NullOpt;
             }
+            Result.Format = HDRFormat.GetValue();
             
             size_t dataSize = static_cast<size_t>(x) * y * channels * sizeof(float);
             Result.Pixels.Reset();
@@ -325,9 +330,10 @@ namespace Lumina::Import::Textures
             stbi_image_free(Data);
             
             Result.Dimensions = {x, y};
+            ResizeImportResult(Result, Size);
             return Result;
         }
-        
+
         if (stbi_is_16_bit_from_memory(ImageData.GetData(), DataSize))
         {
             uint16* Data = stbi_load_16_from_memory(ImageData.GetData(), DataSize, &x, &y, &channels, 0);
@@ -368,9 +374,10 @@ namespace Lumina::Import::Textures
             
             stbi_image_free(Data);
             Result.Dimensions = {x, y};
+            ResizeImportResult(Result, Size);
             return Result;
         }
-        
+
         // Standard 8-bit image
         uint8* data = stbi_load_from_memory(ImageData.GetData(), DataSize, &x, &y, &channels, 0);
         if (data == nullptr)
@@ -410,10 +417,7 @@ namespace Lumina::Import::Textures
         
         Result.Dimensions = FUIntVector2(x, y);
         
-        if (Size.x > 0 && Size.y > 0)
-        {
-            ResizeImportResult(Result, Size);
-        }
+        ResizeImportResult(Result, Size);
         
         stbi_image_free(data);
         return Result;

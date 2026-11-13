@@ -7,6 +7,7 @@
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Core/Threading/Thread.h"
+#include "Core/Module/ModuleManager.h"
 // The lean-and-mean macro is already defined workspace-wide, so guarding on it would skip the include.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -32,8 +33,6 @@ namespace Lumina::Platform
 {
     namespace
     {
-        TVector<FString> GDLLSearchPaths;
-
         struct FScopedComApartment
         {
             const HRESULT Result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
@@ -74,7 +73,7 @@ namespace Lumina::Platform
             }
         }
 
-        // GDLLSearchPaths only locates the file asked for, not the imports the loader resolves first.
+        // The module manager's search paths only locate the file asked for, not the imports the loader resolves first.
         void RegisterLoaderDirectory(const FString& Directory)
         {
             FWString Wide = StringUtils::ToWideString(Directory);
@@ -116,11 +115,7 @@ namespace Lumina::Platform
 
     void* GetDLLHandle(const TCHAR* Filename)
     {
-        FWString WideString = Filename;
-        TVector<FString> SearchPaths = GDLLSearchPaths;
-
-        
-        return LoadLibraryWithSearchPaths(StringUtils::FromWideString(WideString), SearchPaths);
+        return LoadLibraryWithSearchPaths(StringUtils::FromWideString(Filename), FModuleManager::Get().GetDLLSearchPaths());
     }
 
     bool FreeDLLHandle(void* DLLHandle)
@@ -130,16 +125,10 @@ namespace Lumina::Platform
 
     void AddDLLDirectory(const FString& Directory)
     {
-        for (const FString& Existing : GDLLSearchPaths)
+        if (FModuleManager::Get().AddDLLSearchPath(Directory))
         {
-            if (Existing == Directory)
-            {
-                return;
-            }
+            RegisterLoaderDirectory(Directory);
         }
-
-        GDLLSearchPaths.Add(Directory);
-        RegisterLoaderDirectory(Directory);
     }
 
     void PushDLLDirectory(const TCHAR* Directory)
@@ -151,7 +140,7 @@ namespace Lumina::Platform
         // SetDllDirectory is ignored once search flags are passed, so both have to agree.
         RegisterLoaderDirectory(Narrow);
 
-        GDLLSearchPaths.Add(Narrow);
+        FModuleManager::Get().AddDLLSearchPath(Narrow);
 
         LOG_INFO("Pushing DLL Search Path: {0}", Narrow);
     }

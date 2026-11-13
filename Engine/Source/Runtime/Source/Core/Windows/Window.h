@@ -27,6 +27,12 @@ namespace Lumina
 
 		RUNTIME_API void ProcessMessages();
 
+		// Reads the OS events that arrived since ProcessMessages and holds every one for the next call, so only their mouse motion is seen early.
+		RUNTIME_API void PumpLateMessages();
+
+		// The mouse motion PumpLateMessages held, which the next ProcessMessages still delivers.
+		RUNTIME_API FVector2 GetLateMouseDelta() const;
+
 		// Native handle for code that genuinely needs it (Vulkan surface, ImGui GLFW backend).
 		RUNTIME_API GLFWwindow* GetWindow() const;
 
@@ -90,9 +96,13 @@ namespace Lumina
 		TUniquePtr<FWindowImpl> Impl;
 	};
 
-	namespace Windowing
+	namespace Global
 	{
 		RUNTIME_API extern FWindow* PrimaryWindow;
+	}
+
+	namespace Windowing
+	{
 		// Asserts when there is none. A host that may not have published one uses TryGet instead.
 		RUNTIME_API FWindow* GetPrimaryWindowHandle();
 

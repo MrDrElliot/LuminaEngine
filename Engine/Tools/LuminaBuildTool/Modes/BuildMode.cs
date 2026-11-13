@@ -4,6 +4,7 @@ using LuminaBuildTool.Core;
 using LuminaBuildTool.Execution;
 using LuminaBuildTool.Graph;
 using LuminaBuildTool.Platform;
+using LuminaBuildTool.Platform.Linux;
 using LuminaBuildTool.ProjectFiles;
 using LuminaBuildTool.Rules;
 using LuminaBuildTool.Toolchain;
@@ -76,6 +77,11 @@ public static class BuildMode
         BuildConfiguration ConfigurationValue,
         CancellationToken Cancellation)
     {
+        if (WslBuild.IsNeeded(PlatformValue))
+        {
+            return WslBuild.Run(TargetNames, Arguments, Directories, TypeValue, ConfigurationValue);
+        }
+
         Stopwatch ToolchainTimer = Stopwatch.StartNew();
         IBuildPlatform PlatformSupport = BuildPlatformRegistry.Get(PlatformValue);
         BuildOptions Options = BuildOptions.Load(Directories, Arguments);
@@ -415,7 +421,17 @@ public static class BuildMode
 
             if (!Result.bSucceeded)
             {
-                Log.Error("{0} failed: {1} of {2} actions failed.", Target.Name, Result.ActionsFailed, Outdated.Count);
+                int ActionsNotCompleted = Result.ActionsFailed + Result.ActionsBlocked;
+
+                Log.Error(
+                    "{0} failed: {1} of {2} actions failed{3}.",
+                    Target.Name,
+                    Result.ActionsFailed,
+                    Outdated.Count,
+                    Result.ActionsBlocked > 0
+                        ? $" ({ActionsNotCompleted} of {Outdated.Count} actions did not complete, {Result.ActionsBlocked} blocked by a failed dependency)"
+                        : string.Empty);
+
                 return 1;
             }
 

@@ -44,6 +44,27 @@ namespace Lumina
         SoftEntries.Add(Move(Entry));
     }
 
+    CObject* FObjectReferenceReplacer::MatchHard(CObject* Current, TVector<TStrongObjectPtr<CObject>>& Released)
+    {
+        if (Current == nullptr)
+        {
+            return nullptr;
+        }
+        for (const FHardEntry& Entry : HardEntries)
+        {
+            if (Entry.ToReplace == Current)
+            {
+                ++NumReplaced;
+                if (Object::Internal::GetStrongRefCountByIndex(Current->GetInternalIndex()) > 0)
+                {
+                    Released.Emplace(Current);
+                }
+                return Entry.Replacement;
+            }
+        }
+        return Current;
+    }
+
     uint32 FObjectReferenceReplacer::ApplyTo(CObject* Object)
     {
         if (Object == nullptr || IsEmpty())
@@ -55,26 +76,7 @@ namespace Lumina
 
         // A swapped-out object is held until the walk ends, since its release can free the very object being walked.
         TVector<TStrongObjectPtr<CObject>> Released;
-        auto Hard = [this, &Released](CObject* Current) -> CObject*
-        {
-            if (Current == nullptr)
-            {
-                return nullptr;
-            }
-            for (const FHardEntry& Entry : HardEntries)
-            {
-                if (Entry.ToReplace == Current)
-                {
-                    ++NumReplaced;
-                    if (Object::Internal::GetStrongRefCountByIndex(Current->GetInternalIndex()) > 0)
-                    {
-                        Released.Emplace(Current);
-                    }
-                    return Entry.Replacement;
-                }
-            }
-            return Current;
-        };
+        auto Hard = [this, &Released](CObject* Current) -> CObject* { return MatchHard(Current, Released); };
 
         auto Soft = [this](FSoftObjectPath& Path)
         {
@@ -154,26 +156,7 @@ namespace Lumina
 
         // The holders no walk of the object graph can reach, which is most of what an ECS world is.
         TVector<TStrongObjectPtr<CObject>> Released;
-        auto Hard = [this, &Released](CObject* Current) -> CObject*
-        {
-            if (Current == nullptr)
-            {
-                return nullptr;
-            }
-            for (const FHardEntry& Entry : HardEntries)
-            {
-                if (Entry.ToReplace == Current)
-                {
-                    ++NumReplaced;
-                    if (Object::Internal::GetStrongRefCountByIndex(Current->GetInternalIndex()) > 0)
-                    {
-                        Released.Emplace(Current);
-                    }
-                    return Entry.Replacement;
-                }
-            }
-            return Current;
-        };
+        auto Hard = [this, &Released](CObject* Current) -> CObject* { return MatchHard(Current, Released); };
 
         FObjectReferenceProviders::ForEach([&Hard](IObjectReferenceProvider& Provider)
         {

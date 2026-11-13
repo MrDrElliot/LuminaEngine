@@ -94,6 +94,7 @@ namespace Lumina
         {
             if (Node == SelectedNode)
             {
+                SelectedNode = nullptr;
                 GetPropertyTable()->SetObject(nullptr, nullptr);
             }
         });

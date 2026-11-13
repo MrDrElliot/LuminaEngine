@@ -452,6 +452,103 @@ TEST(AudioMixer, RespectsTheVoiceBudget)
     EXPECT_EQ(Mixer.GetActiveVoiceCount(), 2u);
 }
 
+TEST(AudioMixer, VoiceBudgetRotatesSoNoVoiceStarves)
+{
+    FAudioMixer Mixer;
+    ASSERT_TRUE(Mixer.Initialize(kMixRate, 2));
+    Mixer.SetMaxVoiceCount(2);
+
+    constexpr uint32 VoiceCount = 5;
+    TVector<FMixerTestSource> Sources;
+    for (uint32 i = 0; i < VoiceCount; ++i)
+    {
+        Sources.Emplace(kMixRate, 1, 1u << 20);
+    }
+    for (uint32 i = 0; i < VoiceCount; ++i)
+    {
+        ASSERT_TRUE(Mixer.StartVoice(MakeDesc(i, &Sources[i])));
+    }
+
+    TVector<float> Out(512, 0.0f);
+    for (uint32 Block = 0; Block < VoiceCount; ++Block)
+    {
+        Mixer.RenderAudio(Out.GetData(), 64);
+        EXPECT_EQ(Mixer.GetActiveVoiceCount(), 2u);
+    }
+
+    for (uint32 i = 0; i < VoiceCount; ++i)
+    {
+        EXPECT_GT(Sources[i].GetCursor(), 0u) << "voice " << i << " never rendered";
+    }
+}
+
+TEST(AudioMixer, PausedVoicesDoNotStarveThePlayingBudget)
+{
+    FAudioMixer Mixer;
+    ASSERT_TRUE(Mixer.Initialize(kMixRate, 2));
+    Mixer.SetVolumeSmoothing(0.0f);
+    Mixer.SetMaxVoiceCount(2);
+
+    constexpr uint32 BlockerCount = 3;
+    TVector<FMixerConstantSource> Blockers;
+    for (uint32 i = 0; i < BlockerCount; ++i)
+    {
+        Blockers.Emplace(1, 0.1f);
+    }
+    for (uint32 i = 0; i < BlockerCount; ++i)
+    {
+        ASSERT_TRUE(Mixer.StartVoice(MakeDesc(i + 1, &Blockers[i])));
+    }
+
+    FMixerConstantSource Playing(1, 0.5f);
+    ASSERT_TRUE(Mixer.StartVoice(MakeDesc(0, &Playing)));
+
+    TVector<float> Out(64, 0.0f);
+    Mixer.RenderAudio(Out.GetData(), 32);
+
+    for (uint32 i = 1; i <= BlockerCount; ++i)
+    {
+        Mixer.PostCommand(FAudioCommand::MakeBool(EAudioCommandType::SetPaused, SAudioHandle{ i + 1, i }, true));
+    }
+
+    for (uint32 Block = 0; Block < 4; ++Block)
+    {
+        Mixer.RenderAudio(Out.GetData(), 32);
+        EXPECT_NEAR(Out[0], 0.5f, 1.0e-5f) << "block " << Block;
+    }
+}
+
+TEST(AudioMixer, StartDelayedVoicesDoNotStarveThePlayingBudget)
+{
+    FAudioMixer Mixer;
+    ASSERT_TRUE(Mixer.Initialize(kMixRate, 2));
+    Mixer.SetVolumeSmoothing(0.0f);
+    Mixer.SetMaxVoiceCount(2);
+
+    constexpr uint32 BlockerCount = 3;
+    TVector<FMixerConstantSource> Blockers;
+    for (uint32 i = 0; i < BlockerCount; ++i)
+    {
+        Blockers.Emplace(1, 0.1f);
+    }
+    for (uint32 i = 0; i < BlockerCount; ++i)
+    {
+        FMixerVoiceDesc Desc = MakeDesc(i, &Blockers[i]);
+        Desc.Params.StartDelaySeconds = 10.0f;
+        ASSERT_TRUE(Mixer.StartVoice(Desc));
+    }
+
+    FMixerConstantSource Playing(1, 0.5f);
+    ASSERT_TRUE(Mixer.StartVoice(MakeDesc(BlockerCount, &Playing)));
+
+    TVector<float> Out(64, 0.0f);
+    for (uint32 Block = 0; Block < 4; ++Block)
+    {
+        Mixer.RenderAudio(Out.GetData(), 32);
+        EXPECT_NEAR(Out[0], 0.5f, 1.0e-5f) << "block " << Block;
+    }
+}
+
 TEST(AudioMixer, RenderCountAdvancesPerCallback)
 {
     FAudioMixer Mixer;

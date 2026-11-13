@@ -4,7 +4,6 @@
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/FileHelper.h"
 #include "Containers/StringFormat.h"
-#include "Core/Json/Json.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 
 
@@ -37,19 +36,15 @@ namespace Lumina
     void FConsoleRegistry::Register(FConsoleVariable&& Var) noexcept
     {
         FStringView VarName = Var.Name.GetData();
-        if (!ConsoleVariables.TryAdd(VarName, Move(Var)) || LoadedConfigText.IsEmpty())
+        if (!ConsoleVariables.TryAdd(VarName, Move(Var)) || !LoadedConfig.IsObject())
         {
             return;
         }
 
         // OnChange is skipped since nothing has read the variable yet and its module may still be running static initializers.
-        FJsonValue Saved;
-        if (FJsonValue::Parse(LoadedConfigText.View(), Saved) && Saved.IsObject())
+        if (const FJsonValue* Member = LoadedConfig.Find(VarName))
         {
-            if (const FJsonValue* Member = Saved.Find(VarName))
-            {
-                ApplySavedValue(*Find(VarName), *Member);
-            }
+            ApplySavedValue(*Find(VarName), *Member);
         }
     }
 
@@ -324,7 +319,7 @@ namespace Lumina
         }
 
         // Plugin modules register their variables after this, so their saved values wait here for Register.
-        LoadedConfigText = Move(Text);
+        LoadedConfig = Move(Saved);
         return true;
     }
 }

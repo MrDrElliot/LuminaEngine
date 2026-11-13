@@ -687,14 +687,14 @@ public sealed class MsvcToolchain : IToolchain
             $"/OUT:{PathUtils.Quote(Module.OutputFile)}",
         };
 
+        if (Module.ImportLibraryFile.Length > 0)
+        {
+            Arguments.Add($"/IMPLIB:{PathUtils.Quote(Module.ImportLibraryFile)}");
+        }
+
         if (bIsSharedLibrary)
         {
             Arguments.Add("/DLL");
-
-            if (Module.ImportLibraryFile.Length > 0)
-            {
-                Arguments.Add($"/IMPLIB:{PathUtils.Quote(Module.ImportLibraryFile)}");
-            }
         }
         else
         {
@@ -797,7 +797,7 @@ public sealed class MsvcToolchain : IToolchain
 
         Action.ProducedItems.Add(FileItem.Get(Module.OutputFile));
 
-        if (bIsSharedLibrary && Module.ImportLibraryFile.Length > 0)
+        if (Module.ImportLibraryFile.Length > 0)
         {
             Action.OptionalProducedItems.Add(FileItem.Get(Module.ImportLibraryFile));
         }

@@ -38,9 +38,6 @@ namespace Lumina
 
         void Configure() override;
 
-        // Only the attachments, since the parent lookups match almost every mesh.
-        bool HasWork(const SSystemContext& Context) override;
-
         void OnUpdate(const SSystemContext& Context) override;
 
     private:

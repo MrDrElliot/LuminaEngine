@@ -49,6 +49,12 @@ namespace Lumina::Physics
             return false;
         }
 
+        // Box3D hands sensors to cast callbacks too, and every blocking cast callback must skip them here.
+        FORCEINLINE bool IsBlockingHit(const FQueryContext& Query, b3ShapeId ShapeId)
+        {
+            return !b3Shape_IsSensor(ShapeId) && !IsIgnored(Query.IgnoreEntities, EntityOfBody(b3Shape_GetBody(ShapeId)));
+        }
+
         b3QueryFilter MakeLayerFilter(ECollisionProfiles LayerMask)
         {
             b3QueryFilter Filter = b3DefaultQueryFilter();
@@ -83,9 +89,7 @@ namespace Lumina::Physics
                                   uint64_t, int, int, void* Context)
         {
             FQueryContext& Query = *static_cast<FQueryContext*>(Context);
-
-            const b3BodyId BodyId = b3Shape_GetBody(ShapeId);
-            if (IsIgnored(Query.IgnoreEntities, EntityOfBody(BodyId)))
+            if (!IsBlockingHit(Query, ShapeId))
             {
                 return -1.0f;
             }
@@ -114,9 +118,7 @@ namespace Lumina::Physics
                                   uint64_t, int, int, void* Context)
         {
             FQueryContext& Query = *static_cast<FQueryContext*>(Context);
-
-            const b3BodyId BodyId = b3Shape_GetBody(ShapeId);
-            if (IsIgnored(Query.IgnoreEntities, EntityOfBody(BodyId)))
+            if (!IsBlockingHit(Query, ShapeId))
             {
                 return -1.0f;
             }
@@ -130,7 +132,7 @@ namespace Lumina::Physics
         float AnyHitCastCallback(b3ShapeId ShapeId, b3Pos, b3Vec3, float, uint64_t, int, int, void* Context)
         {
             FQueryContext& Query = *static_cast<FQueryContext*>(Context);
-            if (IsIgnored(Query.IgnoreEntities, EntityOfBody(b3Shape_GetBody(ShapeId))))
+            if (!IsBlockingHit(Query, ShapeId))
             {
                 return -1.0f;
             }
@@ -170,20 +172,7 @@ namespace Lumina::Physics
             Algo::Sort(Hits, [](const SRayResult& A, const SRayResult& B) { return A.Fraction < B.Fraction; });
         }
 
-        // Inline for the common single-shape body, spilling only for a large compound.
-        using FBodyShapes = TInlineVector<b3ShapeId, 8>;
-
-        bool GatherShapes(b3BodyId Body, FBodyShapes& Out)
-        {
-            if (!b3Body_IsValid(Body))
-            {
-                return false;
-            }
-            Out.SetNum(b3Body_GetShapeCount(Body));
-            Out.SetNum(b3Body_GetShapes(Body, Out.GetData(), Out.Num()));
-            return !Out.IsEmpty();
-        }
-
+        // Overlaps keep sensors on purpose, since finding the triggers around a point is a valid use.
         bool OverlapCallback(b3ShapeId ShapeId, void* Context)
         {
             FQueryContext& Query = *static_cast<FQueryContext*>(Context);
@@ -198,15 +187,11 @@ namespace Lumina::Physics
 
             const ECS::FEntity Entity = UnpackEntity(UserData);
 
-            // Several shapes can share one body, so the last few entities are checked before appending.
+            // Box3D visits shapes in broad-phase tree order, so a compound body's shapes can arrive interleaved with other bodies'.
             const int32 Written = Query.EntityCount;
-            const int32 ScanFrom = Math::Max(0, Written - 8);
-            for (int32 i = ScanFrom; i < Written; ++i)
+            if (Algo::Contains(Query.OutEntities.Left(Written), Entity))
             {
-                if (Query.OutEntities[i] == Entity)
-                {
-                    return true;
-                }
+                return true;
             }
 
             if (Written >= Query.OutEntities.Num())
@@ -279,8 +264,12 @@ namespace Lumina::Physics
                 return {};
             }
 
-            FillRayResult(Result, *this, Hit.shapeId, Settings.Start, Settings.End, Length, Hit.point, Hit.normal, Hit.fraction);
-            return Result;
+            // A sensor in front can hide a solid behind it, so that case falls through to the filtering traversal.
+            if (!b3Shape_IsSensor(Hit.shapeId))
+            {
+                FillRayResult(Result, *this, Hit.shapeId, Settings.Start, Settings.End, Length, Hit.point, Hit.normal, Hit.fraction);
+                return Result;
+            }
         }
 
         FQueryContext Query;

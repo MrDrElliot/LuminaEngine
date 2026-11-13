@@ -33,11 +33,32 @@ FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instanc
     const float3 Center   = ProxyWidenedCenter(Transform.ToMatrix(), Proxy, GroundWiden);
     const float  HalfSize = Proxy.SplatHalfSize * TransformMaxScale(Transform);
 
-    // Two triangles, corners 0 1 2 and 0 2 3 of a quad facing the camera.
-    static const float2 Corners[6] = { float2(-1, -1), float2(1, -1), float2(1, 1), float2(-1, -1), float2(1, 1), float2(-1, 1) };
-    const float2 C = Corners[min(VertexIndex, 5u)];
-    const float3 WorldPos = Center + (GetCameraRight() * C.x + GetCameraUp() * C.y) * HalfSize * GroundWiden;
+    // A strip's two triangles, so the quad's shared corners are emitted once.
+    static const float2 Corners[4] = { float2(-1, -1), float2(1, -1), float2(-1, 1), float2(1, 1) };
+    const float2 C = Corners[min(VertexIndex, 3u)];
 
-    Out.Position = mul(GetCameraProjection(), mul(GetCameraView(), float4(WorldPos, 1.0)));
+    // Clip is linear in position, so the corner offsets project once as directions and add to the center's image.
+    const float4x4 Projection  = GetCameraProjection();
+    const float4   ClipCenter  = WorldToClip(Center);
+    const float4   ClipRight   = mul(Projection, float4(NormalWorldToView(GetCameraRight() * HalfSize * GroundWiden), 0.0));
+    const float4   ClipUp      = mul(Projection, float4(NormalWorldToView(GetCameraUp() * HalfSize * GroundWiden), 0.0));
+
+    const float2 ScreenSize   = float2(GetScreenSize());
+    const float2 ClipToPixels = ScreenSize * 0.5 / ClipCenter.w;
+    const float2 RightPixels  = ClipRight.xy * ClipToPixels;
+    const float2 UpPixels     = ClipUp.xy * ClipToPixels;
+
+    // A splat narrower than a pixel would hit or miss pixel centers as it moves, so it covers one whole pixel kept by its share of that pixel.
+    if (max(length(RightPixels), length(UpPixels)) < 0.5)
+    {
+        const float Coverage = 4.0 * abs(RightPixels.x * UpPixels.y - RightPixels.y * UpPixels.x);
+        if (float(PCGHash(Slot) >> 8u) / 16777216.0 < Coverage)
+        {
+            Out.Position = ClipCenter + float4(C * ClipCenter.w / ScreenSize, 0.0, 0.0);
+        }
+        return Out;
+    }
+
+    Out.Position = ClipCenter + ClipRight * C.x + ClipUp * C.y;
     return Out;
 }

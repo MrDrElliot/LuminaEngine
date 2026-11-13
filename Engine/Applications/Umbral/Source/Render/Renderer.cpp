@@ -95,7 +95,7 @@ namespace Umbral
             Options.DebugName = DebugName;
             Options.bGenerateReflectionData = false;
 
-            GShaderCompiler->CompilerShaderRaw(Source, Options,
+            Global::GShaderCompiler->CompilerShaderRaw(Source, Options,
                 [&Out](FShaderHeader Header) { Out = Move(Header.Binaries); });
         }
 
@@ -361,7 +361,7 @@ namespace Umbral
         SubmitCompile(Prelude + Shaders::kBloomCommon + Shaders::kUpsamplePS, "Umbral.UpsamplePS", UpsamplePS);
         SubmitCompile(Prelude + Shaders::kCompositeCommon + Shaders::kCompositePS, "Umbral.CompositePS", CompositePS);
 
-        GShaderCompiler->Flush();
+        Global::GShaderCompiler->Flush();
 
         GroundPipeline       = MakePipeline(FullscreenVS, "FullscreenVS", GroundPS, "GroundPS", kSceneFormat, {});
         LightPipeline        = MakePipeline(LightVS, "LightVS", LightPS, "LightPS", kSceneFormat, AdditiveBlend());

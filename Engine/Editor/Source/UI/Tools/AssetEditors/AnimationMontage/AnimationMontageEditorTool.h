@@ -18,13 +18,14 @@ namespace Lumina
     class CAnimationMontage;
     struct SSimpleAnimationComponent;
 
-    class FAnimationMontageEditorTool : public FAssetEditorTool
+    class EDITOR_API FAnimationMontageEditorTool : public FAssetEditorTool
     {
     public:
 
         LUMINA_EDITOR_TOOL(FAnimationMontageEditorTool)
 
         FAnimationMontageEditorTool(IEditorToolContext* Context, CObject* InAsset);
+        ~FAnimationMontageEditorTool() override;
 
         bool IsSingleWindowTool() const override { return false; }
         bool ShouldGenerateThumbnailOnSave() const override { return true; }
@@ -40,6 +41,8 @@ namespace Lumina
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 
     private:
+
+        friend struct FAnimationMontageEditorToolTestAccess;
 
         // What a click or drag on the timeline refers to.
         enum class ESelectionKind : uint8 { None, Segment, Section, Notify, NotifyState };

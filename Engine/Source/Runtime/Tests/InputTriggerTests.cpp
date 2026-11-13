@@ -211,6 +211,41 @@ TEST_F(InputTriggerTests, ChordActionNeedsItsPartnerDown)
     EXPECT_TRUE(ActionState("Special", Context).IsReleased());
 }
 
+TEST_F(InputTriggerTests, ChordChainRequiresEveryLinkDown)
+{
+    SInputAction Ultimate = MakeDigital("Ultimate", Lumina::EKey::E);
+    Ultimate.ChordAction = FName("Special");
+    SInputAction Special = MakeDigital("Special", Lumina::EKey::LeftShift);
+    Special.ChordAction = FName("Modifier");
+    Author({ MakeDigital("Modifier", Lumina::EKey::LeftControl), Special, Ultimate });
+    FInputContext Context;
+
+    PressKey(Context, Lumina::EKey::E);
+    PressKey(Context, Lumina::EKey::LeftShift);
+    Tick(Context);
+    EXPECT_FALSE(ActionState("Ultimate", Context).IsDown()) << "Special's own chord on Modifier is still up";
+
+    PressKey(Context, Lumina::EKey::LeftControl);
+    Tick(Context);
+    EXPECT_TRUE(ActionState("Ultimate", Context).IsPressed());
+}
+
+TEST_F(InputTriggerTests, ChordChainThroughAMissingActionNeverFires)
+{
+    SInputAction Ultimate = MakeDigital("Ultimate", Lumina::EKey::E);
+    Ultimate.ChordAction = FName("Special");
+    SInputAction Special = MakeDigital("Special", Lumina::EKey::LeftShift);
+    Special.ChordAction = FName("NotAuthored");
+    Author({ Special, Ultimate });
+    FInputContext Context;
+
+    PressKey(Context, Lumina::EKey::E);
+    PressKey(Context, Lumina::EKey::LeftShift);
+    Tick(Context);
+    EXPECT_FALSE(ActionState("Special", Context).IsDown());
+    EXPECT_FALSE(ActionState("Ultimate", Context).IsDown()) << "a chord on an action that never fires never fires either";
+}
+
 TEST_F(InputTriggerTests, ChordOnAMissingActionNeverFires)
 {
     SInputAction Special = MakeDigital("Special", Lumina::EKey::E);

@@ -30,6 +30,10 @@ namespace Lumina
     /** Maps normalized blend time [0..1] through Function to an eased [0..1] alpha. */
     RUNTIME_API float EvaluateCameraBlend(ECameraBlendFunction Function, float Alpha);
 
+    // Yaw about world up, then pitch about the camera's right, stopping a degree short of vertical.
+    RUNTIME_API FQuat AddMouseLook(const FQuat& Rotation, FVector2 YawPitchDegrees);
+    RUNTIME_API FViewVolume AddMouseLook(const FViewVolume& View, FVector2 YawPitchDegrees);
+
     // Result of CCameraSubsystem::WorldToScreen. Blittable so C# receives it by value.
     REFLECT()
     struct RUNTIME_API SScreenProjection
@@ -179,6 +183,10 @@ namespace Lumina
         /** When true, this camera activates automatically when the entity is spawned. */
         PROPERTY(Editable, Category = "Camera")
         bool bAutoActivate = false;
+
+        // Turns the rendered view by mouse motion that arrives after the update, so set it to the look code's degrees per count. Zero is off.
+        PROPERTY(Editable, Category = "Camera|Input", ClampMin = 0.0f)
+        float MouseLookDegreesPerCount = 0.0f;
 
         // Per-camera color grading + tone mapping; the render scene reads it from the active camera and
         // applies it in the composite pass. Defaults to an identity grade with AGX.

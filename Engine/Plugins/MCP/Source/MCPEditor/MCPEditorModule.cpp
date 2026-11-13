@@ -71,13 +71,13 @@ namespace Lumina
         ShutdownStartedHandle = FCoreDelegates::OnEngineShutdownStarted.AddLambda([this]() { Server.Stop(); });
 
         // The editor tears its tools down before plugins unload, so the drawer never outlives this DLL.
-        if (FEditorUI* EditorUI = GEditorEngine != nullptr ? static_cast<FEditorUI*>(GEditorEngine->GetDevelopmentToolsUI()) : nullptr)
+        if (FEditorUI* EditorUI = Global::GEditorEngine != nullptr ? static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI()) : nullptr)
         {
             EditorUI->CreateDrawerTool<FMCPHubEditorTool>(LE_ICON_ROBOT, "MCP", 0, EditorUI, &Server);
         }
 
         // A single dash clusters into character flags, so the switch has to be the double dash form.
-        const bool bSwitched = GCommandLine != nullptr && GCommandLine->Has("mcp");
+        const bool bSwitched = Global::GCommandLine != nullptr && Global::GCommandLine->Has("mcp");
 
         if (!bSwitched && !GMCPAutoStart.GetValue())
         {
@@ -86,9 +86,9 @@ namespace Lumina
         }
 
         int32 Port = GMCPPort.GetValue();
-        if (GCommandLine != nullptr)
+        if (Global::GCommandLine != nullptr)
         {
-            if (const TOptional<int> Override = GCommandLine->GetInt("mcpport"))
+            if (const TOptional<int> Override = Global::GCommandLine->GetInt("mcpport"))
             {
                 Port = *Override;
             }

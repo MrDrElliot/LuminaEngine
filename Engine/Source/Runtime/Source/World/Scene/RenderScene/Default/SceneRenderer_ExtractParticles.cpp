@@ -57,6 +57,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ScheduleParticleExtract(ECS::FRegistry& Registry, FFrameData& Frame)
     {
+        LUMINA_PROFILE_SCOPE();
         auto Transforms      = Registry.GetStorage<STransformComponent>();
         auto AttractorView   = Registry.View<ECS::Read<SParticleAttractorComponent>, ECS::Without<SDisabledTag>>();
         auto ColliderView    = Registry.View<ECS::Read<SParticleColliderComponent>, ECS::Without<SDisabledTag>>();

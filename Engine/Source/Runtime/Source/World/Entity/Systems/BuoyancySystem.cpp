@@ -1,6 +1,8 @@
 #include "RuntimePCH.h"
 #include "Physics/PhysicsScene.h"
 #include "BuoyancySystem.h"
+#include "MovementComponentSystem.h"
+#include "ProjectileSystem.h"
 #include "World/ECS/Registry.h"
 #include "SystemContext.h"
 #include "SystemResources.h"
@@ -28,6 +30,7 @@ namespace Lumina
     void CBuoyancySystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
+        RunsAfter<CMovementComponentSystem, CProjectileSystem>();
     }
 
     void CBuoyancySystem::OnUpdate(const SSystemContext& Context)
@@ -44,10 +47,15 @@ namespace Lumina
 
         FWaterPlane Planes[16];
         int NumPlanes = 0;
-        Waters.ForEach([&](const SWaterComponent& W, const STransformComponent& T)
+        Waters.ForEach([&](ECS::FEntity Entity, const SWaterComponent& W, const STransformComponent& T)
         {
-            if (!W.bBuoyancy || NumPlanes >= 16)
+            if (!W.bBuoyancy)
             {
+                return;
+            }
+            if (NumPlanes >= 16)
+            {
+                LOG_WARN_ONCE("CBuoyancySystem: more than 16 buoyant water volumes in one update, entity {} and later are dropped and will not float anything.", Entity.Value);
                 return;
             }
             FVector3 C = T.GetWorldLocation();

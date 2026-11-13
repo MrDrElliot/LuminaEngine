@@ -2,6 +2,7 @@
 
 #include "Assets/AssetTypes/DataTable/DataTable.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
+#include "UI/Properties/Customizations/AssetPickerFilter.h"
 #include "imgui.h"
 
 namespace Lumina
@@ -23,6 +24,7 @@ namespace Lumina
         SDataTableRowHandle DisplayValue;
 
         ImGuiTextFilter TableFilter;
+        AssetPickerFilter::FAssetsOfClassCache AssetsOfClass;
 
         // Picks are one-frame edits: Started on the change frame, Finished the next, so they pair
         // into one undo transaction.

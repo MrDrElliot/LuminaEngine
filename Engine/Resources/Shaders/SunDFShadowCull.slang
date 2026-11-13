@@ -115,11 +115,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
     const int4 Range = SunDFCellRange(Sphere, Grid.SunRight, Grid.SunUp, Grid.Origin, Grid.CellSize, Grid.Dimension);
     if (uint(Range.z - Range.x + 1) * uint(Range.w - Range.y + 1) > kSunDFLargeCasterCells)
     {
+        Flags |= kSunDFLargeCaster;
         const uint LargeIndex = WaveInterlockedAdd(Grid.Counters.At(kSunDFLargeCounter), 1u);
         if (LargeIndex < Pass().LargeObjects.Count)
         {
             Pass().LargeObjects.Set(LargeIndex, ObjectIndex);
-            Flags |= kSunDFLargeCaster;
         }
     }
 

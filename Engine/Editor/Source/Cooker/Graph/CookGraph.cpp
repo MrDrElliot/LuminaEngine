@@ -24,7 +24,7 @@ namespace Lumina
         const FFixedString Resolved = VFS::ResolveToVirtualPath(Root.Asset);
         const FStringView View(*Resolved, Resolved.Len());
 
-        FAssetData* Data = Registry->GetAssetByPath(View);
+        FAssetDataPtr Data = Registry->GetAssetByPath(View);
         if (!Data)
         {
             FCookGraphIssue Issue;
@@ -48,7 +48,7 @@ namespace Lumina
         }
         Prefix.AppendChar('/');
 
-        TVector<FAssetData*> Contained = Registry->FindByPredicate([&Prefix](const FAssetData& Data)
+        TVector<FAssetDataPtr> Contained = Registry->FindByPredicate([&Prefix](const FAssetData& Data)
         {
             return FStringView(*Data.Path, Data.Path.Len()).StartsWith(FStringView(*Prefix, Prefix.Len()));
         });
@@ -63,8 +63,8 @@ namespace Lumina
         }
 
         // Registry order is hash order, so sort to keep the cook reproducible.
-        Algo::Sort(Contained, [](const FAssetData* A, const FAssetData* B) { return A->AssetGUID < B->AssetGUID; });
-        for (const FAssetData* Data : Contained)
+        Algo::Sort(Contained, [](const FAssetDataPtr& A, const FAssetDataPtr& B) { return A->AssetGUID < B->AssetGUID; });
+        for (const FAssetDataPtr& Data : Contained)
         {
             VisitTarget(Data->AssetGUID, Chunk, EDependencyType::Hard);
         }
@@ -92,13 +92,13 @@ namespace Lumina
             // Already in the graph, and an owned edge wins because it pulls the target into the referrer's chunk.
             if (EdgeType == EDependencyType::Owned)
             {
-                It->Chunk = InheritedChunk;
+                Rechunk(TargetGUID, InheritedChunk);
             }
             // Soft/Script don't change chunk; first Hard root wins.
             return false;
         }
 
-        FAssetData* Data = Registry->GetAssetByGUID(TargetGUID);
+        FAssetDataPtr Data = Registry->GetAssetByGUID(TargetGUID);
         if (!Data)
         {
             // A reachable GUID with no asset record is not cookable, and real dangling refs still warn at load.
@@ -142,6 +142,41 @@ namespace Lumina
         return true;
     }
 
+    void FCookGraph::Rechunk(const FGuid& TargetGUID, const FName& Chunk)
+    {
+        const FName OldChunk = Nodes.Find(TargetGUID)->Chunk;
+        if (OldChunk == Chunk)
+        {
+            return;
+        }
+
+        // Only nodes that inherited the old chunk follow, so a subtree another root placed elsewhere stays put.
+        TVector<FGuid> Pending = { TargetGUID };
+        while (!Pending.IsEmpty())
+        {
+            const FGuid Current = Pending.Last();
+            Pending.Pop();
+
+            FCookNode* Node = Nodes.Find(Current);
+            if (Node == nullptr || Node->Chunk != OldChunk)
+            {
+                continue;
+            }
+            Node->Chunk = Chunk;
+
+            const FAssetDataPtr Data = Registry->GetAssetByGUID(Current);
+            if (!Data) continue;
+
+            for (const FAssetDependency& Dep : Data->Dependencies)
+            {
+                if (Dep.Type == EDependencyType::Hard || Dep.Type == EDependencyType::Owned)
+                {
+                    Pending.Add(Dep.TargetGUID);
+                }
+            }
+        }
+    }
+
     void FCookGraph::Traverse()
     {
         while (!Frontier.IsEmpty())
@@ -153,7 +188,7 @@ namespace Lumina
             if (NodeIt == nullptr) continue; // defensive
             const FName ParentChunk = NodeIt->Chunk;
 
-            FAssetData* Data = Registry->GetAssetByGUID(Current);
+            FAssetDataPtr Data = Registry->GetAssetByGUID(Current);
             if (!Data) continue;
 
             for (const FAssetDependency& Dep : Data->Dependencies)

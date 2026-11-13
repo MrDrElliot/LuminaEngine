@@ -74,6 +74,7 @@ namespace Lumina::TextAsset
         // Split on commas / whitespace.
         int32 i = 0;
         const int32 N = Meta.Len();
+        bool bHadTokens = false;
         while (i < N)
         {
             while (i < N && (Meta[i] == ',' || Meta[i] == ' ' || Meta[i] == '\t')) ++i;
@@ -82,6 +83,7 @@ namespace Lumina::TextAsset
             if (i <= Start) continue;
 
             FStringView Token = Meta.Mid(Start, i - Start);
+            bHadTokens = true;
 
             if (IEquals(Token, "any") || IEquals(Token, "*"))
             {
@@ -101,8 +103,8 @@ namespace Lumina::TextAsset
             AddUnique(K);
         }
 
-        // Empty meta == accept everything.
-        if (Out.IsEmpty())
+        // Empty/whitespace-only meta == accept everything; an unrecognized token stays empty.
+        if (!bHadTokens)
         {
             AddUnique(ETextAssetKind::RmlDocument);
             AddUnique(ETextAssetKind::RmlStyleSheet);

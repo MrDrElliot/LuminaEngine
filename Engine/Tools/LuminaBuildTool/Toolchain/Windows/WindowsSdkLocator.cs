@@ -129,7 +129,7 @@ public static class WindowsSdkLocator
         }
     }
 
-    private static Version ParseVersion(string Text)
+    internal static Version ParseVersion(string Text)
     {
         return Version.TryParse(Text, out Version? Parsed) ? Parsed : new Version(0, 0);
     }

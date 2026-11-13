@@ -621,7 +621,7 @@ namespace Lumina
 
     bool CMaterialNodeGraph::CollapseSelectionToFunction(FString& OutPath, FString& OutError)
     {
-        const FAssetData* HostData = Material.IsValid() ? FAssetRegistry::Get().GetAssetByGUID(Material->GetGUID()) : nullptr;
+        const FAssetDataPtr HostData = Material.IsValid() ? FAssetRegistry::Get().GetAssetByGUID(Material->GetGUID()) : nullptr;
         if (HostData == nullptr)
         {
             OutError = "Save the material once first, so the function has a folder to go in.";

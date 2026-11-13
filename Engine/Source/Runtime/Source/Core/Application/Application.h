@@ -83,7 +83,10 @@ namespace Lumina
 
 	};
 	
-	RUNTIME_API extern FApplication* GApp;
+	namespace Global
+	{
+		RUNTIME_API extern FApplication* GApp;
+	}
 
 
 	/* Implemented by client */

@@ -1,5 +1,6 @@
 #pragma once
 #include "UI/Tools/EditorTool.h"
+#include "Containers/RingBuffer.h"
 #include "Memory/MemoryTracking.h"
 #include "Platform/Process/PlatformProcess.h"
 #include "Renderer/RHI.h"
@@ -94,11 +95,11 @@ namespace Lumina
         bool                         bShowBuffers  = true;
 
         // Rolling timelines in MB, advanced once per refresh tick.
-        TVector<float>          HistRSS;
-        TVector<float>          HistCPUTracked;
-        TVector<float>          HistMapped;     // rpmalloc's OS footprint (mapped bytes)
-        TVector<float>          HistExternal;   // RSS - mapped (driver / CRT)
-        TVector<float>          HistVRAM;
+        TRingBuffer<float>      HistRSS;
+        TRingBuffer<float>      HistCPUTracked;
+        TRingBuffer<float>      HistMapped;     // rpmalloc's OS footprint (mapped bytes)
+        TRingBuffer<float>      HistExternal;   // RSS - mapped (driver / CRT)
+        TRingBuffer<float>      HistVRAM;
 
         float                   RefreshTimer = 0.0f;
 

@@ -1,41 +1,28 @@
-#include <gtest/gtest.h>
-
-#include "Agent/AgentToolRegistry.h"
-#include "Containers/StringFormat.h"
 #include "MCPEditorSessionTools.h"
-#include "MCPServer.h"
+#include "MCPToolTestUtil.h"
 
 using namespace Lumina;
 using namespace Lumina::MCP;
 
 namespace MCPConsoleExecTestsInternal
 {
-    constexpr const char* GOwner = "MCPConsoleExecTests";
-
-    class MCPConsoleExecTest : public testing::Test
+    class MCPConsoleExecTest : public FRegisteredToolsTest
     {
     protected:
 
-        void SetUp() override { RegisterEditorSessionTools(GOwner); }
+        MCPConsoleExecTest() : FRegisteredToolsTest("MCPConsoleExecTests", &RegisterEditorSessionTools) {}
 
         void TearDown() override
         {
-            Agent::FToolRegistry::Get().UnregisterOwner(GOwner);
+            FRegisteredToolsTest::TearDown();
             UnregisterEditorSessionTools();
         }
 
         // The line is spliced into the request as written, so tabs arrive as JSON escapes.
-        FJsonValue Exec(FStringView JsonLine)
+        static FString ExecArguments(FStringView JsonLine)
         {
-            const FServer::FReply Reply = Server.HandleMessage(FStringView(Format(
-                R"({{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"editor.console_exec","arguments":{{"Line":"{}"}}}}}})",
-                JsonLine)), "");
-            FJsonValue Parsed;
-            EXPECT_TRUE(FJsonValue::Parse(FStringView(Reply.Body), Parsed)) << *Reply.Body;
-            return FJsonValue(Parsed["result"]);
+            return Format(R"({{"Line":"{}"}})", JsonLine);
         }
-
-        FServer Server;
     };
 }
 
@@ -52,15 +39,13 @@ TEST_F(MCPConsoleExecTest, ADeniedCommandPaddedWithSpacesOrTabsIsStillRefused)
     };
     for (const auto& [Line, Expected] : Cases)
     {
-        const FJsonValue Result = Exec(Line);
-        EXPECT_TRUE(Result["isError"].AsBool(false)) << Line;
-        EXPECT_NE(Result["content"][0]["text"].AsString().Find(Expected), Constants::kIndexNone) << Line;
+        ExpectRefused("editor.console_exec", FStringView(ExecArguments(Line)), Expected);
     }
 }
 
 TEST_F(MCPConsoleExecTest, APaddedVariableReadReportsTheTrimmedName)
 {
-    const FJsonValue Result = Exec(R"(\tmcp.Port )");
+    const FJsonValue Result = Call("editor.console_exec", FStringView(ExecArguments(R"(\tmcp.Port )")));
     EXPECT_FALSE(Result["isError"].AsBool(true));
     EXPECT_EQ(Result["content"][0]["text"].AsString().Find("mcp.Port = "), 0);
 }

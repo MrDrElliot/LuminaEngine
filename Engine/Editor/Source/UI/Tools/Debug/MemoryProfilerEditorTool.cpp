@@ -15,6 +15,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
 #include "Containers/StringFormat.h"
+#include "UI/Tools/Debug/DebugHistoryTimeline.h"
 
 namespace Lumina
 {
@@ -40,6 +41,33 @@ namespace Lumina
             if (Fraction > 0.85f) { return EditorColors::Danger(); }
             if (Fraction > 0.65f) { return EditorColors::Warning(); }
             return EditorColors::Success();
+        }
+
+        struct FCPUMemorySample
+        {
+            size_t Process;
+            size_t Tracked;
+            size_t Mapped;
+            size_t Committed;
+            size_t Retained;
+            size_t External;
+        };
+
+        // Retained and External use committed bytes because mapped also counts address space rpmalloc has decommitted.
+        FCPUMemorySample SampleCPUMemory()
+        {
+            FCPUMemorySample S;
+            S.Process   = Platform::GetProcessMemoryUsageBytes();
+#if LUMINA_MEMORY_TRACKING
+            S.Tracked   = Memory::GetTrackedLiveBytes();
+#else
+            S.Tracked   = 0;
+#endif
+            S.Mapped    = Memory::GetCurrentMappedMemory();
+            S.Committed = Memory::GetCommittedMemory();
+            S.Retained  = (S.Committed > S.Tracked) ? (S.Committed - S.Tracked) : 0;
+            S.External  = (S.Process > S.Committed) ? (S.Process - S.Committed) : 0;
+            return S;
         }
 
 #if LUMINA_MEMORY_TRACKING
@@ -208,17 +236,8 @@ namespace Lumina
             return Format("{} ({} bytes)", *ImGuiX::FormatSize((size_t)Bytes), (unsigned long long)Bytes);
         }
 
-        void PushHistory(TVector<float>& History, float Value)
-        {
-            History.Add(Value);
-            if (static_cast<uint32>(History.Num()) > kHistorySamples)
-            {
-                History.RemoveAt(0);
-            }
-        }
-
         // Compact line+fill plot for a rolling MB history.
-        void DrawTimeline(const char* Id, const TVector<float>& History, const ImVec4& Color, float Height)
+        void DrawTimeline(const char* Id, const TRingBuffer<float>& History, const ImVec4& Color, float Height)
         {
             if (ImPlot::BeginPlot(Id, ImVec2(-1, Height), ImPlotFlags_NoMouseText | ImPlotFlags_NoLegend | ImPlotFlags_NoTitle))
             {
@@ -229,10 +248,14 @@ namespace Lumina
 
                 if (!History.IsEmpty())
                 {
+                    auto Sample = [](int Index, void* Data) { return ImPlotPoint(Index, HistorySampleAt(Data, Index)); };
+                    auto Baseline = [](int Index, void*) { return ImPlotPoint(Index, 0.0); };
+                    void* Data = const_cast<TRingBuffer<float>*>(&History);
+
                     ImPlot::PushStyleColor(ImPlotCol_Line, Color);
                     ImPlot::PushStyleColor(ImPlotCol_Fill, EditorColors::WithAlpha(Color, 0.25f));
-                    ImPlot::PlotShaded(Id, History.GetData(), History.Num(), 0.0);
-                    ImPlot::PlotLine(Id, History.GetData(), History.Num());
+                    ImPlot::PlotShadedG(Id, Sample, Data, Baseline, nullptr, History.Num());
+                    ImPlot::PlotLineG(Id, Sample, Data, History.Num());
                     ImPlot::PopStyleColor(2);
                 }
                 ImPlot::EndPlot();
@@ -312,21 +335,19 @@ namespace Lumina
         }
 
         const float ToMB = 1.0f / float(Constants::kMiB);
-        const size_t Process = Platform::GetProcessMemoryUsageBytes();
-        const size_t Mapped  = Memory::GetCurrentMappedMemory();
-        const size_t External = (Process > Mapped) ? (Process - Mapped) : 0;
-        PushHistory(HistRSS, (float)Process * ToMB);
-        PushHistory(HistMapped, (float)Mapped * ToMB);
-        PushHistory(HistExternal, (float)External * ToMB);
-        PushHistory(HistVRAM, (float)GPUStats.TotalUsage * ToMB);
+        const FCPUMemorySample CPU = SampleCPUMemory();
+        PushHistorySample(HistRSS, (float)CPU.Process * ToMB, kHistorySamples);
+        PushHistorySample(HistMapped, (float)CPU.Mapped * ToMB, kHistorySamples);
+        PushHistorySample(HistExternal, (float)CPU.External * ToMB, kHistorySamples);
+        PushHistorySample(HistVRAM, (float)GPUStats.TotalUsage * ToMB, kHistorySamples);
 #if LUMINA_MEMORY_TRACKING
-        PushHistory(HistCPUTracked, (float)Memory::GetTrackedLiveBytes() * ToMB);
+        PushHistorySample(HistCPUTracked, (float)CPU.Tracked * ToMB, kHistorySamples);
 #endif
     }
 
     void FMemoryProfilerEditorTool::DrawWindow(bool bIsFocused)
     {
-        RefreshTimer += (float)GEngine->GetDeltaTime();
+        RefreshTimer += (float)Global::GEngine->GetDeltaTime();
         if (RefreshTimer >= kMemoryRefreshSeconds || HistVRAM.IsEmpty())
         {
             RefreshTimer = 0.0f;
@@ -367,18 +388,7 @@ namespace Lumina
 
     void FMemoryProfilerEditorTool::DrawHeaderCards()
     {
-        const size_t Process = Platform::GetProcessMemoryUsageBytes();
-#if LUMINA_MEMORY_TRACKING
-        const size_t Tracked = Memory::GetTrackedLiveBytes();
-#else
-        const size_t Tracked = 0;
-#endif
-        const size_t Untracked = (Process > Tracked) ? (Process - Tracked) : 0;
-
-        const size_t Mapped    = Memory::GetCurrentMappedMemory();
-        const size_t Retained  = (Mapped > Tracked) ? (Mapped - Tracked) : 0;
-        const size_t External  = (Process > Mapped) ? (Process - Mapped) : 0;
-        (void)Untracked;
+        const FCPUMemorySample CPU = SampleCPUMemory();
 
         const float Spacing = ImGui::GetStyle().ItemSpacing.x;
         const float CardW = (ImGui::GetContentRegionAvail().x - Spacing) * 0.5f;
@@ -393,21 +403,21 @@ namespace Lumina
             ImGui::TextColored(EditorColors::SectionHeader(), LE_ICON_CPU_64_BIT " CPU MEMORY");
             ImGui::Separator();
             ImGuiX::Font::PushFont(ImGuiX::Font::EFont::Large);
-            ImGui::TextUnformatted(*ImGuiX::FormatSize(Process));
+            ImGui::TextUnformatted(*ImGuiX::FormatSize(CPU.Process));
             ImGuiX::Font::PopFont();
             ImGui::SameLine();
             ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("process (RSS)");
 
             ImGui::Spacing();
-            ImGui::TextColored(kTrackedSeries, "%s tracked", *ImGuiX::FormatSize(Tracked));
+            ImGui::TextColored(kTrackedSeries, "%s tracked", *ImGuiX::FormatSize(CPU.Tracked));
             ImGui::SameLine();
-            ImGui::TextColored(kRetainedSeries, "  %s retained", *ImGuiX::FormatSize(Retained));
+            ImGui::TextColored(kRetainedSeries, "  %s retained", *ImGuiX::FormatSize(CPU.Retained));
             ImGui::SameLine();
-            ImGui::TextColored(kExternalSeries, "  %s external", *ImGuiX::FormatSize(External));
+            ImGui::TextColored(kExternalSeries, "  %s external", *ImGuiX::FormatSize(CPU.External));
             ImGuiX::TextTooltip("tracked = ledger live bytes\n"
-                                "retained = rpmalloc mapped - tracked (caches + fragmentation; freed, not returned to OS)\n"
-                                "external = RSS - rpmalloc mapped (GPU driver host memory, CRT malloc, code/stacks)");
+                                "retained = rpmalloc committed - tracked (caches + fragmentation; freed, not returned to OS)\n"
+                                "external = RSS - rpmalloc committed (GPU driver host memory, CRT malloc, code/stacks)");
         }
         ImGui::EndChild();
 
@@ -816,16 +826,8 @@ namespace Lumina
 
     void FMemoryProfilerEditorTool::DrawCPUComposition()
     {
-        const size_t Process = Platform::GetProcessMemoryUsageBytes();
-#if LUMINA_MEMORY_TRACKING
-        const size_t Tracked = Memory::GetTrackedLiveBytes();
-#else
-        const size_t Tracked = 0;
-#endif
-        const size_t Mapped   = Memory::GetCurrentMappedMemory();
-        const size_t Cached   = Memory::GetCachedMemory();
-        const size_t Retained = (Mapped > Tracked) ? (Mapped - Tracked) : 0;
-        const size_t External = (Process > Mapped) ? (Process - Mapped) : 0;
+        const FCPUMemorySample CPU = SampleCPUMemory();
+        const size_t Cached = Memory::GetCachedMemory();
 
         ImGui::Spacing();
         ImGui::TextColored(EditorColors::SectionHeader(), "Composition  " LE_ICON_INFORMATION);
@@ -846,14 +848,15 @@ namespace Lumina
             }
         };
 
-        Row("Process RSS", Process, EditorColors::TextPrimary(), "total resident");
-        Row("rpmalloc mapped", Mapped, kMappedSeries, "allocator's OS footprint");
-        Row("tracked live", Tracked, kTrackedSeries, "category ledger");
-        Row("retained", Retained, kRetainedSeries, "caches + fragmentation (freed, not returned)");
+        Row("Process RSS", CPU.Process, EditorColors::TextPrimary(), "total resident");
+        Row("rpmalloc mapped", CPU.Mapped, kMappedSeries, "allocator's address space, decommitted spans included");
+        Row("rpmalloc committed", CPU.Committed, kMappedSeries, "allocator's RAM footprint");
+        Row("tracked live", CPU.Tracked, kTrackedSeries, "category ledger");
+        Row("retained", CPU.Retained, kRetainedSeries, "committed - tracked, caches + fragmentation");
         Row("of which cached", Cached, kCachedSeries, "rpmalloc global span cache");
-        Row("external", External, kExternalSeries, "driver / CRT / code+stacks");
+        Row("external", CPU.External, kExternalSeries, "RSS - committed, driver / CRT / code+stacks");
 
-        if (Mapped == 0)
+        if (CPU.Mapped == 0)
         {
             ImGui::TextColored(EditorColors::Warning(),
                 LE_ICON_ALERT " rpmalloc statistics are zero -- build with ENABLE_STATISTICS (Debug/Development).");
@@ -864,7 +867,7 @@ namespace Lumina
         const float HalfW = (ImGui::GetContentRegionAvail().x - Spacing) * 0.5f;
 
         ImGui::BeginChild("##MappedTL", ImVec2(HalfW, 150), false);
-        ImGui::TextColored(kMappedSeries, "rpmalloc mapped (retained churn)");
+        ImGui::TextColored(kMappedSeries, "rpmalloc mapped (address space)");
         DrawTimeline("##MappedPlot", HistMapped, kMappedSeries, 110.0f);
         ImGui::EndChild();
 
@@ -942,7 +945,7 @@ namespace Lumina
         Row("reserved", AddressSpace.Reserved, EditorColors::TextMuted(), "address space only, costs no RAM");
 
         // Whichever is largest tells you which trace to run, see BuildScripts/MemoryTrace.ps1.
-        const uint64 Rpmalloc = Memory::GetCurrentMappedMemory();
+        const uint64 Rpmalloc = Memory::GetCommittedMemory();
         const uint64 Heap     = AddressSpace.bHeapWalkValid ? AddressSpace.HeapCommitted : 0;
         const uint64 Accounted = Rpmalloc + Heap;
         const uint64 Unattributed = AddressSpace.PrivateCommitted > Accounted
@@ -1543,17 +1546,9 @@ namespace Lumina
         FString R;
         R.Reserve(16 * 1024);
 
-        const size_t Process = Platform::GetProcessMemoryUsageBytes();
-#if LUMINA_MEMORY_TRACKING
-        const size_t Tracked = Memory::GetTrackedLiveBytes();
-#else
-        const size_t Tracked = 0;
-#endif
-        const size_t Untracked = (Process > Tracked) ? (Process - Tracked) : 0;
-        const size_t Mapped    = Memory::GetCurrentMappedMemory();
+        const FCPUMemorySample CPU = SampleCPUMemory();
+        const size_t Untracked = (CPU.Process > CPU.Tracked) ? (CPU.Process - CPU.Tracked) : 0;
         const size_t Cached    = Memory::GetCachedMemory();
-        const size_t Retained  = (Mapped > Tracked) ? (Mapped - Tracked) : 0;
-        const size_t External  = (Process > Mapped) ? (Process - Mapped) : 0;
 
         R += "# Lumina Engine - Memory Report\n\n";
         R += "Captured from the in-editor Memory tool. Sizes show human-readable form with exact\n";
@@ -1575,12 +1570,13 @@ namespace Lumina
 
         // CPU
         R += "## CPU memory\n";
-        AppendFormat(R, "- Process RSS:     {}\n", *SizeBoth(Process));
-        AppendFormat(R, "- rpmalloc mapped: {} (allocator's OS footprint)\n", *SizeBoth(Mapped));
-        AppendFormat(R, "- Tracked:         {} (category ledger, live)\n", *SizeBoth(Tracked));
-        AppendFormat(R, "- Retained:        {} (mapped - tracked: rpmalloc caches + fragmentation, freed but not returned to OS)\n", *SizeBoth(Retained));
+        AppendFormat(R, "- Process RSS:     {}\n", *SizeBoth(CPU.Process));
+        AppendFormat(R, "- rpmalloc mapped: {} (allocator's address space, decommitted spans included)\n", *SizeBoth(CPU.Mapped));
+        AppendFormat(R, "- rpmalloc committed: {} (allocator's RAM footprint)\n", *SizeBoth(CPU.Committed));
+        AppendFormat(R, "- Tracked:         {} (category ledger, live)\n", *SizeBoth(CPU.Tracked));
+        AppendFormat(R, "- Retained:        {} (committed - tracked: rpmalloc caches + fragmentation, freed but not returned to OS)\n", *SizeBoth(CPU.Retained));
         AppendFormat(R, "- ...cached:       {} (rpmalloc global span cache)\n", *SizeBoth(Cached));
-        AppendFormat(R, "- External:        {} (RSS - mapped: GPU driver host memory, CRT malloc, code + stacks)\n", *SizeBoth(External));
+        AppendFormat(R, "- External:        {} (RSS - committed: GPU driver host memory, CRT malloc, code + stacks)\n", *SizeBoth(CPU.External));
         AppendFormat(R, "- Untracked:       {} (RSS - tracked; = retained + external)\n\n", *SizeBoth(Untracked));
 
         // The OS-level view, omitted rather than faked when the user has not run a scan.
@@ -1592,7 +1588,7 @@ namespace Lumina
         else
         {
             const uint64 Heap = AddressSpace.bHeapWalkValid ? AddressSpace.HeapCommitted : 0;
-            const uint64 Accounted = Mapped + Heap;
+            const uint64 Accounted = CPU.Committed + Heap;
             const uint64 Unattributed = AddressSpace.PrivateCommitted > Accounted
                                       ? AddressSpace.PrivateCommitted - Accounted : 0;
 
@@ -1601,7 +1597,7 @@ namespace Lumina
             AppendFormat(R, "- Mapped commit:   {} (file mappings, shared sections)\n", *SizeBoth(AddressSpace.MappedCommitted));
             AppendFormat(R, "- Reserved:        {} (address space only, no RAM)\n", *SizeBoth(AddressSpace.Reserved));
             R += "\n  Private commit by owner:\n";
-            AppendFormat(R, "  - rpmalloc:      {} (engine allocator; see category table)\n", *SizeBoth(Mapped));
+            AppendFormat(R, "  - rpmalloc:      {} (engine allocator; see category table)\n", *SizeBoth(CPU.Committed));
             if (AddressSpace.bHeapWalkValid)
             {
                 AppendFormat(R, "  - NT/CRT heap:   {} committed, {} live in {} heaps (foreign DLLs: Slang, GPU driver, basisu, ucrtbase)\n",

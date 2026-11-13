@@ -285,7 +285,7 @@ namespace Lumina
             FName        ClassName;
             FFixedString PackagePath;
             {
-                const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(*PackageName);
+                const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(*PackageName);
                 if (Data == nullptr)
                 {
                     Self->SetRecordState(PackageName, FPackageThumbnail::EState::Failed);
@@ -730,7 +730,7 @@ namespace Lumina
                 }
                 else if (Record->GUID.IsValid())
                 {
-                    if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Record->GUID))
+                    if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(Record->GUID))
                     {
                         bDrop = (Data->ContentHash != Record->ContentHash);   // content changed -> regenerate
                     }
@@ -785,7 +785,7 @@ namespace Lumina
     void CThumbnailManager::OnPackageDestroyed(FName Package)
     {
         FGuid GUID;
-        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByPath(*Package))
+        if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(*Package))
         {
             GUID = Data->AssetGUID;
         }

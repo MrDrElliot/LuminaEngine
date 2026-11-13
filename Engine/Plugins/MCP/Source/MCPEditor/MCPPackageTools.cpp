@@ -42,13 +42,24 @@ namespace Lumina::MCP
         }
 
         // Compiler and build tool phrasing, since "0 error(s)" in a summary line is not a problem.
-        bool IsPackageBuildProblem(FStringView Line)
+        bool IsPackageBuildError(FStringView Line)
         {
             const FString Low = LoweredPackageText(Line);
             return Low.Find("error:") != Constants::kIndexNone || Low.Find(" error c") != Constants::kIndexNone
                 || Low.Find("fatal error") != Constants::kIndexNone || Low.Find("failed") != Constants::kIndexNone
-                || Low.Find("warning:") != Constants::kIndexNone || Low.Find(" warning c") != Constants::kIndexNone
-                || Low.Find("[warn]") != Constants::kIndexNone || Low.Find("[error]") != Constants::kIndexNone;
+                || Low.Find("[error]") != Constants::kIndexNone;
+        }
+
+        bool IsPackageBuildWarning(FStringView Line)
+        {
+            const FString Low = LoweredPackageText(Line);
+            return Low.Find("warning:") != Constants::kIndexNone || Low.Find(" warning c") != Constants::kIndexNone
+                || Low.Find("[warn]") != Constants::kIndexNone;
+        }
+
+        bool IsPackageBuildProblem(FStringView Line)
+        {
+            return IsPackageBuildError(Line) || IsPackageBuildWarning(Line);
         }
 
         bool IsPackageLogError(FStringView Line)
@@ -75,12 +86,12 @@ namespace Lumina::MCP
 
         FString PackageProjectName()
         {
-            return GEngine != nullptr ? FString(GEngine->GetProjectName().GetData(), GEngine->GetProjectName().Len()) : FString();
+            return Global::GEngine != nullptr ? FString(Global::GEngine->GetProjectName().GetData(), Global::GEngine->GetProjectName().Len()) : FString();
         }
 
         FString PackageProjectDirectory()
         {
-            FString Directory = GEngine != nullptr ? FString(GEngine->GetProjectPath().GetData(), GEngine->GetProjectPath().Len()) : FString();
+            FString Directory = Global::GEngine != nullptr ? FString(Global::GEngine->GetProjectPath().GetData(), Global::GEngine->GetProjectPath().Len()) : FString();
             while (!Directory.IsEmpty() && (Directory.Last() == '/' || Directory.Last() == '\\'))
             {
                 Directory.LeftChopInline(1);
@@ -144,11 +155,42 @@ namespace Lumina::MCP
             Out.AssetsCooked = S.AssetsCooked;
             Out.Chunks = S.Chunks;
             Out.LogLineCount = S.Lines.Num();
+            Out.Errors = S.Errors;
             Out.Warnings = S.Warnings;
 
             const double End = Out.bFinished ? S.EndSeconds.load() : PlatformTime::Seconds();
             Out.ElapsedSeconds = Stage == EPackageStage::Idle ? 0.0f : (float)(End - S.StartSeconds);
             Out.Log = TailPackageLog(S.Lines, Math::Max(In.FromLine, 0), Math::Max(In.MaxLines, 0), In.bProblemsOnly, &IsPackageBuildProblem);
+        }
+
+        // Strips a trailing '\r' so a CRLF line reads the same as an LF one.
+        FStringView StripTrailingCR(FStringView Line)
+        {
+            if (!Line.IsEmpty() && Line.Last() == '\r')
+            {
+                Line.RemoveSuffix(1);
+            }
+            return Line;
+        }
+
+        // Invokes Fn with each '\n'-terminated line in Text, in order. Returns the consumed prefix length, leaving an unterminated remainder for the caller.
+        template <typename FFunc>
+        int32 ForEachCompleteLogLine(FStringView Text, FFunc&& Fn)
+        {
+            int32 Start = 0;
+            int32 Consumed = 0;
+            while (Start < Text.Len())
+            {
+                const int32 End = Text.Find('\n', Start);
+                if (End == Constants::kIndexNone)
+                {
+                    break;
+                }
+                Fn(StripTrailingCR(Text.Mid(Start, End - Start)));
+                Start = End + 1;
+                Consumed = Start;
+            }
+            return Consumed;
         }
 
         // Only the newest part of a long log is read, since a poll wants the tail and the file can reach many megabytes.
@@ -171,25 +213,18 @@ namespace Lumina::MCP
                 return Lines;
             }
 
-            FStringView Text(reinterpret_cast<const char*>(Bytes.GetData()), Bytes.Num());
-            int32 Start = 0;
-            while (Start < Text.Len())
+            const FStringView Text(reinterpret_cast<const char*>(Bytes.GetData()), Bytes.Num());
+            auto AddLine = [&Lines](FStringView Line)
             {
-                int32 End = Text.Find('\n', Start);
-                if (End == Constants::kIndexNone)
-                {
-                    End = Text.Len();
-                }
-                FStringView Line = Text.Mid(Start, End - Start);
-                if (!Line.IsEmpty() && Line.Last() == '\r')
-                {
-                    Line.RemoveSuffix(1);
-                }
                 if (!Line.IsEmpty())
                 {
                     Lines.Emplace(Line.GetData(), Line.Len());
                 }
-                Start = End + 1;
+            };
+            const int32 Consumed = ForEachCompleteLogLine(Text, AddLine);
+            if (Consumed < Text.Len())
+            {
+                AddLine(StripTrailingCR(Text.Mid(Consumed, Text.Len() - Consumed)));
             }
 
             // A partial first line from the cut is dropped rather than shown half.
@@ -214,13 +249,11 @@ namespace Lumina::MCP
             Out.LogPath = G.LogPath;
             Out.ElapsedSeconds = G.Process.IsValid() ? (float)((Out.bRunning ? PlatformTime::Seconds() : G.EndSeconds) - G.StartSeconds) : 0.0f;
 
+            G.ScanNewLogLines();
+            Out.Errors = G.Errors;
+            Out.Warnings = G.Warnings;
+
             const TVector<FString> Lines = ReadPackageLogLines(G.LogPath);
-            for (const FString& Line : Lines)
-            {
-                const FStringView View(*Line, Line.Len());
-                Out.Errors += IsPackageLogError(View) ? 1 : 0;
-                Out.Warnings += IsPackageLogWarning(View) ? 1 : 0;
-            }
             Out.Log = TailPackageLog(Lines, 0, Math::Max(In.MaxLines, 0), In.bProblemsOnly, &IsPackageLogProblem);
         }
 
@@ -244,15 +277,8 @@ namespace Lumina::MCP
             FPackageGameSession& G = PackageGame();
             G.Close();
 
-            const FString Directory = PackageDirectoryOf(Executable);
-            G.Process = Platform::SpawnProcess(UTF8_TO_TCHAR(*Executable), UTF8_TO_TCHAR(*In.Arguments), UTF8_TO_TCHAR(*Directory));
-            if (!G.Process.IsValid())
-            {
-                return Agent::FToolResult::Error(Lumina::Format("Could not start {}.", Executable));
-            }
-
             // A cooked game logs into its data folder, since it never loads a project directory to move the log into.
-            G.Executable = Executable;
+            const FString Directory = PackageDirectoryOf(Executable);
             FStringView ExeStem(*Executable, Executable.Len());
             ExeStem = ExeStem.Mid(ExeStem.FindLastOf("/\\") + 1);
             if (const int32 Dot = ExeStem.FindLastOf('.'); Dot != Constants::kIndexNone)
@@ -261,6 +287,23 @@ namespace Lumina::MCP
             }
             const FString DataDir = Directory + "/" + FString(ExeStem.GetData(), ExeStem.Len()) + "_Data";
             G.LogPath = (Filesystem::Exists(FStringView(*DataDir, DataDir.Len())) ? DataDir : Directory) + "/Logs/Lumina.log";
+
+            // Recorded before the spawn, so ScanNewLogLines can tell a leftover log from this run's own once it changes.
+            const Filesystem::FFileStat PreLaunchStat = Filesystem::Stat(FStringView(*G.LogPath, G.LogPath.Len()));
+            G.PreLaunchLogSize = PreLaunchStat.IsFile() ? (int64)PreLaunchStat.Size : -1;
+            G.PreLaunchLogModifyTime = PreLaunchStat.IsFile() ? PreLaunchStat.LastModifyTime : 0;
+            G.bLockedOntoLog = false;
+            G.ScannedLogBytes = 0;
+            G.Errors = 0;
+            G.Warnings = 0;
+
+            G.Process = Platform::SpawnProcess(UTF8_TO_TCHAR(*Executable), UTF8_TO_TCHAR(*In.Arguments), UTF8_TO_TCHAR(*Directory));
+            if (!G.Process.IsValid())
+            {
+                return Agent::FToolResult::Error(Lumina::Format("Could not start {}.", Executable));
+            }
+
+            G.Executable = Executable;
             G.StartSeconds = PlatformTime::Seconds();
             G.EndSeconds = 0.0;
 
@@ -306,7 +349,7 @@ namespace Lumina::MCP
                         const FStringView Map = Settings->GameStartupMap.GetPath();
                         Out.StartupMap = FStringView(Map.GetData(), Map.Len());
                     }
-                    for (const FCookRoot& Root : GEngine->GetCookRoots())
+                    for (const FCookRoot& Root : Global::GEngine->GetCookRoots())
                     {
                         SPackageCookRootInfo Info;
                         Info.Asset = Root.Asset;
@@ -346,6 +389,19 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Lumina::Format("Configuration must be Shipping, Development or Debug, not {}.", In.Configuration));
                     }
 
+                    TOptional<EPackagePlatform> Platform;
+                    for (const EPackagePlatform Candidate : { EPackagePlatform::Windows64, EPackagePlatform::Linux64 })
+                    {
+                        if (FStringView(*In.Platform, In.Platform.Len()) == FPackagePlatformRules::For(Candidate).Name)
+                        {
+                            Platform = Candidate;
+                        }
+                    }
+                    if (!Platform)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("Platform must be Windows64 or Linux64, not {}.", In.Platform));
+                    }
+
                     const FString Name = PackageProjectName();
                     const FString PackageName = FProjectPackager::GetPackageName(FStringView(*Name, Name.Len()), In.bServer);
                     const FString OutputDirectory = In.OutputDirectory.IsEmpty() ? PackageDefaultOutputDirectory(In.bServer) : In.OutputDirectory;
@@ -358,6 +414,7 @@ namespace Lumina::MCP
                     {
                         FScopeLock Lock(S.Mutex);
                         S.Lines.Reset();
+                        S.Errors = 0;
                         S.Warnings = 0;
                         S.Error.Reset();
                         S.Configuration = In.Configuration;
@@ -415,6 +472,7 @@ namespace Lumina::MCP
                     Options.bBuildExecutable = true;
                     Options.bExtractScriptsAsLooseFiles = In.bExtractScriptsAsLooseFiles;
                     Options.bServer = In.bServer;
+                    Options.Platform = Platform.GetValue();
 
                     S.Stage.store(EPackageStage::Building);
                     S.Worker = FThread([&Worker = S, Options, Name, PackageName, PakPath]()
@@ -424,7 +482,7 @@ namespace Lumina::MCP
                                                                                               [&Worker](FStringView Line) { Worker.Append(Line); });
                         if (Result.bSuccess)
                         {
-                            const FString Executable = Options.OutputDirectory + "/" + PackageName + ".exe";
+                            const FString Executable = Options.OutputDirectory + "/" + FPackagePlatformRules::For(Options.Platform).ExecutableFileName(*PackageName);
                             FScopeLock Lock(Worker.Mutex);
                             Worker.Executable = Filesystem::IsFile(FStringView(*Executable, Executable.Len())) ? Executable : FString();
                         }
@@ -487,7 +545,9 @@ namespace Lumina::MCP
     {
         FScopeLock Lock(Mutex);
         Lines.Emplace(Line.GetData(), Line.Len());
-        Warnings += IsPackageBuildProblem(Line) ? 1 : 0;
+        const bool bIsWarning = IsPackageBuildWarning(Line);
+        Errors += (!bIsWarning && IsPackageBuildError(Line)) ? 1 : 0;
+        Warnings += bIsWarning ? 1 : 0;
     }
 
     void FPackageSession::Finish(bool bSucceeded, const FString& InError)
@@ -515,6 +575,50 @@ namespace Lumina::MCP
         Process.ExitCode = Exited.ExitCode;
         Process.bExited = Exited.bExited;
         return bWasRunning;
+    }
+
+    void FPackageGameSession::ScanNewLogLines()
+    {
+        const FStringView View(*LogPath, LogPath.Len());
+        const Filesystem::FFileStat Stat = LogPath.IsEmpty() ? Filesystem::FFileStat() : Filesystem::Stat(View);
+        if (!Stat.IsFile())
+        {
+            return;
+        }
+
+        if (!bLockedOntoLog)
+        {
+            // The previous run's log can still sit at this path until the game rotates it away; wait for it to visibly change.
+            if ((int64)Stat.Size == PreLaunchLogSize && Stat.LastModifyTime == PreLaunchLogModifyTime)
+            {
+                return;
+            }
+            bLockedOntoLog = true;
+            ScannedLogBytes = 0;
+        }
+        else if (Stat.Size < ScannedLogBytes)
+        {
+            // A rotation at the size cap replaces the file mid-run; keep the totals but restart the cursor.
+            ScannedLogBytes = 0;
+        }
+
+        if (Stat.Size <= ScannedLogBytes)
+        {
+            return;
+        }
+
+        TVector<uint8> Bytes;
+        if (!Filesystem::ReadFileRange(Bytes, View, ScannedLogBytes, Stat.Size - ScannedLogBytes))
+        {
+            return;
+        }
+
+        const FStringView Text(reinterpret_cast<const char*>(Bytes.GetData()), Bytes.Num());
+        ScannedLogBytes += (uint64)ForEachCompleteLogLine(Text, [this](FStringView Line)
+        {
+            Errors += IsPackageLogError(Line) ? 1 : 0;
+            Warnings += IsPackageLogWarning(Line) ? 1 : 0;
+        });
     }
 
     void FPackageToolsState::Shutdown()

@@ -1217,7 +1217,7 @@ namespace Lumina
             ImGui::OpenPopup("CurveContextMenu");
         }
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !IO.WantTextInput)
         {
             DeleteSelected();
         }

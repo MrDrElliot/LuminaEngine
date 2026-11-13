@@ -60,6 +60,16 @@ namespace Lumina::Physics
         }
     }
 
+    CStaticMesh* FBox3DPhysicsScene::ResolveColliderMesh(const ECS::FRegistry& Registry, ECS::FEntity Entity, const SMeshColliderComponent& Collider)
+    {
+        if (CStaticMesh* Mesh = Collider.Mesh.Get())
+        {
+            return Mesh;
+        }
+        const SStaticMeshComponent* StaticMesh = Registry.TryGet<SStaticMeshComponent>(Entity);
+        return StaticMesh ? StaticMesh->StaticMesh.Get() : nullptr;
+    }
+
     EBodyBuildStatus FBox3DPhysicsScene::TryBuildRigidBody(ECS::FRegistry& Registry, ECS::FEntity Entity, FRigidBodyBuildResult& Out)
     {
         // No zone, since this runs per body across all workers and the zone would cost more than the work.
@@ -219,15 +229,7 @@ namespace Lumina::Physics
             bColliderIsTrigger = MC->bIsTrigger;
             ResolvedMaterial = MC->PhysicsMaterial.Get();
 
-            CStaticMesh* Mesh = MC->Mesh.Get();
-            if (Mesh == nullptr)
-            {
-                if (const SStaticMeshComponent* SMC = Registry.TryGet<SStaticMeshComponent>(Entity))
-                {
-                    Mesh = SMC->StaticMesh.Get();
-                }
-            }
-
+            CStaticMesh* Mesh = ResolveColliderMesh(Registry, Entity, *MC);
             if (Mesh == nullptr || Mesh->HasAnyFlag(OF_NeedsLoad) || Mesh->GetMeshResource().MeshletData.IsEmpty())
             {
                 return EBodyBuildStatus::Defer;
@@ -428,7 +430,7 @@ namespace Lumina::Physics
         Out.ShapeDef.userData = Box3DUtils::PackProfileUserData(RigidBody->CollisionProfile);
         Out.ShapeDef.enableCustomFiltering = Box3DUtils::UsesPermissiveCollisionFilter();
         Out.ShapeDef.isSensor = RigidBody->bIsSensor || bColliderIsTrigger;
-        Out.ShapeDef.enableSensorEvents = Out.ShapeDef.isSensor;
+        Out.ShapeDef.enableSensorEvents = Out.ShapeDef.isSensor || BodyType != EBodyType::Static;
         Out.ShapeDef.enableContactEvents = true;
         Out.ShapeDef.enableHitEvents = true;
 
@@ -475,6 +477,20 @@ namespace Lumina::Physics
         return EBodyBuildStatus::Success;
     }
 
+    bool FBox3DPhysicsScene::HasBodyCapacity(uint32 Count)
+    {
+        if (GetBodyCount() + Count <= MaxBodies)
+        {
+            return true;
+        }
+        if (!bWarnedBodyCap)
+        {
+            bWarnedBodyCap = true;
+            LOG_WARN("[Box3D] Physics body cap of {} reached, so new bodies are not created. Raise World Settings > Physics > MaxPhysicsBodies.", MaxBodies);
+        }
+        return false;
+    }
+
     uint32 FBox3DPhysicsScene::CommitRigidBody(ECS::FEntity Entity, FRigidBodyBuildResult& Build)
     {
         LUMINA_PROFILE_SCOPE();
@@ -493,7 +509,7 @@ namespace Lumina::Physics
             break;
         }
 
-        if (static_cast<uint32>(BodyHandles.Num() - FreeBodyHandles.Num()) >= MaxBodies)
+        if (!HasBodyCapacity(1))
         {
             return InvalidBodyHandle;
         }
@@ -616,7 +632,6 @@ namespace Lumina::Physics
             Def.identifyEdges = true;
             Cook.Mesh = b3CreateMesh(&Def, nullptr, 0);
         }
-        Cook.bFailed = Pending.bConvex ? Cook.Hull == nullptr : Cook.Mesh == nullptr;
         Cook.bDone.store(true, std::memory_order_release);
     }
 
@@ -659,7 +674,6 @@ namespace Lumina::Physics
             TVector<int32>  Indices;
             if (!GatherMeshResourceGeometry(MeshData->Resource, Scale, Positions, bConvex ? nullptr : &Indices))
             {
-                Cook->bFailed = true;
                 Cook->bDone.store(true, std::memory_order_release);
                 continue;
             }

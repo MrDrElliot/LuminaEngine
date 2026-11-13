@@ -42,7 +42,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Reflection Probe Bake", tracy::Color::SkyBlue3);
         SCENE_GPU_SCOPE(CL, "Reflection Probe Bake");
 
         FSceneView& View = SceneViews[Bake.BakeViewIndex];
@@ -152,8 +151,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::SkyCubeCapturePass(RHI::FCmdListH CL)
     {
-        LUMINA_PROFILE_SECTION_COLORED("Sky Cube Capture", tracy::Color::SkyBlue);
-
         const FFrameData& Frame = *RenderFrame;
         const auto& LightData         = Frame.Lighting.LightData;
         const auto& SceneGlobalData   = Frame.SceneGlobalData;
@@ -168,6 +165,7 @@ namespace Lumina
             }
             bSkyTargetsBlack = true;
 
+            SCENE_GPU_SCOPE(CL, "Sky Cube Capture");
             const float Black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
             RHI::CmdBarrier(CL,
                 RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
@@ -195,6 +193,7 @@ namespace Lumina
             return;
         }
 
+        SCENE_GPU_SCOPE(CL, "Sky Cube Capture");
         // HDRI path where equirect to cube replaces the procedural fill.
         if (EnvironmentMapID >= 0)
         {
@@ -282,8 +281,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::IrradianceConvolutionPass(RHI::FCmdListH CL)
     {
-        LUMINA_PROFILE_SECTION_COLORED("Sky Irradiance Convolution", tracy::Color::SkyBlue1);
-
         const FFrameData& Frame = *RenderFrame;
         const bool bIBLConvolutionDirty = Frame.Volumetrics.bIBLConvolutionDirty;
 
@@ -297,6 +294,7 @@ namespace Lumina
             return;
         }
 
+        SCENE_GPU_SCOPE(CL, "Sky Irradiance");
         const FSceneImage& SkyCube        = GetNamedImage(ENamedImage::SkyCube);
         const FSceneImage& IrradianceCube = GetNamedImage(ENamedImage::SkyIrradiance);
         if (!SkyCube.IsValid() || !IrradianceCube.IsValid())
@@ -366,7 +364,7 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Sky Prefilter Convolution", tracy::Color::SkyBlue2);
+        SCENE_GPU_SCOPE(CL, "Sky Prefilter");
 
         const FSceneImage& SkyCube       = GetNamedImage(ENamedImage::SkyCube);
         const FSceneImage& PrefilterCube = GetNamedImage(ENamedImage::SkyPrefilter);

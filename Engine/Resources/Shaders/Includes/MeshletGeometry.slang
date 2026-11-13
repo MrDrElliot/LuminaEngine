@@ -15,7 +15,7 @@ struct FMeshletRef
     property FGPUInstance* Inst { get { return Instances() + InstanceID; } }
 
     // FGPUInstance::MeshletHeader would load the whole instance to reach the slot.
-    property FMeshletHeader* Header { get { return MeshletHeaders().At(Inst.MeshletHeaderSlot); } }
+    property FMeshletHeader* Header { get { return MeshletHeaderAt(Inst.MeshletHeaderSlot); } }
 
     // Transform sits at offset 0 of a 16-aligned 128-byte stride, so 48 aligned bytes cover it.
     property float4x4 ModelMatrix { get { return loadAligned<16>(&Inst.Transform).ToMatrix(); } }

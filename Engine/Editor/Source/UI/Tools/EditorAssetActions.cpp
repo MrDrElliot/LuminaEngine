@@ -128,7 +128,7 @@ namespace Lumina
 
     CObject* DuplicateAsset(FStringView SourcePath, FFixedString& OutPath)
     {
-        const FAssetData* Data   = FAssetRegistry::Get().GetAssetByPath(SourcePath);
+        const FAssetDataPtr Data   = FAssetRegistry::Get().GetAssetByPath(SourcePath);
         CObject*          Source = Data != nullptr ? LoadObject<CObject>(Data->AssetGUID) : nullptr;
         if (Source == nullptr)
         {
@@ -237,7 +237,7 @@ namespace Lumina
             // Opened, since creating an instance is nearly always a prelude to tweaking its parameters.
             if (Context.ToolContext != nullptr)
             {
-                if (const FAssetData* NewData = FAssetRegistry::Get().GetAssetByPath(FStringView(*NewPath, NewPath.Len())))
+                if (const FAssetDataPtr NewData = FAssetRegistry::Get().GetAssetByPath(FStringView(*NewPath, NewPath.Len())))
                 {
                     Context.ToolContext->OpenAssetEditor(NewData->AssetGUID);
                 }
@@ -278,7 +278,7 @@ namespace Lumina
 
             if (Context.ToolContext != nullptr)
             {
-                if (const FAssetData* NewData = FAssetRegistry::Get().GetAssetByPath(FStringView(*NewPath, NewPath.Len())))
+                if (const FAssetDataPtr NewData = FAssetRegistry::Get().GetAssetByPath(FStringView(*NewPath, NewPath.Len())))
                 {
                     Context.ToolContext->OpenAssetEditor(NewData->AssetGUID);
                 }

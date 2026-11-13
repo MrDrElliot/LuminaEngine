@@ -393,14 +393,15 @@ namespace Lumina::RmlBinding
         return nullptr;
     }
 
-    void Scan(std::string_view Text, FDocumentBindings& Out)
+    // Scans bindings up to StopAt and returns the data-model in scope there.
+    static FString ScanUntil(std::string_view Text, size_t StopAt, FDocumentBindings& Out)
     {
         Out = FDocumentBindings();
         const Scanning::FLineIndex Lines(Text);
         TVector<Scanning::FOpenElement> Stack;
 
         size_t Cursor = 0;
-        while (Cursor < Text.size())
+        while (Cursor < Text.size() && Cursor <= StopAt)
         {
             const std::string_view Rest = Text.substr(Cursor);
             if (Scanning::StartsWith(Rest, "<!--"))
@@ -461,6 +462,10 @@ namespace Lumina::RmlBinding
                 }
 
                 const FString Model = Element.Model.IsEmpty() ? Scanning::CurrentModel(Stack) : Element.Model;
+                if (StopAt < Cursor)
+                {
+                    return Model;
+                }
                 for (const Scanning::FRawAttribute& Attribute : Attributes)
                 {
                     if (!Scanning::StartsWith(Attribute.Name, "data-") || Attribute.Name == "data-model" || Scanning::StartsWith(Attribute.Name, "data-alias-"))
@@ -517,6 +522,18 @@ namespace Lumina::RmlBinding
             }
             Cursor = TextEnd;
         }
+        return Scanning::CurrentModel(Stack);
+    }
+
+    void Scan(std::string_view Text, FDocumentBindings& Out)
+    {
+        ScanUntil(Text, std::string_view::npos, Out);
+    }
+
+    FString ModelEnclosing(std::string_view Text, size_t Offset)
+    {
+        FDocumentBindings Ignored;
+        return ScanUntil(Text, Offset, Ignored);
     }
 
     FUIDesignModel Infer(const FString& ModelName, const FDocumentBindings& Bindings)

@@ -1,6 +1,7 @@
 #include "DLSSUpscaler.h"
 
 #include "Config/EngineSettings.h"
+#include "Containers/Algorithm.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Log/Log.h"
 #include "Lumina.h"
@@ -177,6 +178,16 @@ namespace Lumina
             return RequestedScale;
         }
 
+        const TSpan<FRenderScaleCacheEntry> LiveEntries(RenderScaleCache.GetData(), RenderScaleCacheNum);
+        const auto MatchesRequest = [&](const FRenderScaleCacheEntry& Entry)
+        {
+            return Entry.DisplaySize == DisplaySize && Entry.Mode == Mode && Entry.RequestedScale == RequestedScale;
+        };
+        if (auto Found = Algo::FindIf(LiveEntries, MatchesRequest); Found != LiveEntries.end())
+        {
+            return Found->Result;
+        }
+
         uint32 OptimalWidth  = 0;
         uint32 OptimalHeight = 0;
         uint32 MaxWidth = 0, MaxHeight = 0, MinWidth = 0, MinHeight = 0;
@@ -189,12 +200,19 @@ namespace Lumina
         }
 
         // A custom percentage keeps its own size inside the range the nearest mode accepts.
+        float RenderScale = (float)OptimalWidth / (float)DisplaySize.x;
         if (Mode == EUpscalerMode::Custom && MinWidth > 0 && MaxWidth >= MinWidth)
         {
             const float Wanted = Math::Clamp(RequestedScale * (float)DisplaySize.x, (float)MinWidth, (float)MaxWidth);
-            return Wanted / (float)DisplaySize.x;
+            RenderScale = Wanted / (float)DisplaySize.x;
         }
-        return (float)OptimalWidth / (float)DisplaySize.x;
+
+        if (RenderScaleCacheNum >= RenderScaleCache.Num())
+        {
+            RenderScaleCacheNum = 0;
+        }
+        RenderScaleCache[RenderScaleCacheNum++] = FRenderScaleCacheEntry{ DisplaySize, Mode, RequestedScale, RenderScale };
+        return RenderScale;
     }
 
     void FDLSSUpscaler::Evaluate(RHI::FCmdListH CL, const FUpscaleInputs& Inputs)

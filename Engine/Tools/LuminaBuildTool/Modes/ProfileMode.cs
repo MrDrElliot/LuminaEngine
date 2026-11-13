@@ -420,13 +420,14 @@ public static class ProfileMode
 
         if (!Export_.bSucceeded)
         {
-            throw new BuildException($"'{ExportTool}' failed with exit code {Export_.ExitCode}.");
+            string Suffix = Export_.Error.Length == 0 ? string.Empty : $" {Export_.Error.Trim()}";
+            throw new BuildException($"'{ExportTool}' failed with exit code {Export_.ExitCode}.{Suffix}");
         }
 
         return Export_.Output;
     }
 
-    private static List<ProfileEntry> Parse(string Csv)
+    internal static List<ProfileEntry> Parse(string Csv)
     {
         List<ProfileEntry> Entries = new();
         string[] Lines = Csv.Split('\n', StringSplitOptions.RemoveEmptyEntries);
@@ -476,7 +477,7 @@ public static class ProfileMode
     }
 
     // Median across the repeats, keeping only zones every pass saw, since a partial zone yields no delta.
-    private static List<ProfileEntry> Merge(List<List<ProfileEntry>> Runs)
+    internal static List<ProfileEntry> Merge(List<List<ProfileEntry>> Runs)
     {
         if (Runs.Count == 1)
         {
@@ -525,7 +526,7 @@ public static class ProfileMode
         return Merged;
     }
 
-    private static double Median(double[] Sorted)
+    internal static double Median(double[] Sorted)
     {
         if (Sorted.Length == 0)
         {
@@ -556,7 +557,7 @@ public static class ProfileMode
     }
 
     // The GPU export is one row per event with no parent link, so nesting is rebuilt from the intervals.
-    private static List<ProfileEntry> ParseGpuZones(string Csv)
+    internal static List<ProfileEntry> ParseGpuZones(string Csv)
     {
         string[] Lines = Csv.Split('\n', StringSplitOptions.RemoveEmptyEntries);
 

@@ -60,6 +60,9 @@ namespace Lumina
         int32 GetResidentCount() const { return Resident.Num(); }
         bool IsResident(int32 TX, int32 TY) const { return Resident.Contains(NavTile::PackKey(TX, TY)); }
 
+        // True when the next Update with this focus and settings would be a no-op fast path.
+        bool CanSkipPass(const TVector<FVector3>& FocusPoints, const FSettings& Settings) const;
+
     private:
 
         struct FCandidate
@@ -69,8 +72,6 @@ namespace Lumina
             int32 Y = 0;
             float Distance = 0.0f;
         };
-
-        bool CanSkipPass(const TVector<FVector3>& FocusPoints, const FSettings& Settings) const;
 
         FVector3            Origin = FVector3(0.0f);
         float               TileWorldSize = 0.0f;

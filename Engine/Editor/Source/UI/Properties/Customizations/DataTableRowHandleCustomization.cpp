@@ -2,7 +2,6 @@
 #include "UI/Properties/Customizations/AssetPickerFilter.h"
 
 #include "Assets/AssetRegistry/AssetData.h"
-#include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Containers/Vector.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectCore.h"
@@ -25,22 +24,6 @@ namespace Lumina
                 return nullptr;
             }
             return ResolveStructByName(FName(Property->GetMetadata("RowType")));
-        }
-
-        TVector<FAssetData*> GatherDataTables()
-        {
-            TVector<FAssetData*> Assets = FAssetRegistry::Get().FindByPredicate([](const FAssetData& Data)
-            {
-                CClass* DataClass = FindObject<CClass>(Data.AssetClass);
-                return DataClass != nullptr && DataClass->IsChildOf(CDataTable::StaticClass());
-            });
-
-            Algo::Sort(Assets, [](const FAssetData* A, const FAssetData* B)
-            {
-                return strcmp(*A->AssetName, *B->AssetName) < 0;
-            });
-
-            return Assets;
         }
     }
 
@@ -111,7 +94,7 @@ namespace Lumina
             ImGui::SetNextWindowSizeConstraints(ImVec2(200, 200), DropdownSize);
             if (ImGui::BeginChild("##TableList", DropdownSize, false, ImGuiChildFlags_NavFlattened))
             {
-                for (const FAssetData* Asset : GatherDataTables())
+                for (const FAssetDataPtr& Asset : AssetsOfClass.Get(CDataTable::StaticClass()))
                 {
                     if (!ImGuiX::PassSearchFilter(TableFilter, *Asset->AssetName))
                     {

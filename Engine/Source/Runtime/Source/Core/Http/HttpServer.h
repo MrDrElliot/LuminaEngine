@@ -29,6 +29,9 @@ namespace Lumina::Http
     // A small HTTP 1.1 server that multiplexes its connections on one thread.
     class RUNTIME_API FServer
     {
+        // Defined only by tests, which need to drive SendAll directly against a mock connection.
+        friend struct FServerTestAccess;
+
     public:
 
         FServer() = default;

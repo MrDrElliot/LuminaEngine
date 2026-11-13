@@ -123,6 +123,9 @@ namespace Lumina
         // points, so pieces follow the silhouette. Falls back to the AABB for degenerate/dense meshes.
         RUNTIME_API void GenerateConvexFracture(const CMesh* SourceMesh, const FFractureSettings& Settings, TVector<FFracturePiece>& OutPieces);
 
+        // Outward planes (normal, distance) of the triangles that have every position on one side.
+        RUNTIME_API void ComputeHullPlanes(const TVector<FVector3>& Positions, const TVector<FUIntVector3>& Triangles, float Tol, TVector<FVector4>& OutPlanes);
+
         /** Build a transient, render- and collision-ready CStaticMesh from one piece. */
         RUNTIME_API CStaticMesh* BuildPieceMesh(const FFracturePiece& Piece, const TVector<TStrongObjectPtr<CMaterialInterface>>& Materials, const char* DebugName);
     }

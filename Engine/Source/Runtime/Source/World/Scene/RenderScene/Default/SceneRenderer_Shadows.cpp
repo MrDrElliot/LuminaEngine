@@ -5,7 +5,8 @@ namespace Lumina
 {
     namespace
     {
-        constexpr uint32 kMaxTerrainShadowRecords = 8u;
+        // Covers a 4x4 open-world terrain tiling with shadow casting enabled on every tile.
+        constexpr uint32 kMaxTerrainShadowRecords = 16u;
         constexpr uint32 kTerrainShadowSteps      = 48u;
 
         // How far past a receiver a distance-field caster can still shade it.
@@ -174,6 +175,8 @@ namespace Lumina
             return false;
         }
 
+        SCENE_GPU_SCOPE(CL, "Sun Far Shadows");
+
         const auto& Settings = Frame.Lighting.SunFarShadow;
 
         FSunFarShadowArgs Args = {};
@@ -191,9 +194,9 @@ namespace Lumina
         Args.bDistanceField     = (Settings.bDistanceField && bSunDFGridReady) ? 1u : 0u;
         if (Args.bDistanceField != 0u)
         {
-            Args.DFGrid.Objects      = { SunDFObjectBuffer, kSunDFMaxObjects };
+            Args.DFGrid.Objects      = { SunDFObjectBuffer, SunDFObjectBuffer.CapacityOf<FSunDFObject>() };
             Args.DFGrid.CellCounts   = { SunDFCellCountBuffer, kSunDFGridDimension * kSunDFGridDimension + 1u };
-            Args.DFGrid.CellItems    = { SunDFCellItemBuffer, kSunDFGridDimension * kSunDFGridDimension * kSunDFCellCapacity };
+            Args.DFGrid.CellItems    = { SunDFCellItemBuffer, SunDFCellItemBuffer.CapacityOf<uint32>() };
             Args.DFGrid.Counters     = { SunDFCounterBuffer, 4u };
             Args.DFGrid.SunRight     = Settings.SunRight;
             Args.DFGrid.CellSize     = Settings.GridCellSize;
@@ -204,9 +207,15 @@ namespace Lumina
         }
 
         // Every casting terrain, not only those in view, since a ridge behind the camera still shades what is in front.
+        uint32 NumCastingTerrains = 0u;
         for (const FFrameData::FTerrainExtract& Terrain : Frame.Extracts.TerrainExtracts)
         {
-            if (!Terrain.bCastShadow || Args.NumTerrains >= kMaxTerrainShadowRecords || Terrain.Resolution < 2)
+            if (!Terrain.bCastShadow || Terrain.Resolution < 2)
+            {
+                continue;
+            }
+            ++NumCastingTerrains;
+            if (Args.NumTerrains >= kMaxTerrainShadowRecords)
             {
                 continue;
             }
@@ -226,6 +235,10 @@ namespace Lumina
             Record.MaxHeight      = Terrain.MaxHeight;
             Record.Resolution     = (float)Terrain.Resolution;
             Record.HeightmapIndex = (uint32)StateIt->HeightmapTexture.GetResourceID();
+        }
+        if (NumCastingTerrains > kMaxTerrainShadowRecords)
+        {
+            LOG_WARN_ONCE("Renderer: the sun far shadow needed {} casting terrains but can only hold {}, so far shadows lose casters.", NumCastingTerrains, kMaxTerrainShadowRecords);
         }
 
         // Runs even with nothing to trace yet, since the lighting reads whatever this leaves in the mask.
@@ -303,38 +316,55 @@ namespace Lumina
             return false;
         }
 
+        SCENE_GPU_SCOPE(CL, "Sun DF Shadow Cull");
+
         constexpr uint32 NumCells = kSunDFGridDimension * kSunDFGridDimension;
-        constexpr uint32 NumItems = NumCells * kSunDFCellCapacity;
+        constexpr uint32 MinItems = NumCells * kSunDFCellCapacity;
         // The extra slot past the last cell is where the scan leaves the total.
         constexpr uint32 NumCellSlots = NumCells + 1u;
 
-        FSceneBuffer& ItemTotalReadback = SunDFItemTotalReadback[CurrentFrameSlot];
-        if (const uint32* ItemTotal = ItemTotalReadback.CpuAs<const uint32>(); ItemTotal != nullptr && *ItemTotal > NumItems)
+        // Holds the scan's item total, then the cull's caster and large caster counts.
+        constexpr uint32 NumDemands = 3u;
+        FSceneBuffer& DemandReadback = SunDFDemandReadback[CurrentFrameSlot];
+        const uint32* Demand = DemandReadback.CpuAs<const uint32>();
+        const uint32 ItemsWanted   = Demand != nullptr ? Math::Max(Demand[0], MinItems) : MinItems;
+        const uint32 ObjectsWanted = Demand != nullptr ? Math::Max(Demand[1], kSunDFMinObjects) : kSunDFMinObjects;
+        if (Demand != nullptr && Demand[2] > kSunDFMaxLargeCasters)
         {
-            LOG_WARN_ONCE("Renderer: the sun's distance-field grid needed {} cell items but holds {}, so far shadows lose casters.", *ItemTotal, NumItems);
+            LOG_WARN_ONCE("Renderer: the sun's distance-field grid needed {} large casters but holds {}, so far shadows lose casters.", Demand[2], kSunDFMaxLargeCasters);
         }
-        if (ItemTotalReadback.Gpu == 0)
+        if (DemandReadback.Gpu == 0)
         {
-            ItemTotalReadback.Adopt(RHI::Malloc(sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::CPURead));
-            if (void* Host = ItemTotalReadback.Cpu)
+            DemandReadback.Adopt(RHI::Malloc(NumDemands * sizeof(uint32), RHI::kDefaultAlign, RHI::EMemoryType::CPURead));
+            if (void* Host = DemandReadback.Cpu)
             {
-                RHI::SetDebugName(ItemTotalReadback.Gpu, ItemTotalReadback.DebugName);
-                Memory::Memzero(Host, sizeof(uint32));
+                RHI::SetDebugName(DemandReadback.Gpu, DemandReadback.DebugName);
+                Memory::Memzero(Host, NumDemands * sizeof(uint32));
             }
         }
 
-        ReserveBuffer(CL, SunDFObjectBuffer,    (uint64)kSunDFMaxObjects * sizeof(FSunDFObject), false, false);
+        ReserveBuffer(CL, SunDFObjectBuffer,    (uint64)ObjectsWanted * sizeof(FSunDFObject), false, false);
         ReserveBuffer(CL, SunDFCellCountBuffer, (uint64)NumCellSlots * sizeof(uint32), false, false);
-        ReserveBuffer(CL, SunDFCellItemBuffer,  (uint64)NumItems * sizeof(uint32), false, false);
+        ReserveBuffer(CL, SunDFCellItemBuffer,  (uint64)ItemsWanted * sizeof(uint32), false, false);
         ReserveBuffer(CL, SunDFCounterBuffer,   4u * sizeof(uint32), false, false);
         ReserveBuffer(CL, SunDFLargeObjectBuffer, (uint64)kSunDFMaxLargeCasters * sizeof(uint32), false, false);
-        if (SunDFObjectBuffer.CapacityOf<FSunDFObject>() < kSunDFMaxObjects ||
+        const uint32 NumItems   = SunDFCellItemBuffer.CapacityOf<uint32>();
+        const uint32 NumObjects = SunDFObjectBuffer.CapacityOf<FSunDFObject>();
+        if (NumObjects < kSunDFMinObjects ||
             SunDFLargeObjectBuffer.CapacityOf<uint32>() < kSunDFMaxLargeCasters ||
             SunDFCellCountBuffer.CapacityOf<uint32>() < NumCellSlots ||
-            SunDFCellItemBuffer.CapacityOf<uint32>() < NumItems ||
+            NumItems < MinItems ||
             SunDFCounterBuffer.CapacityOf<uint32>() < 4u)
         {
             return false;
+        }
+        if (NumItems < ItemsWanted)
+        {
+            LOG_WARN_ONCE("Renderer: the sun's distance-field grid needed {} cell items but could only grow to {}, so far shadows lose casters.", ItemsWanted, NumItems);
+        }
+        if (NumObjects < ObjectsWanted)
+        {
+            LOG_WARN_ONCE("Renderer: the sun's distance-field grid needed {} casters but could only grow to {}, so far shadows lose casters.", ObjectsWanted, NumObjects);
         }
 
         RHI::CmdMemzero(CL, RHI::FGPURange{ SunDFCellCountBuffer.Gpu, (uint64)NumCellSlots * sizeof(uint32) });
@@ -348,7 +378,7 @@ namespace Lumina
         Args.RetainedTransforms  = { RetainedTransformBuffer, RetainedSlots };
         Args.RetainedStatic      = { RetainedStaticBuffer, RetainedSlots };
         Args.LargeObjects        = { SunDFLargeObjectBuffer, kSunDFMaxLargeCasters };
-        Args.Grid.Objects        = { SunDFObjectBuffer, kSunDFMaxObjects };
+        Args.Grid.Objects        = { SunDFObjectBuffer, NumObjects };
         Args.Grid.CellCounts     = { SunDFCellCountBuffer, NumCellSlots };
         Args.Grid.CellItems      = { SunDFCellItemBuffer, NumItems };
         Args.Grid.Counters       = { SunDFCounterBuffer, 4u };
@@ -379,7 +409,7 @@ namespace Lumina
         RHI::CmdDispatch(CL, MakeArgs(Args), Groups.x, Groups.y, 1u);
 
         // A group per large caster, then a lane per remaining caster, counted first and scattered once the scan has placed every cell.
-        constexpr uint32 BinGroups = kSunDFMaxLargeCasters + kSunDFMaxObjects / 64u;
+        const uint32 BinGroups = kSunDFMaxLargeCasters + RenderUtils::GetGroupCount(NumObjects, 64u);
         FSunDFShadowBinArgs BinArgs = {};
         BinArgs.LargeObjects = Args.LargeObjects;
         BinArgs.Grid         = Args.Grid;
@@ -401,9 +431,10 @@ namespace Lumina
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
             RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::TransferRead);
-        if (ItemTotalReadback.Gpu != 0)
+        if (DemandReadback.Gpu != 0)
         {
-            RHI::CmdMemcpy(CL, { ItemTotalReadback.Gpu, sizeof(uint32) }, { SunDFCellCountBuffer.Gpu + NumCells * sizeof(uint32), sizeof(uint32) });
+            RHI::CmdMemcpy(CL, { DemandReadback.Gpu, sizeof(uint32) }, { SunDFCellCountBuffer.Gpu + NumCells * sizeof(uint32), sizeof(uint32) });
+            RHI::CmdMemcpy(CL, { DemandReadback.Gpu + sizeof(uint32), 2u * sizeof(uint32) }, { SunDFCounterBuffer.Gpu, 2u * sizeof(uint32) });
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite, RHI::EStageFlags::Host, RHI::EAccessFlags::HostRead);
         }
         bSunDFGridReady = true;

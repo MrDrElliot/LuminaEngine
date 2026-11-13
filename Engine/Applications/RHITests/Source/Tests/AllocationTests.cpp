@@ -9,8 +9,8 @@ namespace Lumina::RHITests
 {
     namespace
     {
-        // Category 0 is "Default", so untagged allocations are counted too.
-        uint64 TotalAllocsAcrossCategories()
+        // Category 0 is "Default", so untagged allocations are counted too; the driver and its layers are not ours to budget.
+        uint64 TotalEngineAllocs()
         {
             Memory::FMemoryCategoryStats Stats[256];
             const uint32 Count = Memory::GetCategoryStats(Stats, 256);
@@ -18,7 +18,10 @@ namespace Lumina::RHITests
             uint64 Total = 0;
             for (uint32 Index = 0; Index < Count; ++Index)
             {
-                Total += Stats[Index].TotalAllocs;
+                if (strcmp(Stats[Index].Name, "Vulkan") != 0)
+                {
+                    Total += Stats[Index].TotalAllocs;
+                }
             }
             return Total;
         }
@@ -70,12 +73,12 @@ namespace Lumina::RHITests
                 Body();
             }
 
-            const uint64 Before = TotalAllocsAcrossCategories();
+            const uint64 Before = TotalEngineAllocs();
             for (uint32 Iteration = 0; Iteration < kMeasuredIterations; ++Iteration)
             {
                 Body();
             }
-            const uint64 Delta = TotalAllocsAcrossCategories() - Before;
+            const uint64 Delta = TotalEngineAllocs() - Before;
 
             if (Delta > Budget)
             {
@@ -106,7 +109,7 @@ namespace Lumina::RHITests
         Measure("texture upload", 4, [&]
         {
             const uint32 Pixels[16] = {};
-            RHI::UploadTexture(Texture, 0, 0, Pixels, sizeof(Pixels), 4);
+            RHI::UploadTexture(Texture, 0, 0, Pixels, sizeof(Pixels), 4, 4, 4);
             Ctx.PumpFrames(1);
         });
     }

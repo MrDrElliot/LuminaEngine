@@ -100,19 +100,6 @@ bool IsBlockInReach(FInstanceBlockBounds Block, float3 CamPos)
     return dot(ToBox, ToBox) <= Block.Reach * Block.Reach;
 }
 
-// Keyed on the exact position bits, so an instance that has not moved keeps its answer every frame.
-float ThinningHash(float3 Position)
-{
-    const uint3 Bits = asuint(Position);
-    uint H = (Bits.x * 0x8da6b343u) ^ (Bits.y * 0xd8163841u) ^ (Bits.z * 0xcb1ab31fu);
-    H ^= H >> 16u;
-    H *= 0x7feb352du;
-    H ^= H >> 15u;
-    H *= 0x846ca68bu;
-    H ^= H >> 16u;
-    return float(H >> 8u) * (1.0 / 16777216.0);
-}
-
 // Staging all MAX_CULL_VIEWS took 16 KB a group and stalled half the launches on shared memory, so only the first few are staged.
 static const uint kStagedCullViews = 8u;
 groupshared FCullView gsViews[kStagedCullViews];
@@ -207,20 +194,21 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const float Keep = bNoCull ? 1.0 : ThinningKeep(DistSq, Cull.ThinningStartDistance);
     if (Keep < 1.0)
     {
-        if (ThinningHash(Center) >= Keep)
+        // Hashed on the pivot, the one position the proxy pass rebuilds bit for bit from the same transform.
+        Transform = Pass().RetainedTransforms.Get(SlotIdx);
+        bWidened  = true;
+        const float3 Pivot = float3(Transform.Row0.w, Transform.Row1.w, Transform.Row2.w);
+        const float3 Scale = ThinningScale(Keep, Pivot);
+        if (Scale.y <= 0.0)
         {
             return;
         }
 
-        // Widened across the ground only, so a blade covers more without standing taller.
-        const float  Widen = rsqrt(Keep);
-        Transform = Pass().RetainedTransforms.Get(SlotIdx);
-        bWidened  = true;
-        const float3 Pivot = float3(Transform.Row0.w, Transform.Row1.w, Transform.Row2.w);
-        Transform.Row0.xyz *= Widen;
-        Transform.Row2.xyz *= Widen;
-        Center = Pivot + (Center - Pivot) * float3(Widen, 1.0, Widen);
-        Radius *= Widen;
+        Transform.Row0.xyz *= Scale.x;
+        Transform.Row1.xyz *= Scale.y;
+        Transform.Row2.xyz *= Scale.z;
+        Center = Pivot + (Center - Pivot) * Scale;
+        Radius *= Scale.x;
     }
 
     const uint Layers = Cull.bCustomLayers ? Pass().RetainedStatic.At(SlotIdx).RenderLayers : RENDER_LAYER_DEFAULT_MASK;
@@ -229,7 +217,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const bool bProxyCandidate = !bSkinned && !bNoCull && !Cull.HasFlag(EInstanceFlags::ShadowOnly) && Cull.HasFlag(EInstanceFlags::HasGeometry)
                               && Pass().OutProxyList.Count > 0u && (Scene().CullData.VirtualGeometryFlags & VG_FLAG_PROXIES) != 0u
                               && Scene().CullData.ProxyTransitionPixels > 0.0;
-    const bool bProxied = bProxyCandidate && ProjectedDiameterPixels(Center, Radius) < Scene().CullData.ProxyTransitionPixels;
+    const bool bProxied = bProxyCandidate && IsProxySized(Center, Radius, Cull.SphereBounds.xyz);
     if (bProxied)
     {
         // Only what the camera could see, since the proxy pass draws the list without a cull of its own.

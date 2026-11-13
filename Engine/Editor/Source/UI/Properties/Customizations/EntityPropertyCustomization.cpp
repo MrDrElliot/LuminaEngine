@@ -78,24 +78,26 @@ namespace Lumina
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
 
-        // Index 0 is always "None"; the rest are the same named entities the outliner shows.
+        const ECS::FEntity CurrentEntity = CachedValue;
+        const bool bHasCurrent = CurrentEntity != ECS::NullEntity && Registry.IsValid(CurrentEntity);
+        const FFixedString Preview = bHasCurrent ? MakeEntityLabel(Registry, CurrentEntity) : FFixedString("None");
+
+        // Index 0 is always "None"; the named entities the outliner shows are only walked while the list is open.
         TVector<ECS::FEntity> Candidates;
         Candidates.Add(ECS::NullEntity);
 
-        const ECS::FEntity CurrentEntity = CachedValue;
-        const bool bHasCurrent = CurrentEntity != ECS::NullEntity && Registry.IsValid(CurrentEntity);
-
         int32 CurrentIndex = 0; // default to None
-        for (ECS::FEntity Entity : Registry.View<SNameComponent, ECS::Without<FHideInSceneOutliner>>())
+        if (ImGuiX::IsSearchableComboOpen("##entity"))
         {
-            if (bHasCurrent && Entity == CurrentEntity)
+            for (ECS::FEntity Entity : Registry.View<SNameComponent, ECS::Without<FHideInSceneOutliner>>())
             {
-                CurrentIndex = Candidates.Num();
+                if (bHasCurrent && Entity == CurrentEntity)
+                {
+                    CurrentIndex = Candidates.Num();
+                }
+                Candidates.Add(Entity);
             }
-            Candidates.Add(Entity);
         }
-
-        const FFixedString Preview = bHasCurrent ? MakeEntityLabel(Registry, CurrentEntity) : FFixedString("None");
 
         // Leave room on the right for the square eyedropper button.
         const float LineHeight = ImGui::GetFrameHeight();

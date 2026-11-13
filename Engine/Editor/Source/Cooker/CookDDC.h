@@ -2,13 +2,13 @@
 
 #include "Containers/Vector.h"
 #include "Containers/String.h"
+#include "Lumina.h"
 #include "Platform/GenericPlatform.h"
 
 
 namespace Lumina
 {
-    // Stable key for a cooked artifact: source content hash + cooker version stamp + cook-mode flags.
-    // Bump FCookDDC::kCookStamp when cook logic changes in a way that should invalidate cached bytes.
+    // Stable key for a cooked artifact; bumping either FCookDDC::kCookStamp or LUMINA_VERSION_NUM invalidates every cached entry.
     struct FCookInputHash
     {
         uint64 Hash = 0;
@@ -20,13 +20,14 @@ namespace Lumina
 
     // Disk-backed derived data cache under <EngineInstall>/Intermediates/DDC/<XX>/<full-hash>.ddc (two-byte hex prefix = 256 buckets).
     // Hit = identical source + cook logic, so cached bytes equal a fresh BundleAssetCooked; miss does the full load + cook-mode resave then Puts.
-    class FCookDDC
+    class EDITOR_API FCookDDC
     {
     public:
-        // Bump to invalidate every cached entry; triggers: cook-mode serialize/saver layout, import wire format, EditorOnly strip rules.
+        // Manual trigger for cook logic changes that don't bump LUMINA_VERSION_NUM, such as cook-mode serialize/saver layout or EditorOnly strip rules.
         static constexpr uint32 kCookStamp = 3;
 
-        static FCookInputHash ComputeKey(uint64 SourceContentHash);
+        // Mixes EngineVersion in alongside kCookStamp, so a new engine build never reads a cache written by another one.
+        static FCookInputHash ComputeKey(uint64 SourceContentHash, uint32 EngineVersion = LUMINA_VERSION_NUM);
 
         // Returns true and fills OutBytes on hit; bumps the hit counter.
         // Bumps the miss counter on absence (so the caller doesn't need to).

@@ -86,31 +86,11 @@ public static class UnitySymbolScanner
     /// </summary>
     private static void CollectScope(string Text, HashSet<string> Names, bool bFileScope, string Scope)
     {
-        int Depth = 0;
         int StatementStart = 0;
 
         for (int Index = 0; Index < Text.Length; Index++)
         {
             char Current = Text[Index];
-
-            if (Depth > 0)
-            {
-                if (Current == '{')
-                {
-                    Depth++;
-                }
-                else if (Current == '}')
-                {
-                    Depth--;
-
-                    if (Depth == 0)
-                    {
-                        StatementStart = Index + 1;
-                    }
-                }
-
-                continue;
-            }
 
             if (Current == '{')
             {
@@ -135,7 +115,6 @@ public static class UnitySymbolScanner
                 }
 
                 Index = BodyEnd;
-                Depth = 0;
                 StatementStart = Index + 1;
                 continue;
             }
@@ -279,7 +258,18 @@ public static class UnitySymbolScanner
                 continue;
             }
 
-            if (Current == '"' || Current == '\'')
+            int RawOpen = Current == '"' && Output.Length > 0 && Output[^1] == 'R' ? Text.IndexOf('(', Index) : -1;
+
+            if (RawOpen >= 0)
+            {
+                string Close = ")" + Text.Substring(Index + 1, RawOpen - Index - 1) + "\"";
+                int RawEnd = Text.IndexOf(Close, RawOpen, StringComparison.Ordinal);
+                Index = RawEnd < 0 ? Text.Length : RawEnd + Close.Length - 1;
+                Output.Append('0');
+                continue;
+            }
+
+            if (Current == '"' || (Current == '\'' && !IsDigitSeparator(Output)))
             {
                 char Quote = Current;
                 Index++;
@@ -298,9 +288,9 @@ public static class UnitySymbolScanner
                 continue;
             }
 
-            if (Current == '#' && (Output.Length == 0 || Output[^1] == '\n'))
+            if (Current == '#' && IsLineStart(Output))
             {
-                while (Index < Text.Length && !(Text[Index] == '\n' && Text[Index - 1] != '\\'))
+                while (Index < Text.Length && !(Text[Index] == '\n' && !IsContinuedLine(Text, Index)))
                 {
                     Index++;
                 }
@@ -313,5 +303,43 @@ public static class UnitySymbolScanner
         }
 
         return Output.ToString();
+    }
+
+    private static bool IsLineStart(StringBuilder Output)
+    {
+        for (int Index = Output.Length - 1; Index >= 0 && Output[Index] != '\n'; Index--)
+        {
+            if (!char.IsWhiteSpace(Output[Index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsContinuedLine(string Text, int NewlineIndex)
+    {
+        int Before = NewlineIndex - 1;
+
+        if (Before >= 0 && Text[Before] == '\r')
+        {
+            Before--;
+        }
+
+        return Before >= 0 && Text[Before] == '\\';
+    }
+
+    // A quote inside a number token such as 1'000 separates digits rather than opening a character literal.
+    private static bool IsDigitSeparator(StringBuilder Output)
+    {
+        int Start = Output.Length;
+
+        while (Start > 0 && (char.IsAsciiLetterOrDigit(Output[Start - 1]) || Output[Start - 1] is '_' or '\''))
+        {
+            Start--;
+        }
+
+        return Start < Output.Length && char.IsAsciiDigit(Output[Start]);
     }
 }

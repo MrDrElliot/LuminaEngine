@@ -63,6 +63,7 @@ namespace Lumina
 		bool			bFirstMouseUpdate = true;
 		bool			bInitialized = false;
 		bool			bTitleBarHovered = false;
+		FWindowEventGate Gate;
 
 		EWindowMode		Mode = EWindowMode::Windowed;
 
@@ -82,16 +83,21 @@ namespace Lumina
 			return static_cast<FWindowImpl*>(glfwGetWindowUserPointer(Window));
 		}
 
-		FWindow* OwnerFrom(GLFWwindow* Window)
+		template<auto Delegate, typename... TArgs>
+		void BroadcastFrom(GLFWwindow* Window, TArgs... Args)
 		{
-			const FWindowImpl* Impl = ImplFrom(Window);
-			return Impl != nullptr ? Impl->Owner : nullptr;
+			if (FWindowImpl* Impl = ImplFrom(Window))
+			{
+				Impl->Gate.Dispatch([Owner = Impl->Owner, ...Args = Move(Args)]
+				{
+					(Owner->*Delegate).Broadcast(Owner, Args...);
+				});
+			}
 		}
 
 		void MouseButtonCallback(GLFWwindow* Window, int Button, int Action, int /*Mods*/)
 		{
-			FWindow* Owner = OwnerFrom(Window);
-			if (Owner == nullptr || (Action != GLFW_PRESS && Action != GLFW_RELEASE))
+			if (Action != GLFW_PRESS && Action != GLFW_RELEASE)
 			{
 				return;
 			}
@@ -105,7 +111,7 @@ namespace Lumina
 			Input.X        = (float)xpos;
 			Input.Y        = (float)ypos;
 
-			Owner->OnMouseButton.Broadcast(Owner, Input);
+			BroadcastFrom<&FWindow::OnMouseButton>(Window, Input);
 		}
 
 		void MousePosCallback(GLFWwindow* Window, double xpos, double ypos)
@@ -130,25 +136,21 @@ namespace Lumina
 			Impl->LastMouseY = ypos;
 			Impl->bFirstMouseUpdate = false;
 
-			Impl->Owner->OnMouseMove.Broadcast(Impl->Owner, Input);
+			Impl->Gate.Dispatch([Owner = Impl->Owner, Input]
+			{
+				Owner->OnMouseMove.Broadcast(Owner, Input);
+			}, FVector2(Input.DeltaX, Input.DeltaY));
 		}
 
 		void MouseScrollCallback(GLFWwindow* Window, double /*xoffset*/, double yoffset)
 		{
-			FWindow* Owner = OwnerFrom(Window);
-			if (Owner == nullptr)
-			{
-				return;
-			}
-
 			// Vertical scroll only.
-			Owner->OnScroll.Broadcast(Owner, FMouseScrollInput{ (float)yoffset });
+			BroadcastFrom<&FWindow::OnScroll>(Window, FMouseScrollInput{ (float)yoffset });
 		}
 
 		void KeyCallback(GLFWwindow* Window, int Key, int /*Scancode*/, int Action, int Mods)
 		{
-			FWindow* Owner = OwnerFrom(Window);
-			if (Owner == nullptr || Key == GLFW_KEY_UNKNOWN)
+			if (Key == GLFW_KEY_UNKNOWN)
 			{
 				return;
 			}
@@ -162,24 +164,24 @@ namespace Lumina
 			Input.bAlt     = (Mods & GLFW_MOD_ALT) != 0;
 			Input.bSuper   = (Mods & GLFW_MOD_SUPER) != 0;
 
-			Owner->OnKey.Broadcast(Owner, Input);
+			BroadcastFrom<&FWindow::OnKey>(Window, Input);
 		}
 
 		void CharCallback(GLFWwindow* Window, unsigned int Codepoint)
 		{
-			if (FWindow* Owner = OwnerFrom(Window))
-			{
-				Owner->OnChar.Broadcast(Owner, Codepoint);
-			}
+			BroadcastFrom<&FWindow::OnChar>(Window, (uint32)Codepoint);
 		}
 
 		void WindowResizeCallback(GLFWwindow* Window, int width, int height)
 		{
 			FWindowImpl* Impl = ImplFrom(Window);
-			Impl->Specs.Extent.x = width;
-			Impl->Specs.Extent.y = height;
+			Impl->Gate.Dispatch([Impl, width, height]
+			{
+				Impl->Specs.Extent.x = width;
+				Impl->Specs.Extent.y = height;
 
-			FWindow::OnWindowResized.Broadcast(Impl->Owner, Impl->Specs.Extent);
+				FWindow::OnWindowResized.Broadcast(Impl->Owner, Impl->Specs.Extent);
+			});
 		}
 
 		void WindowDropCallback(GLFWwindow* Window, int PathCount, const char* Paths[])
@@ -194,18 +196,12 @@ namespace Lumina
 				StringPaths.Emplace(Paths[i]);
 			}
 
-			if (FWindow* Owner = OwnerFrom(Window))
-			{
-				Owner->OnFileDrop.Broadcast(Owner, StringPaths, static_cast<float>(xpos), static_cast<float>(ypos));
-			}
+			BroadcastFrom<&FWindow::OnFileDrop>(Window, StringPaths, static_cast<float>(xpos), static_cast<float>(ypos));
 		}
 
 		void WindowCloseCallback(GLFWwindow* Window)
 		{
-			if (FWindow* Owner = OwnerFrom(Window))
-			{
-				Owner->OnCloseRequested.Broadcast(Owner);
-			}
+			BroadcastFrom<&FWindow::OnCloseRequested>(Window);
 		}
 
 		void TitleBarHitTestCallback(GLFWwindow* Window, int /*x*/, int /*y*/, int* hit)
@@ -332,9 +328,44 @@ namespace Lumina
 		}
 	}
 
+	void FWindowEventGate::Dispatch(TFunction<void()>&& Event, FVector2 MouseDelta)
+	{
+		if (!bHolding)
+		{
+			Event();
+			return;
+		}
+		Held.Add(Move(Event));
+		HeldMouseDelta += MouseDelta;
+	}
+
+	void FWindowEventGate::Release()
+	{
+		TVector<TFunction<void()>> Events = Move(Held);
+		Held.Reset();
+		HeldMouseDelta = FVector2(0.0f);
+		for (TFunction<void()>& Event : Events)
+		{
+			Event();
+		}
+	}
+
 	void FWindow::ProcessMessages()
 	{
+		Impl->Gate.Release();
 		glfwPollEvents();
+	}
+
+	void FWindow::PumpLateMessages()
+	{
+		Impl->Gate.BeginHold();
+		glfwPollEvents();
+		Impl->Gate.EndHold();
+	}
+
+	FVector2 FWindow::GetLateMouseDelta() const
+	{
+		return Impl->Gate.GetHeldMouseDelta();
 	}
 
 	GLFWwindow* FWindow::GetWindow() const
@@ -587,25 +618,28 @@ namespace Lumina
 		glfwSetWindowShouldClose(Impl->Window, GLFW_FALSE);
 	}
 
-	namespace Windowing
+	namespace Global
 	{
 		FWindow* PrimaryWindow = nullptr;
+	}
 
+	namespace Windowing
+	{
 		FWindow* GetPrimaryWindowHandle()
 		{
-			ASSERT(PrimaryWindow != nullptr);
-			return PrimaryWindow;
+			ASSERT(Global::PrimaryWindow != nullptr);
+			return Global::PrimaryWindow;
 		}
 
 		FWindow* TryGetPrimaryWindowHandle()
 		{
-			return PrimaryWindow;
+			return Global::PrimaryWindow;
 		}
 
 		void SetPrimaryWindowHandle(FWindow* InWindow)
 		{
-			ASSERT(PrimaryWindow == nullptr);
-			PrimaryWindow = InWindow;
+			ASSERT(Global::PrimaryWindow == nullptr);
+			Global::PrimaryWindow = InWindow;
 		}
 
 		void SetCursorModeForNativeWindow(void* NativeWindow, ECursorMode Mode, bool bRawMotion)
@@ -613,7 +647,7 @@ namespace Lumina
 			GLFWwindow* Window = static_cast<GLFWwindow*>(NativeWindow);
 			if (Window == nullptr)
 			{
-				Window = PrimaryWindow ? PrimaryWindow->GetWindow() : nullptr;
+				Window = Global::PrimaryWindow ? Global::PrimaryWindow->GetWindow() : nullptr;
 			}
 			if (Window == nullptr)
 			{

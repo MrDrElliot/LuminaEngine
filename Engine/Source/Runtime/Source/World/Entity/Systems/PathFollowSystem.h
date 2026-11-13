@@ -28,7 +28,6 @@ namespace Lumina
 
         void Configure() override;
 
-        bool HasWork(const SSystemContext& Context) override;
         void OnUpdate(const SSystemContext& Context) override;
 
     private:

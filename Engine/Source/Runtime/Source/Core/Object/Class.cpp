@@ -30,7 +30,7 @@ namespace Lumina
     template<typename TClass, typename... TArgs>
     static TClass* NewTypeObject(TArgs&&... Args)
     {
-        void* Storage = GCObjectAllocator.AllocateCObject(sizeof(TClass), alignof(TClass));
+        void* Storage = Global::GCObjectAllocator.AllocateCObject(sizeof(TClass), alignof(TClass));
         return Memory::ConstructAt(static_cast<TClass*>(Storage), Forward<TArgs>(Args)...);
     }
 

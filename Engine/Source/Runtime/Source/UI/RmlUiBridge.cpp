@@ -51,6 +51,7 @@
 #include "Memory/Memory.h"
 #include "Memory/MemoryTracking.h"
 #include "Memory/SmartPtr.h"
+#include "Core/Threading/Mutex.h"
 #include "Core/Threading/Thread.h"
 #include "Renderer/Format.h"
 #include "Renderer/RHI.h"
@@ -111,41 +112,7 @@ namespace Lumina::RmlUi
 
 #if USING(WITH_EDITOR)
         // Each distinct message is shown once and then muted, since RmlUi repeats them every frame.
-        void NotifyDiagnostic(Rml::Log::Type Type, const Rml::String& Message)
-        {
-            constexpr double MuteSeconds = 10.0;
-            constexpr size_t MaxTracked  = 64;
-
-            static FMutex Mutex;
-            static THashMap<FString, double> LastShown;
-
-            const double Now = PlatformTime::Seconds();
-
-            const FString Key(Message.c_str(), IntCastChecked<int32>(Message.size()));
-            {
-                FScopeLock Lock(Mutex);
-
-                // Bounded rather than evicted one by one, since messages carrying line numbers are unique.
-                if (static_cast<size_t>(LastShown.Num()) >= MaxTracked)
-                {
-                    LastShown.Reset();
-                }
-
-                auto It = LastShown.Find(Key);
-                if (It != nullptr && (Now - (*It)) < MuteSeconds)
-                {
-                    return;
-                }
-                LastShown[Key] = Now;
-            }
-
-            // NotifyInternal, not the format wrappers, because RCSS text is full of braces.
-            const ImGuiX::Notifications::EType Severity = (Type == Rml::Log::LT_WARNING)
-                ? ImGuiX::Notifications::EType::Warning
-                : ImGuiX::Notifications::EType::Error;
-
-            ImGuiX::Notifications::NotifyInternal(Severity, FStringView(*Key, Key.Len()));
-        }
+        void NotifyDiagnostic(Rml::Log::Type Type, const Rml::String& Message);
 #endif
 
         class FLuminaSystemInterface final : public Rml::SystemInterface
@@ -306,6 +273,9 @@ namespace Lumina::RmlUi
             Rml::String          Type;
             Rml::Element*        Element   = nullptr;
             bool                 bAttached = false;
+
+            // Set instead of deleting while a dispatch may still hold this listener on the call stack.
+            bool                 bDead     = false;
         };
 
         // Element and member identity packs into the handle, row in the high 32 bits, column in the low.
@@ -454,6 +424,9 @@ namespace Lumina::RmlUi
             TUniquePtr<FLuminaSystemInterface>  System;
             TUniquePtr<FRmlUiFileInterface>     Files;
             TUniquePtr<FRmlUiRenderer>          Renderer;
+
+            // Stands in for Renderer when Initialize(false) skips the GPU device, so CreateContext still has one to fall back on.
+            TUniquePtr<Rml::RenderInterface>    HeadlessRenderer;
             TVector<TUniquePtr<FEditorEntry>>   EditorContexts;
 
             // Editor hot-reload, raised by OnContentFileModified on any .rml or .rcss save.
@@ -473,8 +446,7 @@ namespace Lumina::RmlUi
             bool                                bDefaultRcssLoaded = false;
 
             // .rml files saved since the last reload pass, handed to the scripts showing them. Written by the watcher thread.
-            FMutex                              ChangedDocumentsMutex;
-            TVector<FString>                    ChangedDocuments;
+            TMutex<TVector<FString>>            ChangedDocuments;
 
             CWorld*                             ActiveWorld = nullptr;
 
@@ -488,8 +460,6 @@ namespace Lumina::RmlUi
             // Family, path and style of every project face handed to RmlUi, which has no way to unregister one.
             TVector<FString>                    RegisteredProjectFonts;
 
-            uint32                              WidgetRenderCursor = 0;
-
             // Small N per screen, so a linear scan on add and remove is fine.
             TVector<FManagedUIListener*>        UIListeners;
 
@@ -502,9 +472,6 @@ namespace Lumina::RmlUi
             // Recursive because Update may fire callbacks that re-enter the bridge on the same thread.
             FRecursiveMutex                     StateMutex;
 
-            // Bumped by anything that can change what a context draws, so a context that saw the current value can sit idle.
-            uint64                              ChangeGeneration = 1;
-
             // Elements whose children came from one inner RML string, so the same string set again can be skipped.
             THashMap<const Rml::Element*, uint64> InnerRmlHashes;
 
@@ -513,6 +480,11 @@ namespace Lumina::RmlUi
 
             // Checked once after their first layout, for mistakes RmlUi accepts silently.
             TVector<Rml::ElementDocument*>      DocumentsToLint;
+
+#if USING(WITH_EDITOR)
+            // Last time each distinct RmlUi diagnostic message was shown, so repeats can be muted.
+            THashMap<FString, double>           LastShownDiagnostics;
+#endif
         };
 
         FState& S()
@@ -521,13 +493,46 @@ namespace Lumina::RmlUi
             return State;
         }
 
+#if USING(WITH_EDITOR)
+        void NotifyDiagnostic(Rml::Log::Type Type, const Rml::String& Message)
+        {
+            constexpr double MuteSeconds = 10.0;
+            constexpr size_t MaxTracked  = 64;
+
+            const double Now = PlatformTime::Seconds();
+
+            const FString Key(Message.c_str(), IntCastChecked<int32>(Message.size()));
+            {
+                FState& State = S();
+                FRecursiveScopeLock Lock(State.StateMutex);
+
+                THashMap<FString, double>& LastShown = State.LastShownDiagnostics;
+
+                // Bounded rather than evicted one by one, since messages carrying line numbers are unique.
+                if (static_cast<size_t>(LastShown.Num()) >= MaxTracked)
+                {
+                    LastShown.Reset();
+                }
+
+                auto It = LastShown.Find(Key);
+                if (It != nullptr && (Now - (*It)) < MuteSeconds)
+                {
+                    return;
+                }
+                LastShown[Key] = Now;
+            }
+
+            // NotifyInternal, not the format wrappers, because RCSS text is full of braces.
+            const ImGuiX::Notifications::EType Severity = (Type == Rml::Log::LT_WARNING)
+                ? ImGuiX::Notifications::EType::Warning
+                : ImGuiX::Notifications::EType::Error;
+
+            ImGuiX::Notifications::NotifyInternal(Severity, FStringView(*Key, Key.Len()));
+        }
+#endif
+
         FEventDispatchScope::FEventDispatchScope()  { ++S().EventDispatchDepth; }
         FEventDispatchScope::~FEventDispatchScope() { --S().EventDispatchDepth; }
-
-        void NoteUIChanged()
-        {
-            ++S().ChangeGeneration;
-        }
 
         // A change under an element whose children were set from markup means that markup no longer describes them.
         void ForgetInnerRml(const Rml::Element* Element)
@@ -541,12 +546,6 @@ namespace Lumina::RmlUi
             {
                 State.InnerRmlHashes.Remove(It);
             }
-        }
-
-        void NoteElementChanged(const Rml::Element* Element)
-        {
-            NoteUIChanged();
-            ForgetInnerRml(Element);
         }
 
         Rml::Element* HandOutElement(Rml::Element* Element)
@@ -582,6 +581,62 @@ namespace Lumina::RmlUi
                 return nullptr;
             }
             return World->GetUIContext();
+        }
+
+        // Null for a context no world owns, such as an editor preview or a world widget, which never idle on a generation.
+        FWorldUIContext* WorldUI(const Rml::Context* Context)
+        {
+            if (Context == nullptr)
+            {
+                return nullptr;
+            }
+            for (CWorld* World : S().Worlds)
+            {
+                if (FWorldUIContext* UI = World->GetUIContext(); UI != nullptr && UI->Context == Context)
+                {
+                    return UI;
+                }
+            }
+            return nullptr;
+        }
+
+        // Wakes only the world whose UI can draw differently, so the others keep replaying their last frame.
+        void NoteUIChanged(FWorldUIContext* UI)
+        {
+            if (UI != nullptr)
+            {
+                ++UI->ChangeGeneration;
+            }
+        }
+
+        void NoteUIChanged(const Rml::Context* Context)
+        {
+            NoteUIChanged(WorldUI(Context));
+        }
+
+        // For changes every world shares, such as restyled sheets or reloaded textures.
+        void NoteUIChanged()
+        {
+            for (CWorld* World : S().Worlds)
+            {
+                NoteUIChanged(World->GetUIContext());
+            }
+        }
+
+        void NoteElementChanged(const Rml::Element* Element)
+        {
+            NoteUIChanged(Element->GetContext());
+            ForgetInnerRml(Element);
+        }
+
+        FManagedDataModel* EditDataModel(void* Handle)
+        {
+            FManagedDataModel* Model = LiveDataModel(Handle);
+            if (Model != nullptr)
+            {
+                NoteUIChanged(WorldUI(Model->World));
+            }
+            return Model;
         }
 
         FWorldUIContext* ActiveUI()
@@ -813,8 +868,8 @@ namespace Lumina::RmlUi
             // Restyling cannot change markup, so a script showing a saved .rml loads it again.
             TVector<FString> Changed;
             {
-                FScopeLock ChangedLock(State.ChangedDocumentsMutex);
-                swap(Changed, State.ChangedDocuments);
+                auto Guard = State.ChangedDocuments.Lock();
+                swap(Changed, *Guard);
             }
             for (const FString& Path : Changed)
             {
@@ -911,6 +966,26 @@ namespace Lumina::RmlUi
             }
         }
 
+        void ReapDeadUIListeners(FState& State)
+        {
+            if (State.EventDispatchDepth > 0)
+            {
+                return;
+            }
+            for (int32 i = 0; i < State.UIListeners.Num();)
+            {
+                if (State.UIListeners[i]->bDead)
+                {
+                    delete State.UIListeners[i];
+                    State.UIListeners.RemoveAtSwap(i);
+                }
+                else
+                {
+                    ++i;
+                }
+            }
+        }
+
         // RemoveContext already tore down the underlying DataModel, so only the wrapper is freed.
         void ReapWorldDataModels(FState& State, CWorld* World)
         {
@@ -937,8 +1012,7 @@ namespace Lumina::RmlUi
                 if (bIsDocument)
                 {
                     FState& State = S();
-                    FScopeLock Lock(State.ChangedDocumentsMutex);
-                    State.ChangedDocuments.AddUnique(FString(VirtualPath.GetData(), VirtualPath.Len()));
+                    State.ChangedDocuments.Lock()->AddUnique(FString(VirtualPath.GetData(), VirtualPath.Len()));
                 }
                 S().LastUIFileChangeCycles.store(PlatformTime::Cycles(), Atomic::MemoryOrderRelease);
                 S().UIFileChangeSerial.fetch_add(1, Atomic::MemoryOrderRelease);
@@ -1055,6 +1129,20 @@ namespace Lumina::RmlUi
             }
         }
 
+        // Lints one known document directly instead of walking the whole pending list, for callers that already have it.
+        void LintLoadedDocumentIfPending(Rml::ElementDocument* Document)
+        {
+            TVector<Rml::ElementDocument*>& Pending = S().DocumentsToLint;
+            const int32 Index = Pending.Find(Document);
+            if (Index == Constants::kIndexNone)
+            {
+                return;
+            }
+            int32 Warnings = 0;
+            LintTextLineHeights(Document, Document->GetSourceURL(), Warnings);
+            Pending.RemoveAt(Index);
+        }
+
         void RegisterDefaultStyleSheet()
         {
             static FDefaultStyleSheetPlugin Plugin;
@@ -1100,27 +1188,50 @@ namespace Lumina::RmlUi
 
             LOG_INFO("[RmlUi] Created context '{}' for world {} (initial {}x{}).", NameBuf, static_cast<void*>(World), InitialSize.x, InitialSize.y);
         }
+
+        // Satisfies Rml::CreateContext's requirement for a render interface when there is no GPU device to back one.
+        class FHeadlessRenderInterface final : public Rml::RenderInterface
+        {
+        public:
+            Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex>, Rml::Span<const int>) override { return 0; }
+            void RenderGeometry(Rml::CompiledGeometryHandle, Rml::Vector2f, Rml::TextureHandle) override {}
+            void ReleaseGeometry(Rml::CompiledGeometryHandle) override {}
+            Rml::TextureHandle LoadTexture(Rml::Vector2i&, const Rml::String&) override { return 0; }
+            Rml::TextureHandle GenerateTexture(Rml::Span<const Rml::byte>, Rml::Vector2i) override { return 0; }
+            void ReleaseTexture(Rml::TextureHandle) override {}
+            void EnableScissorRegion(bool) override {}
+            void SetScissorRegion(Rml::Rectanglei) override {}
+        };
     }
 
-    bool Initialize()
+    bool Initialize(bool bWithRenderer)
     {
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         if (State.bInitialized) return true;
 
-        State.System   = MakeUnique<FLuminaSystemInterface>();
-        State.Files    = MakeUnique<FRmlUiFileInterface>();
-        State.Renderer = MakeUnique<FRmlUiRenderer>();
+        State.System = MakeUnique<FLuminaSystemInterface>();
+        State.Files  = MakeUnique<FRmlUiFileInterface>();
+        if (bWithRenderer)
+        {
+            State.Renderer = MakeUnique<FRmlUiRenderer>();
+            Rml::SetRenderInterface(State.Renderer.get());
+        }
+        else
+        {
+            State.HeadlessRenderer = MakeUnique<FHeadlessRenderInterface>();
+            Rml::SetRenderInterface(State.HeadlessRenderer.get());
+        }
 
         Rml::SetSystemInterface(State.System.get());
         Rml::SetFileInterface(State.Files.get());
-        Rml::SetRenderInterface(State.Renderer.get());
 
         auto ResetOnFailure = [&]()
         {
             State.System.reset();
             State.Files.reset();
             State.Renderer.reset();
+            State.HeadlessRenderer.reset();
             State.EditorContexts.Reset();
             State.ActiveWorld = nullptr;
             State.DebuggerHost = nullptr;
@@ -1140,7 +1251,7 @@ namespace Lumina::RmlUi
 
         RegisterDefaultStyleSheet();
 
-        if (!State.Renderer->Initialize())
+        if (bWithRenderer && !State.Renderer->Initialize())
         {
             LOG_ERROR("[RmlUi] FRmlUiRenderer initialization failed; tearing down.");
             Rml::Shutdown();
@@ -1328,6 +1439,7 @@ namespace Lumina::RmlUi
         State.System.reset();
         State.Files.reset();
         State.Renderer.reset();
+        State.HeadlessRenderer.reset();
         State.bDebuggerVisible = false;
     }
 
@@ -1455,6 +1567,7 @@ namespace Lumina::RmlUi
         UIScripts::Tick(World);
         DotNetUI::PollModels(World);
         ReapDeadDataModels(State);
+        ReapDeadUIListeners(State);
         PollObjectModels(UI->Context);
 
         const FWorldTarget Tgt = GetWorldTarget(World);
@@ -1471,21 +1584,13 @@ namespace Lumina::RmlUi
 
         // RmlUi reports how long it can wait before an animation, transition or caret blink needs it, and every edit and input bumps the generation.
         const double Now = PlatformTime::Seconds();
-        const bool bChanged = UI->SeenChangeGeneration != State.ChangeGeneration || LayoutSize != UI->LastLayoutSize
-            || DpRatio != UI->LastDpRatio || Now >= UI->NextUpdateSeconds;
-        UI->bIdleThisFrame = !bChanged;
-        if (!bChanged)
+        if (!UI->NeedsUpdate(LayoutSize, DpRatio, Now))
         {
             return;
         }
 
         UI->Context->SetDimensions(Rml::Vector2i(int(LayoutSize.x), int(LayoutSize.y)));
         UI->Context->SetDensityIndependentPixelRatio(DpRatio);
-        UI->LastLayoutSize = LayoutSize;
-        UI->LastDpRatio = DpRatio;
-
-        // Taken before the update, so an edit made by a callback inside it brings the next frame back for another pass.
-        UI->SeenChangeGeneration = State.ChangeGeneration;
         {
             LUMINA_PROFILE_SECTION("RmlUi Context Update");
             UI->Context->Update();
@@ -1625,6 +1730,10 @@ namespace Lumina::RmlUi
             R.Context->SetDimensions(Rml::Vector2i(int(Width), int(Height)));
             R.Context->SetDensityIndependentPixelRatio(Math::Max(0.1f, float(Height) / 1080.0f));
             R.Context->Update();
+            if (!State.DocumentsToLint.IsEmpty())
+            {
+                LintLoadedDocumentIfPending(R.Document);
+            }
 
             // RmlUi lowers this from infinity when an animation is pending, so huge means idle.
             R.bRmlIdle = (R.Context->GetNextUpdateDelay() > 1.0e6);
@@ -1645,7 +1754,7 @@ namespace Lumina::RmlUi
         {
             return;
         }
-        const FWorldUIContext* UI = WorldUI(World);
+        FWorldUIContext* UI = WorldUI(World);
         if (UI == nullptr)
         {
             return;
@@ -1661,9 +1770,10 @@ namespace Lumina::RmlUi
         int32 Rendered = 0;
 
         // Rotate the start each frame so the budget doesn't always favor the first widgets.
+        const uint32 Start = UI->NextWidgetRenderStart(JobCount);
         for (int32 k = 0; k < JobCount; ++k)
         {
-            const FWidgetRenderJob& Job = UI->WidgetJobs[(State.WidgetRenderCursor + k) % JobCount];
+            const FWidgetRenderJob& Job = UI->WidgetJobs[(Start + k) % JobCount];
             if (Job.Context == nullptr || !RHI::IsValid(Job.Target))
             {
                 continue;
@@ -1711,8 +1821,6 @@ namespace Lumina::RmlUi
                 RHI::EStageFlags::PixelShader,
                 RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
-
-        State.WidgetRenderCursor = (State.WidgetRenderCursor + 1) % JobCount;
     }
 
     void ReleaseWidget(CWorld* World, SWidgetComponent& Component)
@@ -1741,6 +1849,7 @@ namespace Lumina::RmlUi
             return;
         }
         ReapDeadDataModels(State);
+        ReapDeadUIListeners(State);
 
         for (auto& E : State.EditorContexts)
         {
@@ -1821,7 +1930,7 @@ namespace Lumina::RmlUi
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         FWorldUIContext* UI = WorldUI(World);
-        NoteUIChanged();
+        NoteUIChanged(UI);
         return UI ? UI->Context : nullptr;
     }
 
@@ -1856,7 +1965,7 @@ namespace Lumina::RmlUi
         // Whatever the holder does to the context, it did not go through an edit the bridge could see.
         if (bMayModify)
         {
-            NoteUIChanged();
+            NoteUIChanged(UI);
         }
     }
 
@@ -1922,7 +2031,6 @@ namespace Lumina::RmlUi
 
     bool SetWorldInlineDocument(CWorld* World, FStringView Body, FStringView SourceUrl)
     {
-        NoteUIChanged();
         if (World == nullptr)
         {
             return false;
@@ -1938,6 +2046,7 @@ namespace Lumina::RmlUi
         {
             return false;
         }
+        NoteUIChanged(UI);
 
         // Drop whatever was loaded; the preview owns the whole context.
         for (auto& [Path, Document] : UI->Documents)
@@ -2267,7 +2376,6 @@ namespace Lumina::RmlUi
 
     void* LoadScreenDocument(CWorld* World, FStringView VirtualPath)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         if (World == nullptr || VirtualPath.IsEmpty())
@@ -2277,7 +2385,7 @@ namespace Lumina::RmlUi
         if (!State.bInitialized)
         {
             // A headless process never starts the UI, so a document it asks for is expected to come back empty.
-            if (!GIsHeadless)
+            if (!Global::GIsHeadless)
             {
                 LOG_WARN("[RmlUi] CUILibrary.LoadDocument('{}') called before RmlUi initialized.", *FString(VirtualPath.GetData(), VirtualPath.Len()));
             }
@@ -2290,6 +2398,7 @@ namespace Lumina::RmlUi
                 *FString(VirtualPath.GetData(), VirtualPath.Len()), *World->GetName());
             return nullptr;
         }
+        NoteUIChanged(UI);
         DropStaleStyleSheets();
         Rml::ElementDocument* Doc = UI->Context->LoadDocument(ToRml(VirtualPath));
         if (Doc == nullptr)
@@ -2301,7 +2410,6 @@ namespace Lumina::RmlUi
 
     void* LoadScreenDocumentFromMemory(CWorld* World, FStringView Body, FStringView SourceUrl)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         if (!State.bInitialized || World == nullptr || Body.IsEmpty())
@@ -2313,6 +2421,7 @@ namespace Lumina::RmlUi
         {
             return nullptr;
         }
+        NoteUIChanged(UI);
         DropStaleStyleSheets();
         return UI->Context->LoadDocumentFromMemory(ToRml(Body), ToRml(SourceUrl));
     }
@@ -2354,7 +2463,6 @@ namespace Lumina::RmlUi
 
     void UnloadScreenDocument(CWorld* World, void* Document)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         if (!State.bInitialized || World == nullptr || Document == nullptr)
@@ -2364,17 +2472,18 @@ namespace Lumina::RmlUi
         FWorldUIContext* UI = WorldUI(World);
         if (UI != nullptr && UI->Context != nullptr && IsLiveDocument(Document))
         {
+            NoteUIChanged(UI);
             UI->Context->UnloadDocument(AsDocument(Document));
         }
     }
 
     void ShowDocument(void* Document, bool bModal, bool bAutoFocus)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         if (State.bInitialized && IsLiveDocument(Document))
         {
+            NoteUIChanged(AsDocument(Document)->GetContext());
             AsDocument(Document)->Show(bModal     ? Rml::ModalFlag::Modal : Rml::ModalFlag::None,
                                        bAutoFocus ? Rml::FocusFlag::Auto  : Rml::FocusFlag::None);
         }
@@ -2382,22 +2491,22 @@ namespace Lumina::RmlUi
 
     void HideDocument(void* Document)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         if (State.bInitialized && IsLiveDocument(Document))
         {
+            NoteUIChanged(AsDocument(Document)->GetContext());
             AsDocument(Document)->Hide();
         }
     }
 
     void PullDocumentToFront(void* Document)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         if (State.bInitialized && IsLiveDocument(Document))
         {
+            NoteUIChanged(AsDocument(Document)->GetContext());
             AsDocument(Document)->PullToFront();
         }
     }
@@ -2657,25 +2766,26 @@ namespace Lumina::RmlUi
             return;
         }
         FManagedUIListener* L = static_cast<FManagedUIListener*>(Listener);
-        for (int32 i = 0; i < State.UIListeners.Num(); ++i)
+        const int32 Index = State.UIListeners.Find(L);
+        if (Index == Constants::kIndexNone)
         {
-            if (State.UIListeners[i] != L)
-            {
-                continue;
-            }
-            if (L->bAttached && L->Element != nullptr)
-            {
-                L->Element->RemoveEventListener(L->Type, L, false);
-            }
-            State.UIListeners.RemoveAtSwap(i);
-            delete L;
             return;
         }
+        if (L->bAttached && L->Element != nullptr)
+        {
+            L->Element->RemoveEventListener(L->Type, L, false);
+        }
+        if (State.EventDispatchDepth > 0)
+        {
+            L->bDead = true;
+            return;
+        }
+        State.UIListeners.RemoveAtSwap(Index);
+        delete L;
     }
 
     void* CreateDataModel(CWorld* World, FStringView Name, SScriptCallback OnSet, SScriptCallback OnEvent)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         FWorldUIContext* UI = State.bInitialized && World != nullptr && !Name.IsEmpty() ? WorldUI(World) : nullptr;
@@ -2685,6 +2795,7 @@ namespace Lumina::RmlUi
             Scripting::ReleaseScriptCallback(OnEvent);
             return nullptr;
         }
+        NoteUIChanged(UI);
 
         const Rml::String ModelName(Name.GetData(), Name.Len());
         Rml::DataModelConstructor Ctor = UI->Context->CreateDataModel(ModelName);
@@ -2865,10 +2976,9 @@ namespace Lumina::RmlUi
 
     void DataModelListResize(void* ModelPtr, int32 ListField, int32 RowCount)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        FManagedDataModel* M = LiveDataModel(ModelPtr);
+        FManagedDataModel* M = EditDataModel(ModelPtr);
         if (M == nullptr || RowCount < 0 || ListField < 0 || ListField >= M->Lists.Num())
         {
             return;
@@ -2889,10 +2999,9 @@ namespace Lumina::RmlUi
 
     void DataModelListSetCell(void* ModelPtr, int32 ListField, int32 Row, int32 Col, FStringView Value)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        FManagedDataModel* M = LiveDataModel(ModelPtr);
+        FManagedDataModel* M = EditDataModel(ModelPtr);
         if (M == nullptr || ListField < 0 || ListField >= M->Lists.Num())
         {
             return;
@@ -2906,10 +3015,9 @@ namespace Lumina::RmlUi
 
     void DataModelListDirty(void* ModelPtr, int32 ListField)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        FManagedDataModel* M = LiveDataModel(ModelPtr);
+        FManagedDataModel* M = EditDataModel(ModelPtr);
         if (M != nullptr && M->Handle && ListField >= 0 && ListField < M->Lists.Num())
         {
             M->Handle.DirtyVariable(M->Lists[ListField]->Name);
@@ -2918,10 +3026,9 @@ namespace Lumina::RmlUi
 
     void DataModelSetNumber(void* ModelPtr, int32 Field, double Value)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        FManagedDataModel* M = LiveDataModel(ModelPtr);
+        FManagedDataModel* M = EditDataModel(ModelPtr);
         if (M != nullptr && Field >= 0 && Field < M->Values.Num())
         {
             StoreNumber(M->Values[Field], M->Types[Field], Value);
@@ -2930,10 +3037,9 @@ namespace Lumina::RmlUi
 
     void DataModelSetString(void* ModelPtr, int32 Field, FStringView Value)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        FManagedDataModel* M = LiveDataModel(ModelPtr);
+        FManagedDataModel* M = EditDataModel(ModelPtr);
         if (M != nullptr && Field >= 0 && Field < M->Values.Num())
         {
             M->Values[Field] = Rml::String(Value.GetData(), Value.Len());
@@ -2942,10 +3048,9 @@ namespace Lumina::RmlUi
 
     void DataModelDirty(void* ModelPtr, int32 Field)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        FManagedDataModel* M = LiveDataModel(ModelPtr);
+        FManagedDataModel* M = EditDataModel(ModelPtr);
         if (M != nullptr && M->Handle && Field >= 0 && Field < M->VarNames.Num())
         {
             M->Handle.DirtyVariable(M->VarNames[Field]);
@@ -2954,10 +3059,9 @@ namespace Lumina::RmlUi
 
     void DataModelDirtyAll(void* ModelPtr)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        FManagedDataModel* M = LiveDataModel(ModelPtr);
+        FManagedDataModel* M = EditDataModel(ModelPtr);
         if (M != nullptr && M->Handle)
         {
             M->Handle.DirtyAllVariables();
@@ -2966,10 +3070,9 @@ namespace Lumina::RmlUi
 
     void DestroyDataModel(void* ModelPtr)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
-        FManagedDataModel* M = LiveDataModel(ModelPtr);
+        FManagedDataModel* M = EditDataModel(ModelPtr);
         if (M == nullptr)
         {
             return;
@@ -3371,13 +3474,13 @@ namespace Lumina::RmlUi
                     }
                 }
                 Frame.Invoke(Object);
-                NoteUIChanged();
+                NoteUIChanged(Context);
             }
 
             // A two-way view wrote Root, so its PROPERTY(Change = ...) function runs with the old and new values.
             void ValueWrittenByView(const FProperty* InRoot)
             {
-                NoteUIChanged();
+                NoteUIChanged(Context);
                 const int32 Index = Snapshot.IndexOf(InRoot);
                 if (Index < 0 || Object == nullptr)
                 {
@@ -3441,7 +3544,7 @@ namespace Lumina::RmlUi
                 }
                 if (bChanged)
                 {
-                    NoteUIChanged();
+                    NoteUIChanged(Context);
                 }
             }
         };
@@ -3531,13 +3634,13 @@ namespace Lumina::RmlUi
 
     void* CreateObjectModel(Rml::Context* Context, FStringView Name, CObject* Object, bool bDesignTime)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         if (!State.bInitialized || Context == nullptr || Object == nullptr || Name.IsEmpty())
         {
             return nullptr;
         }
+        NoteUIChanged(Context);
 
         const Rml::String ModelName(Name.GetData(), Name.Len());
         Rml::DataModelConstructor Constructor = Context->CreateDataModel(ModelName);
@@ -3604,7 +3707,6 @@ namespace Lumina::RmlUi
 
     void DestroyObjectModel(void* ModelPtr)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         TVector<FObjectModel*>& Models = State.ObjectModels;
@@ -3615,6 +3717,7 @@ namespace Lumina::RmlUi
             {
                 continue;
             }
+            NoteUIChanged(Model->Context);
             if (State.EventDispatchDepth > 0)
             {
                 Model->bDead = true;
@@ -3669,7 +3772,7 @@ namespace Lumina::RmlUi
             if (const FProperty* Property = UIBinding::ResolvePath(Model->Object, Variable, Container))
             {
                 const bool bSet = Reflection::FromText(Property, Container, Text);
-                NoteUIChanged();
+                NoteUIChanged(Model->Context);
                 return bSet;
             }
         }
@@ -3769,7 +3872,6 @@ namespace Lumina::RmlUi
 
     void SetEditorDesignModels(Rml::Context* Context, const TVector<FUIDesignModel>& Models)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         FEditorEntry* Entry = State.bInitialized ? FindEditorEntry(Context) : nullptr;
@@ -3842,7 +3944,6 @@ namespace Lumina::RmlUi
 
     void SetEditorDesignValue(Rml::Context* Context, FStringView Model, FStringView Variable, FStringView Value)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         FEditorEntry* Entry = State.bInitialized ? FindEditorEntry(Context) : nullptr;
@@ -3873,7 +3974,6 @@ namespace Lumina::RmlUi
 
     void SetEditorDesignRows(Rml::Context* Context, FStringView Model, FStringView List, const TVector<TVector<FString>>& Rows)
     {
-        NoteUIChanged();
         FState& State = S();
         FRecursiveScopeLock Lock(State.StateMutex);
         FEditorEntry* Entry = State.bInitialized ? FindEditorEntry(Context) : nullptr;

@@ -31,7 +31,7 @@ namespace Lumina
 
     // Usage: AddRoot() per FEngine::GetCookRoots() entry, Traverse() once, then query IsReachable / GetChunkFor / GetReachableNodes.
     // Walks FAssetData::Dependencies from the registry; never loads packages (discovery/dep extraction is the AssetRegistry's job).
-    class FCookGraph
+    class EDITOR_API FCookGraph
     {
     public:
         explicit FCookGraph(const FAssetRegistry& InRegistry)
@@ -67,6 +67,9 @@ namespace Lumina
         bool VisitTarget(const FGuid& TargetGUID,
                          const FName& InheritedChunk,
                          EDependencyType EdgeType);
+
+        // Move a reached node and the Hard/Owned subtree that shares its chunk into Chunk.
+        void Rechunk(const FGuid& TargetGUID, const FName& Chunk);
 
         const FAssetRegistry*           Registry;
         THashMap<FGuid, FCookNode, FGuidHash> Nodes;

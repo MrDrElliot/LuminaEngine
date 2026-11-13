@@ -17,9 +17,11 @@ namespace Lumina
     class CParticleModule_SimulationStage;
     class CParticleSystem;
 
-    class FParticleSystemEditorTool : public FAssetEditorTool
+    class EDITOR_API FParticleSystemEditorTool : public FAssetEditorTool
     {
     public:
+
+        friend struct FParticleSystemEditorToolTestAccess;
 
         struct FCompilationResultInfo
         {
@@ -94,6 +96,9 @@ namespace Lumina
         void SelectObject(CObject* Object);
         void SelectModule(CParticleModule* Module) { SelectObject((CObject*)Module); }
 
+        // Sets SelectedEmitter and the identity it names together, so a later SyncEmitterStacks can re-find it.
+        void SelectEmitter(int32 EmitterIndex);
+
         /** Brings EmitterStacks into line with the asset's emitter list, creating any stack that does not
          *  exist yet. Cheap and idempotent; called before anything walks the stacks. */
         void SyncEmitterStacks();
@@ -135,6 +140,8 @@ namespace Lumina
         uint64                  GraphContentVersion = 0;
         // Emitter whose column owns the selection, and the target of the add-module popup.
         int32                   SelectedEmitter = 0;
+        // Identity behind SelectedEmitter, so SyncEmitterStacks can re-find its index after a removal or reorder.
+        CParticleEmitter*       SelectedEmitterObject = nullptr;
         FCompilationResultInfo  CompilationResult;
 
         // Emitter whose stack changed structurally (add / remove / reorder / toggle) this frame, or

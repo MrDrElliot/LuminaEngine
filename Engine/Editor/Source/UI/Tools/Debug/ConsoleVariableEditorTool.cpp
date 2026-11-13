@@ -81,10 +81,7 @@ namespace Lumina
         const float CountsWidth = ImGui::CalcTextSize(*Counts).x;
 
         ImGui::SetNextItemWidth(Math::Max(ImGui::GetContentRegionAvail().x - CountsWidth - ImGui::GetStyle().ItemSpacing.x, 120.0f));
-        if (ImGui::InputTextWithHint("##Search", LE_ICON_MAGNIFY " Filter by name or description...", SearchBuffer, IM_ARRAYSIZE(SearchBuffer)))
-        {
-            SearchFilter = SearchBuffer;
-        }
+        ImGuiX::InputText("##Search", SearchFilter, ImGuiInputTextFlags_None, LE_ICON_MAGNIFY " Filter by name or description...");
 
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
@@ -196,26 +193,11 @@ namespace Lumina
                 }
                 else if constexpr (std::is_same_v<T, FStringView>)
                 {
-                    FString Key(Var->Name.GetData(), Var->Name.Len());
-                    FString& Buffer = StringEditBuffers[Key];
-                    if (!ImGui::IsItemActive())
+                    // ImGui keeps the in-progress text itself and writes it back only on Enter.
+                    FString Edit(Value);
+                    if (ImGuiX::InputText("##Val", Edit, ImGuiInputTextFlags_EnterReturnsTrue))
                     {
-                        Buffer = FStringView(Value.GetData(), Value.Len());
-                    }
-
-                    char Tmp[512];
-                    size_t Copy = Math::Min<size_t>(sizeof(Tmp) - 1, Buffer.Len());
-                    Memory::Memcpy(Tmp, Buffer.GetData(), Copy);
-                    Tmp[Copy] = '\0';
-
-                    if (ImGui::InputText("##Val", Tmp, sizeof(Tmp), ImGuiInputTextFlags_EnterReturnsTrue))
-                    {
-                        Buffer = Tmp;
-                        Registry.SetValueFromString(Var->Name, FStringView(Buffer.GetData(), Buffer.Len()));
-                    }
-                    else
-                    {
-                        Buffer = Tmp;
+                        Registry.SetValueFromString(Var->Name, Edit);
                     }
                 }
             }, *Var->ValuePtr);

@@ -10,6 +10,7 @@
 #include "NavWorldTestUtil.h"
 #include "World/Entity/Components/NavModifierComponent.h"
 #include "World/Entity/Components/PathFollowComponent.h"
+#include "World/Subsystems/NavigationSubsystem.h"
 
 using namespace Lumina;
 
@@ -158,13 +159,13 @@ TEST(NavSourceTracking, ADestroyedColliderReopensTheGround)
 }
 
 // Every collider brings a rigid body that defaults to Dynamic, and physics keeps a concave mesh static regardless, so nav must bake it too.
-TEST(NavSourceTracking, AConcaveMeshColliderOnADefaultRigidBodyCarvesTheMesh)
+static void ExpectConcaveShelfCarves(bool bMeshFromStaticMeshComponent)
 {
-    const bool bWasHeadless = GIsHeadless;
-    GIsHeadless = true;
+    const bool bWasHeadless = Global::GIsHeadless;
+    Global::GIsHeadless = true;
     CStaticMesh* Shelf = NewObject<CStaticMesh>();
     Shelf->SetMeshResource(MakeUnique<FMeshResource>());
-    GIsHeadless = bWasHeadless;
+    Global::GIsHeadless = bWasHeadless;
 
     const FVector3 Half(2.0f, 0.7f, 2.0f);
     Shelf->Collision.bUseTriangleMesh = true;
@@ -181,7 +182,15 @@ TEST(NavSourceTracking, AConcaveMeshColliderOnADefaultRigidBodyCarvesTheMesh)
     FTransform Transform;
     Transform.SetLocation(FVector3(-12.0f, 0.7f, 0.0f));
     Registry.Emplace<STransformComponent>(Entity, Transform);
-    Registry.Emplace<SMeshColliderComponent>(Entity).Mesh = Shelf;
+    SMeshColliderComponent& Collider = Registry.Emplace<SMeshColliderComponent>(Entity);
+    if (bMeshFromStaticMeshComponent)
+    {
+        Registry.Emplace<SStaticMeshComponent>(Entity).StaticMesh = Shelf;
+    }
+    else
+    {
+        Collider.Mesh = Shelf;
+    }
     ASSERT_EQ(Registry.Emplace<SRigidBodyComponent>(Entity).BodyType, EBodyType::Dynamic);
     World.Start();
     ASSERT_TRUE(World.WaitReady());
@@ -189,6 +198,16 @@ TEST(NavSourceTracking, AConcaveMeshColliderOnADefaultRigidBodyCarvesTheMesh)
     EXPECT_FALSE(World.IsGroundWalkable(-12.0f, 0.0f));
     EXPECT_TRUE(World.IsGroundWalkable(12.0f, 0.0f));
     World.Stop();
+}
+
+TEST(NavSourceTracking, AConcaveMeshColliderOnADefaultRigidBodyCarvesTheMesh)
+{
+    ExpectConcaveShelfCarves(false);
+}
+
+TEST(NavSourceTracking, AMeshColliderWithoutAMeshBakesItsStaticMeshComponentsMesh)
+{
+    ExpectConcaveShelfCarves(true);
 }
 
 // A streamed world can unload every source at once, and the sweep then rebuilds an empty order.
@@ -556,4 +575,31 @@ TEST(NavPathRepath, ALedgeAboveTheClimbHeightIsNotWalkedOnto)
         EXPECT_EQ(!Follow.IsPathPartial(), bReachable) << "slab " << Height << " m against a 0.4 m climb";
         World.Stop();
     }
+}
+
+// A MaxCorners of 0 means the caller wants Nav::FindPath's own default cap, not a buffer of zero corners.
+TEST(NavigationSubsystem, IsPathPartialTreatsAZeroMaxCornersAsNoCap)
+{
+    NavTest::FNavWorld World;
+    World.Create(64.0f);
+    World.Start();
+    ASSERT_TRUE(World.WaitReady());
+
+    CNavigationSubsystem* Navigation = World.World->GetNavigation();
+    ASSERT_NE(Navigation, nullptr);
+    EXPECT_FALSE(Navigation->IsPathPartial(FVector3(-20.0f, 0.0f, -20.0f), FVector3(20.0f, 0.0f, 20.0f), 0, FName()));
+    World.Stop();
+}
+
+TEST(NavigationSubsystem, IsPathPartialStillReportsATighterCornerCap)
+{
+    NavTest::FNavWorld World;
+    World.Create(64.0f);
+    World.Start();
+    ASSERT_TRUE(World.WaitReady());
+
+    CNavigationSubsystem* Navigation = World.World->GetNavigation();
+    ASSERT_NE(Navigation, nullptr);
+    EXPECT_TRUE(Navigation->IsPathPartial(FVector3(-20.0f, 0.0f, -20.0f), FVector3(20.0f, 0.0f, 20.0f), 1, FName()));
+    World.Stop();
 }

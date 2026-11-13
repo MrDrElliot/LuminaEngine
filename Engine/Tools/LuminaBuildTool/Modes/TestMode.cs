@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Xml.Linq;
 using LuminaBuildTool.Configuration;
 using LuminaBuildTool.Core;
 using LuminaBuildTool.Execution;
@@ -13,15 +14,28 @@ public static class TestMode
 {
     private const int DefaultSuiteTimeoutSeconds = 1800;
 
+    // CancelAfter rejects a TimeSpan above uint.MaxValue - 1 milliseconds.
+    private const int MaxSuiteTimeoutSeconds = (int)((uint.MaxValue - 1) / 1000);
+
+    // 0 is the documented "no timeout" sentinel; LaunchAsync only arms CancelAfter when Timeout > TimeSpan.Zero.
+    public static int ValidateSuiteTimeoutSeconds(int SuiteTimeoutSeconds)
+    {
+        if (SuiteTimeoutSeconds < 0)
+        {
+            throw new BuildException($"-SuiteTimeoutSeconds={SuiteTimeoutSeconds} cannot be negative. Pass 0 for no timeout.");
+        }
+
+        if (SuiteTimeoutSeconds > MaxSuiteTimeoutSeconds)
+        {
+            throw new BuildException($"-SuiteTimeoutSeconds={SuiteTimeoutSeconds} exceeds the maximum of {MaxSuiteTimeoutSeconds} seconds.");
+        }
+
+        return SuiteTimeoutSeconds;
+    }
+
     public static async Task<int> RunAsync(CommandLine Arguments, BuildDirectories Directories, CancellationToken Cancellation)
     {
         RulesAssembly Assembly = RulesAssembly.Create(Directories, Arguments.HasFlag("RecompileRules"));
-
-        if (Assembly.DiscoveredTestSuites.Count == 0)
-        {
-            Log.Warning("No test suites found. A module gets one by adding a Tests directory beside its Build.cs.");
-            return 0;
-        }
 
         string? Requested = Arguments.GetPositional(1);
 
@@ -34,12 +48,28 @@ public static class TestMode
         // Benchmarks measure rather than assert, so a plain run stays to the correctness suites.
         TestSuiteKind Kind = Arguments.HasFlag("Benchmarks") ? TestSuiteKind.Benchmarks : TestSuiteKind.Tests;
 
-        List<TestSuite> Suites = SelectSuites(Assembly, Requested, Kind);
+        bool bRunAfterBuild = !Arguments.HasFlag("BuildOnly");
+
+        // LuminaBuildTool's own xunit tests have no suite name, platform or filter to ask by, so only an unscoped run covers them.
+        bool bRunLuminaBuildToolTests = bRunAfterBuild && Kind == TestSuiteKind.Tests && Requested is null
+            && string.IsNullOrEmpty(Arguments.GetString("Filter"));
+
+        List<string> Suites = SelectSuites(Assembly, Requested, Kind);
+
+        if (Suites.Count == 0 && !bRunLuminaBuildToolTests)
+        {
+            Log.Warning(Assembly.DiscoveredTestSuites.Count == 0
+                ? "No test suites found. A module gets one by adding a Tests directory beside its Build.cs, a target by [TestTarget]."
+                : $"No {Kind} suites found.");
+            return 0;
+        }
+
+        Stopwatch Timer = Stopwatch.StartNew();
 
         if (Suites.Count == 0)
         {
-            Log.Warning("No {0} suites found.", Kind);
-            return 0;
+            bool bPassed = await RunLuminaBuildToolTestsAsync(Directories, Cancellation).ConfigureAwait(false);
+            return bPassed ? 0 : 1;
         }
 
         BuildPlatform PlatformValue = Arguments.GetEnum("Platform", BuildPlatformRegistry.HostPlatform);
@@ -48,7 +78,7 @@ public static class TestMode
         // A suite testing an editor module only exists in an editor target, which asking by name should not require knowing.
         TargetType TypeValue = Arguments.GetEnum("TargetType", TargetType.Editor);
 
-        bool bRunAfterBuild = !Arguments.HasFlag("BuildOnly");
+        int SuiteTimeoutSeconds = ValidateSuiteTimeoutSeconds(Arguments.GetInt("SuiteTimeoutSeconds", DefaultSuiteTimeoutSeconds));
 
         if (bRunAfterBuild && PlatformValue != BuildPlatformRegistry.HostPlatform)
         {
@@ -56,10 +86,8 @@ public static class TestMode
                 $"Cannot run a {PlatformValue} test binary on {BuildPlatformRegistry.HostPlatform}. Pass -BuildOnly to compile it here.");
         }
 
-        Stopwatch Timer = Stopwatch.StartNew();
-
         int BuildResult = await BuildMode.BuildTargetsAsync(
-            Suites.Select(S => S.SuiteName).ToList(),
+            Suites,
             Arguments,
             Directories,
             Assembly,
@@ -79,8 +107,92 @@ public static class TestMode
             return 0;
         }
 
-        return await RunSuitesAsync(Suites, Arguments, Directories, Assembly, TypeValue, PlatformValue, ConfigurationValue, Timer, Cancellation)
+        return await RunSuitesAsync(
+                Suites, Arguments, Directories, Assembly, TypeValue, PlatformValue, ConfigurationValue,
+                TimeSpan.FromSeconds(SuiteTimeoutSeconds), Timer, Cancellation, bRunLuminaBuildToolTests)
             .ConfigureAwait(false);
+    }
+
+    // verify-lumina.ps1 reads failures only from gtest-shaped "[  FAILED  ] " lines, so xunit failures are echoed in that form.
+    private static async Task<bool> RunLuminaBuildToolTestsAsync(BuildDirectories Directories, CancellationToken Cancellation)
+    {
+        string ProjectPath = Path.Combine(Directories.EngineRoot, "Engine", "Tools", "LuminaBuildTool", "Tests", "LuminaBuildTool.Tests.csproj");
+        string ResultsDirectory = Path.Combine(Path.GetTempPath(), $"LuminaBuildToolTests-{Guid.NewGuid():N}");
+
+        Log.Info("Running LuminaBuildTool.Tests");
+
+        ProcessResult Result = await ProcessRunner.RunAsync(
+            ManagedProjectStep.ResolveDotNet(),
+            $"test \"{ProjectPath}\" --nologo --logger \"trx;LogFileName=results.trx\" --results-directory \"{ResultsDirectory}\"",
+            Directories.EngineRoot,
+            null,
+            Cancellation).ConfigureAwait(false);
+
+        if (Result.bSucceeded)
+        {
+            TryDeleteResultsDirectory(ResultsDirectory);
+            return true;
+        }
+
+        List<string> FailedTests = ReadFailedTestNamesFromTrx(ResultsDirectory);
+        TryDeleteResultsDirectory(ResultsDirectory);
+
+        // No TRX means the tests never ran at all, most likely because the project failed to build or restore.
+        foreach (string FailedTest in FailedTests.Count > 0 ? FailedTests : new List<string> { "LuminaBuildTool.Tests.Build" })
+        {
+            Log.Raw($"[  FAILED  ] {FailedTest}");
+        }
+
+        Log.Error("Test suite 'LuminaBuildTool.Tests' failed:\n{0}", Result.Output);
+        return false;
+    }
+
+    private static List<string> ReadFailedTestNamesFromTrx(string ResultsDirectory)
+    {
+        List<string> Names = new();
+
+        if (!Directory.Exists(ResultsDirectory))
+        {
+            return Names;
+        }
+
+        foreach (string TrxFile in Directory.GetFiles(ResultsDirectory, "*.trx", SearchOption.AllDirectories))
+        {
+            try
+            {
+                XDocument Document = XDocument.Load(TrxFile);
+                XNamespace Namespace = Document.Root!.Name.Namespace;
+
+                foreach (XElement Result in Document.Descendants(Namespace + "UnitTestResult"))
+                {
+                    if ((string?)Result.Attribute("outcome") == "Failed")
+                    {
+                        Names.Add((string)Result.Attribute("testName")!);
+                    }
+                }
+            }
+            catch (Exception Ex) when (Ex is IOException or System.Xml.XmlException)
+            {
+                Log.Verbose("Could not read '{0}': {1}", TrxFile, Ex.Message);
+            }
+        }
+
+        return Names;
+    }
+
+    private static void TryDeleteResultsDirectory(string ResultsDirectory)
+    {
+        try
+        {
+            if (Directory.Exists(ResultsDirectory))
+            {
+                Directory.Delete(ResultsDirectory, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // Best effort; a leftover temp directory does not affect the test result.
+        }
     }
 
     private static void ListSuites(RulesAssembly Assembly)
@@ -92,18 +204,26 @@ public static class TestMode
             Log.Raw($"  {Suite.SuiteName,-32} {Suite.SourceDirectory}");
         }
 
+        foreach (string Target in Assembly.TestTargetNames.Order(StringComparer.OrdinalIgnoreCase))
+        {
+            Log.Raw($"  {Target,-32} [TestTarget]");
+        }
+
         Log.Raw("");
         Log.Raw("A Benchmarks suite runs only with -Benchmarks, or by naming it in full.");
     }
 
     // Resolves the requested name to suites, accepting the module name or the suite name.
-    private static List<TestSuite> SelectSuites(RulesAssembly Assembly, string? Requested, TestSuiteKind Kind)
+    private static List<string> SelectSuites(RulesAssembly Assembly, string? Requested, TestSuiteKind Kind)
     {
         if (string.IsNullOrEmpty(Requested))
         {
+            // A test target asserts rather than measures, so it runs with the correctness suites.
             return Assembly.DiscoveredTestSuites.Values
                 .Where(S => S.Kind == Kind)
-                .OrderBy(S => S.SuiteName, StringComparer.OrdinalIgnoreCase)
+                .Select(S => S.SuiteName)
+                .Concat(Kind == TestSuiteKind.Tests ? Assembly.TestTargetNames : Enumerable.Empty<string>())
+                .Order(StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
 
@@ -113,25 +233,32 @@ public static class TestMode
             if (Suite.SuiteName.Equals(Requested, StringComparison.OrdinalIgnoreCase)
                 || (Suite.Kind == Kind && Suite.ModuleName.Equals(Requested, StringComparison.OrdinalIgnoreCase)))
             {
-                return new List<TestSuite> { Suite };
+                return new List<string> { Suite.SuiteName };
             }
+        }
+
+        if (Assembly.TestTargetNames.FirstOrDefault(T => T.Equals(Requested, StringComparison.OrdinalIgnoreCase)) is string Target)
+        {
+            return new List<string> { Target };
         }
 
         throw new BuildException(
             $"No suite for '{Requested}'. Known suites: "
-            + string.Join(", ", Assembly.DiscoveredTestSuites.Keys.OrderBy(K => K, StringComparer.OrdinalIgnoreCase)));
+            + string.Join(", ", Assembly.DiscoveredTestSuites.Keys.Concat(Assembly.TestTargetNames).Order(StringComparer.OrdinalIgnoreCase)));
     }
 
     private static async Task<int> RunSuitesAsync(
-        IReadOnlyList<TestSuite> Suites,
+        IReadOnlyList<string> Suites,
         CommandLine Arguments,
         BuildDirectories Directories,
         RulesAssembly Assembly,
         TargetType TypeValue,
         BuildPlatform PlatformValue,
         BuildConfiguration ConfigurationValue,
+        TimeSpan SuiteTimeout,
         Stopwatch Timer,
-        CancellationToken Cancellation)
+        CancellationToken Cancellation,
+        bool bRunLuminaBuildToolTests)
     {
         IBuildPlatform PlatformSupport = BuildPlatformRegistry.Get(PlatformValue);
         BuildOptions Options = BuildOptions.Load(Directories, Arguments);
@@ -149,25 +276,23 @@ public static class TestMode
 
         SuiteArguments.AddRange(Arguments.ForwardedArguments);
 
-        TimeSpan SuiteTimeout = TimeSpan.FromSeconds(Arguments.GetInt("SuiteTimeoutSeconds", DefaultSuiteTimeoutSeconds));
-
         List<string> Failed = new();
 
-        foreach (TestSuite Suite in Suites)
+        foreach (string Suite in Suites)
         {
-            TargetInfo Info = new(Suite.SuiteName, TypeValue, PlatformValue, ConfigurationValue, Directories, Options);
-            BuildTarget Target = new TargetAssembler(Assembly, Directories, PlatformSupport).Assemble(Suite.SuiteName, Info);
+            TargetInfo Info = new(Suite, TypeValue, PlatformValue, ConfigurationValue, Directories, Options);
+            BuildTarget Target = new TargetAssembler(Assembly, Directories, PlatformSupport).Assemble(Suite, Info);
 
             string Executable = Target.LaunchModule?.OutputFile ?? string.Empty;
 
             if (Executable.Length == 0 || !File.Exists(Executable))
             {
-                Log.Error("Test suite '{0}' produced no executable at '{1}'.", Suite.SuiteName, Executable);
-                Failed.Add(Suite.SuiteName);
+                Log.Error("Test suite '{0}' produced no executable at '{1}'.", Suite, Executable);
+                Failed.Add(Suite);
                 continue;
             }
 
-            Log.Info("Running {0}", Suite.SuiteName);
+            Log.Info("Running {0}", Suite);
 
             // Plugin modules write beside their plugin, so the loader needs every directory this suite linked into.
             List<string> SearchDirectories = new() { EngineBinaries };
@@ -176,23 +301,42 @@ public static class TestMode
                 .Select(M => M.OutputDirectory));
             string LibraryPath = string.Join(Path.PathSeparator, SearchDirectories.Distinct(StringComparer.OrdinalIgnoreCase));
 
-            if (await LaunchAsync(Suite.SuiteName, Executable, SuiteArguments, LibraryPath, SuiteTimeout, Cancellation).ConfigureAwait(false) != 0)
+            int? ExitCode = await LaunchAsync(Suite, Executable, SuiteArguments, LibraryPath, SuiteTimeout, Cancellation).ConfigureAwait(false);
+
+            if (ExitCode != 0)
             {
-                Failed.Add(Suite.SuiteName);
+                if (ExitCode is int Code)
+                {
+                    Log.Error("Test suite '{0}' exited with 0x{1:X} ({2})", Suite, (uint)Code, DescribeExitCode(Code));
+                }
+
+                Failed.Add(Suite);
+            }
+        }
+
+        int TotalSuites = Suites.Count;
+
+        if (bRunLuminaBuildToolTests)
+        {
+            TotalSuites++;
+
+            if (!await RunLuminaBuildToolTestsAsync(Directories, Cancellation).ConfigureAwait(false))
+            {
+                Failed.Add("LuminaBuildTool.Tests");
             }
         }
 
         if (Failed.Count > 0)
         {
-            Log.Error("{0} of {1} test suite(s) failed: {2}", Failed.Count, Suites.Count, string.Join(", ", Failed));
+            Log.Error("{0} of {1} test suite(s) failed: {2}", Failed.Count, TotalSuites, string.Join(", ", Failed));
             return 1;
         }
 
-        Log.Info("{0} test suite(s) passed in {1:F2}s.", Suites.Count, Timer.Elapsed.TotalSeconds);
+        Log.Info("{0} test suite(s) passed in {1:F2}s.", TotalSuites, Timer.Elapsed.TotalSeconds);
         return 0;
     }
 
-    private static async Task<int> LaunchAsync(
+    private static async Task<int?> LaunchAsync(
         string SuiteName,
         string Executable,
         IReadOnlyList<string> LaunchArguments,
@@ -228,7 +372,7 @@ public static class TestMode
             if (Runner is null)
             {
                 Log.Error("Could not start '{0}'.", Executable);
-                return 1;
+                return null;
             }
 
             using CancellationTokenSource Deadline = CancellationTokenSource.CreateLinkedTokenSource(Cancellation);
@@ -251,7 +395,7 @@ public static class TestMode
                 }
 
                 Log.Error("Test suite '{0}' timed out after {1}s and was killed.", SuiteName, Timeout.TotalSeconds);
-                return 1;
+                return null;
             }
 
             // Ctrl+C on the shared console can end the suite before the cancel handler runs.
@@ -261,7 +405,36 @@ public static class TestMode
         catch (Exception Ex) when (Ex is System.ComponentModel.Win32Exception or IOException)
         {
             Log.Error("Could not start '{0}': {1}", Executable, Ex.Message);
-            return 1;
+            return null;
         }
+    }
+
+    private static string DescribeExitCode(int ExitCode)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return (uint)ExitCode switch
+            {
+                0xC0000005 => "access violation",
+                0xC0000409 => "fast fail or stack buffer overrun",
+                0x80000003 => "breakpoint or assert",
+                _ => ExitCode == 1 ? "test failures" : "unknown",
+            };
+        }
+
+        if (ExitCode > 128)
+        {
+            return (ExitCode - 128) switch
+            {
+                4 => "SIGILL",
+                6 => "SIGABRT",
+                8 => "SIGFPE",
+                9 => "SIGKILL",
+                11 => "SIGSEGV",
+                int Signal => $"signal {Signal}",
+            };
+        }
+
+        return ExitCode == 1 ? "test failures" : "unknown";
     }
 }

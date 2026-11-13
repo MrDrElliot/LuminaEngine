@@ -4,6 +4,9 @@
 #include "Core/Object/ObjectCore.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Serialization/MemoryArchiver.h"
+#include "Log/Log.h"
+#include "LogCountTestHelpers.h"
+#include "Memory/Memcpy.h"
 #include "SaveGame/SaveGameArchive.h"
 #include "SaveGame/SaveGameComponent.h"
 #include "SaveGame/SaveGameEvents.h"
@@ -240,6 +243,79 @@ TEST(SaveGame, RestoringInPlaceReplacesRuntimeSpawnsInsteadOfDoublingThem)
     EXPECT_EQ(Gems, 1u);
 }
 
+TEST(SaveGame, SameNamedRuntimeRootsKeepTheirDataWhenALaterOneReusesAnEarlierSlot)
+{
+    FLevel Session = LoadLevel();
+    ECS::FRegistry& R = Session.Registry();
+    const ECS::FEntity Doomed = Spawn(R, "Barrel");
+    const ECS::FEntity First  = Spawn(R, "Barrel");
+    R.Destroy(Doomed);
+    const ECS::FEntity Second = Spawn(R, "Barrel");
+    ASSERT_LT(Second.GetIndex(), First.GetIndex());
+    R.Emplace<SSaveGameTestComponent>(First).Coins  = 1;
+    R.Emplace<SSaveGameTestComponent>(Second).Coins = 2;
+    const TVector<uint8> Bytes = Capture(R);
+
+    FLevel Loaded = LoadLevel();
+    ECS::FRegistry& L = Loaded.Registry();
+    const ECS::FEntity LoadedFirst  = Spawn(L, "Barrel");
+    const ECS::FEntity LoadedSecond = Spawn(L, "Barrel");
+    ASSERT_TRUE(Restore(L, Bytes));
+
+    EXPECT_EQ(L.Get<SSaveGameTestComponent>(LoadedFirst).Coins, 1);
+    EXPECT_EQ(L.Get<SSaveGameTestComponent>(LoadedSecond).Coins, 2);
+}
+
+TEST(SaveGame, ManySameNamedRuntimeRootsEachRestoreIntoTheirOwnOriginal)
+{
+    constexpr int32 CrowdSize = 300;
+    FLevel Session = LoadLevel();
+    ECS::FRegistry& R = Session.Registry();
+    TVector<ECS::FEntity> Crowd;
+    for (int32 Index = 0; Index < CrowdSize; ++Index)
+    {
+        Crowd.Add(Spawn(R, "Zombie"));
+    }
+    // Freed slots are reused by later spawns, so index order no longer matches creation order.
+    for (int32 Index = 0; Index < CrowdSize; Index += 3)
+    {
+        R.Destroy(Crowd[Index]);
+    }
+    TVector<ECS::FEntity> Survivors;
+    for (int32 Index = 0; Index < CrowdSize; ++Index)
+    {
+        if (Index % 3 != 0)
+        {
+            Survivors.Add(Crowd[Index]);
+        }
+    }
+    for (int32 Index = 0; Index < CrowdSize / 3; ++Index)
+    {
+        Survivors.Add(Spawn(R, "Zombie"));
+    }
+    for (int32 Index = 0; Index < Survivors.Num(); ++Index)
+    {
+        R.Emplace<SSaveGameTestComponent>(Survivors[Index]).Coins = Index + 1;
+    }
+    const TVector<uint8> Bytes = Capture(R);
+
+    FLevel Loaded = LoadLevel();
+    ECS::FRegistry& L = Loaded.Registry();
+    TVector<ECS::FEntity> LoadedCrowd;
+    for (int32 Index = 0; Index < Survivors.Num(); ++Index)
+    {
+        LoadedCrowd.Add(Spawn(L, "Zombie"));
+    }
+    ASSERT_TRUE(Restore(L, Bytes));
+
+    for (int32 Index = 0; Index < LoadedCrowd.Num(); ++Index)
+    {
+        const SSaveGameTestComponent* Restored = L.TryGet<SSaveGameTestComponent>(LoadedCrowd[Index]);
+        ASSERT_NE(Restored, nullptr) << "Zombie " << Index;
+        EXPECT_EQ(Restored->Coins, Index + 1) << "Zombie " << Index;
+    }
+}
+
 TEST(SaveGame, ADamagedWorldStateFailsWithoutTouchingTheWorld)
 {
     FLevel Session = LoadLevel();
@@ -251,6 +327,53 @@ TEST(SaveGame, ADamagedWorldStateFailsWithoutTouchingTheWorld)
     EXPECT_FALSE(Restore(Loaded.Registry(), Bytes));
     EXPECT_TRUE(Loaded.Registry().IsValid(Loaded.Crate));
     EXPECT_EQ(Loaded.Registry().Get<SSaveGameTestComponent>(Loaded.Chest).Coins, 1);
+}
+
+TEST(SaveGame, ARespawnedComponentThatNoLongerExistsWarnsAndTheRestOfTheRecordStillReads)
+{
+    RegisterPendingTypes();
+    CWorld* World = NewObject<CWorld>(nullptr, FName("SaveGameRespawnMissingComponentTest"), FGuid::New(), OF_Transient);
+    ECS::FRegistry& R = World->GetEntityRegistry();
+    R.GetSignals<STransformComponent>().OnConstruct.Connect<&BindTransform>();
+
+    const ECS::FEntity Orphan = Spawn(R, "Orphan");
+    R.Emplace<SSaveGameComponent>(Orphan);
+    R.Emplace<SSaveGameTestComponent>(Orphan).Coins = 42;
+
+    TVector<uint8> Bytes = Capture(R);
+
+    // The struct name appears twice for a respawn root, so only the first occurrence is renamed.
+    const FString Needle("SSaveGameTestComponent");
+    const FString Replacement("SSaveGameGoneComponent");
+    ASSERT_EQ(Needle.Len(), Replacement.Len());
+    int32 FoundAt = Constants::kIndexNone;
+    for (int32 Index = 0; Index + Needle.Len() <= Bytes.Num(); ++Index)
+    {
+        if (Memory::Memcmp(Bytes.GetData() + Index, Needle.GetData(), Needle.Len()) == 0)
+        {
+            FoundAt = Index;
+            break;
+        }
+    }
+    ASSERT_NE(FoundAt, Constants::kIndexNone);
+    Memory::Memcpy(Bytes.GetData() + FoundAt, Replacement.GetData(), Replacement.Len());
+
+    CWorld* Fresh = NewObject<CWorld>(nullptr, FName("SaveGameRespawnMissingComponentTestFresh"), FGuid::New(), OF_Transient);
+    ECS::FRegistry& FR = Fresh->GetEntityRegistry();
+    FR.GetSignals<STransformComponent>().OnConstruct.Connect<&BindTransform>();
+
+    Logging::ClearLogQueue();
+    ASSERT_TRUE(Restore(FR, Bytes));
+    EXPECT_EQ(CountLoggedMessages(ELogLevel::Warn, "SSaveGameGoneComponent", "is gone"), 1);
+
+    const TVector<ECS::FEntity> Pickups = Respawned(FR);
+    ASSERT_EQ(Pickups.Num(), 1);
+    const ECS::FEntity Restored = Pickups[0];
+    EXPECT_EQ(FR.Get<SNameComponent>(Restored).Name, FName("Orphan"));
+    EXPECT_NE(FR.TryGet<STransformComponent>(Restored), nullptr);
+    const SSaveGameTestComponent* Recreated = FR.TryGet<SSaveGameTestComponent>(Restored);
+    ASSERT_NE(Recreated, nullptr);
+    EXPECT_EQ(Recreated->Coins, 0) << "the coin count was in the corrupted dump, not the SaveGameOnly block that recreated the component";
 }
 
 TEST(SaveGame, SaveGameObjectRoundTripsWithItsWorlds)

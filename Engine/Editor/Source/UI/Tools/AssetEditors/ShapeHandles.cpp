@@ -329,4 +329,14 @@ namespace Lumina::ShapeHandles
                            ViewportOrigin.y + (0.5f - Ndc.y * 0.5f) * ViewportSize.y);
         return true;
     }
+
+    void CloseOpenDragTransaction(IShapeHandleHost& Host, FShapeHandleState& State)
+    {
+        if (State.bHandleTransactionOpen || State.bGizmoTransactionOpen)
+        {
+            State.bHandleTransactionOpen = false;
+            State.bGizmoTransactionOpen = false;
+            Host.EndShapeTransaction();
+        }
+    }
 }

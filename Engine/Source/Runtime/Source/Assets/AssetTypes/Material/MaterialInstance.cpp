@@ -28,21 +28,6 @@ namespace Lumina
             return "unknown";
         }
 
-        // Once per name, since a script setting a missing parameter every frame would flood the log.
-        void WarnMissingParameterOnce(const char* Kind, const FName& Name)
-        {
-            static FMutex          Mutex;
-            static THashSet<FName> Reported;
-            {
-                FScopeLock Lock(Mutex);
-                if (!Reported.TryAdd(Name))
-                {
-                    return;
-                }
-            }
-            LOG_WARN("Material instance: no parent {} parameter named '{}'.", Kind, Name);
-        }
-
         // Writes an override into a block without uploading, for the full rebuild that uploads once at the end.
         void ApplyOverride(const SMaterialParameter& Param, const SMaterialParameterOverride& Override, FMaterialUniforms& Uniforms)
         {
@@ -364,7 +349,10 @@ namespace Lumina
         SMaterialParameter Param;
         if (!GetParameterValue(Type, Name, Param))
         {
-            WarnMissingParameterOnce(ParameterKindName(Type), Name);
+            if (CMaterial* Root = GetMaterial())
+            {
+                Root->WarnMissingParameterOnce(ParameterKindName(Type), Name);
+            }
             return false;
         }
 
@@ -722,7 +710,10 @@ namespace Lumina
         CMaterial* Root = GetMaterial();
         if (Root == nullptr || Root->FindStaticSwitchBit(Name) == Constants::kIndexNone)
         {
-            WarnMissingParameterOnce("static switch", Name);
+            if (Root != nullptr)
+            {
+                Root->WarnMissingParameterOnce("static switch", Name);
+            }
             return false;
         }
 

@@ -324,6 +324,6 @@ namespace Lumina
 
     namespace MCP
     {
-        void RegisterAnimGraphTools(FStringView Owner);
+        MCPEDITOR_API void RegisterAnimGraphTools(FStringView Owner);
     }
 }

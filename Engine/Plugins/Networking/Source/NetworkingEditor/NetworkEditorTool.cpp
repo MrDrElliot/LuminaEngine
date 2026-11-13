@@ -120,7 +120,7 @@ namespace Lumina
 
     void FNetworkEditorTool::DrawNetworkWindow(bool bIsFocused)
     {
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             ImGui::TextDisabled("World manager not initialized.");
             return;
@@ -129,7 +129,7 @@ namespace Lumina
         // Gather networked worlds, and keep their rate history sampled every frame (even when unselected).
         const float Dt = ImGui::GetIO().DeltaTime;
         TVector<CWorld*> NetWorlds;
-        for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
+        for (const TUniquePtr<FWorldContext>& Ctx : Global::GWorldManager->GetContexts())
         {
             CWorld* ContextWorld = Ctx->World.Get();
             if (GetNetState(ContextWorld) == nullptr)
@@ -139,6 +139,9 @@ namespace Lumina
             NetWorlds.Add(ContextWorld);
             SampleRates(ContextWorld, Histories[ContextWorld], Dt);
         }
+
+        // Prune ended sessions so a reused CWorld address never inherits a stale graph.
+        Histories.RemoveAll([&NetWorlds](const auto& Pair) { return !NetWorlds.Contains(Pair.Key); });
 
         if (NetWorlds.IsEmpty())
         {

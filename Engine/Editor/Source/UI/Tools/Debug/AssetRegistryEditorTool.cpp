@@ -207,7 +207,7 @@ namespace Lumina
         CachedReferencerTarget   = Target;
         bReferencersFromLiveScan = false;
 
-        for (const FAssetData* Data : FAssetRegistry::Get().GetReferencersOf(Target))
+        for (const FAssetDataPtr& Data : FAssetRegistry::Get().GetReferencersOf(Target))
         {
             FReferencer Ref;
             Ref.Name    = Data->AssetName;
@@ -313,11 +313,11 @@ namespace Lumina
 
         THashSet<FName> Types;
         {
-            const FAssetDataMap& Assets = FAssetRegistry::Get().GetAssets();
+            const TVector<FAssetDataPtr> Assets = FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; });
             Rows.Reserve(Assets.Num());
             RowIndexByGUID.Reserve(Assets.Num());
 
-            for (const TSharedPtr<FAssetData>& Data : Assets)
+            for (const FAssetDataPtr& Data : Assets)
             {
                 FAssetRow Row;
                 Row.GUID      = Data->AssetGUID;
@@ -1012,7 +1012,7 @@ namespace Lumina
                     }
                     if (ImGui::MenuItem("Copy Path"))
                     {
-                        if (const FAssetData* Data = FAssetRegistry::Get().GetAssetByGUID(Row.GUID))
+                        if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(Row.GUID))
                         {
                             ImGui::SetClipboardText(*Data->Path);
                         }
@@ -1154,7 +1154,7 @@ namespace Lumina
 
         Field("Name",  Selected->Name.ToString());
         Field("Class", Selected->Class.ToString(), CategoryColor(Selected->Class));
-        const FAssetData* SelectedData = FAssetRegistry::Get().GetAssetByGUID(Selected->GUID);
+        const FAssetDataPtr SelectedData = FAssetRegistry::Get().GetAssetByGUID(Selected->GUID);
         Field("Path",  SelectedData != nullptr ? FString(*SelectedData->Path) : FString());
         Field("GUID",  Selected->GUID.ToString(), ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
 

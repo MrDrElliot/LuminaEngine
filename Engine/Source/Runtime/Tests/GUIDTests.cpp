@@ -175,6 +175,24 @@ TEST(GUIDTests, TryParse_AcceptsValid)
     EXPECT_EQ(*Parsed, Original);
 }
 
+TEST(GUIDTests, TryParse_RejectsTrailingGarbage)
+{
+    FGuid Original = FGuid::NewDeterministic("trailing-garbage");
+
+    EXPECT_FALSE(FGuid::TryParse(Original.ToString() + "x").IsSet());
+    EXPECT_FALSE(FGuid::TryParse(Original.ToShortString() + "0").IsSet());
+    EXPECT_FALSE(FGuid::TryParse(Original.ToString(true, true) + " ").IsSet());
+}
+
+TEST(GUIDTests, TryParse_AcceptsAllFormats)
+{
+    FGuid Original = FGuid::NewDeterministic("all-formats");
+
+    EXPECT_EQ(*FGuid::TryParse(Original.ToString(true, true)), Original);
+    EXPECT_EQ(*FGuid::TryParse(Original.ToShortString()), Original);
+    EXPECT_EQ(*FGuid::TryParse(FString("{") + Original.ToString(true, true) + "}"), Original);
+}
+
 TEST(GUIDTests, ComparisonOperators)
 {
     FGuid Lower  = FGuid::FromString("00000000-0000-0000-0000-000000000001");

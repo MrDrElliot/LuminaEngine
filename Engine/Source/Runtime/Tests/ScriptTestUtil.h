@@ -53,7 +53,7 @@ namespace ScriptTest
         return New;
     }
 
-    // Publishes a C# enum the way a reload does, so a schema can name it.
+    // Publishes a C# enum the way a reload does, so a schema can name it, which retires any published earlier.
     inline void PublishEnum(const char* Name, Lumina::EPropertyTypeFlags Underlying,
         std::initializer_list<Lumina::Scripting::FScriptEnumEntry> Entries)
     {

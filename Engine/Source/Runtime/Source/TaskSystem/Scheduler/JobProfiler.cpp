@@ -128,8 +128,12 @@ namespace Lumina
         if (Lane.Depth < kMaxDepth)
         {
             Lane.Names[Lane.Depth] = Name != nullptr ? Name : "job";
+            ++Lane.Depth;
         }
-        ++Lane.Depth;
+        else
+        {
+            ++Lane.Overflow;
+        }
         Lane.OpenMs = Now;
         JobsRun.fetch_add(1, std::memory_order_relaxed);
         if (bHelping || Lane.Depth > 1)
@@ -145,13 +149,20 @@ namespace Lumina
             return;
         }
         FLane& Lane = *Lanes[Slot];
-        if (Lane.Depth == 0)
+        if (Lane.Depth == 0 && Lane.Overflow == 0)
         {
             return;
         }
         const double Now = NowMs();
         CloseOpen(Lane, Slot, Now);
-        --Lane.Depth;
+        if (Lane.Overflow > 0)
+        {
+            --Lane.Overflow;
+        }
+        else
+        {
+            --Lane.Depth;
+        }
         Lane.OpenMs = Now;
     }
 

@@ -180,7 +180,7 @@ namespace Lumina::VFS
     {
         return Detail::VisitFileSystems(Path, [&](IFileSystem& FS)
         {
-            return FS.Remove(Path);
+            return FS.RemoveAll(Path);
         });
     }
 

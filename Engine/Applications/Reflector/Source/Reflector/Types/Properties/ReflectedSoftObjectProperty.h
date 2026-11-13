@@ -9,7 +9,7 @@ namespace Lumina
     {
     public:
 
-        const char* GetTypeName() override { return "SoftObject"; }
+        const char* GetTypeName() const override { return "SoftObject"; }
         EReflectedLink GetLink() const override { return EReflectedLink::Class; }
 
         // A bare FSoftObjectPath names CObject, an intrinsic class the database does not hold.

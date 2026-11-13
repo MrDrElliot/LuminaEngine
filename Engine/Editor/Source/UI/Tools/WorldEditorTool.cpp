@@ -695,11 +695,8 @@ namespace Lumina
                 return;
             }
 
-            EditorEntityUtils::RenameOutlinerRow(Tree.Get<FTreeNodeDisplay>(Item), NewName);
-
-            SNameComponent& NameComponent = World->GetEntityRegistry().Get<SNameComponent>(Data.Entity);
-            NameComponent.Name = NewName;
-		};
+            RenameEntityTransacted(Data.Entity, NewName);
+        };
         
         OutlinerContext.ItemSelectedFunction = [this](FTreeListView& Tree, FTreeNodeID Item, bool bShouldClear)
         {
@@ -833,7 +830,7 @@ namespace Lumina
             }
         }
         
-        if (ObservedWorld != nullptr && (GWorldManager == nullptr || GWorldManager->FindContext(ObservedWorld) == nullptr))
+        if (ObservedWorld != nullptr && (Global::GWorldManager == nullptr || Global::GWorldManager->FindContext(ObservedWorld) == nullptr))
         {
             ObservedRegistry = nullptr; // its registry is gone; make UnbindRegistryObservers a no-op
             ObservedWorld = nullptr;
@@ -2477,7 +2474,7 @@ namespace Lumina
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
                     if (ImGui::MenuItem(LE_ICON_TRASH_CAN " Delete Entity", "Del"))
                     {
-                        if (Dialogs::Confirmation("Confirm Deletion", "Are you sure you want to delete entity \"{0}\"?\n\nThis action cannot be undone.", (LastSelected).Value))
+                        if (Dialogs::Confirmation("Confirm Deletion", "Are you sure you want to delete entity \"{0}\"?", (LastSelected).Value))
                         {
                             EntityDestroyRequests.Enqueue(LastSelected);
                         }
@@ -2514,14 +2511,14 @@ namespace Lumina
         Settings->GizmoSnapTranslate = GuizmoSnapTranslate;
         Settings->GizmoSnapRotate    = GuizmoSnapRotate;
         Settings->GizmoSnapScale     = GuizmoSnapScale;
-        GConfig->SaveSettings(CWorldEditorSettings::StaticClass());
+        Global::GConfig->SaveSettings(CWorldEditorSettings::StaticClass());
     }
 
     void FWorldEditorTool::PersistCameraPreviewScale()
     {
         CWorldEditorSettings* Settings = GetMutableDefault<CWorldEditorSettings>();
         Settings->CameraPreviewScale = CameraPreviewScale;
-        GConfig->SaveSettings(CWorldEditorSettings::StaticClass());
+        Global::GConfig->SaveSettings(CWorldEditorSettings::StaticClass());
     }
 
     void FWorldEditorTool::DrawViewportToolbarPlayControls(float ButtonSize)
@@ -2961,7 +2958,7 @@ namespace Lumina
         ECS::FRegistry& Registry = World->GetEntityRegistry();
 
         // Drops invalid handles and prefab-instance children whose hierarchy is locked.
-        THashSet<ECS::FEntity> Filtered;
+        TVector<ECS::FEntity> Filtered;
         for (ECS::FEntity Entity : SelectedEntities)
         {
             if (Registry.IsValid(Entity) && !WorldEditorToolInternal::IsLockedPrefabChild(Registry, Entity))
@@ -2969,29 +2966,7 @@ namespace Lumina
                 Filtered.Add(Entity);
             }
         }
-
-        // If any ancestor is also selected, the descent happens through the parent instead.
-        TVector<ECS::FEntity> Roots;
-        Roots.Reserve(Filtered.Num());
-        for (ECS::FEntity Entity : Filtered)
-        {
-            const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
-            bool bAncestorInSet = false;
-            for (ECS::FEntity Walk = Hierarchy.GetParent(Entity); Walk != ECS::NullEntity; Walk = Hierarchy.GetParent(Walk))
-            {
-                if (Filtered.Contains(Walk))
-                {
-                    bAncestorInSet = true;
-                    break;
-                }
-            }
-            if (!bAncestorInSet)
-            {
-                Roots.Add(Entity);
-            }
-        }
-
-        return Roots;
+        return EditorEntityUtils::GatherHierarchyRoots(Registry.GetHierarchy(), Filtered);
     }
 
     void FWorldEditorTool::PushCreatePrefabFromSelectionModal()
@@ -3471,13 +3446,13 @@ namespace Lumina
 
     void FWorldEditorTool::SetPlaySessionPaused(bool bPause)
     {
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             return;
         }
 
         // Multiplayer PIE spawns a world per player, and pausing only ours leaves the rest simulating.
-        for (const TUniquePtr<FWorldContext>& Context : GWorldManager->GetContexts())
+        for (const TUniquePtr<FWorldContext>& Context : Global::GWorldManager->GetContexts())
         {
             CWorld* Candidate = Context ? Context->World.Get() : nullptr;
             if (Candidate == nullptr)
@@ -3641,7 +3616,7 @@ namespace Lumina
         }
 
         SetWorldPlayInEditor(true);
-        return true;
+        return bGamePreviewRunning;
     }
 
     void FWorldEditorTool::DrawPlaySettingsPopup()
@@ -3895,14 +3870,14 @@ namespace Lumina
 
     void FWorldEditorTool::DrawOutlinerWorldSelector()
     {
-        if (GWorldManager == nullptr)
+        if (Global::GWorldManager == nullptr)
         {
             return;
         }
 
         // Other tools' preview worlds are excluded, so the selector only appears for play.
         TVector<FWorldContext*> Candidates;
-        for (const TUniquePtr<FWorldContext>& Ctx : GWorldManager->GetContexts())
+        for (const TUniquePtr<FWorldContext>& Ctx : Global::GWorldManager->GetContexts())
         {
             CWorld* CtxWorld = Ctx->World.Get();
             if (CtxWorld == nullptr)
@@ -3950,7 +3925,7 @@ namespace Lumina
 
         CWorld* Observed = GetObservedWorld();
         FString Preview = "World: ";
-        if (FWorldContext* ObservedCtx = GWorldManager->FindContext(Observed))
+        if (FWorldContext* ObservedCtx = Global::GWorldManager->FindContext(Observed))
         {
             Preview += WorldLabel(*ObservedCtx);
         }
@@ -4075,7 +4050,7 @@ namespace Lumina
             // Its net mode makes CreateRenderer a no-op, so it stays invisible and listens on loopback.
             if (PlaySettings.NetMode == ENetMode::DedicatedServer)
             {
-                PIEDedicatedServerWorld = GWorldManager->StartPIE(ProxyWorld.Get(), EWorldType::Game, ENetMode::DedicatedServer);
+                PIEDedicatedServerWorld = Global::GWorldManager->StartPIE(ProxyWorld.Get(), EWorldType::Game, ENetMode::DedicatedServer);
                 if (PIEDedicatedServerWorld == nullptr)
                 {
                     LOG_WARN("Failed to start the dedicated-server world for PIE.");
@@ -4083,14 +4058,14 @@ namespace Lumina
             }
 
             // StartPIE returns null when the world cannot be duplicated, so bail before rebinding to null.
-            CWorld* PIEWorld = GWorldManager->StartPIE(ProxyWorld.Get(), EWorldType::Game, ResolvePlayerNetMode(0));
+            CWorld* PIEWorld = Global::GWorldManager->StartPIE(ProxyWorld.Get(), EWorldType::Game, ResolvePlayerNetMode(0));
             if (PIEWorld == nullptr)
             {
                 LOG_WARN("Cannot Play '{0}': world has no package (save the world before playing).", *World->GetName());
                 ImGuiX::Notifications::NotifyError("Cannot Play: save the world first.");
                 if (PIEDedicatedServerWorld != nullptr)
                 {
-                    GWorldManager->StopPIE(PIEDedicatedServerWorld);
+                    Global::GWorldManager->StopPIE(PIEDedicatedServerWorld);
                     PIEDedicatedServerWorld = nullptr;
                 }
                 World->SetActive(true);
@@ -4129,7 +4104,7 @@ namespace Lumina
             // Tear down the hidden dedicated-server world, if one was spawned.
             if (PIEDedicatedServerWorld != nullptr)
             {
-                GWorldManager->StopPIE(PIEDedicatedServerWorld);
+                Global::GWorldManager->StopPIE(PIEDedicatedServerWorld);
                 PIEDedicatedServerWorld = nullptr;
             }
 
@@ -4236,7 +4211,7 @@ namespace Lumina
             ProxyEditorEntity = EditorEntity;
 
             // StartPIE returns null when the world cannot be duplicated, so bail before dereferencing it.
-            CWorld* SimWorld = GWorldManager->StartPIE(ProxyWorld.Get(), EWorldType::Simulation, ENetMode::Standalone);
+            CWorld* SimWorld = Global::GWorldManager->StartPIE(ProxyWorld.Get(), EWorldType::Simulation, ENetMode::Standalone);
             if (SimWorld == nullptr)
             {
                 LOG_WARN("Cannot Simulate '{0}': world has no package (save the world before simulating).", *World->GetName());

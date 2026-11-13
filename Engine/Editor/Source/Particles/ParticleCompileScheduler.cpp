@@ -35,7 +35,7 @@ namespace Lumina
 
     void FParticleCompileScheduler::Tick()
     {
-        if (TryRender() == nullptr || GShaderCompiler == nullptr)
+        if (TryRender() == nullptr || Global::GShaderCompiler == nullptr)
         {
             return;
         }

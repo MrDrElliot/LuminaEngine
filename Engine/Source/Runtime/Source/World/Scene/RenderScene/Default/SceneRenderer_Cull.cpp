@@ -681,7 +681,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Skinned Meshlet Bounds", tracy::Color::SkyBlue3);
         SCENE_GPU_SCOPE(CL, "Skinned Meshlet Bounds");
 
         struct FSkinnedBoundsPC
@@ -806,17 +805,15 @@ namespace Lumina
     bool FDefaultSceneRenderer::TrackCameraCut(const FFrameData& Frame)
     {
         // A cut lands somewhere the lagging demand has never seen, so the lists hold the session peak until it catches up.
-        constexpr float CameraCutDistance = 10.0f;
         const auto& CullViews = Frame.Views.CullViews;
         if (!CullViews.IsEmpty())
         {
-            const FVector3 Origin = FVector3(CullViews[0].ViewOriginAndFlags);
-            if (bHasLastCullOrigin && Math::Length(Origin - LastCullOrigin) > CameraCutDistance)
+            if (bHasLastCameraCullView && SceneCull::IsCameraCut(LastCameraCullView, CullViews[0]))
             {
                 CameraCutFramesLeft = RHI::kFramesInFlight + 2u;
             }
-            LastCullOrigin     = Origin;
-            bHasLastCullOrigin = true;
+            LastCameraCullView     = CullViews[0];
+            bHasLastCameraCullView = true;
         }
         const bool bAfterCameraCut = CameraCutFramesLeft > 0u;
         CameraCutFramesLeft = bAfterCameraCut ? CameraCutFramesLeft - 1u : 0u;
@@ -1196,8 +1193,7 @@ namespace Lumina
             return;
         }
 
-        // The GPU scope is opened by the caller, not here.
-        LUMINA_PROFILE_SECTION_COLORED("Skinning Pass", tracy::Color::SkyBlue);
+        SCENE_GPU_SCOPE(CL, "Skinning");
 
         static const FShaderH WorkShader = FShaderLibrary::Get("BuildSkinWork.slang");
         static const FShaderH SkinShader = FShaderLibrary::Get("Skinning.slang");
@@ -1471,7 +1467,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("GPU Scene Cull", tracy::Color::Magenta);
         SCENE_GPU_SCOPE(CL, "GPU Scene Cull");
 
         const FFrameData::FGeometry::FRetainedUpload& Upload = Frame.Geometry.RetainedUpload;
@@ -1530,7 +1525,6 @@ namespace Lumina
 
         if (NumCullViews > 0u)
         {
-            LUMINA_PROFILE_SECTION_COLORED("Build Meshlet Blocks", tracy::Color::Magenta2);
             SCENE_GPU_SCOPE(CL, "Build Meshlet Blocks");
             DispatchMeshletBlockBuild(CL, /*bLatePass*/ false);
         }
@@ -1543,7 +1537,6 @@ namespace Lumina
 
     bool FDefaultSceneRenderer::UploadRetainedInstances(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload)
     {
-        LUMINA_PROFILE_SECTION_COLORED("Retained Upload", tracy::Color::Magenta4);
         SCENE_GPU_SCOPE(CL, "Retained Upload");
 
         const uint32 RetainedSlots = Upload.SlotCount;
@@ -1743,7 +1736,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::DispatchCullInstances(RHI::FCmdListH CL, const FFrameData& Frame, FShaderH CullInstancesShader)
     {
-        LUMINA_PROFILE_SECTION_COLORED("Cull Instances", tracy::Color::Magenta2);
         SCENE_GPU_SCOPE(CL, "Cull Instances");
 
         const uint8  Slot          = CurrentFrameSlot;
@@ -1806,8 +1798,8 @@ namespace Lumina
                                              : RHI::TGPUSpan<uint32>{};
         if (bProxies)
         {
-            // Six corners per proxy, and each cull counts its list into the second word.
-            const RHI::FDrawIndirectArguments ProxyArgs[2] = { { 6u, 0u, 0u, 0u }, { 6u, 0u, 0u, 0u } };
+            // One four-corner strip per proxy, and each cull counts its list into the second word.
+            const RHI::FDrawIndirectArguments ProxyArgs[2] = { { 4u, 0u, 0u, 0u }, { 4u, 0u, 0u, 0u } };
             WriteBuffer(CL, ProxyDrawArgsRing[Slot].Gpu, ProxyArgs, sizeof(ProxyArgs));
             Barriers::TransferToCompute(CL);
         }
@@ -1825,7 +1817,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::DispatchDrawPrefix(RHI::FCmdListH CL, const FFrameData& Frame, FShaderH DrawPrefixShader)
     {
-        LUMINA_PROFILE_SECTION_COLORED("Build Draw Prefix", tracy::Color::Magenta3);
         SCENE_GPU_SCOPE(CL, "Build Draw Prefix");
 
         struct FBuildDrawPrefixPC
@@ -1943,7 +1934,6 @@ namespace Lumina
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Meshlet Cull", tracy::Color::Magenta);
         SCENE_GPU_SCOPE(CL, "Meshlet Cull");
 
         // Instances last frame did not see get their blocks only now, and only if this frame's pyramid leaves them visible.
@@ -2142,6 +2132,7 @@ namespace Lumina
     // After the last cull pass of the frame, so the survivors every phase appended are in what the CPU reads back.
     void FDefaultSceneRenderer::CopyCullTotalsForReadback(RHI::FCmdListH CL)
     {
+        LUMINA_PROFILE_SCOPE();
         const uint8 Slot = CurrentFrameSlot;
         if (MeshletBoundReadback[Slot].Gpu == 0 || !GetTotals())
         {

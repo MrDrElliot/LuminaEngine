@@ -50,8 +50,11 @@ namespace Lumina
             int32          Priority;
         };
 
-        void DispatchEvent(FEvent& Event);
+        RUNTIME_API void DispatchEvent(FEvent& Event);
 
         TVector<FEntry> EventHandlers;
+
+        // Index the active DispatchEvent call is on, kept valid by Register/Unregister; kIndexNone when idle.
+        int32 DispatchCursor = Constants::kIndexNone;
     };
 }

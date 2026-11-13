@@ -148,7 +148,7 @@ namespace Lumina
     {
         // Test hosts run without an engine, and a stack that never compiled has no key.
         TVector<uint8> Bytes;
-        if (CompiledCodeHash == 0 || GEngine == nullptr || !GEngine->GetArtifactCache().Load(MakeArtifactKey(), Bytes) || Bytes.IsEmpty() || Bytes.Num() % sizeof(uint32) != 0)
+        if (CompiledCodeHash == 0 || Global::GEngine == nullptr || !Global::GEngine->GetArtifactCache().Load(MakeArtifactKey(), Bytes) || Bytes.IsEmpty() || Bytes.Num() % sizeof(uint32) != 0)
         {
             return false;
         }
@@ -161,13 +161,13 @@ namespace Lumina
 
     void CParticleEmitter::StoreShaderInArtifactCache() const
     {
-        if (CompiledCodeHash == 0 || ComputeShaderBinaries.IsEmpty() || GEngine == nullptr)
+        if (CompiledCodeHash == 0 || ComputeShaderBinaries.IsEmpty() || Global::GEngine == nullptr)
         {
             return;
         }
 
         const TSpan<const uint8> Bytes(reinterpret_cast<const uint8*>(ComputeShaderBinaries.GetData()), ComputeShaderBinaries.Num() * sizeof(uint32));
-        GEngine->GetArtifactCache().Store(MakeArtifactKey(), Bytes);
+        Global::GEngine->GetArtifactCache().Store(MakeArtifactKey(), Bytes);
     }
 
     void CParticleEmitter::CommitComputeShader()

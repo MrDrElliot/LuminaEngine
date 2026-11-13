@@ -417,7 +417,7 @@ namespace Lumina::CrashHandler
                     StackBuffer[0] ? StackBuffer : "  <unavailable>");
             }
 
-            // Only for the synthesized code, since a real unhandled exception is already reported by the monitor.
+            // Only for the synthesized code, since a real unhandled exception reaches the reporter through its own filter.
             if (CrashReporting::IsEnabled() && Code == kSynthesizedFatalCode)
             {
                 CrashReporting::GenerateReport(ExceptionInfo);
@@ -452,6 +452,11 @@ namespace Lumina::CrashHandler
 
         LONG WINAPI TopLevelFilter(EXCEPTION_POINTERS* ExceptionInfo)
         {
+            // The vectored pass already wrote the local dump and holds the guard, so only the reporter's filter is left to run.
+            if (GInsideHandler.load() && CrashReporting::IsEnabled() && GPreviousFilter != nullptr)
+            {
+                return GPreviousFilter(ExceptionInfo);
+            }
             return HandleCrash(ExceptionInfo, /*bMayHandOff*/ true);
         }
 

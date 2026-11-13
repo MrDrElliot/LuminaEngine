@@ -62,6 +62,14 @@ namespace Lumina
             return It != nullptr ? (*It) : ECS::NullEntity;
         }
 
-        NODISCARD SNetGUID AllocateDynamic() { return SNetGUID{ NextDynamic++ }; }
+        NODISCARD SNetGUID AllocateDynamic()
+        {
+            const uint32 Allocated = NextDynamic++;
+            if (NextDynamic == 0)
+            {
+                NextDynamic = NetGUID_DynamicStart;
+            }
+            return SNetGUID{ Allocated };
+        }
     };
 }

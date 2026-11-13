@@ -213,6 +213,14 @@ namespace Lumina::Physics
             {
                 const EBodyType Type = static_cast<EBodyType>(static_cast<uint8>(Command.Parameters.x));
                 b3Body_SetType(Body, Box3DUtils::ToBox3DBodyType(Type));
+
+                FBodyShapes Shapes;
+                GatherShapes(Body, Shapes);
+                for (b3ShapeId Shape : Shapes)
+                {
+                    b3Shape_EnableSensorEvents(Shape, b3Shape_IsSensor(Shape) || Type != EBodyType::Static);
+                }
+
                 if (auto* Component = World->GetEntityRegistry().TryGet<SRigidBodyComponent>(Command.Entity))
                 {
                     Component->BodyType = Type;

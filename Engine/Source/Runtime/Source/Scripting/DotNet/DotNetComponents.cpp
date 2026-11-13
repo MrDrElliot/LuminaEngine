@@ -38,6 +38,19 @@ namespace
         const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
         return (W && O) ? W->GetEntityRegistry().FindStorage(O->GetTypeID()) : nullptr;
     }
+
+    // A parallel script shares each pool with scripts on other workers, so its change runs at the sync point.
+    template<typename TFunc>
+    void LmApplyOrDefer(uint64 World, TFunc&& Func)
+    {
+        Lumina::CWorld* W = reinterpret_cast<Lumina::CWorld*>(World);
+        if (Lumina::ECS::FCommandBus::ShouldDefer())
+        {
+            W->GetCommandBus().Enqueue(Lumina::Forward<TFunc>(Func));
+            return;
+        }
+        Func(W->GetEntityRegistry());
+    }
 }
 
 // Managed code writes through what it gets without crossing again, so a tracked pool stamps here and counts the pointer as cached.
@@ -87,13 +100,13 @@ LUMINA_DOTNET_EXPORT(int, TrackComponentPointer)(const void* Payload, const void
     *OutEntity = 0;
     *OutEpoch = nullptr;
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
-    if (Payload == nullptr || O == nullptr || Lumina::GWorldManager == nullptr)
+    if (Payload == nullptr || O == nullptr || Lumina::Global::GWorldManager == nullptr)
     {
         return 0;
     }
 
     int Found = 0;
-    Lumina::GWorldManager->ForEachWorld([&](Lumina::CWorld& World)
+    Lumina::Global::GWorldManager->ForEachWorld([&](Lumina::CWorld& World)
     {
         if (Found != 0)
         {
@@ -122,13 +135,24 @@ LUMINA_DOTNET_EXPORT(int, HasComponent)(uint64 World, uint32 Entity, const void*
     return Pool && Pool->Contains(static_cast<Lumina::ECS::FEntity>(Entity)) ? 1 : 0;
 }
 
-// Get-or-emplace a default component, returning the live pointer to configure in place.
+// Get-or-emplace a default component, returning the pointer to configure in place.
 LUMINA_DOTNET_EXPORT(void*, EmplaceComponent)(uint64 World, uint32 Entity, const void* Ops)
 {
     Lumina::EntityScripts::CheckParallelAccess(static_cast<Lumina::ECS::FEntity>(Entity), "EmplaceComponent");
     Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
-    return (R && O) ? O->Emplace(*R, static_cast<Lumina::ECS::FEntity>(Entity)) : nullptr;
+    if (R == nullptr || O == nullptr)
+    {
+        return nullptr;
+    }
+
+    // A parallel script gets a component it already has in place, and otherwise fills a staged one the sync point adds.
+    const Lumina::ECS::FEntity Target = static_cast<Lumina::ECS::FEntity>(Entity);
+    if (Lumina::ECS::FCommandBus::ShouldDefer())
+    {
+        return O->Has(*R, Target) ? O->Get(*R, Target) : O->StageEmplace(reinterpret_cast<Lumina::CWorld*>(World)->GetCommandBus(), Target);
+    }
+    return O->Emplace(*R, Target);
 }
 
 LUMINA_DOTNET_EXPORT(int, RemoveComponent)(uint64 World, uint32 Entity, const void* Ops)
@@ -169,11 +193,15 @@ LUMINA_DOTNET_EXPORT(void*, RegistryConnect)(uint64 World, const void* Ops, int3
         return nullptr;
     }
 
-    auto* Listener = new Lumina::FManagedSignalListener();
-    O->ConnectSignal(*R, static_cast<Lumina::EComponentSignal>(Kind), Listener);
-
     // Tracked per world, since a torn down world takes its registry and nothing else would free the listener.
+    auto* Listener = new Lumina::FManagedSignalListener();
     Lumina::DotNet::TrackSignalListener(reinterpret_cast<Lumina::CWorld*>(World), Listener);
+
+    // The handle is usable at once, and only the pool's shared listener list waits for a parallel script's sync point.
+    LmApplyOrDefer(World, [O, Kind, Listener](Lumina::ECS::FRegistry& Registry)
+    {
+        O->ConnectSignal(Registry, static_cast<Lumina::EComponentSignal>(Kind), Listener);
+    });
     return Listener;
 }
 
@@ -186,25 +214,26 @@ LUMINA_DOTNET_EXPORT(void*, RegistryGetSignalDelegate)(void* Handle)
 // Disconnect a listener returned by Connect and free it. Safe with a null handle / torn-down world.
 LUMINA_DOTNET_EXPORT(void, RegistryDisconnect)(uint64 World, const void* Ops, int32 Kind, void* Handle)
 {
-    if (Handle == nullptr)
+    if (Handle == nullptr || World == 0)
     {
         return;
     }
 
-    // World teardown frees every listener it tracked before scripts detach, so a dispose from OnDetach lands here after it.
-    if (!Lumina::DotNet::ForgetSignalListener(reinterpret_cast<Lumina::CWorld*>(World), Handle))
+    LmApplyOrDefer(World, [World, O = static_cast<const Lumina::FComponentOps*>(Ops), Kind, Handle](Lumina::ECS::FRegistry& Registry)
     {
-        return;
-    }
+        // World teardown frees every listener it tracked before scripts detach, so a dispose from OnDetach lands here after it.
+        if (!Lumina::DotNet::ForgetSignalListener(reinterpret_cast<Lumina::CWorld*>(World), Handle))
+        {
+            return;
+        }
 
-    Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
-    const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
-    if (R != nullptr && O != nullptr)
-    {
-        O->DisconnectSignal(*R, static_cast<Lumina::EComponentSignal>(Kind), static_cast<Lumina::FManagedSignalListener*>(Handle));
-    }
-
-    delete static_cast<Lumina::FManagedSignalListener*>(Handle);
+        auto* Listener = static_cast<Lumina::FManagedSignalListener*>(Handle);
+        if (O != nullptr)
+        {
+            O->DisconnectSignal(Registry, static_cast<Lumina::EComponentSignal>(Kind), Listener);
+        }
+        delete Listener;
+    });
 }
 
 // Fire on_update<T> for an entity's component (the manual "signal" pulse). No-op for tags or if absent.
@@ -212,10 +241,16 @@ LUMINA_DOTNET_EXPORT(void, RegistryPatch)(uint64 World, uint32 Entity, const voi
 {
     Lumina::ECS::FRegistry* R = LmRegistryFromWorld(World);
     const auto* O = static_cast<const Lumina::FComponentOps*>(Ops);
-    if (R != nullptr && O != nullptr)
+    if (R == nullptr || O == nullptr)
     {
-        O->Patch(*R, static_cast<Lumina::ECS::FEntity>(Entity));
+        return;
     }
+
+    // Update listeners run managed code against the registry, so a parallel script's pulse fires at the sync point.
+    LmApplyOrDefer(World, [O, Target = static_cast<Lumina::ECS::FEntity>(Entity)](Lumina::ECS::FRegistry& Registry)
+    {
+        O->Patch(Registry, Target);
+    });
 }
 
 LUMINA_DOTNET_SIGNATURES(

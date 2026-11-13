@@ -63,7 +63,7 @@ namespace Lumina
                     return true;
                 }
 
-                const FAssetData* Target = FAssetRegistry::Get().GetAssetByGUID(Dependency.TargetGUID);
+                const FAssetDataPtr Target = FAssetRegistry::Get().GetAssetByGUID(Dependency.TargetGUID);
                 if (Target == nullptr || Target->AssetClass != SkeletonClassName)
                 {
                     continue;
@@ -88,27 +88,12 @@ namespace Lumina
     FCompatibleAssetList::FCompatibleAssetList(CClass* InAssetClass)
         : AssetClass(InAssetClass)
     {
-        // The registry can broadcast from an import worker, so this only flags the list.
-        RegistryHandle = FAssetRegistry::Get().GetOnAssetRegistryUpdated().AddLambda([this]()
-        {
-            bStale.store(true, std::memory_order_relaxed);
-        });
     }
 
-    FCompatibleAssetList::~FCompatibleAssetList()
-    {
-        FAssetRegistry::Get().GetOnAssetRegistryUpdated().Remove(RegistryHandle);
-    }
 
     const TVector<FCompatibleAssetList::FEntry>& FCompatibleAssetList::Get(const CSkeleton* Skeleton)
     {
-        if (Skeleton != CachedSkeleton)
-        {
-            CachedSkeleton = Skeleton;
-            bStale.store(true, std::memory_order_relaxed);
-        }
-
-        if (!bStale.exchange(false, std::memory_order_relaxed))
+        if (!StaleLatch.Refresh(Skeleton, CachedSkeleton))
         {
             return Entries;
         }
@@ -120,13 +105,13 @@ namespace Lumina
         }
 
         const FName ClassName = AssetClass->GetName();
-        TVector<FAssetData*> Candidates = FAssetRegistry::Get().FindByPredicate([&ClassName](const FAssetData& Data)
+        TVector<FAssetDataPtr> Candidates = FAssetRegistry::Get().FindByPredicate([&ClassName](const FAssetData& Data)
         {
             return Data.AssetClass == ClassName;
         });
 
         THashMap<FGuid, bool> SkeletonVerdicts;
-        for (const FAssetData* Data : Candidates)
+        for (const FAssetDataPtr& Data : Candidates)
         {
             if (AnimPreview::IsAssetCompatible(*Data, *Skeleton, SkeletonVerdicts))
             {

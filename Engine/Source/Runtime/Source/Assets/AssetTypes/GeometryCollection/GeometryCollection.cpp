@@ -11,6 +11,7 @@
 #include "Renderer/MeshData.h"
 #include "Renderer/Vertex.h"
 #include "Log/Log.h"
+#include "Platform/Time/PlatformTime.h"
 #include "Renderer/MeshQuantization.h"
 #include "TaskSystem/TaskSystem.h"
 
@@ -82,11 +83,16 @@ namespace Lumina
         // Clips the convex polyhedron by the half-space and caps the cut.
         void ClipPolyByPlane(FConvexPoly& Poly, const FVector3& N, float D, float Eps)
         {
-            TVector<FFace>     NewFaces;
             TVector<FVector3> CapPoints;
 
-            for (const FFace& Face : Poly.Faces)
+            // A face wholly inside the half-space clips to itself, so it stays in place without a rebuild.
+            Poly.Faces.RemoveAll([&](FFace& Face)
             {
+                if (Algo::AllOf(Face, [&](const FVector3& P) { return Math::Dot(N, P) - D <= Eps; }))
+                {
+                    return false;
+                }
+
                 FFace Out;
                 const int32 L = Face.Num();
                 for (int32 k = 0; k < L; ++k)
@@ -108,22 +114,18 @@ namespace Lumina
                         CapPoints.Add(P);
                     }
                 }
-                if (Out.Num() >= 3)
-                {
-                    NewFaces.Add(Move(Out));
-                }
-            }
+                Face = Move(Out);
+                return Face.Num() < 3;
+            });
 
             if (CapPoints.Num() >= 3)
             {
                 FFace Cap = OrderCoplanarLoop(CapPoints, N, Eps);
                 if (Cap.Num() >= 3)
                 {
-                    NewFaces.Add(Move(Cap));
+                    Poly.Faces.Add(Move(Cap));
                 }
             }
-
-            Poly.Faces = Move(NewFaces);
         }
 
         FVector3 NewellNormal(const FFace& Face)
@@ -141,60 +143,93 @@ namespace Lumina
             return N;
         }
 
-        // The source surface a piece is cut from, so its faces keep the colors of the mesh they came out of.
+        struct FSurfaceTriangle
+        {
+            FVector3 Centroid;
+            FVector3 Normal;    // zero for a degenerate triangle, so it never counts as coplanar
+            FVector3 Corner;
+            uint32   Color = 0u;
+            uint32   Index = 0u;
+        };
+
+        // The source surface a piece is cut from, sorted by centroid along the widest axis so a face only visits the slab that can hold its nearest one.
         struct FSurfaceColors
         {
-            const TVector<FVector3>&     Positions;
-            const TVector<FUIntVector3>& Triangles;
-            const TVector<uint32>&       Colors;
-            float                        Tolerance = 0.0f;
+            TVector<FSurfaceTriangle> Triangles;
+            int32                     Axis = 0;
+            float                     Tolerance = 0.0f;
+
+            FSurfaceColors(const TVector<FVector3>& Positions, const TVector<FUIntVector3>& SourceTriangles, const TVector<uint32>& Colors, const FVector3& Size, float InTolerance)
+                : Axis(Size.x >= Size.y && Size.x >= Size.z ? 0 : (Size.y >= Size.z ? 1 : 2))
+                , Tolerance(InTolerance)
+            {
+                Triangles.Reserve(SourceTriangles.Num());
+                for (const FUIntVector3& Tri : SourceTriangles)
+                {
+                    const FVector3& A = Positions[Tri.x];
+                    const FVector3& B = Positions[Tri.y];
+                    const FVector3& C = Positions[Tri.z];
+                    const FVector3 Cross = Math::Cross(B - A, C - A);
+                    const float Length = Math::Length(Cross);
+                    Triangles.Add({ (A + B + C) / 3.0f, Length < 1e-12f ? FVector3(0.0f) : Cross / Length, A, Colors[Tri.x], static_cast<uint32>(Triangles.Num()) });
+                }
+                Algo::Sort(Triangles, [this](const FSurfaceTriangle& L, const FSurfaceTriangle& R) { return L.Centroid[Axis] < R.Centroid[Axis]; });
+            }
         };
 
         // An outer face lies in a source triangle's plane and takes its color; a fresh cut takes the nearest color, darkened like broken material.
         uint32 ColorForFace(const FSurfaceColors& Source, const FVector3& FaceCenter, const FVector3& Normal)
         {
             constexpr float CutShade = 0.55f;
-            float BestSurface = FLT_MAX;
-            float BestAny = FLT_MAX;
-            uint32 SurfaceColor = 0u;
-            uint32 AnyColor = PackColor(FVector4(1.0f));
-            bool bOnSurface = false;
+            const FSurfaceTriangle* BestSurface = nullptr;
+            const FSurfaceTriangle* BestAny = nullptr;
+            float BestSurfaceSq = FLT_MAX;
+            float BestAnySq = FLT_MAX;
 
-            for (const FUIntVector3& Tri : Source.Triangles)
+            // Ties go to the lower source index, as the unsorted scan did.
+            auto Closer = [](float DistanceSq, const FSurfaceTriangle& Tri, float BestSq, const FSurfaceTriangle* Best)
             {
-                const FVector3& A = Source.Positions[Tri.x];
-                const FVector3& B = Source.Positions[Tri.y];
-                const FVector3& C = Source.Positions[Tri.z];
-                const FVector3 Centroid = (A + B + C) / 3.0f;
-                const float Distance = Math::Length(Centroid - FaceCenter);
-                if (Distance < BestAny)
+                return DistanceSq < BestSq || (DistanceSq == BestSq && Best != nullptr && Tri.Index < Best->Index);
+            };
+
+            const TVector<FSurfaceTriangle>& Tris = Source.Triangles;
+            const float Key = FaceCenter[Source.Axis];
+            const int32 Split = static_cast<int32>(Algo::LowerBound(Tris, Key, [&](const FSurfaceTriangle& Tri, float Value) { return Tri.Centroid[Source.Axis] < Value; }) - Tris.begin());
+            int32 Above = Split;
+            int32 Below = Split - 1;
+            while (Above < Tris.Num() || Below >= 0)
+            {
+                const float GapAbove = Above < Tris.Num() ? Tris[Above].Centroid[Source.Axis] - Key : FLT_MAX;
+                const float GapBelow = Below >= 0 ? Key - Tris[Below].Centroid[Source.Axis] : FLT_MAX;
+                const bool bTakeAbove = GapAbove <= GapBelow;
+                const float Gap = bTakeAbove ? GapAbove : GapBelow;
+                if (Gap * Gap > BestSurfaceSq)
                 {
-                    BestAny = Distance;
-                    AnyColor = Source.Colors[Tri.x];
+                    break;
                 }
 
-                FVector3 TriNormal = Math::Cross(B - A, C - A);
-                const float Length = Math::Length(TriNormal);
-                if (Length < 1e-12f)
+                const FSurfaceTriangle& Tri = Tris[bTakeAbove ? Above++ : Below--];
+                const FVector3 Offset = Tri.Centroid - FaceCenter;
+                const float DistanceSq = Math::Dot(Offset, Offset);
+                if (Closer(DistanceSq, Tri, BestAnySq, BestAny))
                 {
-                    continue;
+                    BestAnySq = DistanceSq;
+                    BestAny = &Tri;
                 }
-                TriNormal /= Length;
-                const bool bCoplanar = Math::Dot(TriNormal, Normal) > 0.9f
-                    && Math::Abs(Math::Dot(FaceCenter - A, TriNormal)) <= Source.Tolerance;
-                if (bCoplanar && Distance < BestSurface)
+                const bool bCoplanar = Math::Dot(Tri.Normal, Normal) > 0.9f
+                    && Math::Abs(Math::Dot(FaceCenter - Tri.Corner, Tri.Normal)) <= Source.Tolerance;
+                if (bCoplanar && Closer(DistanceSq, Tri, BestSurfaceSq, BestSurface))
                 {
-                    BestSurface = Distance;
-                    SurfaceColor = Source.Colors[Tri.x];
-                    bOnSurface = true;
+                    BestSurfaceSq = DistanceSq;
+                    BestSurface = &Tri;
                 }
             }
 
-            if (bOnSurface)
+            if (BestSurface != nullptr)
             {
-                return SurfaceColor;
+                return BestSurface->Color;
             }
-            const FVector4 Cut = UnpackColor(AnyColor);
+            const FVector4 Cut = UnpackColor(BestAny->Color);
             return PackColor(FVector4(FVector3(Cut) * CutShade, Cut.w));
         }
 
@@ -332,49 +367,116 @@ namespace Lumina
                 }
             });
         }
+    }
 
-        // A triangle's plane is a hull face only when every vertex sits on one side of it.
-        void ComputeHullPlanes(const TVector<FVector3>& Positions, const TVector<FUIntVector3>& Triangles, float Tol, TVector<FVector4>& OutPlanes)
+    void Fracture::ComputeHullPlanes(const TVector<FVector3>& Positions, const TVector<FUIntVector3>& Triangles, float Tol, TVector<FVector4>& OutPlanes)
+    {
+        LUMINA_PROFILE_SCOPE();
+        OutPlanes.Reset();
+
+        // Accepted planes sit in a grid over (normal, distance), so coplanar triangles skip the scan of every position.
+        constexpr float MinNormalDot = 0.999f;
+        const FVector4 Margin(0.05f, 0.05f, 0.05f, Tol);   // 0.05 bounds each normal component's drift while the dot passes MinNormalDot
+        const FVector4 CellSize = Margin * 4.0f;
+
+        THashMap<uint64, int32> CellHeads;
+        TVector<int32> NextInCell;
+
+        auto CellKey = [](const int32 (&Cell)[4]) -> uint64
         {
-            auto AddUnique = [&](const FVector3& N, float D)
+            return (uint64(uint32(Cell[3])) << 32) | (uint64(Cell[0] & 0x3FF) << 20) | (uint64(Cell[1] & 0x3FF) << 10) | uint64(Cell[2] & 0x3FF);
+        };
+
+        // NearSide steps toward the neighboring cell a plane within Margin of this one could land in.
+        auto CellOf = [&](const FVector4& Plane, int32 (&Cell)[4], int32 (&NearSide)[4])
+        {
+            for (int32 Axis = 0; Axis < 4; ++Axis)
             {
-                for (const FVector4& Existing : OutPlanes)
+                const float Scaled = Plane[Axis] / CellSize[Axis];
+                Cell[Axis] = static_cast<int32>(std::floor(Scaled));
+                const float IntoCell = (Scaled - static_cast<float>(Cell[Axis])) * CellSize[Axis];
+                NearSide[Axis] = IntoCell < Margin[Axis] ? -1 : (IntoCell > CellSize[Axis] - Margin[Axis] ? 1 : 0);
+            }
+        };
+
+        auto IsKnownHullPlane = [&](const FVector4& Plane)
+        {
+            int32 Base[4];
+            int32 NearSide[4];
+            CellOf(Plane, Base, NearSide);
+            for (uint32 Neighbor = 0; Neighbor < 16; ++Neighbor)
+            {
+                int32 Cell[4];
+                bool bReachable = true;
+                for (int32 Axis = 0; Axis < 4; ++Axis)
                 {
-                    if (Math::Dot(FVector3(Existing), N) > 0.999f && Math::Abs(Existing.w - D) <= Tol)
+                    const bool bStep = ((Neighbor >> Axis) & 1u) != 0;
+                    bReachable &= !bStep || NearSide[Axis] != 0;
+                    Cell[Axis] = Base[Axis] + (bStep ? NearSide[Axis] : 0);
+                }
+                const int32* Head = bReachable ? CellHeads.Find(CellKey(Cell)) : nullptr;
+                for (int32 Index = Head ? *Head : -1; Index != -1; Index = NextInCell[Index])
+                {
+                    const FVector4& Existing = OutPlanes[Index];
+                    if (Math::Dot(FVector3(Existing), FVector3(Plane)) > MinNormalDot && Math::Abs(Existing.w - Plane.w) <= Tol)
                     {
-                        return;
+                        return true;
                     }
                 }
-                OutPlanes.Emplace(N, D);
-            };
-
-            for (const FUIntVector3& Tri : Triangles)
-            {
-                const FVector3& A = Positions[Tri.x];
-                const FVector3& B = Positions[Tri.y];
-                const FVector3& C = Positions[Tri.z];
-
-                FVector3 N = Math::Cross(B - A, C - A);
-                const float Len = Math::Length(N);
-                if (Len < 1e-12f)
-                {
-                    continue;
-                }
-                N /= Len;
-                const float D = Math::Dot(N, A);
-
-                float MaxProj = -FLT_MAX;
-                float MinProj =  FLT_MAX;
-                for (const FVector3& P : Positions)
-                {
-                    const float d = Math::Dot(N, P);
-                    MaxProj = Math::Max(MaxProj, d);
-                    MinProj = Math::Min(MinProj, d);
-                }
-
-                if (MaxProj <= D + Tol)       AddUnique( N,  D);   // mesh on the negative side -> outward = N
-                else if (MinProj >= D - Tol)  AddUnique(-N, -D);   // mesh on the positive side -> outward = -N
             }
+            return false;
+        };
+
+        auto AddHullPlane = [&](const FVector4& Outward)
+        {
+            if (IsKnownHullPlane(Outward))
+            {
+                return;
+            }
+            int32 Cell[4];
+            int32 NearSide[4];
+            CellOf(Outward, Cell, NearSide);
+            int32& Head = CellHeads.FindOrAdd(CellKey(Cell), -1);
+            NextInCell.Add(Head);
+            Head = OutPlanes.Num();
+            OutPlanes.Add(Outward);
+        };
+
+        for (const FUIntVector3& Tri : Triangles)
+        {
+            const FVector3& A = Positions[Tri.x];
+            const FVector3& B = Positions[Tri.y];
+            const FVector3& C = Positions[Tri.z];
+
+            FVector3 N = Math::Cross(B - A, C - A);
+            const float Len = Math::Length(N);
+            if (Len < 1e-12f)
+            {
+                continue;
+            }
+            N /= Len;
+            const float D = Math::Dot(N, A);
+            // Only the same facing proves the scan would add nothing; the opposite facing can be the other side of a thin slab.
+            if (IsKnownHullPlane(FVector4(N, D)))
+            {
+                continue;
+            }
+
+            float MaxProj = -FLT_MAX;
+            float MinProj =  FLT_MAX;
+            for (const FVector3& P : Positions)
+            {
+                const float d = Math::Dot(N, P);
+                MaxProj = Math::Max(MaxProj, d);
+                MinProj = Math::Min(MinProj, d);
+                if (MaxProj > D + Tol && MinProj < D - Tol)
+                {
+                    break;
+                }
+            }
+
+            if (MaxProj <= D + Tol)       AddHullPlane(FVector4( N,  D));   // mesh on the negative side -> outward = N
+            else if (MinProj >= D - Tol)  AddHullPlane(FVector4(-N, -D));   // mesh on the positive side -> outward = -N
         }
     }
 
@@ -402,11 +504,13 @@ namespace Lumina
         GatherMeshGeometry(SourceMesh, Positions, Triangles, &Colors);
         const int32 NumPos = Positions.Num();
         const int32 NumTri = Triangles.Num();
+        PlatformTime::FStopwatch HullWatch;
         if (Positions.Num() >= 4 && !Triangles.IsEmpty())
         {
             ComputeHullPlanes(Positions, Triangles, HullTol, HullPlanes);
         }
-        const FSurfaceColors SurfaceColors{ Positions, Triangles, Colors, HullTol * 4.0f };
+        const double HullMs = HullWatch.ElapsedMilliseconds();
+        const FSurfaceColors SurfaceColors(Positions, Triangles, Colors, Size, HullTol * 4.0f);
         const FSurfaceColors* ColorSource = Colors.Num() == Positions.Num() && !Triangles.IsEmpty() ? &SurfaceColors : nullptr;
 
         // Clip the bounds box down to the hull once; every cell starts from this shape.
@@ -421,7 +525,7 @@ namespace Lumina
             Hull = MakeBox(Mn, Mx);   // hull clip collapsed (bad data) -> fall back to box
         }
 
-        LOG_DEBUG("[Fracture] MeshletVerts={} Tris={} HullPlanes={} HullFacesAfterClip={} BoundsDiag={}", NumPos, NumTri, HullPlanes.Num(), FacesAfterClip, Diag);
+        LOG_DEBUG("[Fracture] MeshletVerts={} Tris={} HullPlanes={} HullFacesAfterClip={} BoundsDiag={} HullMs={:.2f}", NumPos, NumTri, HullPlanes.Num(), FacesAfterClip, Diag, HullMs);
 
         auto InsideHull = [&](const FVector3& S) -> bool
         {

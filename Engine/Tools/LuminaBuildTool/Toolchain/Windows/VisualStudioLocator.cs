@@ -212,13 +212,8 @@ public static class VisualStudioLocator
             .Select(Path.GetFileName)
             .Where(Name => Name is not null)
             .Select(Name => Name!)
-            .OrderByDescending(ParseVersion)
+            .OrderByDescending(WindowsSdkLocator.ParseVersion)
             .FirstOrDefault();
-    }
-
-    private static Version ParseVersion(string Text)
-    {
-        return Version.TryParse(Text, out Version? Parsed) ? Parsed : new Version(0, 0);
     }
 
     /// <summary>Product version of the installed IDE, which is what a solution file's version fields carry.</summary>
