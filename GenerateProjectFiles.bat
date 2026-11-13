@@ -35,6 +35,6 @@ if errorlevel 1 (
 )
 
 echo.
-echo Solution generated: Lumina.sln
+for %%S in (Lumina.slnx Lumina.sln) do if exist "%ENGINE_DIR%\%%S" echo Solution generated: %%S
 endlocal
 exit /b 0

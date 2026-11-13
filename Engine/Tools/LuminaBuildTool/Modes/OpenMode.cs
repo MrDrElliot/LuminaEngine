@@ -27,7 +27,7 @@ public static class OpenMode
             await WaitForEditorToCloseAsync(ProjectRoot, Cancellation).ConfigureAwait(false);
         }
 
-        BuildDirectories EngineDirectories = BuildDirectories.Discover(ProjectDirectories.EngineRoot, null);
+        BuildDirectories EngineDirectories = ProjectDirectories.ToEngineOnly();
         BuildPlatform PlatformValue = BuildPlatformRegistry.HostPlatform;
         BuildConfiguration ConfigurationValue = Arguments.GetEnum("Configuration", BuildConfiguration.Development);
         RulesAssembly Assembly = RulesAssembly.Create(ProjectDirectories, Arguments.HasFlag("RecompileRules"));

@@ -22,6 +22,32 @@ namespace Lumina
         float     DampingOverride = 0.0f;
     };
 
+    // One joint's limits, the spherical joint's hard cone and twist, and a ligament, a motor joint that springs the limb back into its soft range once it strays past it and is slack inside.
+    struct FRagdollJointLimit
+    {
+        b3JointId Cone = b3_nullJointId;
+        b3JointId Ligament = b3_nullJointId;
+        int32     Body = -1;
+        int32     ParentBody = -1;
+        // The spherical joint's frame on each body, which the range is measured in.
+        FQuat     ParentFrame = FQuat::Identity();
+        FQuat     ChildFrame = FQuat::Identity();
+        // Scales the authored spring rate and damping to the limb swinging about its pivot, and the authored torque to the mass the joint carries.
+        float     Retune = 1.0f;
+        float     TorqueShare = 1.0f;
+        FVector3  LimitsRadians = FVector3(0.0f);
+        float     SoftStart = 1.0f;
+        // Spring rate once the limb reaches its limit, falling to nothing at the soft start.
+        float     LimitHertz = 0.0f;
+        float     MaxTorque = 0.0f;
+    };
+
+    inline float MeanRotationalInertia(b3BodyId Body)
+    {
+        const b3Matrix3 Inertia = b3Body_GetLocalRotationalInertia(Body);
+        return (Inertia.cx.x + Inertia.cy.y + Inertia.cz.z) / 3.0f;
+    }
+
     // A soft joint from a fixed anchor that holds one torso body upright, solved implicitly so a light chest can carry a whole body's reflex.
     struct FRagdollBrace
     {
@@ -101,6 +127,7 @@ namespace Lumina
         // Parent body of each body, -1 for the root, parents always before their children.
         TVector<int32>          ParentBody;
         TVector<FRagdollMuscle> Muscles;
+        TVector<FRagdollJointLimit> JointLimits;
         b3BodyId                BraceAnchor = b3_nullBodyId;
         TVector<FRagdollBrace>  Braces;
         // Sum of the braced bodies' inertia, which is how hard the torso is to turn on its own.
@@ -138,6 +165,24 @@ namespace Lumina
         ~FPhysicsRagdollHandle()
         {
             Release();
+        }
+
+        // A motor joint whose angular spring does nothing until a drive gives it a torque cap, owned by this ragdoll.
+        b3JointId AddSlackMotor(b3BodyId BodyA, b3BodyId BodyB, const b3Transform& FrameA, const b3Transform& FrameB, float DampingRatio = 1.0f)
+        {
+            b3MotorJointDef Def = b3DefaultMotorJointDef();
+            Def.base.bodyIdA = BodyA;
+            Def.base.bodyIdB = BodyB;
+            Def.base.localFrameA = FrameA;
+            Def.base.localFrameB = FrameB;
+            Def.angularDampingRatio = DampingRatio;
+
+            const b3JointId Joint = b3CreateMotorJoint(WorldId, &Def);
+            if (b3Joint_IsValid(Joint))
+            {
+                Joints.Add(Joint);
+            }
+            return Joint;
         }
 
         void Release()

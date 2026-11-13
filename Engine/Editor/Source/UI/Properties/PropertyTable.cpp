@@ -9,7 +9,6 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/InstancedStruct.h"
 #include "Core/Object/ObjectHandleTyped.h"
-#include "Core/Object/ObjectIterator.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/ClassProperty.h"
@@ -962,14 +961,10 @@ namespace Lumina::PropertyTableInternal
         TVector<CStruct*> Candidates;
         if (ImGuiX::IsSearchableComboOpen(StrId))
         {
-            for (TObjectIterator<CStruct> It; It; ++It)
+            Candidates = GatherInstancableStructSubtypes(Base, true);
+            if (!Implements.IsEmpty())
             {
-                CStruct* Candidate = *It;
-                if (IsInstancableStructType(Candidate) && (Base == nullptr || Candidate->IsChildOf(Base))
-                    && (Implements.IsEmpty() || ImplementsInterface(Candidate, Implements)))
-                {
-                    Candidates.Add(Candidate);
-                }
+                Candidates.RemoveAll([Implements](CStruct* Candidate) { return !ImplementsInterface(Candidate, Implements); });
             }
 
             Algo::Sort(Candidates, [](CStruct* A, CStruct* B)

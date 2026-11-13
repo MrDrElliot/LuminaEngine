@@ -27,6 +27,7 @@ internal sealed class TypeLibrary
         // Proves the view table still matches the classifier the rewriter emitted accessors from, failures it catches being otherwise silent.
         ScriptPropertyViews.Validate();
 
+        StateTreeNodes = new StateTreeNodeInvokers(this);
         AllTypes = new List<Type>(Types);
         foreach (Type Type in AllTypes)
         {
@@ -160,6 +161,9 @@ internal sealed class TypeLibrary
 
     // Builds the handle for a script struct named at runtime, so a caller can reach it through an interface it implements.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Func<nint, object>?> StructViews = new();
+
+    // The invokers state trees run this generation's C# nodes through.
+    internal readonly StateTreeNodeInvokers StateTreeNodes;
 
     public object? ViewScriptStruct(string StableId, nint Address)
     {

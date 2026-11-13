@@ -1458,25 +1458,6 @@ _rpmalloc_span_finalize(heap_t* heap, size_t iclass, span_t* span, span_t** list
 
 #if ENABLE_GLOBAL_CACHE
 
-//! Finalize a global cache
-static void
-_rpmalloc_global_cache_finalize(global_cache_t* cache) {
-	while (!atomic_cas32_acquire(&cache->lock, 1, 0))
-		_rpmalloc_spin();
-
-	for (size_t ispan = 0; ispan < cache->count; ++ispan)
-		_rpmalloc_span_unmap(cache->span[ispan]);
-	cache->count = 0;
-
-	while (cache->overflow) {
-		span_t* span = cache->overflow;
-		cache->overflow = span->next;
-		_rpmalloc_span_unmap(span);
-	}
-
-	atomic_store32_release(&cache->lock, 0);
-}
-
 static void
 _rpmalloc_global_cache_insert_spans(span_t** span, size_t span_count, size_t count) {
 	const size_t cache_limit = (span_count == 1) ?
@@ -1564,9 +1545,6 @@ _rpmalloc_global_cache_extract_spans(span_t** span, size_t span_count, size_t co
 	while (!atomic_cas32_acquire(&cache->lock, 1, 0))
 		_rpmalloc_spin();
 
-#if ENABLE_STATISTICS
-	cache->extract_count += count;
-#endif
 	size_t want = count - extract_count;
 	if (want > cache->count)
 		want = cache->count;
@@ -1581,6 +1559,9 @@ _rpmalloc_global_cache_extract_spans(span_t** span, size_t span_count, size_t co
 		cache->overflow = current_span->next;
 	}
 
+#if ENABLE_STATISTICS
+	cache->extract_count += extract_count;
+#endif
 #if ENABLE_ASSERTS
 	for (size_t ispan = 0; ispan < extract_count; ++ispan) {
 		rpmalloc_assert(span[ispan]->span_count == span_count, "Global cache span count mismatch");
@@ -3039,8 +3020,7 @@ rpmalloc_finalize(void) {
 
 #if ENABLE_GLOBAL_CACHE
 	//Free global caches
-	for (size_t iclass = 0; iclass < LARGE_CLASS_COUNT; ++iclass)
-		_rpmalloc_global_cache_finalize(&_memory_span_cache[iclass]);
+	rpmalloc_global_trim_caches(SIZE_MAX);
 #endif
 
 #if (defined(__APPLE__) || defined(__HAIKU__)) && ENABLE_PRELOAD
@@ -3097,40 +3077,55 @@ rpmalloc_uses_huge_pages(void) {
 }
 
 // Returns the calling thread's cached spans to the OS, since the cache otherwise only drains when the thread exits.
-void
-rpmalloc_thread_trim_caches(void) {
+size_t
+rpmalloc_thread_trim_caches(size_t max_spans) {
 	heap_t* heap = get_thread_heap_raw();
 	if (!heap)
-		return;
+		return 0;
 	_rpmalloc_heap_cache_adopt_deferred(heap, 0);
-	// The reserve and each class's one-span cache are free too, and each pins the super span it came from, as heap finalization knows.
-	if (heap->spans_reserved) {
-		span_t* reserve = _rpmalloc_span_map(heap, heap->spans_reserved);
-		_rpmalloc_span_unmap(reserve);
-		heap->spans_reserved = 0;
-	}
-	for (size_t iclass = 0; iclass < SIZE_CLASS_COUNT; ++iclass) {
-		if (heap->size_class[iclass].cache)
-			_rpmalloc_span_unmap(heap->size_class[iclass].cache);
-		heap->size_class[iclass].cache = 0;
-	}
+	size_t released = 0;
 #if ENABLE_THREAD_CACHE
 	for (size_t iclass = 0; iclass < LARGE_CLASS_COUNT; ++iclass) {
 		span_cache_t* span_cache = !iclass ? &heap->span_cache : (span_cache_t*)(heap->span_large_cache + (iclass - 1));
-		for (size_t ispan = 0; ispan < span_cache->count; ++ispan)
-			_rpmalloc_span_unmap(span_cache->span[ispan]);
-		span_cache->count = 0;
+		for (; span_cache->count && (released < max_spans); ++released)
+			_rpmalloc_span_unmap(span_cache->span[--span_cache->count]);
 	}
 #endif
+	// The reserve and each class's one-span cache are free too, and each pins the super span it came from, as heap finalization knows.
+	if (heap->spans_reserved && (released < max_spans)) {
+		span_t* reserve = _rpmalloc_span_map(heap, heap->spans_reserved);
+		_rpmalloc_span_unmap(reserve);
+		heap->spans_reserved = 0;
+		++released;
+	}
+	for (size_t iclass = 0; (iclass < SIZE_CLASS_COUNT) && (released < max_spans); ++iclass) {
+		if (heap->size_class[iclass].cache) {
+			_rpmalloc_span_unmap(heap->size_class[iclass].cache);
+			heap->size_class[iclass].cache = 0;
+			++released;
+		}
+	}
+	return released;
 }
 
-// Returns every span in the shared cache to the OS, which is safe at any time since each class is taken under its lock.
-void
-rpmalloc_global_trim_caches(void) {
+// Returns spans in the shared cache to the OS, unmapping each batch only after its class lock is released.
+size_t
+rpmalloc_global_trim_caches(size_t max_spans) {
+	size_t released = 0;
 #if ENABLE_GLOBAL_CACHE
-	for (size_t iclass = 0; iclass < LARGE_CLASS_COUNT; ++iclass)
-		_rpmalloc_global_cache_finalize(&_memory_span_cache[iclass]);
+	span_t* batch[THREAD_SPAN_CACHE_TRANSFER];
+	for (size_t iclass = 0; (iclass < LARGE_CLASS_COUNT) && (released < max_spans); ++iclass) {
+		size_t extracted;
+		do {
+			const size_t want = (max_spans - released) < THREAD_SPAN_CACHE_TRANSFER ? (max_spans - released) : THREAD_SPAN_CACHE_TRANSFER;
+			extracted = _rpmalloc_global_cache_extract_spans(batch, iclass + 1, want);
+			for (size_t ispan = 0; ispan < extracted; ++ispan)
+				_rpmalloc_span_unmap(batch[ispan]);
+			released += extracted;
+		} while (extracted && (released < max_spans));
+	}
 #endif
+	return released;
 }
 
 int
@@ -3454,12 +3449,12 @@ rpmalloc_dump_statistics(void* file) {
 	fprintf(file, "GlobalCacheMiB\n");
 	for (size_t iclass = 0; iclass < LARGE_CLASS_COUNT; ++iclass) {
 		global_cache_t* cache = _memory_span_cache + iclass;
-		size_t global_cache = (size_t)cache->count * iclass * _memory_span_size;
+		size_t global_cache = (size_t)cache->count * (iclass + 1) * _memory_span_size;
 
 		size_t global_overflow_cache = 0;
 		span_t* span = cache->overflow;
 		while (span) {
-			global_overflow_cache += iclass * _memory_span_size;
+			global_overflow_cache += (iclass + 1) * _memory_span_size;
 			span = span->next;
 		}
 		if (global_cache || global_overflow_cache || cache->insert_count || cache->extract_count)

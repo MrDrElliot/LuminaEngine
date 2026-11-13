@@ -6,6 +6,7 @@
 #include "Box3DUtils.h"
 
 #include "Animation/Pose.h"
+#include "Assets/AssetTypes/PhysicsAsset/PhysicsAsset.h"
 #include "Renderer/SkeletonResource.h"
 #include "World/World.h"
 #include "World/Entity/Components/RagdollComponent.h"
@@ -50,6 +51,8 @@ namespace Lumina::Physics
         constexpr float kLostOverhang      = 0.65f;
         constexpr float kElbowBend         = 0.3f;
         constexpr float kRootFollowHertz   = 3.0f;
+        // Box3D keeps warm starting a spring's last impulse once its cap is zero, so a slack spring keeps a cap too small to matter.
+        constexpr float kSlackSpringTorque = 1e-6f;
 
         enum class ELimb : uint8
         {
@@ -121,12 +124,6 @@ namespace Lumina::Physics
                 return Axis * 2.0f;
             }
             return Axis * (2.0f * Math::Atan2(SinHalf, Q.w) / SinHalf);
-        }
-
-        float MeanRotationalInertia(b3BodyId Body)
-        {
-            const b3Matrix3 Inertia = b3Body_GetLocalRotationalInertia(Body);
-            return (Inertia.cx.x + Inertia.cy.y + Inertia.cz.z) / 3.0f;
         }
 
         int32 NearestAncestor(const FPhysicsRagdollHandle& Ragdoll, const TVector<ELimb>& Limbs, int32 Body, ELimb Wanted)
@@ -333,20 +330,43 @@ namespace Lumina::Physics
         Rig.bValid = true;
     }
 
+    // Aims each ligament at the nearest pose inside its soft range, so it pulls back only as far as that range and lets go inside it.
+    static void UpdateRagdollSoftLimits(const FPhysicsRagdollHandle& Ragdoll)
+    {
+        for (const FRagdollJointLimit& Limit : Ragdoll.JointLimits)
+        {
+            if (!b3Joint_IsValid(Limit.Ligament))
+            {
+                continue;
+            }
+
+            const FQuat Parent = Box3DUtils::FromB3Quat(b3Body_GetRotation(Ragdoll.Bodies[Limit.ParentBody])) * Limit.ParentFrame;
+            const FQuat Child  = Box3DUtils::FromB3Quat(b3Body_GetRotation(Ragdoll.Bodies[Limit.Body])) * Limit.ChildFrame;
+            FQuat Target = Math::Normalize(Math::Inverse(Parent) * Child);
+            const float Depth = ClampToSoftRange(Target, Limit.LimitsRadians, Limit.SoftStart);
+            if (Depth > 0.0f)
+            {
+                b3Joint_SetLocalFrameB(Limit.Ligament, b3Transform{ b3Vec3_zero, Box3DUtils::ToB3Quat(Math::Normalize(Limit.ChildFrame * Math::Inverse(Target))) });
+                b3MotorJoint_SetAngularHertz(Limit.Ligament, Limit.LimitHertz * Depth);
+            }
+            b3MotorJoint_SetMaxSpringTorque(Limit.Ligament, Depth > 0.0f ? Limit.MaxTorque : kSlackSpringTorque);
+        }
+    }
+
     static void SlackenRagdollMuscles(FPhysicsRagdollHandle& Ragdoll)
     {
         for (const FRagdollMuscle& Muscle : Ragdoll.Muscles)
         {
             if (b3Joint_IsValid(Muscle.Joint))
             {
-                b3MotorJoint_SetMaxSpringTorque(Muscle.Joint, 0.0f);
+                b3MotorJoint_SetMaxSpringTorque(Muscle.Joint, kSlackSpringTorque);
             }
         }
         for (const FRagdollBrace& Brace : Ragdoll.Braces)
         {
             if (b3Joint_IsValid(Brace.Joint))
             {
-                b3MotorJoint_SetMaxSpringTorque(Brace.Joint, 0.0f);
+                b3MotorJoint_SetMaxSpringTorque(Brace.Joint, kSlackSpringTorque);
             }
         }
         Ragdoll.bMusclesLive = false;
@@ -369,27 +389,9 @@ namespace Lumina::Physics
 
         const auto Brace = [&Ragdoll](int32 Body)
         {
-            b3MotorJointDef Def = b3DefaultMotorJointDef();
-            Def.base.bodyIdA = Ragdoll.BraceAnchor;
-            Def.base.bodyIdB = Ragdoll.Bodies[Body];
-            Def.base.localFrameA = b3Transform{ b3Vec3_zero, b3Quat_identity };
-            Def.base.localFrameB = b3Transform{ b3Vec3_zero, b3Quat_identity };
-            Def.base.collideConnected = false;
-            Def.linearVelocity = b3Vec3_zero;
-            Def.maxVelocityForce = 0.0f;
-            Def.angularVelocity = b3Vec3_zero;
-            Def.maxVelocityTorque = 0.0f;
-            Def.linearHertz = 0.0f;
-            Def.linearDampingRatio = 0.0f;
-            Def.maxSpringForce = 0.0f;
-            Def.angularHertz = 0.0f;
-            Def.angularDampingRatio = 1.0f;
-            Def.maxSpringTorque = 0.0f;
-
-            const b3JointId Joint = b3CreateMotorJoint(Ragdoll.WorldId, &Def);
+            const b3JointId Joint = Ragdoll.AddSlackMotor(Ragdoll.BraceAnchor, Ragdoll.Bodies[Body], b3Transform_identity, b3Transform_identity);
             if (b3Joint_IsValid(Joint))
             {
-                Ragdoll.Joints.Add(Joint);
                 Ragdoll.Braces.Emplace(Joint, Ragdoll.Bodies[Body], MeanRotationalInertia(Ragdoll.Bodies[Body]));
                 Ragdoll.TorsoInertia += MeanRotationalInertia(Ragdoll.Bodies[Body]);
             }
@@ -796,6 +798,7 @@ namespace Lumina::Physics
                 continue;
             }
 
+            UpdateRagdollSoftLimits(Ragdoll);
             const SRagdollComponent* Component = Registry.TryGet<SRagdollComponent>(Owned.Owner);
             if (Component == nullptr || Component->State != ERagdollState::Powered)
             {

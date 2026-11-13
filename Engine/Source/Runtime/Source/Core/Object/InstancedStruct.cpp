@@ -11,6 +11,7 @@
 #include "Core/Reflection/Type/Properties/MapProperty.h"
 #include "Core/Reflection/Type/Properties/OptionalProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "ObjectIterator.h"
 #include "Memory/Memory.h"
 
 namespace Lumina::InstancedStructInternal
@@ -187,6 +188,24 @@ namespace Lumina
 
         // A CDO is an instance OF a struct type, not a type, so it is never something to instance.
         return !Type->HasAnyFlag(OF_DefaultObject);
+    }
+
+    TVector<CStruct*> GatherInstancableStructSubtypes(const CStruct* Base, bool bIncludeBase)
+    {
+        TVector<CStruct*> Subtypes;
+        for (TObjectIterator<CStruct> It; It; ++It)
+        {
+            CStruct* Candidate = *It;
+            if ((Candidate == Base && !bIncludeBase) || !IsInstancableStructType(Candidate))
+            {
+                continue;
+            }
+            if (Base == nullptr || Candidate->IsChildOf(Base))
+            {
+                Subtypes.Add(Candidate);
+            }
+        }
+        return Subtypes;
     }
 
     void FInstancedStruct::InitializeAs(CStruct* InStruct)

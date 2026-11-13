@@ -8,7 +8,10 @@
 #include "Assets/AssetRegistry/CookRoot.h"
 #include "Assets/AssetRegistry/TextAssetSidecar.h"
 #include "Config/Config.h"
+#include "Config/EngineSettings.h"
 #include "Core/Engine/Engine.h"
+#include "Core/Windows/Window.h"
+#include "Tools/Image/ImageWrite.h"
 #include "Core/Json/Json.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/Package/Package.h"
@@ -72,7 +75,7 @@ namespace Lumina
             return true;
         }
 
-        constexpr FStringView Suffixes[] = { ".csproj", ".sln", ".user", ".DotSettings", "/.gitkeep", "/.gitignore", "/.hidden",
+        constexpr FStringView Suffixes[] = { ".csproj", ".sln", ".slnx", ".user", ".DotSettings", "/.gitkeep", "/.gitignore", "/.hidden",
                                              "/Config/EditorSession.json", "/Config/EditorProjectSettings.json" };
         for (const FStringView Suffix : Suffixes)
         {
@@ -448,11 +451,8 @@ namespace Lumina
                 Text.AppendChar('\n');
             }
 
-            // Kept with the project rather than in the package, so the shipped folder holds only what the game reads.
-            const FString ContentsDir = FString(Global::GEngine->GetProjectPath().GetData(), Global::GEngine->GetProjectPath().Len()) + "/Saved/Cook";
-            Filesystem::MakeDirectoryTree(FStringView(*ContentsDir, ContentsDir.Len()));
-            const FString ContentsPath = ContentsDir + "/" + FString(LeafName(FStringView(*PakPath, PakPath.Len())).GetData(),
-                                                                       LeafName(FStringView(*PakPath, PakPath.Len())).Len()) + ".contents.txt";
+            const FString ContentsPath = GetCookRecordPath(Global::GEngine->GetProjectPath(), FStringView(*PakPath, PakPath.Len()), ".contents.txt");
+            Filesystem::MakeParentDirectoryTree(FStringView(*ContentsPath, ContentsPath.Len()));
             if (Filesystem::AtomicWriteFile(ContentsPath, TSpan<const uint8>(reinterpret_cast<const uint8*>(Text.GetData()), Text.Len())))
             {
                 LogCooker(LogFunc, *Format("  listed {} entries in {}", Paths.Num(), *ContentsPath));
@@ -558,8 +558,28 @@ namespace Lumina
             return Count;
         }
 
+        bool BundleProjectIcon(FPakWriter& Writer, FStringView PakPath, const TFunction<void(FStringView)>& LogFunc)
+        {
+            const FString RecordPath = GetCookRecordPath(Global::GEngine->GetProjectPath(), PakPath, ProjectIconRecordSuffix);
+            Filesystem::RemoveFile(FStringView(*RecordPath, RecordPath.Len()));
+
+            const FFixedString IconPath = Global::GEngine->GetProjectIconPath();
+            TVector<uint8> Png;
+            if (!EncodeProjectIcon(IconPath, Png, LogFunc))
+            {
+                return false;
+            }
+
+            const TSpan<const uint8> Bytes(Png.GetData(), Png.Num());
+            Writer.AddEntry(CookedProjectIconPath, Bytes);
+            Filesystem::MakeParentDirectoryTree(FStringView(*RecordPath, RecordPath.Len()));
+            Filesystem::WriteFile(FStringView(*RecordPath, RecordPath.Len()), Bytes);
+            LogCooker(LogFunc, *Format("  + {} ({} bytes, from {})", CookedProjectIconPath, Png.Num(), IconPath));
+            return true;
+        }
+
         // Inject Project.Name into /Config/GameSettings.json so the cooked runtime can resolve the project DLL.
-        bool BundleConfigWithProjectName(FPakWriter& Writer, const TFunction<void(FStringView)>& LogFunc)
+        bool BundleConfigWithProjectName(FPakWriter& Writer, bool bShipsProjectIcon, const TFunction<void(FStringView)>& LogFunc)
         {
             FString JsonText;
             if (!VFS::ReadFile(JsonText, "/Config/GameSettings.json"))
@@ -578,6 +598,10 @@ namespace Lumina
                 Doc.Set("Project", FJsonValue::MakeObject());
             }
             Doc.FindOrAdd("Project").Set("Name", FStringView(Global::GEngine->GetProjectName().GetData(), Global::GEngine->GetProjectName().Len()));
+
+            // The setting names a file under the project, which a package does not carry.
+            const FString Section = FConfig::GetSettingsSection(CProjectSettings::StaticClass());
+            Doc.FindOrAdd(FStringView(*Section, Section.Len())).Set("Icon", bShipsProjectIcon ? CookedProjectIconPath : FStringView());
 
             const FString Out = Doc.ToString(4);
             Writer.AddEntry("/Config/GameSettings.json", Out.View());
@@ -659,6 +683,29 @@ namespace Lumina
             });
             return Count;
         }
+    }
+
+    FString GetCookRecordPath(FStringView ProjectDirectory, FStringView PakPath, FStringView Suffix)
+    {
+        FString Path(*Paths::Combine(ProjectDirectory, "Saved/Cook", LeafName(PakPath)));
+        Path.Append(Suffix.GetData(), Suffix.Len());
+        return Path;
+    }
+
+    bool EncodeProjectIcon(FStringView IconPath, TVector<uint8>& OutPng, const TFunction<void(FStringView)>& LogFunc)
+    {
+        if (IconPath.IsEmpty())
+        {
+            return false;
+        }
+
+        Windowing::FWindowIcon Icon;
+        if (Windowing::LoadWindowIcon(IconPath, Icon) && ImageWrite::EncodePng(OutPng, Icon.Width, Icon.Height, 4, Icon.Pixels.GetData(), Icon.Width * 4))
+        {
+            return true;
+        }
+        LogCooker(LogFunc, *Format("  [warn] project icon {} is missing or not an image, so the package keeps the Lumina icon", IconPath));
+        return false;
     }
 
     FCookResult FAssetCooker::Cook(FStringView OutputPakPath, const FCookOptions& Options, const TFunction<void(FStringView)>& LogFunc)
@@ -820,7 +867,9 @@ namespace Lumina
             int32 ChunkExtras = 0;
             if (bIsMain)
             {
-                if (BundleConfigWithProjectName(Writer, LogFunc)) { ++ChunkExtras; }
+                const bool bShipsProjectIcon = BundleProjectIcon(Writer, OutputPakPath, LogFunc);
+                ChunkExtras += bShipsProjectIcon ? 1 : 0;
+                if (BundleConfigWithProjectName(Writer, bShipsProjectIcon, LogFunc)) { ++ChunkExtras; }
                 ChunkExtras += BundleAuxConfigFiles(Writer, LogFunc);
 
                 LogCooker(LogFunc, "Bundling engine resources...");

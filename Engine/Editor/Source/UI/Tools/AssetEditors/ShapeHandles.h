@@ -21,6 +21,11 @@ namespace Lumina
         ExtentX,
         ExtentY,
         ExtentZ,
+        SwingLimit1,
+        SwingLimit2,
+        TwistLimit,
+        SoftSwing,
+        SoftTwist,
     };
 
     /** One draggable dot. Dragging measures along Axis from Anchor, and that distance becomes the dimension. */
@@ -102,6 +107,10 @@ namespace Lumina
         // Parameter along Axis from Anchor closest to the ray. False when the two are near-parallel.
         bool ClosestParamOnAxisToRay(const FVector3& Anchor, const FVector3& Axis,
                                      const FVector3& RayOrigin, const FVector3& RayDirection, float& OutT);
+
+        // Signed angle from Zero toward Ninety of where the ray crosses their plane through Anchor. False when the ray runs along the plane.
+        bool AngleOnPlaneToRay(const FVector3& Anchor, const FVector3& Zero, const FVector3& Ninety,
+                               const FVector3& RayOrigin, const FVector3& RayDirection, float& OutRadians);
 
         /** World position to viewport pixels. False when the point is at or behind the eye. */
         bool ProjectToScreen(const FMatrix4& ViewProj, const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,

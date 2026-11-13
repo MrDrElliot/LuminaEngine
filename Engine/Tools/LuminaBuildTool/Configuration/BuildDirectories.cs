@@ -64,13 +64,12 @@ public sealed class BuildDirectories
     /// <summary>Where build records live, holding what each output was built from and which headers it included.</summary>
     public string BuildRecordDirectory(BuildPlatform Platform, BuildConfiguration Configuration, TargetType Type)
     {
-        return Path.Combine(
-            EngineRoot,
-            "Intermediates",
-            "Obj",
-            Platform.GetOutputDirectoryName(),
-            $"{Type}-{Configuration}",
-            ".buildtool");
+        return Path.Combine(IntermediatesDirectory, "Obj", Platform.GetOutputDirectoryName(), $"{Type}-{Configuration}", ".buildtool");
+    }
+
+    public BuildDirectories ToEngineOnly()
+    {
+        return ProjectRoot is null ? this : Discover(EngineRoot, null);
     }
 
     /// <summary>Root that owns the output of whatever lives at the given path.</summary>

@@ -136,12 +136,13 @@ TEST(ManagedTypeRegistry, TheBuiltInStagesAreRegisteredInTheOrderTheyMustRun)
     RegisterBuiltInManagedTypeStages();
 
     const TSpan<IManagedTypeCompiler* const> Stages = FManagedTypeRegistry::Get().GetStages();
-    ASSERT_EQ(Stages.Num(), 5);
+    ASSERT_EQ(Stages.Num(), 6);
     EXPECT_STREQ(Stages[0]->GetName(), "Redirects");
     EXPECT_STREQ(Stages[1]->GetName(), "Enums");
     EXPECT_STREQ(Stages[2]->GetName(), "ClassShells");
     EXPECT_STREQ(Stages[3]->GetName(), "Structs");
     EXPECT_STREQ(Stages[4]->GetName(), "ScriptableClasses");
+    EXPECT_STREQ(Stages[5]->GetName(), "StateTrees");
 }
 
 // Reverse, because a stage built on an earlier one has to come down before the thing it was built from.

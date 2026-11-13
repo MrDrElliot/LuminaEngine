@@ -3,7 +3,9 @@
 #include "Platform/Filesystem/PlatformFilesystem.h"
 
 #include "AssetCooker.h"
+#include "ExecutableIconStamp.h"
 #include "Core/Engine/Engine.h"
+#include "Core/Windows/Window.h"
 #include "FileSystem/FileSystem.h"
 #include "Log/Log.h"
 #include "Paths/Paths.h"
@@ -374,6 +376,24 @@ namespace Lumina
             return Copied;
         }
 
+        // The cook leaves no record when the project sets no icon or one it already warned about.
+        void StampProjectIcon(FStringView ExePath, FStringView IconRecordPath, const TFunction<void(FStringView)>& LogFunc)
+        {
+            if (!Filesystem::Exists(IconRecordPath))
+            {
+                return;
+            }
+
+            Windowing::FWindowIcon Icon;
+            FString Error;
+            if (Windowing::LoadWindowIcon(IconRecordPath, Icon) && ExecutableIconStamp::Stamp(ExePath, Icon, Error))
+            {
+                LogPackager(LogFunc, *Format("Stamped the project icon into {}", *FileNameOf(ExePath)));
+                return;
+            }
+            LogPackager(LogFunc, *Format("[warn] {} keeps the Lumina icon, since {}", *FileNameOf(ExePath), Error.IsEmpty() ? FString("the cooked icon is unreadable") : Error));
+        }
+
         // Paks used to sit beside the exe, where the game would still mount them over the data folder's.
         void RemoveOldPaks(FStringView OutDir, const TFunction<void(FStringView)>& LogFunc)
         {
@@ -671,6 +691,12 @@ namespace Lumina
         }
         LogPackager(LogFunc, *Format("Copied {} runtime files.", Copied));
         RemoveStaleBinaries(Rules, DestDir, WrittenStems, FStringView(*Tail, Tail.Len()), LogFunc);
+
+        if (Options.Platform == EPackagePlatform::Windows64 && !ProjectDir.IsEmpty())
+        {
+            const FString IconRecord = GetCookRecordPath(FStringView(*ProjectDir, ProjectDir.Len()), PakPath, ProjectIconRecordSuffix);
+            StampProjectIcon(Paths::Combine(DestDir, Rules.ExecutableFileName(ExecutableName)), FStringView(*IconRecord, IconRecord.Len()), LogFunc);
+        }
 
         // Lets the cooked game boot CoreCLR and load its scripts without the editor or dev tree.
         CopyDotNetPayload(Rules, Paths::GetEngineInstallDirectory(), BinariesDir, DataDir, !(Config == "Shipping"), LogFunc);

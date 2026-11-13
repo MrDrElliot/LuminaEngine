@@ -2096,6 +2096,17 @@ namespace Lumina::Import::Mesh
         OutMeshStats.OverdrawStatics.Emplace(meshopt_analyzeOverdraw(MeshResource.Indices.GetData(), MeshResource.Indices.Num(), reinterpret_cast<const float*>(MeshResource.Positions.GetData()), MeshResource.GetNumVertices(), sizeof(FVector3)));
     }
 
+    int16 FindOrAddMergedMaterialSlot(TVector<int16>& SlotToSource, int16 SourceMaterial)
+    {
+        int32 Slot = SlotToSource.Find(SourceMaterial);
+        if (Slot == Constants::kIndexNone)
+        {
+            Slot = SlotToSource.Num();
+            SlotToSource.Add(SourceMaterial);
+        }
+        return (int16)Slot;
+    }
+
     namespace
     {
         // Coalesce surfaces by MaterialIndex; rebuilds the index buffer to make per-material slices contiguous.
@@ -2226,26 +2237,13 @@ namespace Lumina::Import::Mesh
                 Dst.Indices.Add(Idx + BaseVert);
             }
 
-            // Keyed per piece, so each merged piece keeps its own slot even where pieces share a material.
-            THashMap<int16, int16> PieceSlots;
             Dst.GeometrySurfaces.Reserve(Dst.GeometrySurfaces.Num() + Src.GeometrySurfaces.Num());
             for (FGeometrySurface S : Src.GeometrySurfaces)
             {
                 S.StartIndex += BaseIdx;
                 if (S.MaterialIndex >= 0)
                 {
-                    auto It = PieceSlots.Find(S.MaterialIndex);
-                    if (It == nullptr)
-                    {
-                        const int16 NewSlot = (int16)SlotToSource.Num();
-                        SlotToSource.Add(S.MaterialIndex);
-                        PieceSlots.TryAdd(S.MaterialIndex, NewSlot);
-                        S.MaterialIndex = NewSlot;
-                    }
-                    else
-                    {
-                        S.MaterialIndex = (*It);
-                    }
+                    S.MaterialIndex = FindOrAddMergedMaterialSlot(SlotToSource, S.MaterialIndex);
                 }
                 Dst.GeometrySurfaces.Add(S);
             }

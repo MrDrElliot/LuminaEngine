@@ -157,6 +157,7 @@
 #include "Tools/AssetEditors/BlendSpace/BlendSpaceEditorTool.h"
 #include "Tools/AssetEditors/PhysicsAsset/PhysicsAssetEditorTool.h"
 #include "Tools/AssetEditors/SoundAttenuation/SoundAttenuationEditorTool.h"
+#include "Tools/AssetEditors/StateTree/StateTreeEditorTool.h"
 #include "Tools/AssetEditors/PhysicsMaterial/PhysicsMaterialEditorTool.h"
 #include "Tools/AssetEditors/GeometryCollection/GeometryCollectionEditorTool.h"
 #include "Tools/AssetEditors/MaterialEditor/MaterialEditorTool.h"
@@ -1703,6 +1704,7 @@ namespace Lumina
         Registry.RegisterAssetEditor<CAnimation,          FAnimationEditorTool>(Owner);
         Registry.RegisterAssetEditor<CSkeletalMesh,       FSkeletalMeshEditorTool>(Owner);
         Registry.RegisterAssetEditor<CPrefab,             FPrefabEditorTool>(Owner);
+        Registry.RegisterAssetEditor<CStateTree,          FStateTreeEditorTool>(Owner);
 
         // File editors, keyed by extension (CObject-less, raw content).
         Registry.RegisterFileEditor<FRmlUiEditorTool>({ ".rml", ".rcss" }, Owner);

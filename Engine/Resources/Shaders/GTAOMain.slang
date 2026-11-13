@@ -2,8 +2,9 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
 #include "Includes/XeGTAO.slang"
+#include "Includes/CORTAO.slang"
 
-// Horizon search over the prefiltered depth pyramid; writes the noisy visibility term plus packed edges.
+// Horizon search over the prefiltered depth pyramid, or a CORTAO trace when CORTAO_SAMPLE_COUNT is defined; writes the noisy visibility term plus packed edges.
 
 struct FPushConstants
 {
@@ -70,6 +71,11 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
 
     const float2 LocalNoise  = XeGTAO_SpatioTemporalNoise(PixCoord, Pass().NoiseIndex);
+
+#ifdef CORTAO_SAMPLE_COUNT
+    StoreVisibility(PixCoord, CORTAO_Visibility(V, Pass().WorkingDepth, XeGTAO_ComputeViewspacePosition(V, ScreenUV, Center.ViewspaceZ),
+        Center.Normal, EffectRadius, LocalNoise, CORTAO_Hash(PixCoord, Pass().NoiseIndex)));
+#else
     const float  NoiseSlice  = LocalNoise.x;
     const float  NoiseSample = LocalNoise.y;
 
@@ -124,4 +130,5 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     Visibility = max(0.03, Visibility);
 
     StoreVisibility(PixCoord, Visibility);
+#endif
 }

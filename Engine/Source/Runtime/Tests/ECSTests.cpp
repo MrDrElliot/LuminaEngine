@@ -6,9 +6,23 @@
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Systems/MovedTransforms.h"
 #include "World/Scene/RenderScene/WorldRenderSettings.h"
+#include "World/World.h"
+#include "Core/Object/ObjectCore.h"
+#include "LogCountTestHelpers.h"
 
 using namespace Lumina;
+
+namespace Lumina
+{
+    // Binds a member the way its system's schedule build would, without needing a reflected test system.
+    struct FMovedTransformsTestAccess
+    {
+        static void Bind(FMovedTransforms& Moved, CWorld& World) { FMovedTransforms::GetOps().Bind(&Moved, World); }
+        static bool IsBound(const FMovedTransforms& Moved) { return Moved.Registry != nullptr; }
+    };
+}
 
 namespace
 {
@@ -714,6 +728,44 @@ TEST(ECSTests, FilteredMovedConsumerSeesOnlyItsEntities)
     Some.Reset();
     ECS::Utils::DrainMovedTransforms(Registry, Filtered, Some);
     EXPECT_TRUE(Some.IsEmpty());
+}
+
+TEST(ECSTests, MovedTransformsPastTheConsumerCapWarnOnceAndStayInert)
+{
+    RegisterPendingTypes();
+    TStrongObjectPtr<CWorld> World(NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient));
+    ECS::FRegistry& Registry = World->GetEntityRegistry();
+    constexpr uint32 Cap = ECS::Utils::kMaxMovedTransformConsumers;
+    auto CountFullWarnings = [] { return CountLoggedMessages(ELogLevel::Warn, "All 4 moved-transform consumer slots are taken"); };
+
+    Logging::Flush();
+    Logging::ClearLogQueue();
+    FMovedTransforms Moved[Cap + 2];
+    for (uint32 Index = 0; Index < Cap; ++Index)
+    {
+        FMovedTransformsTestAccess::Bind(Moved[Index], *World);
+        ASSERT_TRUE(FMovedTransformsTestAccess::IsBound(Moved[Index]));
+    }
+    EXPECT_EQ(CountFullWarnings(), 0) << "taking the last free slot refuses nobody";
+
+    FMovedTransforms& Refused = Moved[Cap];
+    FMovedTransformsTestAccess::Bind(Refused, *World);
+    FMovedTransformsTestAccess::Bind(Moved[Cap + 1], *World);
+    EXPECT_FALSE(FMovedTransformsTestAccess::IsBound(Refused));
+    EXPECT_FALSE(FMovedTransformsTestAccess::IsBound(Moved[Cap + 1]));
+    EXPECT_EQ(CountFullWarnings(), 1) << "the first refusal warns and later ones in the same registry stay quiet";
+
+    const ECS::FEntity Entity = Registry.Create();
+    Registry.Emplace<STransformComponent>(Entity).LocalTransform.SetLocation(FVector3(1.f, 0.f, 0.f));
+    Refused.Watch(Entity, true);
+    Registry.Emplace<FNeedsTransformUpdate>(Entity);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+    TVector<ECS::FEntity> Out;
+    EXPECT_FALSE(Refused.Drain(Out));
+    EXPECT_TRUE(Out.IsEmpty());
+    EXPECT_TRUE(Moved[0].Drain(Out)) << "the bound consumers still hear the move";
+    EXPECT_TRUE(Algo::Contains(Out, Entity));
 }
 
 // A writer on the gate is offered every flat move, repeats included, and a move it takes skips only its own consumer's list.

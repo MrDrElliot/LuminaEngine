@@ -207,20 +207,9 @@ struct FGTAOCenter
     float3 Normal;
 };
 
-FGTAOCenter XeGTAO_LoadCenter(FGTAOView V, FTexture2D WorkingDepth, uint2 PixCoord)
+FGTAOCenter XeGTAO_MakeCenter(FGTAOView V, uint2 PixCoord, float CenterZ, float PixLZ, float PixRZ, float PixTZ, float PixBZ)
 {
     const float2 ScreenUV = (float2(PixCoord) + 0.5) * V.ViewportPixelSize;
-
-    // Mip 0 of the working pyramid is the unfiltered linearized depth, so the cross reads it directly.
-    const float2 GatherUV = float2(PixCoord) * V.ViewportPixelSize;
-    const float4 ValuesUL = WorkingDepth.GatherRed(Samplers::PointClamp, GatherUV);
-    const float4 ValuesBR = WorkingDepth.GatherRed(Samplers::PointClamp, GatherUV, int2(1, 1));
-
-    const float CenterZ = ValuesUL.y;
-    const float PixLZ   = ValuesUL.x;
-    const float PixTZ   = ValuesUL.z;
-    const float PixRZ   = ValuesBR.z;
-    const float PixBZ   = ValuesBR.x;
 
     FGTAOCenter C;
     C.ViewspaceZ = CenterZ;
@@ -240,6 +229,16 @@ FGTAOCenter XeGTAO_LoadCenter(FGTAOView V, FTexture2D WorkingDepth, uint2 PixCoo
         C.Normal = -C.Normal;
     }
     return C;
+}
+
+FGTAOCenter XeGTAO_LoadCenter(FGTAOView V, FTexture2D WorkingDepth, uint2 PixCoord)
+{
+    // Mip 0 of the working pyramid is the unfiltered linearized depth, so the cross reads it directly.
+    const float2 GatherUV = float2(PixCoord) * V.ViewportPixelSize;
+    const float4 ValuesUL = WorkingDepth.GatherRed(Samplers::PointClamp, GatherUV);
+    const float4 ValuesBR = WorkingDepth.GatherRed(Samplers::PointClamp, GatherUV, int2(1, 1));
+
+    return XeGTAO_MakeCenter(V, PixCoord, ValuesUL.y, ValuesUL.x, ValuesBR.z, ValuesUL.z, ValuesBR.x);
 }
 
 // One slice of the horizon search, the screen direction it marches and the normal projected into its plane.

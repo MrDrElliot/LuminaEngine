@@ -271,6 +271,7 @@ namespace Lumina::Physics
         void GetRagdollRootTransform(const FPhysicsRagdollHandle& Handle, FVector3& OutPosition, FQuat& OutRotation) override;
         SPhysicsBodyTarget GetRagdollBoneTarget(ECS::FEntity Entity, FName Bone) const override;
         uint32 AllocateRagdollGroupID() override { return NextRagdollGroupID++; }
+        void RetuneRagdollLimits(ECS::FEntity Entity, const CPhysicsAsset& Asset) override;
 
         uint32 CreateConstraint(const SConstraintDesc& Desc) override;
         void DestroyConstraint(uint32 ConstraintID) override;

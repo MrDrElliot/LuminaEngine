@@ -29,6 +29,8 @@ namespace Lumina
 
     private:
 
+        friend struct FMovedTransformsTestAccess;
+
         void Release();
 
         ECS::FRegistry*  Registry = nullptr;

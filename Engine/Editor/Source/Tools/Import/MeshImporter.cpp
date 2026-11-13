@@ -659,8 +659,6 @@ namespace Lumina
                     Target.Indices[BaseIndex + i] = Source.Indices[i] + static_cast<uint32>(BaseVertex);
                 }
 
-                // Keyed per piece, so each merged piece keeps its own slot even where pieces share a material.
-                THashMap<int16, int16> PieceSlots;
                 for (const FGeometrySurface& SourceSurface : Source.GeometrySurfaces)
                 {
                     FGeometrySurface Surface = SourceSurface;
@@ -668,18 +666,7 @@ namespace Lumina
 
                     if (SourceSurface.MaterialIndex >= 0)
                     {
-                        auto It = PieceSlots.Find(SourceSurface.MaterialIndex);
-                        if (It == nullptr)
-                        {
-                            const int16 NewSlot = (int16)SlotToSource.Num();
-                            SlotToSource.Add(SourceSurface.MaterialIndex);
-                            PieceSlots.TryAdd(SourceSurface.MaterialIndex, NewSlot);
-                            Surface.MaterialIndex = NewSlot;
-                        }
-                        else
-                        {
-                            Surface.MaterialIndex = (*It);
-                        }
+                        Surface.MaterialIndex = Import::Mesh::FindOrAddMergedMaterialSlot(SlotToSource, SourceSurface.MaterialIndex);
                     }
 
                     Target.GeometrySurfaces.Add(Surface);

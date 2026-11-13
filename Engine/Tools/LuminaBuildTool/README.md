@@ -34,7 +34,7 @@ Modes:
 | `Includes <Target>` | Rank headers by how many translation units include them |
 | `Deps <Target>` | Compare a module's declared dependencies against the ones it reaches |
 | `Tidy [PathFilter]` | Run clang-tidy with the workspace `.clang-tidy` over first-party sources |
-| `GenerateProjectFiles` | Write `.vcxproj`, `.filters`, a solution and `compile_commands.json` |
+| `GenerateProjectFiles` | Write `.vcxproj`, `.filters`, a solution (`-SolutionFormat=Slnx\|Sln`, default `Slnx`) and `compile_commands.json` |
 
 Targets: `Lumina` (the editor and game launcher), `Reflector` (the reflection generator),
 and `Tests`. Game projects live outside the engine tree and are passed with `-Project=<path>`.
@@ -236,8 +236,11 @@ invalidating on the rules file's timestamp, which would rebuild the world on any
 Rule 4 uses the compiler's own `/sourceDependencies` output, so header tracking reflects what was
 really included rather than what the rules claimed.
 
-Caches live under `Intermediates/Obj/<Platform>/<Type>-<Config>/.buildtool/`. Deleting them costs
-a rebuild and nothing else.
+Caches live under `<OutputRoot>/Intermediates/Obj/<Platform>/<Type>-<Config>/.buildtool/`, where
+`OutputRoot` is the project root for a project build or the engine root otherwise. An engine-owned
+module's record stays under the engine's own `OutputRoot` even inside a project build, so a project
+shares the engine's cache instead of recompiling it on the project's first build. Deleting a cache
+costs a rebuild and nothing else.
 
 ## Unity builds
 
@@ -328,6 +331,11 @@ The boundaries that matter:
 
 ## Generated IDE projects
 
+The solution is written as `<Name>.slnx` by default, or as a classic `<Name>.sln` with
+`-SolutionFormat=Sln`. Both list the same projects, folders and configurations, and writing one
+deletes a previously generated solution of the other format with the same name, so the IDE never
+opens a stale one.
+
 Projects are NMake projects: building one from the IDE calls back into LuminaBuildTool rather than
 reimplementing the build in MSBuild.
 
@@ -343,8 +351,8 @@ There are three kinds, and the split matters:
 - **`LuminaRules`** is a C# project holding every `Target.cs`, `Build.cs` and `BuildRules.cs`.
   Rules files are ordinary C# compiled against this tool, but an IDE only treats them that way if
   some project claims them; without one they open as plain text with no highlighting, no completion
-  on `ModuleRules` and no error until a build fails. It is mapped into the solution with an
-  `ActiveCfg` but no `Build.0`, so it never builds: the build system compiles the same files itself,
+  on `ModuleRules` and no error until a build fails. It is mapped into the solution but marked
+  not to build, so it never builds: the build system compiles the same files itself,
   and building them twice could fail for reasons a real build does not care about. Its settings
   mirror `RulesCompiler` deliberately, including `ImplicitUsings=disable`, so what the editor
   reports and what a build reports are the same thing.

@@ -100,6 +100,9 @@ namespace Lumina
         NODISCARD RUNTIME_API FFixedString GetProjectScriptsDirectory() const;
         NODISCARD RUNTIME_API FFixedString GetProjectShadersDirectory() const;
 
+        // The project Icon setting as LoadWindowIcon reads it, a mounted path as is and anything else under the project.
+        NODISCARD RUNTIME_API FFixedString GetProjectIconPath() const;
+
         // Union of project + enabled-plugin cook roots; legacy GameStartupMap auto-converts
         // to a single root when no explicit roots exist. Cooker iterates this for BFS seeds.
         RUNTIME_API TVector<FCookRoot> GetCookRoots() const;
@@ -159,6 +162,7 @@ namespace Lumina
 
         // The game's name, followed by engine and frame details in any build but Shipping.
         void RefreshWindowTitle(double AverageFrameSeconds = 0.0);
+        void ApplyProjectIcon();
         double                        TitleSampleStart = 0.0;
         uint32                        TitleSampleFrames = 0;
 
@@ -202,7 +206,10 @@ namespace Lumina
         int32                   UserFrameRateLimit = -1;
 
         static constexpr uint32 kCacheTrimDelayFrames = 120;
+        static constexpr size_t kGameThreadTrimSpansPerFrame = 8;
         uint32                  CacheTrimCountdown = 0;
+        // Caps a trim request at the game thread's cache size when it arrived, so refills during play cannot keep it trimming.
+        size_t                  GameThreadTrimSpansLeft = 0;
 
         // Deferred OpenLevel/Host/Connect, drained at FrameStart.
         FURL                    PendingOpenURL;

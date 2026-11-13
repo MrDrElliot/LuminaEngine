@@ -9,6 +9,7 @@
 #include "Memory/SmartPtr.h"
 #include "Paths/Paths.h"
 #include "Platform/Filesystem/DirectoryWatcher.h"
+#include "Thumbnails/AssetTilePainters.h"
 #include "Tools/Actions/DeferredActions.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
@@ -206,6 +207,7 @@ namespace Lumina
         FTileViewContext            ContentBrowserTileViewContext;
         float                       ContentBrowserTileSize = 84.0f;
         ContentBrowserEditorToolInternal::FHoverTooltipCache HoverTooltipCache;
+        FAssetTilePreviewSlot       TilePreview;
 
         FFixedString                SelectedPath;
         TVector<FFixedString>       NavBackStack;

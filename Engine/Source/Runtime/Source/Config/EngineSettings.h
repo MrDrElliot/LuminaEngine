@@ -26,6 +26,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Project")
         FString GameDisplayName;
 
+        // PNG the game window shows as its icon, given relative to the project or as a /Game path. Empty keeps the Lumina icon.
+        PROPERTY(Editable, FilePath, Category = "Project")
+        FString Icon;
+
         /** World loaded when the standalone game starts. */
         PROPERTY(Editable, Category = "Maps")
         TSoftObjectPtr<CWorld> GameStartupMap;
@@ -283,6 +287,14 @@ namespace Lumina
         Ultra,
     };
 
+    // XeGTAO marches horizons along screen slices; CORTAO ray-traces a hemisphere against circular occluders built from depth.
+    REFLECT()
+    enum class EAmbientOcclusionMethod : uint8
+    {
+        XeGTAO,
+        CORTAO,
+    };
+
     // None is the built-in spatial upscale, which an unsupported or unregistered choice also falls back to.
     REFLECT()
     enum class EUpscaler : uint8
@@ -526,6 +538,10 @@ namespace Lumina
         // Screen-space ambient occlusion, reconstructed from depth; visible only where there is ambient to darken.
         PROPERTY(Editable, Category = "Ambient Occlusion")
         bool bEnableGTAO = false;
+
+        // CORTAO traces the same radius and shares intensity, quality, denoise and the depth pyramid, but not Power or the slice heuristics.
+        PROPERTY(Editable, Category = "Ambient Occlusion")
+        EAmbientOcclusionMethod AmbientOcclusionMethod = EAmbientOcclusionMethod::XeGTAO;
 
         /** GTAO sample radius in world units. Larger = wider, softer occlusion. */
         PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0.01f)

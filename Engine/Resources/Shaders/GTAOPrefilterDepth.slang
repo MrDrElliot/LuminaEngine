@@ -2,8 +2,9 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
 #include "Includes/XeGTAO.slang"
+#include "Includes/CORTAO.slang"
 
-// Linearizes scene depth into the 5-mip viewspace pyramid the main pass steps through by sample radius.
+// Linearizes scene depth into the 5-mip viewspace pyramid the main pass steps through by sample radius; CORTAO also packs each texel's normal into it.
 
 struct FPushConstants
 {
@@ -29,8 +30,30 @@ void StoreDepth(FRWTexture2D Mip, uint2 Coord, float Depth)
 
 float FilterQuad(float D0, float D1, float D2, float D3)
 {
-    return XeGTAO_DepthMIPFilter(D0, D1, D2, D3, Pass().EffectRadius, Pass().EffectFalloffRange);
+    const float Filtered = XeGTAO_DepthMIPFilter(D0, D1, D2, D3, Pass().EffectRadius, Pass().EffectFalloffRange);
+#ifdef CORTAO
+    return CORTAO_PackFilteredDepth(Filtered, float4(D0, D1, D2, D3));
+#else
+    return Filtered;
+#endif
 }
+
+#ifdef CORTAO
+float LoadViewspaceDepth(FGTAOView V, int2 Coord)
+{
+    const int2 Clamped = clamp(Coord, int2(0, 0), int2(Pass().ViewportSize) - 1);
+    return XeGTAO_ClampDepth(XeGTAO_ScreenSpaceToViewSpaceDepth(V, Pass().SrcDepth.Load(int3(Clamped * int(Pass().SrcScale), 0)).r));
+}
+
+// Z holds the depths one texel around the thread's quad, so quad texel (X, Y) sits at Z[Y + 1][X + 1].
+float PackQuadTexel(FGTAOView V, uint2 QuadCoord, float Z[4][4], uint X, uint Y)
+{
+    const uint2       PixCoord = QuadCoord + uint2(X, Y);
+    const FGTAOCenter C        = XeGTAO_MakeCenter(V, PixCoord, Z[Y + 1][X + 1], Z[Y + 1][X], Z[Y + 1][X + 2], Z[Y][X + 1], Z[Y + 2][X + 1]);
+    const uint        Hash     = CORTAO_Hash(PixCoord, 0u);
+    return CORTAO_PackDepthNormal(C.ViewspaceZ, C.Normal, float2(Hash & 0xFFFFu, Hash >> 16u) / 65536.0);
+}
+#endif
 
 // One 8x8 group covers a 16x16 pixel tile, which is exactly one texel of mip 4.
 [shader("compute")]
@@ -42,6 +65,24 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID
     const uint2 BaseCoord = DTid.xy;
     const uint2 PixCoord  = BaseCoord * 2u;
 
+#ifdef CORTAO
+    // Each texel's normal needs its cross of neighbors, which reach one texel past the quad.
+    float Z[4][4];
+    [unroll]
+    for (int Y = 0; Y < 4; ++Y)
+    {
+        [unroll]
+        for (int X = 0; X < 4; ++X)
+        {
+            Z[Y][X] = LoadViewspaceDepth(V, int2(PixCoord) + int2(X - 1, Y - 1));
+        }
+    }
+
+    const float Depth0 = PackQuadTexel(V, PixCoord, Z, 0u, 0u);
+    const float Depth1 = PackQuadTexel(V, PixCoord, Z, 1u, 0u);
+    const float Depth2 = PackQuadTexel(V, PixCoord, Z, 0u, 1u);
+    const float Depth3 = PackQuadTexel(V, PixCoord, Z, 1u, 1u);
+#else
     float4 Depths4;
     if (Pass().SrcScale == 1u)
     {
@@ -64,6 +105,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID
     const float Depth1 = XeGTAO_ClampDepth(XeGTAO_ScreenSpaceToViewSpaceDepth(V, Depths4.z));
     const float Depth2 = XeGTAO_ClampDepth(XeGTAO_ScreenSpaceToViewSpaceDepth(V, Depths4.x));
     const float Depth3 = XeGTAO_ClampDepth(XeGTAO_ScreenSpaceToViewSpaceDepth(V, Depths4.y));
+#endif
 
     StoreDepth(Pass().Mip0, PixCoord + uint2(0, 0), Depth0);
     StoreDepth(Pass().Mip0, PixCoord + uint2(1, 0), Depth1);

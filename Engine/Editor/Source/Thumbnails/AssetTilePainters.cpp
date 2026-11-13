@@ -2,13 +2,18 @@
 
 #include "ThumbnailManager.h"
 #include "ThumbnailUtils.h"
+#include "Assets/AssetRegistry/AssetRegistry.h"
+#include "Assets/AssetTypes/Audio/SoundBase.h"
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
+#include "Audio/AudioGlobals.h"
+#include "Audio/SoundPlayback.h"
 #include "Core/Math/Math.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "Tools/UI/ImGui/EditorColors.h"
+#include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 
 namespace Lumina
 {
@@ -27,18 +32,108 @@ namespace Lumina
         Painters.Add(AssetClass, std::move(Painter));
     }
 
-    FAssetTilePainterFn* FAssetTilePainterRegistry::Find(CClass* AssetClass)
+    void FAssetTilePainterRegistry::RegisterAction(CClass* AssetClass, FAssetTileAction Action)
+    {
+        if (AssetClass == nullptr || !Action.Start)
+        {
+            return;
+        }
+        Actions.Add(AssetClass, std::move(Action));
+    }
+
+    namespace
     {
         // Most-derived first, matching the editor-tool registry, so a subclass can override its base.
-        for (CClass* Current = AssetClass; Current != nullptr; Current = Cast<CClass>(Current->GetSuperStruct()))
+        template<typename TValue>
+        TValue* FindInClassHierarchy(THashMap<CClass*, TValue>& Map, CClass* AssetClass)
         {
-            auto It = Painters.Find(Current);
-            if (It != nullptr)
+            for (CClass* Current = AssetClass; Current != nullptr; Current = Cast<CClass>(Current->GetSuperStruct()))
             {
-                return &(*It);
+                auto It = Map.Find(Current);
+                if (It != nullptr)
+                {
+                    return &(*It);
+                }
+            }
+            return nullptr;
+        }
+    }
+
+    FAssetTilePainterFn* FAssetTilePainterRegistry::Find(CClass* AssetClass)
+    {
+        return FindInClassHierarchy(Painters, AssetClass);
+    }
+
+    const FAssetTileAction* FAssetTilePainterRegistry::FindAction(CClass* AssetClass)
+    {
+        return FindInClassHierarchy(Actions, AssetClass);
+    }
+
+    void FAssetTilePreviewSlot::Request(const FAssetTileAction& InAction, const FAssetData& InAsset)
+    {
+        Stop();
+        Action    = InAction;
+        Asset     = InAsset.AssetGUID;
+        AssetPath = InAsset.Path;
+        Load      = FAssetManager::Get().Load(Asset);
+        Advance();
+    }
+
+    void FAssetTilePreviewSlot::Stop()
+    {
+        if (Preview.Stop)
+        {
+            Preview.Stop();
+        }
+        Preview = {};
+        Load.Reset();
+        Asset = FGuid();
+    }
+
+    void FAssetTilePreviewSlot::Tick()
+    {
+        const bool bWasShown = bShown;
+        bShown = false;
+        if (bWasShown)
+        {
+            Advance();
+        }
+        else
+        {
+            Stop();
+        }
+    }
+
+    void FAssetTilePreviewSlot::Advance()
+    {
+        if (!Asset.IsValid())
+        {
+            return;
+        }
+
+        const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(Asset);
+        if (Data == nullptr || Data->Path != AssetPath)
+        {
+            Stop();
+            return;
+        }
+
+        if (!Preview.IsRunning)
+        {
+            if (!Load.IsReady())
+            {
+                return;
+            }
+            if (CObject* Loaded = Load.Get())
+            {
+                Preview = Action.Start(Loaded);
             }
         }
-        return nullptr;
+
+        if (!Preview.IsRunning || !Preview.IsRunning())
+        {
+            Stop();
+        }
     }
 
     namespace
@@ -289,6 +384,21 @@ namespace Lumina
 
             return true;
         }
+
+        FAssetTilePreview StartSoundPreview(CObject* Asset)
+        {
+            const SAudioHandle Handle = Audio::PlaySound(Cast<CSoundBase>(Asset), SAudioPlayParams()).Handle;
+            if (!Handle.IsValid())
+            {
+                return {};
+            }
+
+            return FAssetTilePreview
+            {
+                .IsRunning = [Handle] { return Audio::HasDevice() && Audio::Context().GetVoiceState(Handle) != EAudioVoiceState::Free; },
+                .Stop      = [Handle] { if (Audio::HasDevice()) { Audio::Context().StopSound(Handle); } },
+            };
+        }
     }
 
     namespace AssetTilePainters
@@ -296,6 +406,7 @@ namespace Lumina
         void RegisterBuiltin()
         {
             FAssetTilePainterRegistry::Get().Register(CCurveAsset::StaticClass(), &PaintCurveTile);
+            FAssetTilePainterRegistry::Get().RegisterAction(CSoundBase::StaticClass(), FAssetTileAction{ LE_ICON_PLAY, LE_ICON_STOP, &StartSoundPreview });
             CThumbnailManager::Get().RegisterThumbnailPainter(CCurveAsset::StaticClass(), &PaintCurveThumbnail);
         }
     }

@@ -32,7 +32,7 @@ namespace Lumina
 
     // Editor for CPhysicsAsset: skeleton tree on the left, bodies and constraint limits drawn over a
     // bind-pose preview mesh, details for whichever body/constraint is selected.
-    class FPhysicsAssetEditorTool : public FAssetEditorTool, public IShapeHandleHost
+    class EDITOR_API FPhysicsAssetEditorTool : public FAssetEditorTool, public IShapeHandleHost
     {
     public:
 
@@ -55,6 +55,12 @@ namespace Lumina
         void DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize) override;
         void DrawHelpMenu() override;
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
+
+        // Pull the runtime ligament gives the limb at an angle about one joint axis (0 twist, 1 swing 1, 2 swing 2), per unit of the inertia it swings.
+        static float SampleSoftLimitPull(const SPhysicsConstraintSetup& Constraint, int32 Axis, float AngleRadians);
+
+        // Copies the source constraint's soft limit settings onto the others, only those at or below its child bone when SubtreeSkeleton is given.
+        static void CopySoftLimits(CPhysicsAsset& Asset, int32 SourceIndex, const FSkeletonResource* SubtreeSkeleton);
 
     private:
 
@@ -79,6 +85,17 @@ namespace Lumina
 
         void DrawBodies();
         void DrawConstraints();
+
+        // The joint's pivot and frame as the runtime builds them, false when its child bone is missing.
+        bool GetConstraintFrame(const SPhysicsConstraintSetup& Constraint, FVector3& OutPivot, FQuat& OutFrame);
+        SPhysicsConstraintSetup* GetSelectedConstraint();
+        float GetPreviewScale();
+
+        void DrawSoftLimitResponse(const SPhysicsConstraintSetup& Constraint);
+        void ApplySelectedSoftLimits(bool bSubtreeOnly);
+
+        // Pushes the asset's joint limits into the running ragdoll, so tuning is felt without restarting.
+        void RetuneSimulatedRagdoll();
 
         // While simulating: the physics floor and the live bone positions, so a ragdoll that misses the
         // floor is visibly a placement problem instead of a guess.
@@ -127,7 +144,7 @@ namespace Lumina
         void  PickShapeAtRay(const FVector3& RayOrigin, const FVector3& RayDirection) override;
         FName GetMoveTransactionName() const override   { return "Move Body Frame"; }
         FName GetRotateTransactionName() const override { return "Rotate Body Frame"; }
-        FName GetResizeTransactionName() const override { return "Resize Body"; }
+        FName GetResizeTransactionName() const override { return SelectionMode == EPhysicsAssetSelection::Constraint ? "Edit Constraint Limit" : "Resize Body"; }
         void  BeginShapeTransaction(FName Name) override { BeginAssetTransaction(Name); }
         void  EndShapeTransaction() override             { EndAssetTransaction(); }
 
@@ -163,6 +180,7 @@ namespace Lumina
         TWeakObjectPtr<CSkeletalMesh> CachedPreviewMesh;
 
         float                       GenerateMinBoneLength = 0.05f;
+        int32                       ResponseCurveAxis = 1;
         int32                       SimulationFrames = 0;
         FShapeHandleState           HandleState;
 

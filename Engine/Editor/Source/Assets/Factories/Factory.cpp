@@ -93,7 +93,7 @@ namespace Lumina
     TStrongObjectPtr<CObject> CFactory::CreateAsset(CFactory* Factory, CClass* Class, FStringView Path, FString& OutError)
     {
         // Held through the save, since a fresh object nothing holds dies at the first transient strong reference.
-        TStrongObjectPtr<CObject> Asset(Factory->GetAssetClass() == Class ? Factory->TryCreateNew(Path) : CreateNewOf(Class, Path));
+        TStrongObjectPtr<CObject> Asset(Factory != nullptr && Factory->GetAssetClass() == Class ? Factory->TryCreateNew(Path) : CreateNewOf(Class, Path));
         if (!Asset)
         {
             OutError = "it could not be created";

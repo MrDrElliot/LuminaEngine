@@ -26,6 +26,7 @@ public static class ProjectFilesMode
     {
         BuildPlatform PlatformValue = Arguments.GetEnum("Platform", BuildPlatformRegistry.HostPlatform);
         IBuildPlatform PlatformSupport = BuildPlatformRegistry.Get(PlatformValue);
+        SolutionFormat SolutionFormatValue = Arguments.GetEnum("SolutionFormat", SolutionFormat.Slnx);
 
         BuildOptions Options = BuildOptions.Load(Directories, Arguments);
 
@@ -114,10 +115,10 @@ public static class ProjectFilesMode
         int Changed = (bRulesProjectChanged ? 1 : 0)
             + (CompileDatabaseStep.Write(Directories, Targets, Configurations, Toolchain) ? 1 : 0);
 
-        // No .sln off Windows; nothing there builds a .vcxproj. Keyed on the host, not -Platform.
+        // No solution off Windows; nothing there builds a .vcxproj. Keyed on the host, not -Platform.
         if (BuildPlatformRegistry.HostPlatform == BuildPlatform.Windows64)
         {
-            IProjectFileGenerator Generator = new VisualStudioGenerator(Toolchain);
+            IProjectFileGenerator Generator = new VisualStudioGenerator(Toolchain, SolutionFormatValue);
 
             Changed += Generator.Generate(Directories, Targets, Configurations, RulesProjectPath);
         }

@@ -228,13 +228,13 @@ extern "C" {
 	RPMALLOC_EXPORT int
 		rpmalloc_uses_huge_pages(void);
 
-	// Unmaps the spans the calling thread's heap has cached for reuse.
-	RPMALLOC_EXPORT void
-		rpmalloc_thread_trim_caches(void);
+	// Unmaps up to max_spans of the spans the calling thread's heap has cached for reuse, returning how many it unmapped.
+	RPMALLOC_EXPORT size_t
+		rpmalloc_thread_trim_caches(size_t max_spans);
 
-	// Unmaps the spans held in the global cache.
-	RPMALLOC_EXPORT void
-		rpmalloc_global_trim_caches(void);
+	// Unmaps up to max_spans of the spans held in the global cache, returning how many it unmapped.
+	RPMALLOC_EXPORT size_t
+		rpmalloc_global_trim_caches(size_t max_spans);
 
 	//! Query if allocator is initialized for calling thread
 	RPMALLOC_EXPORT int

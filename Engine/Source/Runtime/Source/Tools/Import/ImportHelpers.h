@@ -489,6 +489,8 @@ namespace Lumina::Import
         /** When Progress is set, advances StepPerSurface of progress for each surface meshletized. */
         RUNTIME_API void GenerateMeshlets(FMeshResource& MeshResource, FScopedSlowTask* Progress = nullptr, float StepPerSurface = 0.0f);
         RUNTIME_API void AnalyzeMeshStatistics(FMeshResource& MeshResource, FMeshStatistics& OutMeshStats);
+        // Pieces that share a source material share one merged slot, so a merge never adds slots per object.
+        RUNTIME_API int16 FindOrAddMergedMaterialSlot(TVector<int16>& SlotToSource, int16 SourceMaterial);
 
         /** Apply user transforms and run the heavy finalize passes on a parsed FMeshImportData.
          *  When Progress is set, advances a total of ProgressBudget across the finalize pass. */

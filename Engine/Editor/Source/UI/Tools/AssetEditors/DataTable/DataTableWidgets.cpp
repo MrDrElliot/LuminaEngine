@@ -3,32 +3,18 @@
 #include "Assets/AssetTypes/DataTable/DataTable.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/InstancedStruct.h"
-#include "Core/Object/ObjectIterator.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "imgui.h"
 
 namespace Lumina::DataTableUI
 {
-    static bool AnyRowStructExists(CStruct* Base)
-    {
-        for (TObjectIterator<CStruct> It; It; ++It)
-        {
-            CStruct* Candidate = *It;
-            if (Candidate != Base && IsInstancableStructType(Candidate) && Candidate->IsChildOf(Base))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
     CStruct* DrawRowStructPicker(const char* StrId, CStruct* Current, bool& bOutChanged)
     {
         CStruct* Base = SDataTableRowBase::StaticStruct();
 
         // An empty combo reads as a broken picker, so say what is missing and how to supply it.
-        if (Current == nullptr && !AnyRowStructExists(Base))
+        if (Current == nullptr && GatherInstancableStructSubtypes(Base).IsEmpty())
         {
             bOutChanged = false;
             ImGui::TextColored(EditorColors::Warning(), "No row structs are defined.");

@@ -39,7 +39,17 @@ namespace Lumina
     };
 
     // Sidecars, IDE state, build output, project files and source-control markers, none of which a game reads.
-    bool IsDevelopmentOnlyGameFile(FStringView VirtualPath, bool bKeepScriptSources);
+    EDITOR_API bool IsDevelopmentOnlyGameFile(FStringView VirtualPath, bool bKeepScriptSources);
+
+    // Where the cook of PakPath keeps a record with the project, so the shipped folder holds only what the game reads.
+    EDITOR_API FString GetCookRecordPath(FStringView ProjectDirectory, FStringView PakPath, FStringView Suffix);
+
+    // The project icon re-encoded as PNG, with one warning through LogFunc when it is set but missing or undecodable.
+    EDITOR_API bool EncodeProjectIcon(FStringView IconPath, TVector<uint8>& OutPng, const TFunction<void(FStringView)>& LogFunc);
+
+    // The cooked settings point the game here, and the packager stamps the exe from the record beside the pak's contents list.
+    inline constexpr FStringView CookedProjectIconPath = "/Engine/ProjectIcon.png";
+    inline constexpr FStringView ProjectIconRecordSuffix = ".icon.png";
 
     // Reachability-driven cooker, seeded from FEngine::GetCookRoots(); only .lasset reachable via FAssetData::Dependencies enters a PAK.
     // Chunked output: "Main" uses OutputPakPath verbatim + holds shared content; other chunks land at <stem>-<chunk>.pak.

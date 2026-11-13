@@ -62,6 +62,9 @@ namespace Lumina
 		RUNTIME_API TVector<SDisplayMode> GetDisplayModes() const;
 
 		RUNTIME_API void SetTitle(const FString& Title);
+
+		// Keeps the current icon when Path is empty or LoadWindowIcon fails.
+		RUNTIME_API void SetIcon(FStringView Path);
 		RUNTIME_API void SetTitleBarHovered(bool bHovered);
 		RUNTIME_API void SetCursorMode(ECursorMode Mode);
 
@@ -123,6 +126,16 @@ namespace Lumina
 			uint8       Buttons[15] = {};
 			const char* Name = nullptr;
 		};
+
+		struct FWindowIcon
+		{
+			TVector<uint8> Pixels;
+			int32          Width = 0;
+			int32          Height = 0;
+		};
+
+		// Decodes a PNG at a virtual or disk path to RGBA8, warning with the path when it cannot be read or decoded.
+		RUNTIME_API bool LoadWindowIcon(FStringView Path, FWindowIcon& Out);
 
 		// False when the slot is empty or holds a device with no standard gamepad mapping.
 		RUNTIME_API bool ReadGamepad(int32 Index, FRawGamepad& Out);

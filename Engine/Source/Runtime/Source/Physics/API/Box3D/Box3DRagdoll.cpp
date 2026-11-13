@@ -36,10 +36,28 @@ namespace Lumina::Physics
             return Math::AngleAxis(Math::Acos(D), Math::Normalize(Math::Cross(Y, Dir)));
         }
 
-        FVector3 RagdollPerpendicular(const FVector3& Axis)
+        // Sets a joint's hard cone and twist and its ligament's spring from Setup, adding the ligament the first time the joint needs one.
+        void ApplyRagdollJointLimit(FPhysicsRagdollHandle& Ragdoll, FRagdollJointLimit& Limit, const SPhysicsConstraintSetup& Setup)
         {
-            const FVector3 Reference = Math::Abs(Axis.y) < 0.99f ? FVector3(0.0f, 1.0f, 0.0f) : FVector3(1.0f, 0.0f, 0.0f);
-            return Math::Normalize(Math::Cross(Reference, Axis));
+            // Box3D's cone is round, so it backstops the wider swing and the ligament holds the narrower one.
+            b3SphericalJoint_SetConeLimit(Limit.Cone, Math::Radians(Math::Max(Setup.Swing1LimitDegrees, Setup.Swing2LimitDegrees)));
+            b3SphericalJoint_SetTwistLimits(Limit.Cone, -Math::Radians(Setup.TwistLimitDegrees), Math::Radians(Setup.TwistLimitDegrees));
+
+            Limit.LimitsRadians = Setup.GetLimitsRadians();
+            Limit.SoftStart = Setup.GetSoftLimitStart();
+            Limit.LimitHertz = Setup.LimitStiffness * Limit.Retune;
+            Limit.MaxTorque = Setup.MaxLimitTorque * Limit.TorqueShare;
+
+            // With soft limits off an elliptical cone still needs the ligament, held at the limits themselves.
+            if (!b3Joint_IsValid(Limit.Ligament) && (Setup.bSoftLimits || Setup.Swing1LimitDegrees != Setup.Swing2LimitDegrees))
+            {
+                Limit.Ligament = Ragdoll.AddSlackMotor(Ragdoll.Bodies[Limit.ParentBody], Ragdoll.Bodies[Limit.Body], b3Joint_GetLocalFrameA(Limit.Cone), b3Joint_GetLocalFrameB(Limit.Cone));
+            }
+            if (b3Joint_IsValid(Limit.Ligament))
+            {
+                b3MotorJoint_SetAngularDampingRatio(Limit.Ligament, Setup.LimitDampingRatio * Limit.Retune);
+            }
+            b3Joint_WakeBodies(Limit.Cone);
         }
 
         struct FRagdollBodyDef
@@ -51,12 +69,6 @@ namespace Lumina::Physics
             FPendingShape   Shape;
             bool            bOverrideMass = false;
             float           Mass = 1.0f;
-            float           TwistDeg = 30.0f;
-            float           Swing1Deg = 45.0f;
-            float           Swing2Deg = 45.0f;
-            float           MotorFrequency = 0.0f;
-            float           MotorDamping = 0.0f;
-            float           MotorStrength = 1.0f;
         };
 
         // A joint's muscle gets a share of the strongest by the mass hanging off it, so a neck is weaker than a hip.
@@ -315,66 +327,71 @@ namespace Lumina::Physics
             return nullptr;
         }
 
+        const int32 NumBodies = Handle->Bodies.Num();
+        Handle->ParentBody.SetNum(NumBodies, -1);
+        TVector<float> SubtreeMass;
+        SubtreeMass.SetNum(NumBodies, 0.0f);
+        TVector<FVector3> SubtreeMoment;
+        SubtreeMoment.SetNum(NumBodies, FVector3(0.0f));
+        float TotalMass = 0.0f;
         for (int32 DefIndex = 0; DefIndex < Defs.Num(); ++DefIndex)
         {
-            const FRagdollBodyDef& Def = Defs[DefIndex];
-            if (Def.ParentBodyIndex < 0 || DefIndexToBodyIndex[DefIndex] < 0 || DefIndexToBodyIndex[Def.ParentBodyIndex] < 0)
+            const int32 BodyIndex = DefIndexToBodyIndex[DefIndex];
+            if (BodyIndex < 0)
             {
                 continue;
             }
 
+            const int32 ParentDefIndex = Defs[DefIndex].ParentBodyIndex;
+            Handle->ParentBody[BodyIndex] = (ParentDefIndex >= 0 && DefIndexToBodyIndex[ParentDefIndex] >= 0)
+                ? DefIndexToBodyIndex[ParentDefIndex] : -1;
+            const b3BodyId Body = Handle->Bodies[BodyIndex];
+            if (b3Body_IsValid(Body))
+            {
+                SubtreeMass[BodyIndex] = b3Body_GetMass(Body);
+                SubtreeMoment[BodyIndex] = Box3DUtils::FromB3Vec3(b3Body_GetWorldCenter(Body)) * SubtreeMass[BodyIndex];
+                TotalMass += SubtreeMass[BodyIndex];
+            }
+        }
+        for (int32 i = NumBodies - 1; i >= 0; --i)
+        {
+            if (Handle->ParentBody[i] >= 0)
+            {
+                SubtreeMass[Handle->ParentBody[i]] += SubtreeMass[i];
+                SubtreeMoment[Handle->ParentBody[i]] += SubtreeMoment[i];
+            }
+        }
+
+        // Every jointed body gets its hard limits, a muscle left slack until the ragdoll is powered, and a ligament for its soft limits.
+        for (int32 DefIndex = 0; DefIndex < Defs.Num(); ++DefIndex)
+        {
+            const int32 BodyIndex = DefIndexToBodyIndex[DefIndex];
+            if (BodyIndex < 0 || Handle->ParentBody[BodyIndex] < 0)
+            {
+                continue;
+            }
+
+            const FRagdollBodyDef& Def = Defs[DefIndex];
             const FRagdollBodyDef& ParentDef = Defs[Def.ParentBodyIndex];
+            const int32 Parent = Handle->ParentBody[BodyIndex];
+            const b3BodyId ChildBody = Handle->Bodies[BodyIndex];
+            const b3BodyId ParentBody = Handle->Bodies[Parent];
 
             // The limit cone is centered on the way the limb itself points at rest, toward its children, so a hanging arm rests inside it.
-            FVector3 TwistAxis(0.0f);
+            FVector3 TowardChildren(0.0f);
             for (int32 ChildBone : Skeleton->GetChildBones(Def.BoneIndex))
             {
                 FVector3 ChildPos;
                 FQuat ChildRot;
                 DecomposeWorld(ChildBone, ChildPos, ChildRot);
-                TwistAxis += ChildPos - Def.WorldPos;
-            }
-            if (Math::Length(TwistAxis) <= 1e-4f)
-            {
-                TwistAxis = Def.WorldPos - ParentDef.WorldPos;
-            }
-            TwistAxis = Math::Length(TwistAxis) > 1e-4f
-                ? Math::Normalize(TwistAxis)
-                : Math::Normalize(Def.WorldRot * FVector3(0.0f, 1.0f, 0.0f));
-
-            float Twist = Def.TwistDeg;
-            float Swing1 = Def.Swing1Deg;
-            float Swing2 = Def.Swing2Deg;
-
-            if (!Request.Constraints.IsEmpty())
-            {
-                const FName ChildBone = Skeleton->GetBone(Def.BoneIndex).Name;
-                for (const SPhysicsConstraintSetup& C : Request.Constraints)
-                {
-                    if (C.ChildBone == ChildBone)
-                    {
-                        Twist = C.TwistLimitDegrees;
-                        Swing1 = C.Swing1LimitDegrees;
-                        Swing2 = C.Swing2LimitDegrees;
-                        Defs[DefIndex].MotorFrequency = C.MotorFrequency;
-                        Defs[DefIndex].MotorDamping = C.MotorDamping;
-                        Defs[DefIndex].MotorStrength = C.MotorStrength;
-                        break;
-                    }
-                }
+                TowardChildren += ChildPos - Def.WorldPos;
             }
 
-            const b3BodyId ChildBody = Handle->Bodies[DefIndexToBodyIndex[DefIndex]];
-            const b3BodyId ParentBody = Handle->Bodies[DefIndexToBodyIndex[Def.ParentBodyIndex]];
+            // A bone the asset has no constraint for, and every bone of a generated ragdoll, gets the defaults.
+            const SPhysicsConstraintSetup Setup = FindConstraintSetup(Request.Constraints, Skeleton->GetBone(Def.BoneIndex).Name);
 
             // Box3D centers the swing cone and the twist on the frame's Z axis, so Z is aimed along the limb.
-            const FVector3 Perp = RagdollPerpendicular(TwistAxis);
-            const FVector3 Bitangent = Math::Cross(TwistAxis, Perp);
-            const FMatrix4 Basis(FVector4(Perp.x, Perp.y, Perp.z, 0.0f),
-                                 FVector4(Bitangent.x, Bitangent.y, Bitangent.z, 0.0f),
-                                 FVector4(TwistAxis.x, TwistAxis.y, TwistAxis.z, 0.0f),
-                                 FVector4(0.0f, 0.0f, 0.0f, 1.0f));
-            const FQuat FrameRotation = Math::ToQuat(Basis);
+            const FQuat FrameRotation = MakeRagdollJointFrame(TowardChildren, Def.WorldPos - ParentDef.WorldPos, Def.WorldRot * FVector3(0.0f, 1.0f, 0.0f));
 
             auto MakeFrame = [&](b3BodyId Body)
             {
@@ -390,96 +407,40 @@ namespace Lumina::Physics
             JointDef.base.localFrameB = MakeFrame(ChildBody);
             JointDef.base.collideConnected = false;
             JointDef.enableConeLimit = true;
-            JointDef.coneAngle = Math::Radians(Math::Max(Swing1, Swing2));
             JointDef.enableTwistLimit = true;
-            JointDef.lowerTwistAngle = -Math::Radians(Twist);
-            JointDef.upperTwistAngle = Math::Radians(Twist);
 
             const b3JointId JointId = b3CreateSphericalJoint(WorldId, &JointDef);
-            if (b3Joint_IsValid(JointId))
+            const float Share = Math::Clamp(kMuscleShareGain * Math::Sqrt(SubtreeMass[BodyIndex] / Math::Max(TotalMass, 1e-3f)), kMinMuscleShare, 1.0f);
+            const FQuat RestRelative = Math::Normalize(Math::Inverse(ParentDef.WorldRot) * Def.WorldRot);
+            const b3JointId MuscleId = Handle->AddSlackMotor(ParentBody, ChildBody,
+                b3Transform{ b3Body_GetLocalPoint(ParentBody, Box3DUtils::ToB3Vec3(Def.WorldPos)), b3Quat_identity },
+                b3Transform{ b3Vec3_zero, Box3DUtils::ToB3Quat(Math::Inverse(RestRelative)) });
+            if (b3Joint_IsValid(MuscleId))
             {
-                Handle->Joints.Add(JointId);
+                Handle->Muscles.Emplace(MuscleId, BodyIndex, Parent, Share * Setup.MotorStrength, Setup.MotorFrequency, Setup.MotorDamping);
             }
-        }
 
-        const int32 NumBodies = Handle->Bodies.Num();
-        Handle->ParentBody.SetNum(NumBodies, -1);
-        TVector<float> SubtreeMass;
-        SubtreeMass.SetNum(NumBodies, 0.0f);
-        float TotalMass = 0.0f;
-        for (int32 DefIndex = 0; DefIndex < Defs.Num(); ++DefIndex)
-        {
-            const int32 BodyIndex = DefIndexToBodyIndex[DefIndex];
-            if (BodyIndex < 0)
+            if (!b3Joint_IsValid(JointId))
             {
                 continue;
             }
+            Handle->Joints.Add(JointId);
 
-            const int32 ParentDefIndex = Defs[DefIndex].ParentBodyIndex;
-            Handle->ParentBody[BodyIndex] = (ParentDefIndex >= 0 && DefIndexToBodyIndex[ParentDefIndex] >= 0)
-                ? DefIndexToBodyIndex[ParentDefIndex] : -1;
-            SubtreeMass[BodyIndex] = b3Body_IsValid(Handle->Bodies[BodyIndex]) ? b3Body_GetMass(Handle->Bodies[BodyIndex]) : 0.0f;
-            TotalMass += SubtreeMass[BodyIndex];
-        }
-        for (int32 i = NumBodies - 1; i >= 0; --i)
-        {
-            if (Handle->ParentBody[i] >= 0)
-            {
-                SubtreeMass[Handle->ParentBody[i]] += SubtreeMass[i];
-            }
-        }
+            // Box3D springs a joint against the two bodies' own inertia, so the ligament is retuned to the limb swinging about its pivot.
+            const float ChildInertia = Math::Max(MeanRotationalInertia(ChildBody), 1e-6f);
+            const float PairInertia = 1.0f / (1.0f / ChildInertia + 1.0f / Math::Max(MeanRotationalInertia(ParentBody), 1e-6f));
+            const FVector3 SubtreeCenter = SubtreeMoment[BodyIndex] / Math::Max(SubtreeMass[BodyIndex], 1e-6f);
+            const float SwungInertia = ChildInertia + SubtreeMass[BodyIndex] * Math::LengthSquared(SubtreeCenter - Def.WorldPos);
 
-        // Every jointed body gets a muscle, left slack until the ragdoll is powered so a limp ragdoll behaves as it always did.
-        for (int32 DefIndex = 0; DefIndex < Defs.Num(); ++DefIndex)
-        {
-            const int32 BodyIndex = DefIndexToBodyIndex[DefIndex];
-            if (BodyIndex < 0)
-            {
-                continue;
-            }
-
-            const int32 Parent = Handle->ParentBody[BodyIndex];
-            if (Parent < 0)
-            {
-                continue;
-            }
-
-            const int32 ParentDefIndex = Defs[DefIndex].ParentBodyIndex;
-            const b3BodyId ChildBody = Handle->Bodies[BodyIndex];
-            const b3BodyId ParentBody = Handle->Bodies[Parent];
-            const FQuat RestRelative = Math::Normalize(Math::Inverse(Defs[ParentDefIndex].WorldRot) * Defs[DefIndex].WorldRot);
-
-            b3MotorJointDef MuscleDef = b3DefaultMotorJointDef();
-            MuscleDef.base.bodyIdA = ParentBody;
-            MuscleDef.base.bodyIdB = ChildBody;
-            MuscleDef.base.localFrameA = b3Transform{ b3Body_GetLocalPoint(ParentBody, Box3DUtils::ToB3Vec3(Defs[DefIndex].WorldPos)), b3Quat_identity };
-            MuscleDef.base.localFrameB = b3Transform{ b3Vec3_zero, Box3DUtils::ToB3Quat(Math::Inverse(RestRelative)) };
-            MuscleDef.base.collideConnected = false;
-            MuscleDef.linearVelocity = b3Vec3_zero;
-            MuscleDef.maxVelocityForce = 0.0f;
-            MuscleDef.angularVelocity = b3Vec3_zero;
-            MuscleDef.maxVelocityTorque = 0.0f;
-            MuscleDef.linearHertz = 0.0f;
-            MuscleDef.linearDampingRatio = 0.0f;
-            MuscleDef.maxSpringForce = 0.0f;
-            MuscleDef.angularHertz = 0.0f;
-            MuscleDef.angularDampingRatio = 1.0f;
-            MuscleDef.maxSpringTorque = 0.0f;
-
-            const b3JointId MuscleId = b3CreateMotorJoint(WorldId, &MuscleDef);
-            if (!b3Joint_IsValid(MuscleId))
-            {
-                continue;
-            }
-            Handle->Joints.Add(MuscleId);
-
-            FRagdollMuscle& Muscle = Handle->Muscles.EmplaceGetRef();
-            Muscle.Joint = MuscleId;
-            Muscle.Body = BodyIndex;
-            Muscle.ParentBody = Parent;
-            Muscle.TorqueScale = Math::Clamp(kMuscleShareGain * Math::Sqrt(SubtreeMass[BodyIndex] / Math::Max(TotalMass, 1e-3f)), kMinMuscleShare, 1.0f) * Defs[DefIndex].MotorStrength;
-            Muscle.HertzOverride = Defs[DefIndex].MotorFrequency;
-            Muscle.DampingOverride = Defs[DefIndex].MotorDamping;
+            FRagdollJointLimit& Limit = Handle->JointLimits.EmplaceGetRef();
+            Limit.Cone        = JointId;
+            Limit.Body        = BodyIndex;
+            Limit.ParentBody  = Parent;
+            Limit.ParentFrame = Box3DUtils::FromB3Quat(JointDef.base.localFrameA.q);
+            Limit.ChildFrame  = Box3DUtils::FromB3Quat(JointDef.base.localFrameB.q);
+            Limit.Retune      = Math::Sqrt(SwungInertia / PairInertia);
+            Limit.TorqueShare = Share;
+            ApplyRagdollJointLimit(*Handle, Limit, Setup);
         }
 
         // Limbs that are not directly jointed still must not collide, which is what a filter joint is for.
@@ -509,6 +470,22 @@ namespace Lumina::Physics
     {
         FPhysicsRagdollHandle* const* Ragdoll = SimulatingRagdolls.Find(Entity);
         return Ragdoll != nullptr && IsRagdollReady(**Ragdoll) ? *Ragdoll : nullptr;
+    }
+
+    void FBox3DPhysicsScene::RetuneRagdollLimits(ECS::FEntity Entity, const CPhysicsAsset& Asset)
+    {
+        ValidateNotInParallelSystem("RetuneRagdollLimits");
+        FPhysicsRagdollHandle* Ragdoll = const_cast<FPhysicsRagdollHandle*>(FindSimulatingRagdoll(Entity));
+        if (Ragdoll == nullptr || Ragdoll->Skeleton == nullptr)
+        {
+            return;
+        }
+
+        for (FRagdollJointLimit& Limit : Ragdoll->JointLimits)
+        {
+            const FName ChildBone = Ragdoll->Skeleton->GetBone(Ragdoll->JointToBone[Limit.Body]).Name;
+            ApplyRagdollJointLimit(*Ragdoll, Limit, FindConstraintSetup(Asset.Constraints, ChildBone));
+        }
     }
 
     FBox3DPhysicsScene::FRagdollMotion FBox3DPhysicsScene::MeasureRagdoll(const FPhysicsRagdollHandle& Ragdoll) const

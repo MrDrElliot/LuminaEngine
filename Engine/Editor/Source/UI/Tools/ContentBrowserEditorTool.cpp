@@ -62,7 +62,6 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
-#include "Thumbnails/AssetTilePainters.h"
 #include "Thumbnails/ThumbnailManager.h"
 #include "Assets/AssetEvents.h"
 #include <LuminaEditor.h>
@@ -481,6 +480,29 @@ namespace Lumina
                                       PageMin.y + (PageMax.y - PageMin.y) * 0.20f);
                 DrawList.AddText(Font, GlyphSize, GlyphPos, Style.Accent, Style.Glyph);
             }
+        }
+
+        // Restores the tile as the last item, so the tile view's tooltip, context menu and drag source still see it.
+        bool DrawTileActionButton(ImDrawList& DrawList, const ImVec2& Min, const ImVec2& Max, const char* Icon)
+        {
+            const float  Radius = Math::Max((Max.x - Min.x) * 0.2f, 10.0f);
+            const ImVec2 Center((Min.x + Max.x) * 0.5f, (Min.y + Max.y) * 0.5f);
+            const ImRect Bounds(Center.x - Radius, Center.y - Radius, Center.x + Radius, Center.y + Radius);
+
+            const ImGuiLastItemData TileItem = GImGui->LastItemData;
+            const ImGuiID Id = ImGui::GetID("##TileAction");
+            bool bHovered = false;
+            bool bHeld    = false;
+            const bool bPressed = ImGui::ItemAdd(Bounds, Id) && ImGui::ButtonBehavior(Bounds, Id, &bHovered, &bHeld);
+            GImGui->LastItemData = TileItem;
+
+            DrawList.AddCircleFilled(Center, Radius, bHovered ? EditorColors::U32(EditorColors::Accent()) : IM_COL32(0, 0, 0, 170));
+
+            ImFont* Font = ImGui::GetFont();
+            const float  IconSize = Radius * 1.2f;
+            const ImVec2 IconExtent = Font->CalcTextSizeA(IconSize, FLT_MAX, 0.0f, Icon);
+            DrawList.AddText(Font, IconSize, ImVec2(Center.x - IconExtent.x * 0.5f, Center.y - IconExtent.y * 0.5f), IM_COL32_WHITE, Icon);
+            return bPressed;
         }
 
         // Build / IDE directories that never belong in the browser (regenerated on demand).
@@ -1194,6 +1216,8 @@ namespace Lumina
 
         CreateToolWindow("Content", [&] (bool bIsFocused)
         {
+            TilePreview.MarkShown();
+
             // A starting width only, since the pane is resizable and keeps wherever it was last dragged.
             constexpr float DefaultDirectoryWidth = 225.0f;
 
@@ -1236,6 +1260,7 @@ namespace Lumina
             // The button still draws its frame and owns every interaction, and only the image is replaced.
             FAssetTilePainterFn* TilePainter = nullptr;
             CObject*             PainterAsset = nullptr;
+            FAssetDataPtr        TileAsset;
 
             // Set when nothing else supplies a picture, so the tile draws a type card instead of an image.
             bool bDrawTypeCard = true;
@@ -1260,9 +1285,10 @@ namespace Lumina
 
                     // RESIDENT ONLY, since loading here would race the editor's loader on a non-atomic object.
                     FStringView AssetPath = ContentItem->GetVirtualPath();
-                    if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(AssetPath))
+                    TileAsset = FAssetRegistry::Get().GetAssetByPath(AssetPath);
+                    if (TileAsset != nullptr)
                     {
-                        if (CObject* Resident = FindObject<CObject>(Data->AssetGUID))
+                        if (CObject* Resident = FindObject<CObject>(TileAsset->AssetGUID))
                         {
                             TilePainter = FAssetTilePainterRegistry::Get().Find(Resident->GetClass());
                             if (TilePainter != nullptr)
@@ -1309,12 +1335,17 @@ namespace Lumina
             
             // The button supplies frame, styling, sizing and clicks, so a painted body draws the image clear.
             const bool bHideImage = (TilePainter != nullptr) || bDrawTypeCard;
+            ImGui::SetNextItemAllowOverlap();
             ImGui::ImageButton("##", ImTexture, Size, ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
                 bHideImage ? ImVec4(TintColor.x, TintColor.y, TintColor.z, 0.0f) : TintColor);
 
             // The item rect already accounts for the pushed frame padding, so the body cannot drift.
             const ImVec2 BodyMin = ImGui::GetItemRectMin();
             const ImVec2 BodyMax = ImGui::GetItemRectMax();
+
+            // A tile action button over the body takes the hover, so the tile itself only counts as hovered off it.
+            const bool bTileHovered  = ImGui::IsItemHovered();
+            const bool bMouseOverTile = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
 
             if (TilePainter != nullptr)
             {
@@ -1342,7 +1373,7 @@ namespace Lumina
                     ImGui::ColorConvertFloat4ToU32(EditorColors::Danger()), 8.0f, 1.5f);
             }
 
-            if (ImGui::IsItemHovered())
+            if (bMouseOverTile)
             {
                 DrawList->AddRect(
                     Pos, 
@@ -1366,8 +1397,28 @@ namespace Lumina
         
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(3);
-            
-            if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+
+            if (TileAsset != nullptr && (bMouseOverTile || TilePreview.IsActiveFor(TileAsset->AssetGUID)))
+            {
+                if (const FAssetTileAction* Action = FAssetTilePainterRegistry::Get().FindAction(FindObject<CClass>(TileAsset->AssetClass)))
+                {
+                    const bool bActive = TilePreview.IsActiveFor(TileAsset->AssetGUID);
+                    if (ContentBrowserEditorToolInternal::DrawTileActionButton(*DrawList, BodyMin, BodyMax, bActive ? Action->ActiveIcon : Action->Icon))
+                    {
+                        if (bActive)
+                        {
+                            TilePreview.Stop();
+                        }
+                        else
+                        {
+                            TilePreview.Request(*Action, *TileAsset);
+                        }
+                        return FTileViewItem::EClickState::None;
+                    }
+                }
+            }
+
+            if (bTileHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
             {
                 // Shift beats Ctrl when both are held, matching every file manager.
                 if (ImGui::GetIO().KeyShift)
@@ -1383,7 +1434,7 @@ namespace Lumina
                 return FTileViewItem::EClickState::Single;
             }
             
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            if (bTileHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
                 return FTileViewItem::EClickState::Double;
             }
@@ -1800,6 +1851,8 @@ namespace Lumina
         {
             RefreshContentBrowser();
         }
+
+        TilePreview.Tick();
     }
     
     // Shared with the agent endpoint, so both refuse the same deletions for the same reasons.

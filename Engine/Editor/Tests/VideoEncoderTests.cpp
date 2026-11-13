@@ -79,12 +79,26 @@ namespace
         return Wide;
     }
 
-    // Reads back a video's audio track as PCM and returns the largest absolute sample found.
+    // Starts its own Media Foundation session since the encoder's Close() shuts that down process-wide.
     int16 DecodeLoudestSample(const FString& Path)
     {
+        const HRESULT Com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        const bool bInitializedCom = SUCCEEDED(Com);
+        if (FAILED(Com) && Com != RPC_E_CHANGED_MODE)
+        {
+            return 0;
+        }
+        if (FAILED(MFStartup(MF_VERSION)))
+        {
+            if (bInitializedCom) { CoUninitialize(); }
+            return 0;
+        }
+
         IMFSourceReader* Reader = nullptr;
         if (FAILED(MFCreateSourceReaderFromURL(WidenPath(Path).c_str(), nullptr, &Reader)))
         {
+            MFShutdown();
+            if (bInitializedCom) { CoUninitialize(); }
             return 0;
         }
 
@@ -130,6 +144,8 @@ namespace
         }
 
         Reader->Release();
+        MFShutdown();
+        if (bInitializedCom) { CoUninitialize(); }
         return Loudest;
     }
 }

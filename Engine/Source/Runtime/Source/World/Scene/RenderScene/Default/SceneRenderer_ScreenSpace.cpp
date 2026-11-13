@@ -3,6 +3,39 @@
 
 namespace Lumina
 {
+    namespace
+    {
+        bool IsCORTAOSelected()
+        {
+            const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+            return Settings != nullptr && Settings->AmbientOcclusionMethod == EAmbientOcclusionMethod::CORTAO;
+        }
+
+        FShaderH GetCORTAOPrefilterShader()
+        {
+            static const FString  Define = "CORTAO";
+            static const FShaderH Shader = FShaderLibrary::Get("GTAOPrefilterDepth.slang", TSpan<const FString>(&Define, 1));
+            return Shader;
+        }
+
+        // The reference's low, medium, high and ultra sample counts, each its own permutation so the sample loop unrolls.
+        FShaderH GetCORTAOMainShader(int32 QualityLevel)
+        {
+            static const FString Defines[] =
+            {
+                "CORTAO_SAMPLE_COUNT=8", "CORTAO_SAMPLE_COUNT=12", "CORTAO_SAMPLE_COUNT=16", "CORTAO_SAMPLE_COUNT=32"
+            };
+            static const FShaderH Shaders[] =
+            {
+                FShaderLibrary::Get("GTAOMain.slang", TSpan<const FString>(&Defines[0], 1)),
+                FShaderLibrary::Get("GTAOMain.slang", TSpan<const FString>(&Defines[1], 1)),
+                FShaderLibrary::Get("GTAOMain.slang", TSpan<const FString>(&Defines[2], 1)),
+                FShaderLibrary::Get("GTAOMain.slang", TSpan<const FString>(&Defines[3], 1)),
+            };
+            return Shaders[QualityLevel];
+        }
+    }
+
     bool FDefaultSceneRenderer::GTAOPass(RHI::FCmdListH CL, EGTAOStage Stage)
     {
         FFrameData& Frame = *RenderFrame;
@@ -11,17 +44,20 @@ namespace Lumina
             return false;
         }
 
-        static const FShaderH PrefilterCS = FShaderLibrary::Get("GTAOPrefilterDepth.slang");
-        static const FShaderH MainCS      = FShaderLibrary::Get("GTAOMain.slang");
-        static const FShaderH DenoiseCS   = FShaderLibrary::Get("GTAODenoise.slang");
-        static const FShaderH UpsampleCS  = FShaderLibrary::Get("GTAOUpsample.slang");
-        if (!PrefilterCS || !MainCS || !DenoiseCS || !UpsampleCS)
+        FGTAOParams Params;
+        if (!MakeGTAOParams(Params))
         {
             return false;
         }
 
-        FGTAOParams Params;
-        if (!MakeGTAOParams(Params))
+        static const FShaderH XeGTAOPrefilterCS = FShaderLibrary::Get("GTAOPrefilterDepth.slang");
+        static const FShaderH XeGTAOMainCS      = FShaderLibrary::Get("GTAOMain.slang");
+        static const FShaderH DenoiseCS         = FShaderLibrary::Get("GTAODenoise.slang");
+        static const FShaderH UpsampleCS        = FShaderLibrary::Get("GTAOUpsample.slang");
+        const bool     bCORTAO     = IsCORTAOSelected();
+        const FShaderH PrefilterCS = bCORTAO ? GetCORTAOPrefilterShader() : XeGTAOPrefilterCS;
+        const FShaderH MainCS      = bCORTAO ? GetCORTAOMainShader(Params.QualityLevel) : XeGTAOMainCS;
+        if (!PrefilterCS || !MainCS || !DenoiseCS || !UpsampleCS)
         {
             return false;
         }

@@ -10,8 +10,8 @@ A Lumina Engine project.
 
 ## First-time setup (Windows)
 
-1. Run `GenerateProject.bat` from this folder. It finds an engine on this machine and runs its `LuminaBuild.bat GenerateProjectFiles` for this project and writes `$PROJECTNAME.sln`.
-2. Open `$PROJECTNAME.sln` in **Visual Studio** or **JetBrains Rider**.
+1. Run `GenerateProject.bat` from this folder. It finds an engine on this machine and runs its `LuminaBuild.bat GenerateProjectFiles` for this project and writes `$PROJECTNAME.slnx`.
+2. Open `$PROJECTNAME.slnx` in **Visual Studio** or **JetBrains Rider**.
 3. Press **F5**.
 
 F5 builds the game DLL (`Binaries\Windows64\$PROJECTNAME-Development.dll`) and launches the Lumina
@@ -57,7 +57,7 @@ The C++ module in `Source/` is optional: use it for native types, custom compone
 
 ```
 $PROJECTNAME.lproject          Project descriptor (name, GUID, plugins)
-GenerateProject.bat            Regenerate the .sln after adding or removing source files (Windows)
+GenerateProject.bat            Regenerate the .slnx after adding or removing source files (Windows)
 GenerateProject.sh             The same, writing compile_commands.json instead (Linux)
 Config/GameSettings.json       Per-project engine settings (startup maps, cook roots, ...)
 Source/                        Your C++ module (optional)

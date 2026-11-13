@@ -369,6 +369,9 @@ namespace Lumina::Physics
         // Monotonic unique id for the next ragdoll's self-collision group.
         virtual uint32 AllocateRagdollGroupID() = 0;
 
+        // Retunes the entity's simulating ragdoll to Asset's joint limits and soft limit springs without rebuilding it.
+        virtual void RetuneRagdollLimits(ECS::FEntity Entity, const CPhysicsAsset& Asset) {}
+
         // Constraints / joints. Create returns an opaque non-zero handle (0 == failure); the caller stores it
         // to drive motors, query break state, or destroy the joint. Must be called outside the physics step
         // (gameplay/PrePhysics is fine), mirroring CreateRagdoll. Default no-op.

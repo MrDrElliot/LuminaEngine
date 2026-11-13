@@ -8,17 +8,30 @@ using LuminaBuildTool.Toolchain.Windows;
 
 namespace LuminaBuildTool.ProjectFiles.VisualStudio;
 
+public enum SolutionFormat
+{
+    Sln,
+    Slnx,
+}
+
 /// <summary>Generates NMake-style vcxproj files plus a solution.</summary>
 public sealed class VisualStudioGenerator : IProjectFileGenerator
 {
     /// <summary>MSBuild's own platform axis.</summary>
     private const string PlatformName = "x64";
 
+    private const string ManagedBuildType = "Debug";
+
+    private const string ManagedPlatform = "Any CPU";
+
     private readonly IToolchain Toolchain;
 
-    public VisualStudioGenerator(IToolchain Toolchain)
+    private readonly SolutionFormat Format;
+
+    public VisualStudioGenerator(IToolchain Toolchain, SolutionFormat Format)
     {
         this.Toolchain = Toolchain;
+        this.Format = Format;
     }
 
     public string Name => "VisualStudio";
@@ -115,10 +128,22 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
             ? "Lumina"
             : Path.GetFileName(Directories.ProjectRoot);
 
-        string SolutionPath = Path.Combine(Directories.OutputRoot, SolutionName + ".sln");
+        string SolutionPath = Path.Combine(Directories.OutputRoot, SolutionName + SolutionExtension(Format));
+        List<SolutionProject> SolutionProjects = CollectSolutionProjects(Projects, ScriptProjects, RulesProjectPath, Directories.OutputRoot);
 
-        if (PathUtils.WriteFileIfChanged(SolutionPath, BuildSolution(Projects, ScriptProjects, Configurations, SolutionPath, RulesProjectPath)))
+        if (PathUtils.WriteFileIfChanged(SolutionPath, BuildSolution(Format, SolutionProjects, Configurations)))
         {
+            Changed++;
+        }
+
+        // Left behind, the other format would open a solution that no longer matches the projects.
+        string StaleSolutionPath = Path.Combine(
+            Directories.OutputRoot,
+            SolutionName + SolutionExtension(Format == SolutionFormat.Slnx ? SolutionFormat.Sln : SolutionFormat.Slnx));
+
+        if (File.Exists(StaleSolutionPath))
+        {
+            File.Delete(StaleSolutionPath);
             Changed++;
         }
 
@@ -131,7 +156,12 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         return Changed;
     }
 
-    private sealed class GeneratedProject
+    private static string SolutionExtension(SolutionFormat Value)
+    {
+        return Value == SolutionFormat.Slnx ? ".slnx" : ".sln";
+    }
+
+    internal sealed class GeneratedProject
     {
         public required string ProjectName { get; init; }
 
@@ -569,50 +599,92 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
     // Solution.
 
-    private static string BuildSolution(
+    // One entry per project, shared by both formats so they list the same projects in the same order.
+    internal sealed record SolutionProject(string Name, string RelativePath, Guid Guid, string Folder, bool bManaged, bool bBuildByDefault);
+
+    internal static List<SolutionProject> CollectSolutionProjects(
         IEnumerable<GeneratedProject> Projects,
         IReadOnlyList<ScriptProject> ScriptProjects,
-        IReadOnlyList<ProjectConfiguration> Configurations,
-        string SolutionPath,
-        string RulesProjectPath)
+        string RulesProjectPath,
+        string SolutionDirectory)
+    {
+        // Neither format has a startup-project field; the IDE picks the first listed, so the startup target goes first.
+        List<SolutionProject> Result = Projects
+            .OrderByDescending(P => P.bIsStartup)
+            .ThenByDescending(P => P.bBuildable)
+            .ThenBy(P => P.ProjectName, StringComparer.OrdinalIgnoreCase)
+            .Select(P => new SolutionProject(
+                P.ProjectName,
+                PathUtils.MakeRelativeTo(P.FilePath, SolutionDirectory),
+                P.Guid,
+                P.SolutionFolder,
+                bManaged: false,
+                bBuildByDefault: P.bBuildable && P.bBuildByDefault))
+            .ToList();
+
+        // Left out of the build, since the engine compiles scripts at run time and an IDE build would race its emit.
+        Result.AddRange(ScriptProjects.Select(P => new SolutionProject(
+            P.Name + ".Scripts",
+            PathUtils.MakeRelativeTo(P.ProjectPath, SolutionDirectory),
+            MakeDeterministicGuid("Scripts:" + P.Name),
+            P.SolutionFolder,
+            bManaged: true,
+            bBuildByDefault: false)));
+
+        // Here purely so the IDE resolves Build.cs and Target.cs files, and left out of the build since the tool compiles them.
+        if (RulesProjectPath.Length > 0)
+        {
+            Result.Add(new SolutionProject(
+                RulesProjectGenerator.ProjectName,
+                PathUtils.MakeRelativeTo(RulesProjectPath, SolutionDirectory),
+                MakeDeterministicGuid("Project:" + RulesProjectGenerator.ProjectName),
+                string.Empty,
+                bManaged: true,
+                bBuildByDefault: false));
+        }
+
+        return Result;
+    }
+
+    // Every level of each nested folder path, in first-use order, so the solution tree resolves.
+    private static Dictionary<string, Guid> CollectSolutionFolders(IEnumerable<SolutionProject> Projects)
+    {
+        Dictionary<string, Guid> FolderGuids = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (SolutionProject Project in Projects)
+        {
+            string Accumulated = string.Empty;
+
+            foreach (string Segment in Project.Folder.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                Accumulated = Accumulated.Length == 0 ? Segment : Accumulated + "/" + Segment;
+                FolderGuids.TryAdd(Accumulated, MakeDeterministicGuid("Folder:" + Accumulated));
+            }
+        }
+
+        return FolderGuids;
+    }
+
+    internal static string BuildSolution(
+        SolutionFormat Format,
+        IReadOnlyList<SolutionProject> Projects,
+        IReadOnlyList<ProjectConfiguration> Configurations)
+    {
+        Dictionary<string, Guid> FolderGuids = CollectSolutionFolders(Projects);
+
+        return Format == SolutionFormat.Slnx
+            ? BuildSlnx(Projects, FolderGuids, Configurations)
+            : BuildSln(Projects, FolderGuids, Configurations);
+    }
+
+    private static string BuildSln(
+        IReadOnlyList<SolutionProject> Projects,
+        Dictionary<string, Guid> FolderGuids,
+        IReadOnlyList<ProjectConfiguration> Configurations)
     {
         const string VcxProjTypeGuid = "8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942";
         const string FolderTypeGuid = "2150E333-8FDC-42A3-9474-1A3956D46DE8";
         const string CSharpProjTypeGuid = "9A19103F-16F7-4668-BE54-9A1E7A4F7556";
-
-        string SolutionDirectory = Path.GetDirectoryName(SolutionPath)!;
-
-        // A .sln has no startup-project field; the IDE picks the first listed, so the startup target goes first.
-        List<GeneratedProject> Ordered = Projects
-            .OrderByDescending(P => P.bIsStartup)
-            .ThenByDescending(P => P.bBuildable)
-            .ThenBy(P => P.ProjectName, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        Dictionary<string, Guid> FolderGuids = new(StringComparer.OrdinalIgnoreCase);
-
-        foreach (GeneratedProject Project in Ordered)
-        {
-            // Declare each level of a nested folder path so the solution tree resolves.
-            string Accumulated = string.Empty;
-
-            foreach (string Segment in Project.SolutionFolder.Split('/', StringSplitOptions.RemoveEmptyEntries))
-            {
-                Accumulated = Accumulated.Length == 0 ? Segment : Accumulated + "/" + Segment;
-                FolderGuids.TryAdd(Accumulated, MakeDeterministicGuid("Folder:" + Accumulated));
-            }
-        }
-
-        foreach (ScriptProject Project in ScriptProjects)
-        {
-            string Accumulated = string.Empty;
-
-            foreach (string Segment in Project.SolutionFolder.Split('/', StringSplitOptions.RemoveEmptyEntries))
-            {
-                Accumulated = Accumulated.Length == 0 ? Segment : Accumulated + "/" + Segment;
-                FolderGuids.TryAdd(Accumulated, MakeDeterministicGuid("Folder:" + Accumulated));
-            }
-        }
 
         // The shell picks which IDE opens the solution from these, so a stale version opens one that cannot build it.
         Version IdeVersion = VisualStudioLocator.TryGetIdeVersion() ?? new Version(18, 0, 0, 0);
@@ -627,32 +699,14 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         foreach ((string FolderPath, Guid FolderGuid) in FolderGuids.OrderBy(P => P.Key, StringComparer.OrdinalIgnoreCase))
         {
             string DisplayName = FolderPath.Split('/').Last();
-            Solution.AppendLine($"Project(\"{{{FolderTypeGuid}}}\") = \"{DisplayName}\", \"{DisplayName}\", \"{{{FolderGuid.ToString().ToUpperInvariant()}}}\"");
+            Solution.AppendLine($"Project(\"{{{FolderTypeGuid}}}\") = \"{DisplayName}\", \"{DisplayName}\", \"{{{FormatGuid(FolderGuid)}}}\"");
             Solution.AppendLine("EndProject");
         }
 
-        foreach (GeneratedProject Project in Ordered)
+        foreach (SolutionProject Project in Projects)
         {
-            string Relative = PathUtils.MakeRelativeTo(Project.FilePath, SolutionDirectory);
-            Solution.AppendLine($"Project(\"{{{VcxProjTypeGuid}}}\") = \"{Project.ProjectName}\", \"{Relative}\", \"{{{Project.Guid.ToString().ToUpperInvariant()}}}\"");
-            Solution.AppendLine("EndProject");
-        }
-
-        foreach (ScriptProject Project in ScriptProjects)
-        {
-            string Relative = PathUtils.MakeRelativeTo(Project.ProjectPath, SolutionDirectory);
-            string Identifier = ScriptProjectGuid(Project).ToString().ToUpperInvariant();
-            Solution.AppendLine($"Project(\"{{{CSharpProjTypeGuid}}}\") = \"{Project.Name}.Scripts\", \"{Relative}\", \"{{{Identifier}}}\"");
-            Solution.AppendLine("EndProject");
-        }
-
-        // The rules project is here purely so the IDE resolves Build.cs and Target.cs files.
-        Guid RulesGuid = MakeDeterministicGuid("Project:" + RulesProjectGenerator.ProjectName);
-
-        if (RulesProjectPath.Length > 0)
-        {
-            string Relative = PathUtils.MakeRelativeTo(RulesProjectPath, SolutionDirectory);
-            Solution.AppendLine($"Project(\"{{{CSharpProjTypeGuid}}}\") = \"{RulesProjectGenerator.ProjectName}\", \"{Relative}\", \"{{{RulesGuid.ToString().ToUpperInvariant()}}}\"");
+            string TypeGuid = Project.bManaged ? CSharpProjTypeGuid : VcxProjTypeGuid;
+            Solution.AppendLine($"Project(\"{{{TypeGuid}}}\") = \"{Project.Name}\", \"{Project.RelativePath}\", \"{{{FormatGuid(Project.Guid)}}}\"");
             Solution.AppendLine("EndProject");
         }
 
@@ -667,44 +721,21 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         Solution.AppendLine("\tEndGlobalSection");
         Solution.AppendLine("\tGlobalSection(ProjectConfigurationPlatforms) = postSolution");
 
-        foreach (GeneratedProject Project in Ordered)
+        foreach (SolutionProject Project in Projects)
         {
-            string ProjectGuid = "{" + Project.Guid.ToString().ToUpperInvariant() + "}";
+            string ProjectGuid = "{" + FormatGuid(Project.Guid) + "}";
 
             foreach (ProjectConfiguration Configuration in Configurations)
             {
                 string Key = $"{Configuration.DisplayName}|{PlatformName}";
-                Solution.AppendLine($"\t\t{ProjectGuid}.{Key}.ActiveCfg = {Key}");
+                string ProjectKey = Project.bManaged ? $"{ManagedBuildType}|{ManagedPlatform}" : Key;
+                Solution.AppendLine($"\t\t{ProjectGuid}.{Key}.ActiveCfg = {ProjectKey}");
 
-                // Only buildable, build-by-default projects get a Build entry; the rest stay individually buildable.
-                if (Project.bBuildable && Project.bBuildByDefault)
+                // Only build-by-default projects get a Build entry; the rest stay individually buildable.
+                if (Project.bBuildByDefault)
                 {
                     Solution.AppendLine($"\t\t{ProjectGuid}.{Key}.Build.0 = {Key}");
                 }
-            }
-        }
-
-        // Left out of the build, since the engine compiles scripts at run time and an IDE build would race its emit.
-        foreach (ScriptProject Project in ScriptProjects)
-        {
-            string Identifier = "{" + ScriptProjectGuid(Project).ToString().ToUpperInvariant() + "}";
-
-            foreach (ProjectConfiguration Configuration in Configurations)
-            {
-                Solution.AppendLine(
-                    $"\t\t{Identifier}.{Configuration.DisplayName}|{PlatformName}.ActiveCfg = Debug|Any CPU");
-            }
-        }
-
-        if (RulesProjectPath.Length > 0)
-        {
-            // Left out of the build, since the build system compiles these rules files itself.
-            string RulesProjectGuid = "{" + RulesGuid.ToString().ToUpperInvariant() + "}";
-
-            foreach (ProjectConfiguration Configuration in Configurations)
-            {
-                Solution.AppendLine(
-                    $"\t\t{RulesProjectGuid}.{Configuration.DisplayName}|{PlatformName}.ActiveCfg = Debug|Any CPU");
             }
         }
 
@@ -720,24 +751,15 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
 
             if (Split > 0 && FolderGuids.TryGetValue(FolderPath.Substring(0, Split), out Guid ParentGuid))
             {
-                Solution.AppendLine($"\t\t{{{FolderGuid.ToString().ToUpperInvariant()}}} = {{{ParentGuid.ToString().ToUpperInvariant()}}}");
+                Solution.AppendLine($"\t\t{{{FormatGuid(FolderGuid)}}} = {{{FormatGuid(ParentGuid)}}}");
             }
         }
 
-        foreach (GeneratedProject Project in Ordered)
+        foreach (SolutionProject Project in Projects)
         {
-            if (FolderGuids.TryGetValue(Project.SolutionFolder, out Guid FolderGuid))
+            if (FolderGuids.TryGetValue(Project.Folder, out Guid FolderGuid))
             {
-                Solution.AppendLine($"\t\t{{{Project.Guid.ToString().ToUpperInvariant()}}} = {{{FolderGuid.ToString().ToUpperInvariant()}}}");
-            }
-        }
-
-        foreach (ScriptProject Project in ScriptProjects)
-        {
-            if (FolderGuids.TryGetValue(Project.SolutionFolder, out Guid FolderGuid))
-            {
-                Solution.AppendLine(
-                    $"\t\t{{{ScriptProjectGuid(Project).ToString().ToUpperInvariant()}}} = {{{FolderGuid.ToString().ToUpperInvariant()}}}");
+                Solution.AppendLine($"\t\t{{{FormatGuid(Project.Guid)}}} = {{{FormatGuid(FolderGuid)}}}");
             }
         }
 
@@ -747,9 +769,83 @@ public sealed class VisualStudioGenerator : IProjectFileGenerator
         return Solution.ToString();
     }
 
-    private static Guid ScriptProjectGuid(ScriptProject Project)
+    private static string BuildSlnx(
+        IReadOnlyList<SolutionProject> Projects,
+        Dictionary<string, Guid> FolderGuids,
+        IReadOnlyList<ProjectConfiguration> Configurations)
     {
-        return MakeDeterministicGuid("Scripts:" + Project.Name);
+        StringBuilder Xml = new();
+        Xml.AppendLine("<Solution>");
+        Xml.AppendLine("  <Configurations>");
+
+        foreach (ProjectConfiguration Configuration in Configurations)
+        {
+            Xml.AppendLine($"""    <BuildType Name="{Escape(Configuration.DisplayName)}" />""");
+        }
+
+        Xml.AppendLine($"""    <Platform Name="{PlatformName}" />""");
+        Xml.AppendLine("  </Configurations>");
+
+        // In first-use order, so the folder holding the startup target, and with it that target, is listed first.
+        foreach (string FolderPath in FolderGuids.Keys)
+        {
+            string FolderName = Escape("/" + FolderPath + "/");
+            List<SolutionProject> Members = Projects
+                .Where(P => P.Folder.Equals(FolderPath, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (Members.Count == 0)
+            {
+                Xml.AppendLine($"""  <Folder Name="{FolderName}" />""");
+                continue;
+            }
+
+            Xml.AppendLine($"""  <Folder Name="{FolderName}">""");
+
+            foreach (SolutionProject Project in Members)
+            {
+                AppendSlnxProject(Xml, Project, "    ");
+            }
+
+            Xml.AppendLine("  </Folder>");
+        }
+
+        foreach (SolutionProject Project in Projects.Where(P => !FolderGuids.ContainsKey(P.Folder)))
+        {
+            AppendSlnxProject(Xml, Project, "  ");
+        }
+
+        Xml.AppendLine("</Solution>");
+
+        return Xml.ToString();
+    }
+
+    private static void AppendSlnxProject(StringBuilder Xml, SolutionProject Project, string Indent)
+    {
+        string Element = $"""{Indent}<Project Path="{Escape(Project.RelativePath.Replace('\\', '/'))}" Id="{Project.Guid}" """;
+
+        // Solution and project configurations share names, so a built native project needs no mapping.
+        if (!Project.bManaged && Project.bBuildByDefault)
+        {
+            Xml.AppendLine(Element + "/>");
+            return;
+        }
+
+        Xml.AppendLine(Element.TrimEnd() + ">");
+
+        if (Project.bManaged)
+        {
+            Xml.AppendLine($"""{Indent}  <BuildType Project="{ManagedBuildType}" />""");
+            Xml.AppendLine($"""{Indent}  <Platform Project="{ManagedPlatform}" />""");
+        }
+
+        Xml.AppendLine($"""{Indent}  <Build Project="false" />""");
+        Xml.AppendLine($"{Indent}</Project>");
+    }
+
+    private static string FormatGuid(Guid Value)
+    {
+        return Value.ToString().ToUpperInvariant();
     }
 
     /// <summary>Command that reinvokes this tool.</summary>

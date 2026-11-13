@@ -90,7 +90,7 @@ public static class WslBuild
     private static string SyncIn(string WindowsRoot, string Mirror)
     {
         IEnumerable<string> Excludes = PackageMode.ExcludedDirectoryNames.Select(Name => $"--exclude={Name}/")
-            .Append("--exclude=/.git").Append("--exclude=/External").Append("--exclude=/Build").Append("--exclude=*.sln");
+            .Append("--exclude=/.git").Append("--exclude=/External").Append("--exclude=/Build").Append("--exclude=*.sln").Append("--exclude=*.slnx");
         return $"mkdir -p \"{Mirror}\" && rsync -a --delete {string.Join(' ', Excludes)} \"{ToWslPath(WindowsRoot)}/\" \"{Mirror}/\"";
     }
 

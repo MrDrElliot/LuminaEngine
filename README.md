@@ -242,7 +242,7 @@ threshold, which is how to see the rejection dialog on hardware that passes.
    (`External-Win64.zip`, ~192 MB), verifies it against a SHA-256 hash pinned in this
    repo (once the maintainer records it, see
    [`DEPENDENCIES.md`](DEPENDENCIES.md)), configures git hooks, registers the
-   `.lproject` file type, and generates `Lumina.sln`.
+   `.lproject` file type, and generates `Lumina.slnx`.
 
    The bundle contains the .NET 10 runtime (C# scripting), LLVM/Clang 19
    (reflection codegen), the Slang shader compiler, RenderDoc, and Tracy. Each
@@ -258,7 +258,7 @@ threshold, which is how to see the rejection dialog on hardware that passes.
 
 1. **Open the solution**
 
-   Open `Lumina.sln` in Visual Studio.
+   Open `Lumina.slnx` in Visual Studio.
 
 2. **Build and run**
 

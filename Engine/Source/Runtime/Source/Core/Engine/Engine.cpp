@@ -731,6 +731,12 @@ namespace Lumina
                 if (CacheTrimCountdown > 0 && --CacheTrimCountdown == 0 && CVarTrimAllocatorCaches.GetValue())
                 {
                     Memory::RequestCacheTrim();
+                    GameThreadTrimSpansLeft = Memory::GetThreadCachedSpans();
+                }
+                if (GameThreadTrimSpansLeft > 0)
+                {
+                    const size_t Budget = Math::Min(GameThreadTrimSpansLeft, kGameThreadTrimSpansPerFrame);
+                    GameThreadTrimSpansLeft = Memory::TrimThreadCache(Budget) < Budget ? 0 : GameThreadTrimSpansLeft - Budget;
                 }
 
                 // Unloads assemblies and destroys objects.
@@ -1159,6 +1165,7 @@ namespace Lumina
         Physics::SetLengthUnitsPerMeter(GetDefault<CProjectSettings>()->PhysicsLengthUnitsPerMeter);
 
         RefreshWindowTitle();
+        ApplyProjectIcon();
         ApplyUserSettings();
         LoadStartupMap();
 
@@ -1780,9 +1787,30 @@ namespace Lumina
         Physics::SetLengthUnitsPerMeter(GetDefault<CProjectSettings>()->PhysicsLengthUnitsPerMeter);
 
         RefreshWindowTitle();
+        ApplyProjectIcon();
         ApplyUserSettings();
         LoadStartupMap();
         return true;
+    }
+
+    void FEngine::ApplyProjectIcon()
+    {
+        // The editor keeps the Lumina icon.
+        #if !USING(WITH_EDITOR)
+        FWindow* Window = Global::GIsHeadless ? nullptr : Windowing::GetPrimaryWindowHandle();
+        if (Window == nullptr)
+        {
+            return;
+        }
+
+        Window->SetIcon(GetProjectIconPath());
+        #endif
+    }
+
+    FFixedString FEngine::GetProjectIconPath() const
+    {
+        const FString& Icon = GetDefault<CProjectSettings>()->Icon;
+        return Icon.IsEmpty() || Icon[0] == '/' ? FFixedString(*Icon, Icon.Len()) : Paths::Combine(ProjectPath, Icon);
     }
 
     void FEngine::RefreshWindowTitle(double AverageFrameSeconds)

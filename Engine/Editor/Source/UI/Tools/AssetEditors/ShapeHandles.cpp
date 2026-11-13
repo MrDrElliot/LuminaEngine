@@ -315,6 +315,21 @@ namespace Lumina::ShapeHandles
         return true;
     }
 
+    bool AngleOnPlaneToRay(const FVector3& Anchor, const FVector3& Zero, const FVector3& Ninety,
+                           const FVector3& RayOrigin, const FVector3& RayDirection, float& OutRadians)
+    {
+        const FVector3 Normal = Math::Cross(Zero, Ninety);
+        const float Facing = Math::Dot(RayDirection, Normal);
+        if (Math::Abs(Facing) < 1e-4f)
+        {
+            return false;
+        }
+
+        const FVector3 Hit = RayOrigin + RayDirection * (Math::Dot(Anchor - RayOrigin, Normal) / Facing) - Anchor;
+        OutRadians = Math::Atan2(Math::Dot(Hit, Ninety), Math::Dot(Hit, Zero));
+        return true;
+    }
+
     bool ProjectToScreen(const FMatrix4& ViewProj, const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,
                          const FVector3& WorldPosition, ImVec2& OutScreen)
     {

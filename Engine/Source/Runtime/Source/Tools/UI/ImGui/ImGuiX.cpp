@@ -1055,19 +1055,7 @@ namespace Lumina::ImGuiX
             return false;
         }
 
-        TVector<CStruct*> Candidates;
-        for (TObjectIterator<CStruct> It; It; ++It)
-        {
-            CStruct* Candidate = *It;
-            if ((Candidate == BaseStruct && !bIncludeBase) || !IsInstancableStructType(Candidate))
-            {
-                continue;
-            }
-            if (BaseStruct == nullptr || Candidate->IsChildOf(BaseStruct))
-            {
-                Candidates.Add(Candidate);
-            }
-        }
+        TVector<CStruct*> Candidates = GatherInstancableStructSubtypes(BaseStruct, bIncludeBase);
 
         Algo::Sort(Candidates, [](CStruct* A, CStruct* B)
         {

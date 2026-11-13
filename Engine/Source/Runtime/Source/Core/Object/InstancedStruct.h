@@ -7,6 +7,9 @@ namespace Lumina
     // False for a CClass, which describes a CObject and derives from CStruct but is never value storage.
     RUNTIME_API bool IsInstancableStructType(const CStruct* Type);
 
+    // Instancable structs deriving from Base, or every instancable struct when Base is null; Base itself only when bIncludeBase.
+    RUNTIME_API TVector<CStruct*> GatherInstancableStructSubtypes(const CStruct* Base, bool bIncludeBase = false);
+
     // A value type an FInstancedStruct may own: reflected, and NOT a CObject. A CObject has identity
     // and is referenced through TStrongObjectPtr, never copied into an inline value slot.
 #if defined(REFLECTION_PARSER)

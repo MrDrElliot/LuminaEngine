@@ -25,6 +25,7 @@
 #include "MCPRuntimeTools.h"
 #include "MCPSceneTools.h"
 #include "MCPSequenceTools.h"
+#include "MCPStateTreeTools.h"
 #include "MCPStressTools.h"
 #include "MCPTerrainTools.h"
 #include "Paths/Paths.h"
@@ -131,6 +132,7 @@ namespace Lumina::MCP
         RegisterRuntimeTools(GOwner);
         RegisterStressTools(GOwner);
         RegisterSequenceTools(GOwner);
+        RegisterStateTreeTools(GOwner);
         RegisterPackageTools(GOwner);
 
         Http::FServerParams Params;

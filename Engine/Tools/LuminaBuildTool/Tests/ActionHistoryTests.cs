@@ -97,4 +97,41 @@ public sealed class ActionHistoryTests : IDisposable
         Assert.DoesNotContain(MissingOutput, Saved.CommandKeys.Keys);
         Assert.Contains(KeptOutput, Saved.CommandKeys.Keys);
     }
+
+    [Fact]
+    public void Load_MergesSeveralFilesAndSaveRoutesEachEntryBackByResolver()
+    {
+        string EngineFile = Path.Combine(TempDirectory, "Engine.json");
+        string ProjectFile = Path.Combine(TempDirectory, "Project.json");
+
+        string EngineOutput = WriteOutput("Engine.obj");
+        string ProjectOutput = WriteOutput("Project.obj");
+
+        // An entry already on the engine side, as if an earlier engine-only build recorded it.
+        ActionHistory Seed = ActionHistory.Load(EngineFile);
+        Seed.RecordCommand(EngineOutput, "EngineCommand");
+        Seed.Save();
+
+        string ResolveFile(string Output) => string.Equals(Output, EngineOutput, StringComparison.OrdinalIgnoreCase)
+            ? EngineFile
+            : ProjectFile;
+
+        ActionHistory Merged = ActionHistory.Load(new[] { ProjectFile, EngineFile }, ResolveFile);
+
+        // The engine-only record is visible without a project build having ever run, so it is not treated as outdated.
+        Assert.False(Merged.HasCommandChanged(EngineOutput, "EngineCommand"));
+
+        Merged.RecordCommand(ProjectOutput, "ProjectCommand");
+        Merged.Save();
+
+        ActionHistoryData? SavedEngine = JsonStore.Load<ActionHistoryData>(EngineFile);
+        ActionHistoryData? SavedProject = JsonStore.Load<ActionHistoryData>(ProjectFile);
+
+        Assert.NotNull(SavedEngine);
+        Assert.NotNull(SavedProject);
+        Assert.Contains(EngineOutput, SavedEngine.CommandKeys.Keys);
+        Assert.DoesNotContain(ProjectOutput, SavedEngine.CommandKeys.Keys);
+        Assert.Contains(ProjectOutput, SavedProject.CommandKeys.Keys);
+        Assert.DoesNotContain(EngineOutput, SavedProject.CommandKeys.Keys);
+    }
 }

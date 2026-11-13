@@ -154,6 +154,8 @@ namespace Lumina::ECS::Utils
 	RUNTIME_API void QueueDirtyTransform(FTransformDirtyGate* Gate, ECS::FEntity Entity, bool bQueueTransform, bool bQueueBody);
 
 
+	inline constexpr uint32 kMaxMovedTransformConsumers = 4;
+
 	// Start recording which entities the resolve moved for one more consumer, such as the render scene or navigation, each draining its own copy.
 	// A filtered consumer records only the entities it marks with SetMovedTransformInterest, so a world of moving props costs it nothing.
 	RUNTIME_API uint32 AddMovedTransformConsumer(ECS::FRegistry& Registry, bool bFiltered = false);

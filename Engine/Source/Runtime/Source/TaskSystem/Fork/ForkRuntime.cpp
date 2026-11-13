@@ -24,6 +24,9 @@ namespace Lumina::Jobs
         constexpr uint32 kIdleTimeoutMs   = 50;
         constexpr uint32 kWaitTimeoutMs   = 1;
 
+        // About a second asleep with no task run, so a worker busy every frame keeps its warm allocator cache.
+        constexpr uint32 kIdleWaitsBeforeCacheTrim = 20;
+
         using FDeque = TWorkDeque<FFrame>;
 
         FORCEINLINE void CpuPause()
@@ -470,6 +473,7 @@ namespace Lumina::Jobs
 
             GRuntime->Searching.fetch_add(1, std::memory_order_relaxed);
             uint32 Spins = 0;
+            uint32 IdleWaits = 0;
             while (!GRuntime->bStopping.load(std::memory_order_acquire))
             {
                 if (const FFound Found = FindWork(Context, kNumJobPriorities))
@@ -481,6 +485,7 @@ namespace Lumina::Jobs
                     Run(Context, Found);
                     GRuntime->Searching.fetch_add(1, std::memory_order_relaxed);
                     Spins = 0;
+                    IdleWaits = 0;
                     continue;
                 }
 
@@ -500,6 +505,7 @@ namespace Lumina::Jobs
                 }
                 if (!AnyWorkVisible() && !GRuntime->bStopping.load(std::memory_order_acquire))
                 {
+                    Memory::TrimThreadCacheIfRequested(IdleWaits++ == kIdleWaitsBeforeCacheTrim);
                     if (GRuntime->Hooks.IdleBegin != nullptr)
                     {
                         GRuntime->Hooks.IdleBegin(Index);

@@ -132,6 +132,7 @@ public static class Program
               Tidy [PathFilter]         Run clang-tidy with the workspace .clang-tidy over first-party sources
                                         (-Checks=<list>, -Jobs=<n>, -WarningsAsErrors, -ClangTidy=<path>)
               GenerateProjectFiles      Write IDE project and solution files
+                                        (-SolutionFormat=Slnx | Sln, default Slnx)
               Package                   Build and zip a prebuilt editor that runs without sources or a toolchain
 
             Profile options:
@@ -163,7 +164,7 @@ public static class Program
               -All                      Include toolchain and SDK headers
 
             Clean options (with no target, whole trees are cleaned rather than one target):
-              -Full                     Also delete Binaries and .sln files, and the engine tree
+              -Full                     Also delete Binaries and solution files, and the engine tree
                                         alongside the project when -Project is given
               -Regenerate               Rewrite both IDE workspaces once every delete succeeded
             -DryRun lists what would go instead. A delete an open IDE is blocking fails the command,

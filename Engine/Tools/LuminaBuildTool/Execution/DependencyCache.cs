@@ -17,58 +17,71 @@ public sealed class DependencyCacheData
 /// <summary>Records which headers each output depended on, so editing one rebuilds exactly its includers.</summary>
 public sealed class DependencyCache
 {
-    private readonly string CacheFile;
+    private readonly Func<string, string> ResolveCacheFile;
+
+    private readonly string[] KnownFiles;
 
     private readonly ConcurrentDictionary<string, string[]> DependenciesByOutput =
         new(StringComparer.OrdinalIgnoreCase);
 
     private bool bDirty;
 
-    private DependencyCache(string CacheFile)
+    private DependencyCache(Func<string, string> ResolveCacheFile, string[] KnownFiles)
     {
-        this.CacheFile = CacheFile;
+        this.ResolveCacheFile = ResolveCacheFile;
+        this.KnownFiles = KnownFiles;
     }
 
     public static DependencyCache Load(string CacheFile)
     {
-        DependencyCache Cache = new(CacheFile);
-        DependencyCacheData? Data = JsonStore.Load<DependencyCacheData>(CacheFile);
+        return Load(new[] { CacheFile }, _ => CacheFile);
+    }
 
-        if (Data is null)
-        {
-            return Cache;
-        }
-
+    // Save writes each output's record back to the file the resolver picks for it.
+    public static DependencyCache Load(IReadOnlyList<string> CacheFiles, Func<string, string> ResolveCacheFile)
+    {
+        string[] Distinct = CacheFiles.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        DependencyCache Cache = new(ResolveCacheFile, Distinct);
         int Dropped = 0;
 
-        foreach ((string Output, List<int> Indices) in Data.Dependencies)
+        foreach (string CacheFile in Distinct)
         {
-            // An output no longer on disk is rebuilt anyway, so freshness is unaffected, but orphaned entries accumulate.
-            if (PathUtils.IsMissingFile(Output))
+            DependencyCacheData? Data = JsonStore.Load<DependencyCacheData>(CacheFile);
+
+            if (Data is null)
             {
-                Dropped++;
                 continue;
             }
 
-            string[] Paths = new string[Indices.Count];
-            bool bValid = true;
-
-            for (int Index = 0; Index < Indices.Count; Index++)
+            foreach ((string Output, List<int> Indices) in Data.Dependencies)
             {
-                int PathIndex = Indices[Index];
-
-                if (PathIndex < 0 || PathIndex >= Data.Paths.Count)
+                // An output no longer on disk is rebuilt anyway, so freshness is unaffected, but orphaned entries accumulate.
+                if (PathUtils.IsMissingFile(Output))
                 {
-                    bValid = false;
-                    break;
+                    Dropped++;
+                    continue;
                 }
 
-                Paths[Index] = Data.Paths[PathIndex];
-            }
+                string[] Paths = new string[Indices.Count];
+                bool bValid = true;
 
-            if (bValid)
-            {
-                Cache.DependenciesByOutput[Output] = Paths;
+                for (int Index = 0; Index < Indices.Count; Index++)
+                {
+                    int PathIndex = Indices[Index];
+
+                    if (PathIndex < 0 || PathIndex >= Data.Paths.Count)
+                    {
+                        bValid = false;
+                        break;
+                    }
+
+                    Paths[Index] = Data.Paths[PathIndex];
+                }
+
+                if (bValid)
+                {
+                    Cache.DependenciesByOutput[Output] = Paths;
+                }
             }
         }
 
@@ -91,11 +104,29 @@ public sealed class DependencyCache
             return;
         }
 
-        Dictionary<string, int> PathIndices = new(StringComparer.OrdinalIgnoreCase);
-        DependencyCacheData Data = new();
+        Dictionary<string, (DependencyCacheData Data, Dictionary<string, int> PathIndices)> ByFile =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        (DependencyCacheData Data, Dictionary<string, int> PathIndices) EntryFor(string CacheFile)
+        {
+            if (ByFile.TryGetValue(CacheFile, out var Entry))
+            {
+                return Entry;
+            }
+
+            Entry = (new DependencyCacheData(), new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase));
+            ByFile[CacheFile] = Entry;
+            return Entry;
+        }
+
+        foreach (string CacheFile in KnownFiles)
+        {
+            EntryFor(CacheFile);
+        }
 
         foreach ((string Output, string[] Paths) in DependenciesByOutput.OrderBy(P => P.Key, StringComparer.OrdinalIgnoreCase))
         {
+            (DependencyCacheData Data, Dictionary<string, int> PathIndices) = EntryFor(ResolveCacheFile(Output));
             List<int> Indices = new(Paths.Length);
 
             foreach (string Path in Paths)
@@ -113,7 +144,11 @@ public sealed class DependencyCache
             Data.Dependencies[Output] = Indices;
         }
 
-        JsonStore.Save(CacheFile, Data);
+        foreach (KeyValuePair<string, (DependencyCacheData Data, Dictionary<string, int> PathIndices)> Entry in ByFile)
+        {
+            JsonStore.Save(Entry.Key, Entry.Value.Data);
+        }
+
         bDirty = false;
     }
 

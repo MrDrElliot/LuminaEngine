@@ -61,9 +61,9 @@ set "DO_OPEN=1"
 if defined LUMINA_NO_OPEN set "DO_OPEN=0"
 echo %* | findstr /I /C:"no-open" >nul && set "DO_OPEN=0"
 if "%DO_OPEN%"=="1" (
-    if exist "%ENGINE_DIR%\Lumina.sln" (
-        echo  Opening Lumina.sln...
-        start "" "%ENGINE_DIR%\Lumina.sln"
+    for %%S in (Lumina.slnx Lumina.sln) do if exist "%ENGINE_DIR%\%%S" (
+        echo  Opening %%S...
+        start "" "%ENGINE_DIR%\%%S"
     )
 )
 

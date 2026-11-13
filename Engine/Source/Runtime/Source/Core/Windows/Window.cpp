@@ -6,6 +6,7 @@
 #include "Core/Application/Application.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Events/Event.h"
+#include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "Platform/Platform.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
@@ -290,23 +291,7 @@ namespace Lumina
 
 			LOG_TRACE("Initializing Window: {} (Width: {}p Height: {}p)", Impl->Specs.Title, Impl->Specs.Extent.x, Impl->Specs.Extent.y);
 
-			const FString IconPath = Paths::GetEngineResourceDirectory() + "/Textures/Lumina.png";
-			TVector<uint8> IconBytes;
-			GLFWimage Icon = {};
-			int Channels;
-			if (Filesystem::ReadFile(IconBytes, IconPath))
-			{
-				Icon.pixels = stbi_load_from_memory(IconBytes.GetData(), (int)IconBytes.Num(), &Icon.width, &Icon.height, &Channels, 4);
-			}
-			if (Icon.pixels)
-			{
-				glfwSetWindowIcon(Impl->Window, 1, &Icon);
-				stbi_image_free(Icon.pixels);
-			}
-			else
-			{
-				LOG_WARN("Failed to load window icon {}: {}", IconPath, IconBytes.IsEmpty() ? "file could not be read" : stbi_failure_reason());
-			}
+			SetIcon(Paths::GetEngineResourceDirectory() + "/Textures/Lumina.png");
 
 			glfwShowWindow(Impl->Window);
 
@@ -566,6 +551,16 @@ namespace Lumina
 		glfwSetWindowTitle(Impl->Window, *Title);
 	}
 
+	void FWindow::SetIcon(FStringView Path)
+	{
+		Windowing::FWindowIcon Icon;
+		if (Windowing::LoadWindowIcon(Path, Icon))
+		{
+			GLFWimage Image = { Icon.Width, Icon.Height, Icon.Pixels.GetData() };
+			glfwSetWindowIcon(Impl->Window, 1, &Image);
+		}
+	}
+
 	void FWindow::SetTitleBarHovered(bool bHovered)
 	{
 		Impl->bTitleBarHovered = bHovered;
@@ -676,6 +671,34 @@ namespace Lumina
 				return false;
 			}
 			return glfwGetWindowAttrib(Window, GLFW_FOCUSED) != 0;
+		}
+
+		bool LoadWindowIcon(FStringView Path, FWindowIcon& Out)
+		{
+			if (Path.IsEmpty())
+			{
+				return false;
+			}
+
+			TVector<uint8> Bytes;
+			if (!VFS::ReadFile(Bytes, Path) && !Filesystem::ReadFile(Bytes, Path))
+			{
+				LOG_WARN("Failed to load window icon {}: file could not be read", Path);
+				return false;
+			}
+
+			int Channels;
+			uint8* Pixels = stbi_load_from_memory(Bytes.GetData(), (int)Bytes.Num(), &Out.Width, &Out.Height, &Channels, 4);
+			if (Pixels == nullptr)
+			{
+				LOG_WARN("Failed to load window icon {}: {}", Path, stbi_failure_reason());
+				return false;
+			}
+
+			Out.Pixels.Reset();
+			Out.Pixels.Append(Pixels, Out.Width * Out.Height * 4);
+			stbi_image_free(Pixels);
+			return true;
 		}
 
 		bool ReadGamepad(int32 Index, FRawGamepad& Out)

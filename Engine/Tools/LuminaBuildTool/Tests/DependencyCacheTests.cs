@@ -73,6 +73,44 @@ public sealed class DependencyCacheTests : IDisposable
         Assert.Contains(KeptOutput, Saved.Dependencies.Keys);
     }
 
+    [Fact]
+    public void Load_MergesSeveralFilesAndSaveRoutesEachEntryBackByResolver()
+    {
+        string EngineFile = Path.Combine(TempDirectory, "Engine.json");
+        string ProjectFile = Path.Combine(TempDirectory, "Project.json");
+
+        string EngineOutput = WriteOutput("Engine.obj");
+        string ProjectOutput = WriteOutput("Project.obj");
+        string Header = Path.Combine(TempDirectory, "Shared.h");
+
+        // Headers already recorded on the engine side, as if an earlier engine-only build recorded them.
+        DependencyCache Seed = DependencyCache.Load(EngineFile);
+        Seed.RecordFromCompilerOutput(EngineOutput, WriteSourceDependencies(EngineOutput, [Header]), DependencyListFormat.MsvcSourceDependencies);
+        Seed.Save();
+
+        string ResolveFile(string Output) => string.Equals(Output, EngineOutput, StringComparison.OrdinalIgnoreCase)
+            ? EngineFile
+            : ProjectFile;
+
+        DependencyCache Merged = DependencyCache.Load(new[] { ProjectFile, EngineFile }, ResolveFile);
+
+        // The engine-only record is visible without a project build having ever run.
+        Assert.NotNull(Merged.GetDependencies(EngineOutput));
+
+        Merged.RecordFromCompilerOutput(ProjectOutput, WriteSourceDependencies(ProjectOutput, [Header]), DependencyListFormat.MsvcSourceDependencies);
+        Merged.Save();
+
+        DependencyCacheData? SavedEngine = JsonStore.Load<DependencyCacheData>(EngineFile);
+        DependencyCacheData? SavedProject = JsonStore.Load<DependencyCacheData>(ProjectFile);
+
+        Assert.NotNull(SavedEngine);
+        Assert.NotNull(SavedProject);
+        Assert.Contains(EngineOutput, SavedEngine.Dependencies.Keys);
+        Assert.DoesNotContain(ProjectOutput, SavedEngine.Dependencies.Keys);
+        Assert.Contains(ProjectOutput, SavedProject.Dependencies.Keys);
+        Assert.DoesNotContain(EngineOutput, SavedProject.Dependencies.Keys);
+    }
+
     private string WriteSourceDependencies(string OutputFile, string[] Headers)
     {
         string ListFile = OutputFile + ".deps.json";

@@ -372,8 +372,7 @@ public static class AnalyzeMode
         TargetInfo Info = new(TargetName, TypeValue, PlatformValue, ConfigurationValue, Directories, Options);
         BuildTarget Target = new TargetAssembler(Assembly, Directories, PlatformSupport).Assemble(TargetName, Info);
 
-        string CacheDirectory = Directories.BuildRecordDirectory(PlatformValue, ConfigurationValue, TypeValue);
-        DependencyCache Cache = DependencyCache.Load(Path.Combine(CacheDirectory, "Dependencies.json"));
+        DependencyCache Cache = new BuildRecords(Directories, PlatformValue, ConfigurationValue, TypeValue).LoadDependencies();
 
         Dictionary<BuildModule, ModuleClosures> ByModule = new();
         Dictionary<string, BuildModule> HeaderOwners = new(StringComparer.OrdinalIgnoreCase);

@@ -7,7 +7,7 @@
 #include "Assets/AssetTypes/DataTable/DataTable.h"
 #include "Assets/AssetTypes/DataTable/DataTableCSV.h"
 #include "Containers/Algorithm.h"
-#include "Core/Object/ObjectIterator.h"
+#include "Core/Object/InstancedStruct.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "MCPServer.h"
 
@@ -90,14 +90,9 @@ namespace Lumina::MCP
                         return Agent::FToolResult::Error(Error);
                     }
 
-                    for (TObjectIterator<CStruct> It; It; ++It)
+                    for (CStruct* Candidate : GatherInstancableStructSubtypes(SDataTableRowBase::StaticStruct()))
                     {
-                        CStruct* Candidate = *It;
-                        if (Candidate != SDataTableRowBase::StaticStruct()
-                            && Candidate->IsChildOf(SDataTableRowBase::StaticStruct()))
-                        {
-                            Out.RowStructs.Emplace(*Candidate->GetName().ToString());
-                        }
+                        Out.RowStructs.Emplace(*Candidate->GetName().ToString());
                     }
 
                     Out.RowCount = Table->GetRowCount();

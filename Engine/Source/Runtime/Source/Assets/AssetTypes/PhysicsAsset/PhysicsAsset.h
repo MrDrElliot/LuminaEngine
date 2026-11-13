@@ -3,6 +3,7 @@
 #include "Core/LuminaMacros.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Containers/Span.h"
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Math/Math.h"
@@ -88,13 +89,33 @@ namespace Lumina
         PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 180.0f, Category = "Constraint|Limits")
         float TwistLimitDegrees = 30.0f;
 
-        // Cone half-angle about the first swing axis (degrees).
+        // Swing half-angle about the joint frame's first axis (degrees), with Swing2 making an elliptical cone.
         PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 180.0f, Category = "Constraint|Limits")
         float Swing1LimitDegrees = 45.0f;
 
-        // Cone half-angle about the second swing axis (degrees).
+        // Swing half-angle about the joint frame's second axis (degrees), with Swing1 making an elliptical cone.
         PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 180.0f, Category = "Constraint|Limits")
         float Swing2LimitDegrees = 45.0f;
+
+        // Ease into the limits like a ligament, a spring that grows past the soft start, instead of meeting a hard stop.
+        PROPERTY(Editable, Category = "Constraint|Soft Limits")
+        bool bSoftLimits = true;
+
+        // Share of each limit the joint moves freely before the soft limit spring starts pulling it back.
+        PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 1.0f, EditCondition = "bSoftLimits", Category = "Constraint|Soft Limits")
+        float SoftLimitStart = 0.7f;
+
+        // How quickly the limb springs back once it reaches the limit, the spring stiffening from nothing at the soft start.
+        PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 30.0f, Units = "Hz", EditCondition = "bSoftLimits", Category = "Constraint|Soft Limits")
+        float LimitStiffness = 3.0f;
+
+        // Soft limit damping ratio, one settling back without a bounce.
+        PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 4.0f, EditCondition = "bSoftLimits", Category = "Constraint|Soft Limits")
+        float LimitDampingRatio = 1.0f;
+
+        // Torque the soft limit can pull back with on the strongest joint, lighter limbs getting a share by the mass they carry.
+        PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 5000.0f, Units = "N m", EditCondition = "bSoftLimits", Category = "Constraint|Soft Limits")
+        float MaxLimitTorque = 300.0f;
 
         // Muscle stiffness for this joint while powered, zero keeping the ragdoll component's.
         PROPERTY(Editable, ClampMin = 0.0f, Units = "Hz", Category = "Constraint|Motor")
@@ -107,7 +128,22 @@ namespace Lumina
         // Scales this joint's share of the ragdoll's muscle torque, such as a weak neck or strong hips.
         PROPERTY(Editable, ClampMin = 0.0f, ClampMax = 10.0f, Category = "Constraint|Motor")
         float MotorStrength = 1.0f;
+
+        // Twist, Swing1 and Swing2 half-angles in radians.
+        FVector3 GetLimitsRadians() const;
+
+        // Share of the limits the soft zone starts at, the limits themselves when soft limits are off.
+        float GetSoftLimitStart() const;
     };
+
+    // Clamps a joint frame rotation into the soft range and returns how far through the soft zone it reached, zero inside and one at the limits.
+    RUNTIME_API float ClampToSoftRange(FQuat& JointRotation, const FVector3& LimitsRadians, float SoftStart);
+
+    // A ragdoll joint's frame, Z along the limb toward its children (else away from its parent, else BoneUp) and X the swing 1 axis.
+    RUNTIME_API FQuat MakeRagdollJointFrame(const FVector3& TowardChildren, const FVector3& AwayFromParent, const FVector3& BoneUp);
+
+    // The constraint on ChildBone, or the defaults for a bone the asset has none for.
+    RUNTIME_API SPhysicsConstraintSetup FindConstraintSetup(TSpan<const SPhysicsConstraintSetup> Constraints, const FName& ChildBone);
 
     // Ragdoll bodies and joint limits for a skeleton, shared by every skeletal mesh on that Skeleton.
     REFLECT()

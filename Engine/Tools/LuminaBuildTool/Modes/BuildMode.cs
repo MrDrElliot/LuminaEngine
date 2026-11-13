@@ -255,10 +255,9 @@ public static class BuildMode
                     TargetName, TypeValue, PlatformValue, ConfigurationValue, Directories,
                     bIsPrimary ? Options : Options.WithoutPgo());
                 // Assembling first touches the rules assembly, a fifth of a second of one-time JIT to hide behind.
-                string PrefetchDirectory = Directories.BuildRecordDirectory(PlatformValue, ConfigurationValue, TypeValue);
-                Task<(ActionHistory History, DependencyCache Dependencies)> Prefetch = Task.Run(() => (
-                    ActionHistory.Load(Path.Combine(PrefetchDirectory, "ActionHistory.json")),
-                    DependencyCache.Load(Path.Combine(PrefetchDirectory, "Dependencies.json"))), Cancellation);
+                BuildRecords PrefetchRecords = new(Directories, PlatformValue, ConfigurationValue, TypeValue);
+                Task<(ActionHistory History, DependencyCache Dependencies)> Prefetch = Task.Run(
+                    () => (PrefetchRecords.LoadHistory(), PrefetchRecords.LoadDependencies()), Cancellation);
 
                 Stopwatch AssembleTimer = Stopwatch.StartNew();
                 BuildTarget Target = new TargetAssembler(Assembly, Directories, PlatformSupport).Assemble(TargetName, Info);
@@ -286,9 +285,7 @@ public static class BuildMode
                 // Built at this target's own type and as the engine's build, so engine intermediates stay out of a project.
                 if (Target.Rules.RequiredTargetNames.Count > 0)
                 {
-                    BuildDirectories EngineOnly = Directories.ProjectRoot is null
-                        ? Directories
-                        : BuildDirectories.Discover(Directories.EngineRoot, null);
+                    BuildDirectories EngineOnly = Directories.ToEngineOnly();
 
                     BuildSession EngineBuild = ReferenceEquals(EngineOnly, Directories)
                         ? this
@@ -313,7 +310,7 @@ public static class BuildMode
                     }
                 }
 
-                return await BuildResolvedAsync(Target, PrefetchDirectory, Prefetch, Cancellation).ConfigureAwait(false);
+                return await BuildResolvedAsync(Target, PrefetchRecords, Prefetch, Cancellation).ConfigureAwait(false);
             }
             finally
             {
@@ -323,7 +320,7 @@ public static class BuildMode
 
         private async Task<int> BuildResolvedAsync(
             BuildTarget Target,
-            string PrefetchDirectory,
+            BuildRecords PrefetchRecords,
             Task<(ActionHistory History, DependencyCache Dependencies)> Prefetch,
             CancellationToken Cancellation)
         {
@@ -343,21 +340,20 @@ public static class BuildMode
             ActionGraph Graph = ActionGraph.Build(Target, Toolchain);
             Phase("  ActionGraph.Build", PhaseTimer);
 
-            string CacheDirectory = Target.Directories.BuildRecordDirectory(
-                Target.Info.Platform, Target.Info.Configuration, Target.Info.Type);
+            BuildRecords Records = new(Target.Directories, Target.Info.Platform, Target.Info.Configuration, Target.Info.Type);
 
             ActionHistory History;
             DependencyCache HeaderDependencies;
 
             // A target may pin its own configuration, which lands the records somewhere the prefetch did not look.
-            if (string.Equals(CacheDirectory, PrefetchDirectory, StringComparison.OrdinalIgnoreCase))
+            if (Records.IsSameLocation(PrefetchRecords))
             {
                 (History, HeaderDependencies) = await Prefetch.ConfigureAwait(false);
             }
             else
             {
-                History = ActionHistory.Load(Path.Combine(CacheDirectory, "ActionHistory.json"));
-                HeaderDependencies = DependencyCache.Load(Path.Combine(CacheDirectory, "Dependencies.json"));
+                History = Records.LoadHistory();
+                HeaderDependencies = Records.LoadDependencies();
             }
             Phase("  Build records (prefetched)", PhaseTimer);
 

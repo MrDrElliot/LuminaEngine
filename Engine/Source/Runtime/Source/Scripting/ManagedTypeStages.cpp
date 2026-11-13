@@ -3,6 +3,7 @@
 #include "ManagedTypeRegistry.h"
 #include "ScriptTypeRegistry.h"
 #include "ScriptableObject.h"
+#include "DotNet/DotNetStateTree.h"
 
 namespace Lumina::Scripting
 {
@@ -83,6 +84,7 @@ namespace Lumina::Scripting
         static FClassShellStage      ClassShells;
         static FStructStage      Structs;
         static FScriptableClassStage ScriptableClasses;
+        static StateTreeScript::FStateTreeStage StateTrees;
 
         FManagedTypeRegistry& Registry = FManagedTypeRegistry::Get();
         Registry.Register(&Redirects);
@@ -90,5 +92,6 @@ namespace Lumina::Scripting
         Registry.Register(&ClassShells);
         Registry.Register(&Structs);
         Registry.Register(&ScriptableClasses);
+        Registry.Register(&StateTrees);
     }
 }

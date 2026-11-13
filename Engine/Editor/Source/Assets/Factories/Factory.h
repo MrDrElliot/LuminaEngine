@@ -59,7 +59,7 @@ namespace Lumina
             return Cast<T>(CreateNewOf(T::StaticClass(), Path));
         }
 
-        // Creates, saves and registers one Class asset, and takes it down again when the save fails so its name stays free.
+        // Creates, saves and registers one Class asset, through Factory when it makes Class, and takes it down again when the save fails.
         static TStrongObjectPtr<CObject> CreateAsset(CFactory* Factory, CClass* Class, FStringView Path, FString& OutError);
 
         // Takes down an asset created here that nothing else has seen, with its package, so the name is free again.

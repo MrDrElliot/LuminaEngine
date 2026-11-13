@@ -11,8 +11,8 @@
 #include "Core/Profiler/Profile.h"
 #include "Core/Templates/Align.h"
 #include "Log/Log.h"
+#include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
-#include "Platform/Time/PlatformTime.h"
 
 namespace Lumina
 {
@@ -41,7 +41,6 @@ namespace Lumina
     {
         rpmalloc_config_t Config = {};
         Config.error_callback = RPMallocAssert;
-        Config.enable_huge_pages = true;
         rpmalloc_initialize_config(&Config);
     }
 
@@ -138,34 +137,106 @@ namespace Lumina
 
     namespace
     {
+        struct FThreadCacheTotals
+        {
+            size_t Sum = 0;
+            size_t Max = 0;
+        };
+
+        // The statistics dump is the only view rpmalloc gives of every thread's span cache, one Cached column per heap.
+        FThreadCacheTotals SumThreadSpanCaches(const char* DumpPath)
+        {
+            FThreadCacheTotals Totals;
+            FILE* File = std::fopen(DumpPath, "r");
+            if (File == nullptr)
+            {
+                return Totals;
+            }
+
+            const size_t SpanSize = rpmalloc_config()->span_size;
+            size_t HeapBytes = 0;
+            bool bInSpanTable = false;
+            char Line[512];
+            while (std::fgets(Line, sizeof(Line), File) != nullptr)
+            {
+                uint32 SpanCount, Peak, Deferred, Cached;
+                int32 Current;
+                size_t PeakMiB;
+                if (std::strncmp(Line, "Spans ", 6) == 0)
+                {
+                    bInSpanTable = true;
+                }
+                else if (bInSpanTable && std::sscanf(Line, "%u: %d %u %u %zu %u", &SpanCount, &Current, &Peak, &Deferred, &PeakMiB, &Cached) == 6)
+                {
+                    HeapBytes += size_t(Cached) * SpanCount * SpanSize;
+                }
+                else if (bInSpanTable)
+                {
+                    Totals.Sum += HeapBytes;
+                    Totals.Max = Math::Max(Totals.Max, HeapBytes);
+                    HeapBytes = 0;
+                    bInSpanTable = false;
+                }
+            }
+            fclose(File);
+            return Totals;
+        }
+
+        FAutoConsoleCommand GAllocatorStatsCommand("Memory.AllocatorStats",
+            "Logs allocator mapped, committed, live and cached bytes in one line and writes the full dump to Saved/AllocatorStats.txt.", []
+            {
+                const FString Directory = Paths::GetEngineDirectory() + "/Saved";
+                Paths::CreateDirectories(FStringView(*Directory, Directory.Len()));
+                const FString DumpPath = Directory + "/AllocatorStats.txt";
+                const bool bDumped = Memory::DumpAllocatorStatistics(*DumpPath);
+                const FThreadCacheTotals ThreadCaches = SumThreadSpanCaches(*DumpPath);
+
+                const size_t Committed   = Memory::GetCommittedMemory();
+                const size_t GlobalCache = Memory::GetCachedMemory();
+                const size_t Cached      = GlobalCache + ThreadCaches.Sum;
+                LOG_INFO("Allocator: mapped {} MB, committed {} MB, OS commit {} MB, live {} MB, global cache {} MB, thread span cache {} MB (largest {} MB), huge {} MB, huge pages {}. Dump {}.",
+                    Memory::GetCurrentMappedMemory() >> 20, Committed >> 20, Platform::GetProcessMemoryUsageBytes() >> 20,
+                    (Committed > Cached ? Committed - Cached : 0) >> 20, GlobalCache >> 20, ThreadCaches.Sum >> 20, ThreadCaches.Max >> 20,
+                    Memory::GetCurrentHugeAllocMemory() >> 20, Memory::UsesHugePages() ? "on" : "off", bDumped ? DumpPath : FString("failed"));
+            });
+    }
+
+    namespace
+    {
         std::atomic<uint32> GCacheTrimEpoch{0};
         thread_local uint32 GThreadTrimEpoch = 0;
     }
 
     void Memory::RequestCacheTrim()
     {
-        LUMINA_PROFILE_SCOPE();
-        const size_t CommitBefore = Platform::GetProcessMemoryUsageBytes();
-        const double Start = PlatformTime::Seconds();
-        GThreadTrimEpoch = GCacheTrimEpoch.fetch_add(1, std::memory_order_relaxed) + 1;
-    #if LUMINA_DEBUG_ALLOCATOR
-        DebugAllocator::FlushQuarantine();
-    #endif
-        rpmalloc_thread_trim_caches();
-        rpmalloc_global_trim_caches();
-        const size_t CommitAfter = Platform::GetProcessMemoryUsageBytes();
-        LOG_INFO("Allocator cache trim released {} MB on the calling thread in {:.2f} ms; idle workers release theirs next.",
-            (int64)(CommitBefore > CommitAfter ? CommitBefore - CommitAfter : 0) >> 20, (PlatformTime::Seconds() - Start) * 1000.0);
+        GCacheTrimEpoch.fetch_add(1, std::memory_order_relaxed);
+        LOG_INFO("Allocator cache trim requested; job workers release their caches and the shared span cache when they next go idle.");
     }
 
-    void Memory::TrimThreadCacheIfRequested()
+    void Memory::TrimThreadCacheIfRequested(bool bForce)
     {
         const uint32 Epoch = GCacheTrimEpoch.load(std::memory_order_relaxed);
-        if (Epoch != GThreadTrimEpoch)
+        if (Epoch == GThreadTrimEpoch && !bForce)
         {
-            GThreadTrimEpoch = Epoch;
-            rpmalloc_thread_trim_caches();
+            return;
         }
+        LUMINA_PROFILE_SCOPE();
+        GThreadTrimEpoch = Epoch;
+        rpmalloc_thread_trim_caches(SIZE_MAX);
+        rpmalloc_global_trim_caches(SIZE_MAX);
+    }
+
+    size_t Memory::GetThreadCachedSpans()
+    {
+        rpmalloc_thread_statistics_t Stats{};
+        rpmalloc_thread_statistics(&Stats);
+        return Stats.spancache / rpmalloc_config()->span_size;
+    }
+
+    size_t Memory::TrimThreadCache(size_t MaxSpans)
+    {
+        LUMINA_PROFILE_SCOPE();
+        return rpmalloc_thread_trim_caches(MaxSpans);
     }
 
     void Memory::Initialize()

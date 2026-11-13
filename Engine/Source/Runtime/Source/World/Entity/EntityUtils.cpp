@@ -929,12 +929,11 @@ namespace Lumina::ECS::Utils
             }
         };
 
-        static constexpr uint32 kMaxMovedConsumers = 4;
-
         // Never freed once made, so a worker publishing while a consumer leaves still writes into live memory.
-        TUniquePtr<FMovedConsumer> MovedConsumers[kMaxMovedConsumers];
+        TUniquePtr<FMovedConsumer> MovedConsumers[kMaxMovedTransformConsumers];
         std::atomic<uint32>        MovedConsumerMask{ 0 };
         uint32                     NumMovedSlots = 0;
+        bool                       bWarnedMovedConsumersFull = false;
 
         static void AppendTo(FMovedConsumer& Consumer, uint32 Slot, uint32 NumSlots, const ECS::FEntity* Entities, size_t Count)
         {
@@ -958,7 +957,7 @@ namespace Lumina::ECS::Utils
         void PublishMovedBulk(const ECS::FEntity* Entities, size_t Count, uint32 SkipConsumer = Constants::kIndexNoneU32)
         {
             uint32 Mask = MovedConsumerMask.load(std::memory_order_acquire);
-            if (SkipConsumer < kMaxMovedConsumers)
+            if (SkipConsumer < kMaxMovedTransformConsumers)
             {
                 Mask &= ~(1u << SkipConsumer);
             }
@@ -1002,7 +1001,7 @@ namespace Lumina::ECS::Utils
 
         void SetMovedInterest(uint32 Index, ECS::FEntity Entity, bool bInterested)
         {
-            if (Index >= kMaxMovedConsumers || !MovedConsumers[Index] || !MovedConsumers[Index]->bFiltered)
+            if (Index >= kMaxMovedTransformConsumers || !MovedConsumers[Index] || !MovedConsumers[Index]->bFiltered)
             {
                 return;
             }
@@ -1023,7 +1022,7 @@ namespace Lumina::ECS::Utils
 
         uint32 AddMovedConsumer(bool bFiltered)
         {
-            for (uint32 Index = 0; Index < kMaxMovedConsumers; ++Index)
+            for (uint32 Index = 0; Index < kMaxMovedTransformConsumers; ++Index)
             {
                 if ((MovedConsumerMask.load(std::memory_order_relaxed) & (1u << Index)) != 0)
                 {
@@ -1043,12 +1042,17 @@ namespace Lumina::ECS::Utils
                 MovedConsumerMask.fetch_or(1u << Index, std::memory_order_release);
                 return Index;
             }
+            if (!bWarnedMovedConsumersFull)
+            {
+                bWarnedMovedConsumersFull = true;
+                LOG_WARN("[ECS] All {} moved-transform consumer slots are taken, so a new FMovedTransforms or render scene is refused and never sees moved entities.", kMaxMovedTransformConsumers);
+            }
             return Constants::kIndexNoneU32;
         }
 
         void DrainMovedConsumer(uint32 Index, TVector<ECS::FEntity>& Out)
         {
-            if (Index >= kMaxMovedConsumers || !MovedConsumers[Index])
+            if (Index >= kMaxMovedTransformConsumers || !MovedConsumers[Index])
             {
                 return;
             }
@@ -1070,7 +1074,7 @@ namespace Lumina::ECS::Utils
 
         void RemoveMovedConsumer(uint32 Index)
         {
-            if (Index >= kMaxMovedConsumers)
+            if (Index >= kMaxMovedTransformConsumers)
             {
                 return;
             }

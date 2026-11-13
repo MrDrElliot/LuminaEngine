@@ -114,11 +114,17 @@ namespace Lumina::Memory
     // Writes the allocator's per-thread, per-size-class statistics as text, for diffing two points in a session.
     RUNTIME_API bool DumpAllocatorStatistics(const char* Path);
 
-    // Asks every thread to hand its cached spans back to the OS, which is worth doing after a level unload.
+    // Asks every job worker to hand its cached spans back to the OS at its next idle, which is worth doing after a level unload.
     RUNTIME_API void RequestCacheTrim();
 
-    // A worker about to sleep trims its own cache here when a trim was requested since it last did.
-    RUNTIME_API void TrimThreadCacheIfRequested();
+    // A worker about to sleep releases its own cache and the shared span cache here when asked to or when bForce is set.
+    RUNTIME_API void TrimThreadCacheIfRequested(bool bForce);
+
+    // Spans this thread's span caches hold, counting a large span by its size in spans.
+    NODISCARD RUNTIME_API size_t GetThreadCachedSpans();
+
+    // Unmaps up to MaxSpans of this thread's cached spans and returns how many it unmapped.
+    RUNTIME_API size_t TrimThreadCache(size_t MaxSpans);
     
     NODISCARD RUNTIME_API LUMINA_ALLOCATION LUMINA_RESTRICT_RETURN void* Malloc(size_t Size, size_t Alignment = DEFAULT_ALIGNMENT) LUMINA_ALLOC_SIZE(1);
 
