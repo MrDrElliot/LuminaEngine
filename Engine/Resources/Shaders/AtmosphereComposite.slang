@@ -105,8 +105,8 @@ float GatherTexel(float4 Quad, int2 Texel)
 // In half-res texels; 1 is plain bilinear, wider averages the cloud march's per-texel start jitter on thin wisps.
 static const float kCloudTentRadius = 1.6;
 
-// The half-res texels under a tent of TentRadius, weighted toward those marched against this pixel's depth.
-float4 UpsampleHalfRes(FTexture2D Source, FTexture2D SourceDepth, float2 UV, float Depth, float TentRadius)
+// The half-res texels under a tent of TentRadius weighted toward this pixel's depth, with Quads fixed so AMD's LLPC never sees an indexed local array.
+float4 UpsampleHalfRes<let Quads : int>(FTexture2D Source, FTexture2D SourceDepth, float2 UV, float Depth, float TentRadius)
 {
     uint Width;
     uint Height;
@@ -125,17 +125,16 @@ float4 UpsampleHalfRes(FTexture2D Source, FTexture2D SourceDepth, float2 UV, flo
     float  ClosestErr = 3.0e38;
 
     // Clamp-to-edge gathers cover the taps' depths two texels at a time and clamp the border exactly like the loads do.
-    const int  First = TentRadius > 1.0 ? -1 : 0;
-    const int  Quads = TentRadius > 1.0 ? 2 : 1;
+    const int  First = Quads > 1 ? -1 : 0;
     const float2 InvSize = 1.0 / float2(Width, Height);
-    float4 DepthQuads[4];
-    [unroll]
+    float4 DepthQuads[Quads * Quads];
+    [ForceUnroll]
     for (int q = 0; q < Quads * Quads; ++q)
     {
         DepthQuads[q] = SourceDepth.GatherRed(Samplers::PointClamp, (float2(Base + First) + 1.0 + float2(q % Quads, q / Quads) * 2.0) * InvSize);
     }
 
-    [unroll]
+    [ForceUnroll]
     for (int i = 0; i < Quads * Quads * 4; ++i)
     {
         const int2   InQuad = int2(i % (Quads * 2), i / (Quads * 2));
@@ -232,7 +231,7 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth, float3 SurfaceViewP
 
         if (TMarchEnd > T0)
         {
-            const float4 Shaft = UpsampleHalfRes(Pass().FogShaft, Pass().FogShaftDepth, UV, Depth, 1.0);
+            const float4 Shaft = UpsampleHalfRes<1>(Pass().FogShaft, Pass().FogShaftDepth, UV, Depth, 1.0);
             InScatter += Trans * Shaft.rgb;
             Trans     *= Shaft.a;
         }
@@ -306,7 +305,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         || length(ViewPos) >= CloudGap;
     if (SPEC_ATMOS_CLOUDS != 0 && Pass().CloudScatter.IsValid() && bCloudReachable)
     {
-        float4 Cloud = UpsampleHalfRes(Pass().CloudScatter, Pass().CloudDepth, UV, Depth, kCloudTentRadius);
+        float4 Cloud = UpsampleHalfRes<2>(Pass().CloudScatter, Pass().CloudDepth, UV, Depth, kCloudTentRadius);
         if (Cloud.a <= 0.999)
         {
             ComposeTerm(Total, float3(Cloud.a), Cloud.rgb);

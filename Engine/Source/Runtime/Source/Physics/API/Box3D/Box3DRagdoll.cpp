@@ -36,6 +36,17 @@ namespace Lumina::Physics
             return Math::AngleAxis(Math::Acos(D), Math::Normalize(Math::Cross(Y, Dir)));
         }
 
+        // The largest axis of the entity's scale, the same measure physics sizes spheres and capsules by.
+        float ComputeRagdollShapeScale(const FMatrix4& EntityToWorld)
+        {
+            FVector3 Position;
+            FQuat Rotation;
+            FVector3 Scale;
+            AnimPose::DecomposeTRS(EntityToWorld, Position, Rotation, Scale);
+            const float Largest = Math::Max(Math::Abs(Scale.x), Math::Max(Math::Abs(Scale.y), Math::Abs(Scale.z)));
+            return Largest > 1e-4f ? Largest : 1.0f;
+        }
+
         // Sets a joint's hard cone and twist and its ligament's spring from Setup, adding the ligament the first time the joint needs one.
         void ApplyRagdollJointLimit(FPhysicsRagdollHandle& Ragdoll, FRagdollJointLimit& Limit, const SPhysicsConstraintSetup& Setup)
         {
@@ -135,6 +146,9 @@ namespace Lumina::Physics
             AnimPose::DecomposeTRS(Desc.EntityToWorld * Globals[BoneIndex], OutPos, OutRot, Scale);
         };
 
+        // Bodies are placed through the entity's scale, so shapes authored in skeleton units scale with it like other physics shapes.
+        const float ShapeScale = ComputeRagdollShapeScale(Desc.EntityToWorld);
+
         if (!Request.Bodies.IsEmpty())
         {
             TVector<int32> Order;
@@ -169,22 +183,22 @@ namespace Lumina::Physics
                 {
                     case ERagdollBodyShape::Box:
                     {
-                        const b3HullData* Hull = GetOrCreateBoxHull(Setup.HalfExtent);
+                        const b3HullData* Hull = GetOrCreateBoxHull(Setup.HalfExtent * ShapeScale);
                         if (Hull == nullptr)
                         {
                             continue;
                         }
-                        Def.Shape = MakeHullShape(Hull, Setup.TranslationOffset, OffsetRot);
+                        Def.Shape = MakeHullShape(Hull, Setup.TranslationOffset * ShapeScale, OffsetRot);
                         break;
                     }
                     case ERagdollBodyShape::Sphere:
                     {
-                        Def.Shape = MakeSphereShape(Setup.TranslationOffset, Setup.Radius);
+                        Def.Shape = MakeSphereShape(Setup.TranslationOffset * ShapeScale, Setup.Radius * ShapeScale);
                         break;
                     }
                     default:
                     {
-                        Def.Shape = MakeCapsuleShape(Setup.TranslationOffset, OffsetRot, Setup.Radius, Setup.HalfHeight);
+                        Def.Shape = MakeCapsuleShape(Setup.TranslationOffset * ShapeScale, OffsetRot, Setup.Radius * ShapeScale, Setup.HalfHeight * ShapeScale);
                         break;
                     }
                 }
@@ -219,12 +233,13 @@ namespace Lumina::Physics
                     ChildAvg /= (float)Children.Num();
 
                     const FVector3 DirC = ChildAvg - BonePos;
-                    const float Length = Math::Length(DirC);
-                    if (Length > 1e-4f)
+                    const float SkeletonLength = Math::Length(DirC);
+                    if (SkeletonLength > 1e-4f)
                     {
                         const FVector3 DirLocal = Math::Normalize(Math::Inverse(BoneRotC) * DirC);
-                        const float Radius = Math::Clamp(Length * 0.12f, 0.02f, 0.1f);
-                        const float HalfHeight = Math::Max(Length * 0.5f - Radius, 0.01f);
+                        const float Length = SkeletonLength * ShapeScale;
+                        const float Radius = Math::Clamp(SkeletonLength * 0.12f, 0.02f, 0.1f) * ShapeScale;
+                        const float HalfHeight = Math::Max(Length * 0.5f - Radius, 0.01f * ShapeScale);
 
                         Def.Shape = MakeCapsuleShape(DirLocal * (Length * 0.5f), RagdollYToDir(DirLocal), Radius, HalfHeight);
                         bBuilt = true;
@@ -233,7 +248,7 @@ namespace Lumina::Physics
 
                 if (!bBuilt)
                 {
-                    Def.Shape = MakeSphereShape(FVector3(0.0f), 0.03f);
+                    Def.Shape = MakeSphereShape(FVector3(0.0f), 0.03f * ShapeScale);
                 }
 
                 BoneToBody[BoneIndex] = Defs.Num();

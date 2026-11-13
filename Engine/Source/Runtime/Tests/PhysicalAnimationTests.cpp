@@ -444,3 +444,33 @@ TEST_F(PhysicalAnimation, StandsAndWalksWithoutShaking)
     EXPECT_LT(ChestSpinRms(4.0f, Travel), 0.8f) << "walking chest spin, in radians a second";
     EXPECT_GT(Travel, 4.0f);
 }
+
+// A limp character scaled up comes to rest on shapes the size of its mesh, so its head lies on the floor rather than in it.
+TEST_F(PhysicalAnimation, ScaledRagdollRestsOnShapesTheSizeOfItsMesh)
+{
+    constexpr float CharacterScale = 2.3f;
+    constexpr float HeadRadius = 0.11f;
+
+    Owner = Registry->Create();
+    STransformComponent& Transform = Registry->Emplace<STransformComponent>(Owner);
+    Transform.SetLocation(FVector3(0.0f, 0.5f, 0.0f));
+    Transform.SetScale(FVector3(CharacterScale));
+    SRagdollComponent& Limp = Registry->Emplace<SRagdollComponent>(Owner);
+    Limp.State = ERagdollState::Simulated;
+
+    Physics::FRagdollDesc Desc;
+    Desc.Entity               = Owner;
+    Desc.Asset                = Asset;
+    Desc.Skeleton             = &Skeleton;
+    Desc.ComponentBoneGlobals = &BindGlobals;
+    Desc.EntityToWorld        = Transform.GetWorldMatrix();
+    TSharedPtr<FPhysicsRagdollHandle> Handle = Scene->CreateRagdoll(Desc);
+    ASSERT_TRUE(Handle);
+    Limp.Ragdoll = Handle;
+    Scene->Update(0.0);
+    ASSERT_TRUE(Scene->IsRagdollReady(*Handle));
+
+    Simulate(4.0f);
+    EXPECT_GT(Limb("head").Position.y, HeadRadius * CharacterScale * 0.75f) << "the head rests on its scaled sphere";
+    EXPECT_LT(Limb("head").Position.y, 1.0f) << "the body has fallen";
+}
