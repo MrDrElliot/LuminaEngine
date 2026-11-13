@@ -3,6 +3,10 @@
 
 #include "Config/GameUserSettings.h"
 #include "Config/InputSettings.h"
+#include "Config/UISettings.h"
+#include "Core/Engine/Engine.h"
+#include "Paths/Paths.h"
+#include "Containers/StringFormat.h"
 #include "Core/Diagnostics/BenchmarkRun.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Windows/Window.h"
@@ -30,6 +34,28 @@ namespace Lumina
             case EMouseMode::Captured: CursorMode = ECursorMode::Disabled; break;
             }
             Windowing::SetCursorModeForNativeWindow(NativeWindow, CursorMode, FInputActionMap::Get().GetPlayerSettings().bRawMouseInput);
+        }
+
+        ESystemCursor ToSystemCursor(EMouseCursor Cursor)
+        {
+            switch (Cursor)
+            {
+            case EMouseCursor::None:            return ESystemCursor::Hidden;
+            case EMouseCursor::Default:         return ESystemCursor::Arrow;
+            case EMouseCursor::TextEditBeam:    return ESystemCursor::TextBeam;
+            case EMouseCursor::ResizeLeftRight: return ESystemCursor::ResizeEastWest;
+            case EMouseCursor::ResizeUpDown:    return ESystemCursor::ResizeNorthSouth;
+            case EMouseCursor::ResizeSouthEast: return ESystemCursor::ResizeNorthWestSouthEast;
+            case EMouseCursor::ResizeSouthWest: return ESystemCursor::ResizeNorthEastSouthWest;
+            case EMouseCursor::CardinalCross:   return ESystemCursor::ResizeAll;
+            case EMouseCursor::Crosshairs:      return ESystemCursor::Crosshair;
+            case EMouseCursor::Hand:            return ESystemCursor::PointingHand;
+            case EMouseCursor::GrabHand:        return ESystemCursor::PointingHand;
+            case EMouseCursor::GrabHandClosed:  return ESystemCursor::PointingHand;
+            case EMouseCursor::SlashedCircle:   return ESystemCursor::NotAllowed;
+            case EMouseCursor::EyeDropper:      return ESystemCursor::Crosshair;
+            }
+            return ESystemCursor::Arrow;
         }
 
         Rml::Input::KeyIdentifier ToRmlKey(EKey Key)
@@ -548,6 +574,9 @@ namespace Lumina
         }
 
         Map.UpdateContext(*RawInput, (float)DeltaSeconds);
+
+        // Hover moves without any event the registry sees, so the cursor image follows it once a frame.
+        ApplyActiveCursor();
     }
 
     void FInputViewportRegistry::EndFrame()
@@ -624,6 +653,11 @@ namespace Lumina
         }
 
         RawInput->OnEvent(Event);
+        if (Event.IsA<FMouseMovedEvent>())
+        {
+            LastMouseWindowX = static_cast<int32>(Event.As<FMouseMovedEvent>().GetX());
+            LastMouseWindowY = static_cast<int32>(Event.As<FMouseMovedEvent>().GetY());
+        }
 
         FInputViewport* Target = bIsKeyEvent ? ActiveViewport : ResolveMouseTarget(Event);
         return Target != nullptr && Target->RouteEvent(Event);
@@ -672,6 +706,7 @@ namespace Lumina
         {
             ApplyCursorModeToWindow(ActiveWindow, GetActiveEffectiveMouseMode());
         }
+        ApplyActiveCursor();
     }
 
     EMouseMode FInputViewportRegistry::GetActiveEffectiveMouseMode() const
@@ -710,5 +745,92 @@ namespace Lumina
         }
         Target->GetContext().SetMouseMode(Mode);
         ApplyActiveCursorMode();
+    }
+
+    void FInputViewportRegistry::SetMouseCursor(EMouseCursor Cursor, const CWorld* CallerWorld)
+    {
+        FInputViewport* Target = FindViewportForWorld(CallerWorld);
+        if (Target == nullptr)
+        {
+            Target = ActiveViewport;
+        }
+        if (Target == nullptr)
+        {
+            return;
+        }
+        Target->GetContext().SetMouseCursor(Cursor);
+        ApplyActiveCursor();
+    }
+
+    const FInputViewport* FInputViewportRegistry::GetGameCursorViewport() const
+    {
+        // Over the editor or a dev overlay, or with the cursor hidden or captured, the window keeps the editor's or the system's own.
+        if (ActiveViewport == nullptr || bDevOverlayCapturing || !IsGameOwningInput())
+        {
+            return nullptr;
+        }
+
+        // The editor reports no hover while the game holds input, so the last mouse position decides it then.
+        const bool bPointerOver = HoveredViewport == ActiveViewport
+            || (HoveredViewport == nullptr && ActiveViewport->ContainsWindowPoint(LastMouseWindowX, LastMouseWindowY));
+        if (!bPointerOver)
+        {
+            return nullptr;
+        }
+        return GetActiveEffectiveMouseMode() == EMouseMode::Normal ? ActiveViewport : nullptr;
+    }
+
+    void* FInputViewportRegistry::ResolveCursor(EMouseCursor Cursor)
+    {
+        const CUISettings* Settings = GetDefault<CUISettings>();
+        if (const SHardwareCursor* Hardware = Settings != nullptr ? Settings->FindHardwareCursor(Cursor) : nullptr)
+        {
+            const FString Key = Format("{}#{},{}", Hardware->Image, Hardware->Hotspot.x, Hardware->Hotspot.y);
+            void** Cached = HardwareCursorImages.Find(Key);
+            if (Cached == nullptr)
+            {
+                const bool bProjectRelative = Hardware->Image[0] != '/' && Global::GEngine != nullptr;
+                const FFixedString Path = bProjectRelative ? Paths::Combine(Global::GEngine->GetProjectPath(), Hardware->Image) : FFixedString(*Hardware->Image, Hardware->Image.Len());
+                HardwareCursorImages.Emplace(Key, Windowing::CreateCursorFromImage(Path, Hardware->Hotspot));
+                Cached = HardwareCursorImages.Find(Key);
+            }
+            if (Cached != nullptr && *Cached != nullptr)
+            {
+                return *Cached;
+            }
+        }
+
+        const int32 Index = static_cast<int32>(Cursor);
+        if (SystemCursors[Index] == nullptr)
+        {
+            SystemCursors[Index] = Windowing::CreateSystemCursor(ToSystemCursor(Cursor));
+        }
+        return SystemCursors[Index];
+    }
+
+    void FInputViewportRegistry::ApplyActiveCursor()
+    {
+        // Without a window there is no platform cursor to make, as in a headless run or a test.
+        if (Windowing::TryGetPrimaryWindowHandle() == nullptr)
+        {
+            return;
+        }
+
+        const FInputViewport* Owner = GetGameCursorViewport();
+        void* const Window = Owner != nullptr ? Owner->GetNativeWindowHandle() : nullptr;
+        if (bGameCursorApplied && (Owner == nullptr || Window != AppliedCursorWindow))
+        {
+            Windowing::SetCursorForNativeWindow(AppliedCursorWindow, nullptr);
+            bGameCursorApplied = false;
+        }
+        if (Owner == nullptr)
+        {
+            return;
+        }
+
+        // Set every frame rather than on change, since the editor's own UI may swap the cursor in the frame before it stands back.
+        Windowing::SetCursorForNativeWindow(Window, ResolveCursor(Owner->GetContext().GetMouseCursor()));
+        AppliedCursorWindow = Window;
+        bGameCursorApplied = true;
     }
 }

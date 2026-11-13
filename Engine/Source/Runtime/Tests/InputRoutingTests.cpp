@@ -151,3 +151,21 @@ TEST(InputRouting, UnregisteringThePressedViewportReleasesTheLock)
     EXPECT_TRUE(F.B.GetContext().IsMouseButtonDownRaw(Lumina::EMouseKey::ButtonLeft));
     F.Button(Lumina::EMouseKey::ButtonLeft, false, 150.0f);
 }
+
+// A cursor is kept per viewport, and the window shows the game's only over the game that owns input, never over editor UI.
+TEST(InputRouting, MouseCursorStaysWithItsViewportAndNeedsTheGame)
+{
+    FRoutingFixture F;
+    F.Registry.SetActiveViewport(&F.A);
+    F.Registry.SetMouseCursor(EMouseCursor::Crosshairs);
+    EXPECT_EQ(F.A.GetContext().GetMouseCursor(), EMouseCursor::Crosshairs);
+    EXPECT_EQ(F.B.GetContext().GetMouseCursor(), EMouseCursor::Default);
+
+    // Hovered and focused but worldless, the editor still owns the window's cursor.
+    F.Registry.SetHoveredViewport(&F.A);
+    F.Registry.TakeGameFocus(&F.A);
+    EXPECT_FALSE(F.Registry.IsGameCursorShowing());
+
+    F.Registry.SetMouseCursor(EMouseCursor::Default);
+    EXPECT_EQ(F.A.GetContext().GetMouseCursor(), EMouseCursor::Default);
+}

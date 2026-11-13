@@ -116,6 +116,10 @@ namespace Lumina::Input
     RUNTIME_API void       SetMouseMode(const CWorld* World, EMouseMode Mode);
     RUNTIME_API EMouseMode GetMouseMode(const CWorld* World);
 
+    // The cursor World shows while it holds the mouse, drawn from the project's hardware cursors in User Interface settings or by the system.
+    RUNTIME_API void         SetMouseCursor(const CWorld* World, EMouseCursor Cursor);
+    RUNTIME_API EMouseCursor GetMouseCursor(const CWorld* World);
+
     RUNTIME_API void       SetInputMode(const CWorld* World, EInputMode Mode);
     RUNTIME_API EInputMode GetInputMode(const CWorld* World);
 }

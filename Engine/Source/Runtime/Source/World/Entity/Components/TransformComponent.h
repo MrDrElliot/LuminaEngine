@@ -367,22 +367,14 @@ namespace Lumina
         // Cached "not linked in the registry hierarchy", which lets a setter resolve itself. Only true is a claim.
         bool bIsFlat = false;
 
-        // Publish-once-per-frame guard for the flat path, compared against FTransformDirtyGate::PublishEpoch.
-        // Also lands in existing padding. Wraps after 2^32 drains, where the only consequence is one entity
-        // skipping one frame's render notification.
+        // Publish-once-per-frame guard for the flat path
         mutable uint32 LastPublishEpoch = 0;
 
-        // Clear both dirty guards without touching the queues. For a freshly bit-copied component, whose flags
-        // describe the *source* entity's queue state and would otherwise suppress the copy's own enqueues.
+        // Clear both dirty guards without touching the queues. 
         void ResetDirtyState()
         {
             bWorldDirty      = false;
             bBodyDirtyQueued = false;
-
-            // Same hazard, one step removed: a copied epoch is a claim about the SOURCE registry's drain
-            // count, and if it happens to match the destination's current epoch the flat path suppresses
-            // the copy's first move notification. Zero can still collide, once every 2^32 drains, at the
-            // documented cost of one skipped notification - the same odds the wrap already carries.
             LastPublishEpoch = 0;
         }
 

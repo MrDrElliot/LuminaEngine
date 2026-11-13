@@ -482,6 +482,8 @@ namespace Lumina
             }
         }
 
+        constexpr const char* kTileActionId = "##TileAction";
+
         // Restores the tile as the last item, so the tile view's tooltip, context menu and drag source still see it.
         bool DrawTileActionButton(ImDrawList& DrawList, const ImVec2& Min, const ImVec2& Max, const char* Icon)
         {
@@ -490,7 +492,7 @@ namespace Lumina
             const ImRect Bounds(Center.x - Radius, Center.y - Radius, Center.x + Radius, Center.y + Radius);
 
             const ImGuiLastItemData TileItem = GImGui->LastItemData;
-            const ImGuiID Id = ImGui::GetID("##TileAction");
+            const ImGuiID Id = ImGui::GetID(kTileActionId);
             bool bHovered = false;
             bool bHeld    = false;
             const bool bPressed = ImGui::ItemAdd(Bounds, Id) && ImGui::ButtonBehavior(Bounds, Id, &bHovered, &bHeld);
@@ -1398,7 +1400,9 @@ namespace Lumina
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(3);
 
-            if (TileAsset != nullptr && (bMouseOverTile || TilePreview.IsActiveFor(TileAsset->AssetGUID)))
+            // A pressed button is the active item, which stops the tile reading as hovered, so it must stay drawn until the release.
+            const bool bActionHeld = ImGui::GetActiveID() == ImGui::GetID(ContentBrowserEditorToolInternal::kTileActionId);
+            if (TileAsset != nullptr && (bMouseOverTile || bActionHeld || TilePreview.IsActiveFor(TileAsset->AssetGUID)))
             {
                 if (const FAssetTileAction* Action = FAssetTilePainterRegistry::Get().FindAction(FindObject<CClass>(TileAsset->AssetClass)))
                 {

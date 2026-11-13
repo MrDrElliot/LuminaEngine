@@ -70,5 +70,8 @@ namespace Lumina
         THashMap<FName, RHI::FManagedTexture>  PathTextures;
 
         mutable FRecursiveMutex                Mutex;
+
+        // Set while a game cursor image shows, so ImGui leaves the OS cursor alone without undoing a flag someone else set.
+        bool                                   bHoldingCursorChange = false;
     };
 }

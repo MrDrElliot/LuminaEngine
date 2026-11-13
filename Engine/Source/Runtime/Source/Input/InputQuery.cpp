@@ -288,6 +288,17 @@ namespace Lumina::Input
         FInputViewportRegistry::Get().SetMouseMode(Mode, World);
     }
 
+    void SetMouseCursor(const CWorld* World, EMouseCursor Cursor)
+    {
+        FInputViewportRegistry::Get().SetMouseCursor(Cursor, World);
+    }
+
+    EMouseCursor GetMouseCursor(const CWorld* World)
+    {
+        const FInputContext* Context = FindOwnContext(World);
+        return Context != nullptr ? Context->GetMouseCursor() : EMouseCursor::Default;
+    }
+
     EMouseMode GetMouseMode(const CWorld* World)
     {
         const FInputContext* Context = FindOwnContext(World);

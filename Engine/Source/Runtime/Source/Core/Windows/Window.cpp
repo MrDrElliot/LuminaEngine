@@ -663,6 +663,63 @@ namespace Lumina
 			}
 		}
 
+		void* CreateCursorFromImage(FStringView Path, FVector2 Hotspot)
+		{
+			FWindowIcon Image;
+			if (!LoadWindowIcon(Path, Image))
+			{
+				return nullptr;
+			}
+			const GLFWimage Pixels = { Image.Width, Image.Height, Image.Pixels.GetData() };
+			const int HotspotX = Math::Clamp(static_cast<int>(Hotspot.x * static_cast<float>(Image.Width)), 0, Image.Width - 1);
+			const int HotspotY = Math::Clamp(static_cast<int>(Hotspot.y * static_cast<float>(Image.Height)), 0, Image.Height - 1);
+			GLFWcursor* Cursor = glfwCreateCursor(&Pixels, HotspotX, HotspotY);
+			if (Cursor == nullptr)
+			{
+				LOG_WARN("Failed to create a cursor from {}", Path);
+			}
+			return Cursor;
+		}
+
+		void* CreateSystemCursor(ESystemCursor Shape)
+		{
+			if (Shape == ESystemCursor::Hidden)
+			{
+				uint8 Blank[4] = {};
+				const GLFWimage Pixels = { 1, 1, Blank };
+				return glfwCreateCursor(&Pixels, 0, 0);
+			}
+			int GlfwShape = GLFW_ARROW_CURSOR;
+			switch (Shape)
+			{
+			case ESystemCursor::Arrow:                    GlfwShape = GLFW_ARROW_CURSOR;         break;
+			case ESystemCursor::TextBeam:                 GlfwShape = GLFW_IBEAM_CURSOR;         break;
+			case ESystemCursor::Crosshair:                GlfwShape = GLFW_CROSSHAIR_CURSOR;     break;
+			case ESystemCursor::PointingHand:             GlfwShape = GLFW_POINTING_HAND_CURSOR; break;
+			case ESystemCursor::ResizeEastWest:           GlfwShape = GLFW_RESIZE_EW_CURSOR;     break;
+			case ESystemCursor::ResizeNorthSouth:         GlfwShape = GLFW_RESIZE_NS_CURSOR;     break;
+			case ESystemCursor::ResizeNorthWestSouthEast: GlfwShape = GLFW_RESIZE_NWSE_CURSOR;   break;
+			case ESystemCursor::ResizeNorthEastSouthWest: GlfwShape = GLFW_RESIZE_NESW_CURSOR;   break;
+			case ESystemCursor::ResizeAll:                GlfwShape = GLFW_RESIZE_ALL_CURSOR;    break;
+			case ESystemCursor::NotAllowed:               GlfwShape = GLFW_NOT_ALLOWED_CURSOR;   break;
+			case ESystemCursor::Hidden:                   break;
+			}
+			return glfwCreateStandardCursor(GlfwShape);
+		}
+
+		void SetCursorForNativeWindow(void* NativeWindow, void* Cursor)
+		{
+			GLFWwindow* Window = static_cast<GLFWwindow*>(NativeWindow);
+			if (Window == nullptr)
+			{
+				Window = Global::PrimaryWindow ? Global::PrimaryWindow->GetWindow() : nullptr;
+			}
+			if (Window != nullptr)
+			{
+				glfwSetCursor(Window, static_cast<GLFWcursor*>(Cursor));
+			}
+		}
+
 		bool IsNativeWindowFocused(void* NativeWindow)
 		{
 			GLFWwindow* Window = static_cast<GLFWwindow*>(NativeWindow);

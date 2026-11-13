@@ -11,6 +11,7 @@
 #include "Core/Engine/Engine.h"
 #include "Core/Profiler/Profile.h"
 #include "Core/Windows/Window.h"
+#include "Input/InputViewport.h"
 #include "Memory/Memcpy.h"
 #include "Renderer/RHICore.h"
 #include "Renderer/RHITexture.h"
@@ -98,6 +99,20 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
+        {
+            const bool bGameCursor = FInputViewportRegistry::Get().IsGameCursorShowing();
+            ImGuiIO& IO = ImGui::GetIO();
+            if (bGameCursor && !(IO.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange))
+            {
+                IO.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+                bHoldingCursorChange = true;
+            }
+            else if (!bGameCursor && bHoldingCursorChange)
+            {
+                IO.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+                bHoldingCursorChange = false;
+            }
+        }
         {
             LUMINA_PROFILE_SECTION_COLORED("ImGui_ImplGlfw_NewFrame", tracy::Color::Aquamarine);
             ImGui_ImplGlfw_NewFrame();

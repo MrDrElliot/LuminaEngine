@@ -11,6 +11,18 @@ namespace Lumina
         RmlUi::RegisterProjectFonts();
     }
 
+    const SHardwareCursor* CUISettings::FindHardwareCursor(EMouseCursor Cursor) const
+    {
+        for (const SHardwareCursor& Entry : HardwareCursors)
+        {
+            if (Entry.Cursor == Cursor && !Entry.Image.IsEmpty())
+            {
+                return &Entry;
+            }
+        }
+        return nullptr;
+    }
+
     void CUISettings::PostPropertyChange(FProperty* ChangedProperty)
     {
         Super::PostPropertyChange(ChangedProperty);

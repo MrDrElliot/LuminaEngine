@@ -18,4 +18,20 @@ namespace Lumina
         Hidden,     // hidden, free
         Disabled,   // hidden, locked/captured
     };
+
+    // The cursor shapes every desktop draws itself.
+    enum class ESystemCursor : uint8
+    {
+        Arrow,
+        TextBeam,
+        Crosshair,
+        PointingHand,
+        ResizeEastWest,
+        ResizeNorthSouth,
+        ResizeNorthWestSouthEast,
+        ResizeNorthEastSouthWest,
+        ResizeAll,
+        NotAllowed,
+        Hidden,
+    };
 }

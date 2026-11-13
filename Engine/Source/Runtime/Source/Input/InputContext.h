@@ -30,6 +30,10 @@ namespace Lumina
         RUNTIME_API EMouseMode GetMouseMode() const { return MouseMode; }
         RUNTIME_API void       SetMouseMode(EMouseMode Mode) { MouseMode = Mode; }
 
+        // The cursor this world shows while it holds the mouse, drawn from the project's hardware cursors or by the system.
+        RUNTIME_API EMouseCursor GetMouseCursor() const { return MouseCursor; }
+        RUNTIME_API void         SetMouseCursor(EMouseCursor Cursor) { MouseCursor = Cursor; }
+
         void SetWindowRect(int MinX, int MinY, int MaxX, int MaxY);
         bool ContainsWindowPoint(int WindowX, int WindowY) const;
 
@@ -146,6 +150,7 @@ namespace Lumina
 
         EInputMode  InputMode = EInputMode::Game;
         EMouseMode  MouseMode = EMouseMode::Normal;
+        EMouseCursor MouseCursor = EMouseCursor::Default;
 
         int32  RectMinX = 0;
         int32  RectMinY = 0;

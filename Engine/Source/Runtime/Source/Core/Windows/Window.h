@@ -115,6 +115,15 @@ namespace Lumina
 		// Null falls back to the primary window. Raw motion only applies while disabled and skips the desktop's pointer acceleration.
 		RUNTIME_API void SetCursorModeForNativeWindow(void* NativeWindow, ECursorMode Mode, bool bRawMotion = false);
 
+		// An OS cursor from the PNG at Path, read through the VFS, clicking at Hotspot from 0,0 at its top left to 1,1 at its bottom right, or null when it cannot be read.
+		RUNTIME_API void* CreateCursorFromImage(FStringView Path, FVector2 Hotspot);
+
+		// One of the desktop's own cursors, or a blank one for Hidden.
+		RUNTIME_API void* CreateSystemCursor(ESystemCursor Shape);
+
+		// Null NativeWindow falls back to the primary window, and a null Cursor brings back the system arrow.
+		RUNTIME_API void SetCursorForNativeWindow(void* NativeWindow, void* Cursor);
+
 		// Authoritative OS-level focus for a native window (GLFWwindow*). Exactly one window is focused at a
 		// time, so this disambiguates the active viewport across separate preview windows under game input.
 		RUNTIME_API bool IsNativeWindowFocused(void* NativeWindow);
