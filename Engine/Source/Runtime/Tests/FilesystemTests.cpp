@@ -321,6 +321,29 @@ TEST_F(FilesystemTest, CopyDuplicatesContent)
     EXPECT_TRUE(Exists(From));
 }
 
+TEST_F(FilesystemTest, CopyTreeWithTrailingSeparatorOnSourcePreservesRelativePaths)
+{
+    const FString Source = Under("CopySource");
+    ASSERT_TRUE(WriteFile(Under("CopySource/Root.txt"), Bytes("root")));
+    ASSERT_TRUE(WriteFile(Under("CopySource/Sub/Nested.txt"), Bytes("nested")));
+
+    FString SourceWithSlash = Source;
+    SourceWithSlash.AppendChar('/');
+
+    const FString Destination = Under("CopyDestination");
+    uint32 FilesCopied = 0;
+    ASSERT_TRUE(CopyTree(SourceWithSlash, Destination, &FilesCopied));
+    EXPECT_EQ(FilesCopied, 2u);
+
+    FString RootText;
+    ASSERT_TRUE(ReadFile(RootText, Under("CopyDestination/Root.txt")));
+    EXPECT_EQ(RootText, FString("root"));
+
+    FString NestedText;
+    ASSERT_TRUE(ReadFile(NestedText, Under("CopyDestination/Sub/Nested.txt")));
+    EXPECT_EQ(NestedText, FString("nested"));
+}
+
 TEST_F(FilesystemTest, StatReportsSizeAndKind)
 {
     const FString File = Under("Stat.txt");

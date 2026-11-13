@@ -189,8 +189,14 @@ namespace Lumina::MCP
 
                     FInstancedStruct Node(Type);
                     FJsonValue Properties;
-                    if (!In.Properties.IsEmpty() && FJsonValue::Parse(In.Properties, Properties))
+                    if (!In.Properties.IsEmpty())
                     {
+                        if (!FJsonValue::Parse(In.Properties, Properties))
+                        {
+                            return Agent::FToolResult::Error(
+                                "Value is not JSON. Strings need quotes, so a quoted name rather than a bare word.");
+                        }
+
                         if (const Agent::FMarshalResult Read = Agent::ReadStruct(Properties, Type, Node.GetMutableMemory()); !Read.IsValid())
                         {
                             return Agent::FToolResult::Error(Read.Error);

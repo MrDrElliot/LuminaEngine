@@ -31,6 +31,14 @@ namespace Lumina
         Bus->Clear();
     }
 
+    void CMessageSubsystem::OnDestroy()
+    {
+        Super::OnDestroy();
+
+        // Released before any object is freed, since a world never torn down frees its registry before this subsystem.
+        Bus.reset();
+    }
+
     uint64 CMessageSubsystem::GetMessageTypeKey(FName TypeName)
     {
         return TypeName.IsNone() ? 0 : MakeGameplayMessageType(TypeName);

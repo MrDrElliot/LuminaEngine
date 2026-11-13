@@ -177,6 +177,9 @@ namespace Lumina
         static void SplitDockingLayoutLeftRight(ImGuiID InDockspaceID, float InRightFraction, ImGuiID& OutLeftDockID, ImGuiID& OutRightDockID);
         static void SplitDockingLayoutLeftRight(ImGuiID InDockspaceID, const char* InLeftWindowName, const char* InRightWindowName, float InRightFraction);
 
+        // A muted icon, title and hint centered in the space left in the current window, for a panel with nothing to show.
+        static void DrawEmptyState(const char* Icon, const char* Title, const char* Hint);
+
         NODISCARD CWorld* GetWorld() const { return World.Get(); }
         NODISCARD bool HasWorld() const { return World != nullptr; }
         NODISCARD virtual FSceneEditorTool* AsSceneEditor() { return nullptr; }

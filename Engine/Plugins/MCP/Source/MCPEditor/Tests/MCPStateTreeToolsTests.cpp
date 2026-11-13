@@ -63,6 +63,23 @@ namespace MCPStateTreeToolsTestsInternal
             return FJsonValue(ExpectSucceeded("statetree.compile", FStringView(Format(R"({{"StateTree":"{}"}})", Guid)))["structuredContent"]);
         }
 
+        // Calls the tool directly, since the MCP JSON-RPC envelope quotes an unparsable RawJson field rather than leaving it broken.
+        Agent::FToolResult AddNodeDirect(const char* Type, const char* Name, const char* State, const char* Properties)
+        {
+            Agent::FTool Tool;
+            EXPECT_TRUE(Agent::FToolRegistry::Get().TryGetTool("statetree.add_node", Tool));
+
+            SAddStateTreeNodeParams Params;
+            Params.StateTree = Guid;
+            Params.Type = Type;
+            Params.Name = Name;
+            Params.State = State;
+            Params.Properties = Properties;
+
+            SStateTreeAddResult Result;
+            return Tool.Invoke(&Params, &Result);
+        }
+
         TestUtil::FScopedTempMount Mount{ "/Game", "LuminaMCPStateTreeToolsTests" };
         TStrongObjectPtr<CStateTree> Tree;
         FString Guid;
@@ -172,6 +189,16 @@ TEST_F(MCPStateTreeToolsTest, EditsRefuseNamesTheTreeCannotTake)
 
     EXPECT_EQ(Tree->States.Num(), 1);
     EXPECT_EQ(Tree->States[0].Tasks.Num(), 1);
+}
+
+TEST_F(MCPStateTreeToolsTest, AddNodeRefusesMalformedProperties)
+{
+    Edit("statetree.add_state", R"("State":{"Name":"Idle"})");
+
+    const Agent::FToolResult Result = AddNodeDirect("SStateTreeTestTask", "Wait", "Idle", "not json");
+    EXPECT_TRUE(Result.bIsError);
+    EXPECT_NE(Result.Text.Find("not JSON"), Constants::kIndexNone) << *Result.Text;
+    EXPECT_EQ(Tree->States[0].Tasks.Num(), 0);
 }
 
 TEST_F(MCPStateTreeToolsTest, InstanceStateNeedsAWorldEditor)

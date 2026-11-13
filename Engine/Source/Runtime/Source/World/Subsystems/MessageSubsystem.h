@@ -59,6 +59,7 @@ namespace Lumina
 
         void OnInitialize() override;
         void OnTeardown() override;
+        void OnDestroy() override;
 
         // The native bus, for typed C++ sends and subscriptions.
         FGameplayMessageBus& GetBus() { return *Bus; }

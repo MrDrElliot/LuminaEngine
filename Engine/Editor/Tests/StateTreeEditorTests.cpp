@@ -20,6 +20,7 @@ namespace Lumina
         static void Collapse(FStateTreeEditorTool& Tool, FName State) { Tool.CollapsedStates.Add(State); }
         static bool IsCardVisible(const FStateTreeEditorTool& Tool, int32 State) { return Tool.Cards.IsValidIndex(State) && Tool.Cards[State].bVisible; }
         static const auto& GetCard(const FStateTreeEditorTool& Tool, int32 State) { return Tool.Cards[State]; }
+        static const auto& GetArrows(const FStateTreeEditorTool& Tool) { return Tool.Arrows; }
 
         // The details and parameter panels are property tables, which need the engine a test binary does not start.
         static void DrawPanels(FStateTreeEditorTool& Tool)
@@ -330,5 +331,99 @@ namespace LuminaStateTreeEditorTests
 
         EXPECT_TRUE(ClickAlongRow(Card.TransitionY[0] - LineHeight, { Idle, EStateTreeSlot::Task, Constants::kIndexNone, 0 }));
         EXPECT_TRUE(ClickAlongRow(Card.TransitionY[1], { Idle, EStateTreeSlot::TransitionCondition, 1, 0 }));
+    }
+
+    // The guard tree from the editor screenshot, with arrows into Idle from three places and across both groups.
+    TEST(StateTreeEditor, ArrowsNeverShareALaneSpanOrALandingPoint)
+    {
+        FImGuiTestHarness Harness;
+        CStateTree* Tree = NewTree();
+        AddState(*Tree, "Guard", nullptr, EStateTreeStateKind::Group);
+        AddState(*Tree, "Idle", "Guard");
+        AddState(*Tree, "Patrol", "Guard");
+        AddState(*Tree, "Alert", "Guard");
+        AddState(*Tree, "Combat", nullptr, EStateTreeStateKind::Group);
+        AddState(*Tree, "Engage", "Combat");
+        AddState(*Tree, "Search", "Combat");
+        const struct { const char* From; EStateTreeTransitionTrigger Trigger; const char* To; } Links[] =
+        {
+            { "Idle", EStateTreeTransitionTrigger::OnCompleted, "Patrol" },
+            { "Idle", EStateTreeTransitionTrigger::OnTick, "Alert" },
+            { "Patrol", EStateTreeTransitionTrigger::OnCompleted, "Idle" },
+            { "Patrol", EStateTreeTransitionTrigger::OnTick, "Alert" },
+            { "Alert", EStateTreeTransitionTrigger::OnCompleted, "Engage" },
+            { "Engage", EStateTreeTransitionTrigger::OnFailed, "Search" },
+            { "Engage", EStateTreeTransitionTrigger::OnSucceeded, "Idle" },
+            { "Search", EStateTreeTransitionTrigger::OnCompleted, "Idle" },
+        };
+        for (const auto& Link : Links)
+        {
+            AddTransition(Tree->States[IndexOf(*Tree, Link.From)], Link.Trigger, EStateTreeTransitionTarget::State, Link.To);
+        }
+
+        FStateTreeEditorTool Tool(nullptr, Tree);
+        for (int32 Frame = 0; Frame < 2; ++Frame)
+        {
+            FImGuiTestHarness::BeginFrame();
+            FAccess::DrawPanels(Tool);
+            FImGuiTestHarness::EndFrame();
+        }
+
+        const auto& Arrows = FAccess::GetArrows(Tool);
+        ASSERT_EQ(Arrows.Num(), (int32)std::size(Links));
+        for (int32 First = 0; First < Arrows.Num(); ++First)
+        {
+            const auto& A = Arrows[First];
+            const auto& Target = FAccess::GetCard(Tool, A.Target);
+            EXPECT_GT(A.ToY, Target.Min.y);
+            EXPECT_LT(A.ToY, Target.Min.y + (Target.Max.y - Target.Min.y) * 0.5f);
+            for (int32 Second = First + 1; Second < Arrows.Num(); ++Second)
+            {
+                const auto& B = Arrows[Second];
+                if (A.Lane == B.Lane)
+                {
+                    EXPECT_TRUE(Math::Max(A.FromY, A.ToY) < Math::Min(B.FromY, B.ToY) || Math::Max(B.FromY, B.ToY) < Math::Min(A.FromY, A.ToY)) << First << " and " << Second;
+                }
+                if (A.Target == B.Target)
+                {
+                    EXPECT_GE(Math::Abs(A.ToY - B.ToY), A.HeadSize + B.HeadSize - 0.01f) << First << " and " << Second;
+                }
+            }
+        }
+    }
+
+    TEST(StateTreeEditor, CardsSizeToTheirContentAndGrowForTransitionBadges)
+    {
+        FImGuiTestHarness Harness;
+        CStateTree* Tree = NewTree();
+        AddState(*Tree, "Root", nullptr, EStateTreeStateKind::Group);
+        AddState(*Tree, "Search", "Root");
+        const int32 Search = IndexOf(*Tree, "Search");
+        AddTransition(Tree->States[Search], EStateTreeTransitionTrigger::OnCompleted, EStateTreeTransitionTarget::State, "Root");
+
+        FStateTreeEditorTool Tool(nullptr, Tree);
+        auto CardWidth = [&]
+        {
+            FImGuiTestHarness::BeginFrame();
+            FAccess::DrawPanels(Tool);
+            FImGuiTestHarness::EndFrame();
+            const auto& Card = FAccess::GetCard(Tool, Search);
+            return Card.Max.x - Card.Min.x;
+        };
+
+        const float Plain = CardWidth();
+        EXPECT_LT(Plain, FImGuiTestHarness::kDisplaySize.x * 0.5f);
+
+        SStateTreeTransition& Transition = Tree->States[Search].Transitions[0];
+        Transition.Delay = 2.0f;
+        const float Delayed = CardWidth();
+        EXPECT_GT(Delayed, Plain);
+
+        Transition.DelayRandomRange = 0.5f;
+        const float Ranged = CardWidth();
+        EXPECT_GT(Ranged, Delayed);
+
+        Transition.Priority = 3;
+        EXPECT_GT(CardWidth(), Ranged);
     }
 }

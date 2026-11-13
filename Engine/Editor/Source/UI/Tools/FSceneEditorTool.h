@@ -266,7 +266,6 @@ namespace Lumina
 
         void DrawDetailsPanel(bool bFocused);
         void DrawEntityProperties(ECS::FEntity Entity);
-        void DrawEmptyState();
         void DrawComponentList(ECS::FEntity Entity);
 
         // One search box over the whole panel, matching a component by title and otherwise filtering into its table.

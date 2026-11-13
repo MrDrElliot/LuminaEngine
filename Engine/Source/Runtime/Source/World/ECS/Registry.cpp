@@ -147,6 +147,35 @@ namespace Lumina::ECS
         }
     }
 
+    uint32* FComponentTypeRegistry::AcquireLayoutEpochSlot()
+    {
+        FScopeLock Lock(LayoutEpochLock);
+        if (LayoutEpochUsed == LayoutEpochSlotsPerChunk)
+        {
+            LayoutEpochChunk = static_cast<uint32*>(Memory::Malloc(sizeof(uint32) * LayoutEpochSlotsPerChunk, alignof(uint32)));
+            LayoutEpochUsed = 0;
+        }
+
+        uint32* Slot = &LayoutEpochChunk[LayoutEpochUsed++];
+        *Slot = 1;
+        return Slot;
+    }
+
+    uint64 FComponentTypeRegistry::AcquireWriteEpochBase()
+    {
+        return static_cast<uint64>(NextWriteEpochPool.fetch_add(1, std::memory_order_relaxed)) << 32;
+    }
+
+    uint32 FComponentTypeRegistry::GetChangeTick() const
+    {
+        return ChangeClock.load(std::memory_order_relaxed);
+    }
+
+    uint32 FComponentTypeRegistry::AdvanceChangeTick()
+    {
+        return ChangeClock.fetch_add(1, std::memory_order_relaxed);
+    }
+
 
 
     // Slots past EntityRecords.Num() up to NextAppendIndex are handed out but not yet stored, so a reservation never reallocates the records a reader may be walking.

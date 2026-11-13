@@ -27,14 +27,17 @@ namespace Lumina
         constexpr const char* DebuggerWindowName   = "Debugger";
         constexpr const char* StatePayload         = "STATE_TREE_STATE";
 
-        constexpr float CardIndent     = 18.0f;
-        constexpr float CardPadding    = 5.0f;
-        constexpr float CardSpacing    = 4.0f;
-        constexpr float CardRounding   = 6.0f;
-        constexpr float ArrowLaneWidth = 7.0f;
-        constexpr int32 ArrowLanes     = 6;
-        constexpr float GutterWidth    = ArrowLaneWidth * ArrowLanes + 10.0f;
-        constexpr int32 MaxIssueRows   = 6;
+        constexpr float CardIndent       = 18.0f;
+        constexpr float CardPadding      = 5.0f;
+        constexpr float CardSpacing      = 4.0f;
+        constexpr float CardRounding     = 6.0f;
+        constexpr float CardMinWidth     = 160.0f;
+        constexpr float ChipSpacing      = 4.0f;
+        constexpr float ContainerPadding = 4.0f;
+        constexpr float SelectionGlow    = 5.0f;
+        constexpr float ArrowLaneWidth   = 7.0f;
+        constexpr float ArrivalSpacing   = 6.0f;
+        constexpr int32 MaxIssueRows     = 6;
 
         constexpr const char* TriggerLabels[] = { "On Completed", "On Succeeded", "On Failed", "On Event", "On Tick" };
         constexpr const char* TargetLabels[]  = { "State", "Next Sibling", "Parent", "Succeeded", "Failed" };
@@ -81,10 +84,63 @@ namespace Lumina
             return Base->Name.IsNone() ? FString(*Node.GetScriptStruct()->MakeDisplayName()) : Base->Name.ToString();
         }
 
-        FString TransitionLabel(const SStateTreeTransition& Transition)
+        FString ConditionLabel(const FInstancedStruct& Node, int32 Index)
         {
-            const FString Target = Transition.Target == EStateTreeTransitionTarget::State ? Transition.TargetState.ToString() : FString(TargetLabels[(int32)Transition.Target]);
-            return Format("{} {} {}", TriggerLabels[(int32)Transition.Trigger], LE_ICON_ARROW_RIGHT_THIN, Target);
+            const SStateTreeConditionBase* Condition = Node.GetPtr<SStateTreeConditionBase>();
+            const char* Join = Index == 0 ? "if" : Condition != nullptr && Condition->Operand == EStateTreeConditionOperand::Or ? "or" : "and";
+            return Format("{}{} {}", Join, Condition != nullptr && Condition->bInvert ? " not" : "", NodeLabel(Node));
+        }
+
+        // A label on a card row that selects Target, gathered before drawing so the card can size to its widest row.
+        struct FCardChip
+        {
+            FString             Label;
+            FStateTreeSelection Target;
+            ImVec4              Color;
+            bool                bLit = false;
+        };
+
+        struct FCardRow
+        {
+            const char*        Icon = nullptr;
+            TVector<FCardChip> Chips;
+        };
+
+        // The transition, then a badge for each setting that changes when or whether it fires, then its conditions.
+        void AddTransitionChips(FCardRow& Row, const SStateTreeTransition& Transition, const FStateTreeSelection& Target, bool bLastTaken)
+        {
+            const FString Trigger = Transition.Trigger != EStateTreeTransitionTrigger::OnEvent ? FString(TriggerLabels[(int32)Transition.Trigger])
+                : Format("On {} {}", LE_ICON_TAG_OUTLINE, Transition.EventTag.IsValid() ? Transition.EventTag.TagName.ToString() : FString("(no tag)"));
+            const FString Destination = Transition.Target == EStateTreeTransitionTarget::State ? Transition.TargetState.ToString() : FString(TargetLabels[(int32)Transition.Target]);
+            Row.Chips.Add({ Format("{} {} {}", Trigger, LE_ICON_ARROW_RIGHT_THIN, Destination), Target, TriggerColor(Transition.Trigger), bLastTaken });
+            if (Transition.Delay > 0.0f || Transition.DelayRandomRange > 0.0f)
+            {
+                const FString Range = Transition.DelayRandomRange > 0.0f ? Format(" {} {:g}", LE_ICON_PLUS_MINUS, Transition.DelayRandomRange) : FString();
+                Row.Chips.Add({ Format("{} {:g} s{}", LE_ICON_TIMER_OUTLINE, Transition.Delay, Range), Target, EditorColors::TextDim() });
+            }
+            if (Transition.Priority != 0)
+            {
+                Row.Chips.Add({ Format("priority {}", Transition.Priority), Target, EditorColors::TextDim() });
+            }
+            for (int32 Index = 0; Index < Transition.Conditions.Num(); ++Index)
+            {
+                Row.Chips.Add({ ConditionLabel(Transition.Conditions[Index], Index), { Target.State, EStateTreeSlot::TransitionCondition, Target.Transition, Index }, EditorColors::Warning() });
+            }
+        }
+
+        float ChipWidth(const FString& Label)
+        {
+            return ImGui::CalcTextSize(*Label).x + CardPadding * 2.0f;
+        }
+
+        float RowWidth(const FCardRow& Row)
+        {
+            float Width = Row.Icon != nullptr ? ImGui::CalcTextSize(Row.Icon).x + ImGui::GetStyle().ItemSpacing.x : 0.0f;
+            for (const FCardChip& Chip : Row.Chips)
+            {
+                Width += ChipWidth(Chip.Label) + ChipSpacing;
+            }
+            return Width;
         }
 
         // The state an arrow points at, none for a transition that completes the tree.
@@ -121,13 +177,12 @@ namespace Lumina
             return Selection.Slot == EStateTreeSlot::Transition ? bState && Tree.States[Selection.State].Transitions.IsValidIndex(Selection.Transition) : bState;
         }
 
-        // A rounded label that selects what it names, drawn at Pos, which then moves past it along the row.
-        bool DrawChip(ImVec2& Pos, int32 Id, const FString& Label, const ImVec4& Color, bool bSelected)
+        // A rounded label drawn at Pos, which then moves past it along the row, filled strongly while lit by the debugger.
+        bool DrawChip(ImVec2& Pos, int32 Id, const FCardChip& Chip, bool bSelected)
         {
-            const ImVec2 TextSize = ImGui::CalcTextSize(*Label);
-            const ImVec2 Size(TextSize.x + CardPadding * 2.0f, ImGui::GetTextLineHeight() + 2.0f);
+            const ImVec2 Size(ChipWidth(Chip.Label), ImGui::GetTextLineHeight() + 2.0f);
             const ImVec2 Min = Pos;
-            Pos.x += Size.x + 4.0f;
+            Pos.x += Size.x + ChipSpacing;
             ImGui::SetCursorScreenPos(Min);
             ImGui::PushID(Id);
             const bool bClicked = ImGui::InvisibleButton("##Chip", Size);
@@ -136,12 +191,12 @@ namespace Lumina
 
             ImDrawList* DrawList = ImGui::GetWindowDrawList();
             const ImVec2 Max(Min.x + Size.x, Min.y + Size.y);
-            DrawList->AddRectFilled(Min, Max, EditorColors::U32(EditorColors::WithAlpha(Color, bHovered ? 0.35f : 0.2f)), CardRounding);
-            if (bSelected)
+            DrawList->AddRectFilled(Min, Max, EditorColors::U32(EditorColors::WithAlpha(Chip.Color, (Chip.bLit ? 0.5f : 0.2f) + (bHovered ? 0.15f : 0.0f))), CardRounding);
+            if (bSelected || Chip.bLit)
             {
-                DrawList->AddRect(Min, Max, EditorColors::U32(Color), CardRounding, 1.5f);
+                DrawList->AddRect(Min, Max, EditorColors::U32(bSelected ? EditorColors::Accent() : Chip.Color), CardRounding, 1.5f);
             }
-            DrawList->AddText(ImVec2(Min.x + CardPadding, Min.y + 1.0f), EditorColors::U32(EditorColors::TextPrimary()), *Label);
+            DrawList->AddText(ImVec2(Min.x + CardPadding, Min.y + 1.0f), EditorColors::U32(EditorColors::TextPrimary()), *Chip.Label);
             return bClicked;
         }
 
@@ -189,14 +244,13 @@ namespace Lumina
 
     void FStateTreeEditorTool::InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& /*InDockspaceSize*/) const
     {
-        ImGuiID LeftDockID = 0, RightDockID = 0, LeftBottomDockID = 0, RightBottomDockID = 0;
-        SplitDockingLayoutLeftRight(InDockspaceID, 0.45f, LeftDockID, RightDockID);
-        const ImGuiID LeftTopDockID = ImGui::DockBuilderSplitNode(LeftDockID, ImGuiDir_Up, 0.7f, nullptr, &LeftBottomDockID);
-        const ImGuiID RightTopDockID = ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Up, 0.6f, nullptr, &RightBottomDockID);
+        ImGuiID OutlineDockID = 0, RightDockID = 0, RightBottomDockID = 0;
+        SplitDockingLayoutLeftRight(InDockspaceID, 0.4f, OutlineDockID, RightDockID);
+        const ImGuiID DetailsDockID = ImGui::DockBuilderSplitNode(RightDockID, ImGuiDir_Up, 0.6f, nullptr, &RightBottomDockID);
 
-        ImGui::DockBuilderDockWindow(*GetToolWindowName(OutlineWindowName), LeftTopDockID);
-        ImGui::DockBuilderDockWindow(*GetToolWindowName(DebuggerWindowName), LeftBottomDockID);
-        ImGui::DockBuilderDockWindow(*GetToolWindowName(DetailsWindowName), RightTopDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(OutlineWindowName), OutlineDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(DetailsWindowName), DetailsDockID);
+        ImGui::DockBuilderDockWindow(*GetToolWindowName(DebuggerWindowName), RightBottomDockID);
         ImGui::DockBuilderDockWindow(*GetToolWindowName(ParametersWindowName), RightBottomDockID);
         ImGui::DockBuilderDockWindow(*GetToolWindowName(EvaluatorsWindowName), RightBottomDockID);
     }
@@ -416,14 +470,19 @@ namespace Lumina
         }
 
         DrawOutlineToolbar(*Tree);
+        DrawValidation();
 
-        const int32 IssueRows = Math::Min(Issues.Num(), MaxIssueRows);
-        const float StripHeight = ImGui::GetFrameHeightWithSpacing() * 1.5f + ImGui::GetTextLineHeightWithSpacing() * IssueRows;
-        if (ImGui::BeginChild("##Cards", ImVec2(0.0f, -StripHeight)))
+        if (ImGui::BeginChild("##Cards"))
         {
             Cards.Reset();
             Cards.SetNum(Tree->States.Num());
+            LastTransition = Debugger.GetLastTransition(*Tree);
             TVector<bool> Drawn(Tree->States.Num(), false);
+
+            // Container frames go on the channel under the cards, since their size is known only after the children are drawn.
+            ImDrawList* DrawList = ImGui::GetWindowDrawList();
+            DrawList->ChannelsSplit(2);
+            DrawList->ChannelsSetCurrent(1);
             DrawStates(*Tree, FName(), 0, Drawn, true);
 
             // A state whose parent is missing or loops still gets a card, at the top level, so it can be fixed.
@@ -434,6 +493,7 @@ namespace Lumina
                     DrawStateCard(*Tree, State, 0);
                 }
             }
+            DrawList->ChannelsMerge();
             DrawTransitionArrows(*Tree);
 
             if (ImGui::BeginPopupContextWindow("##OutlineMenu", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
@@ -451,8 +511,6 @@ namespace Lumina
             HandleOutlineShortcuts();
         }
         ImGui::EndChild();
-
-        DrawValidation();
 
         if (DeferredEdit)
         {
@@ -498,8 +556,9 @@ namespace Lumina
         ImGui::EndDisabled();
     }
 
-    void FStateTreeEditorTool::DrawStates(CStateTree& Tree, FName Parent, int32 Depth, TVector<bool>& Drawn, bool bShown)
+    ImVec2 FStateTreeEditorTool::DrawStates(CStateTree& Tree, FName Parent, int32 Depth, TVector<bool>& Drawn, bool bShown)
     {
+        ImVec2 Extent(-FLT_MAX, -FLT_MAX);
         for (int32 State = 0; State < Tree.States.Num(); ++State)
         {
             if (Drawn[State] || Tree.States[State].Parent != Parent)
@@ -511,19 +570,81 @@ namespace Lumina
             if (bShown)
             {
                 DrawStateCard(Tree, State, Depth);
+                Extent = ImMax(Extent, Cards[State].Max);
             }
-            DrawStates(Tree, Tree.States[State].Name, Depth + 1, Drawn, bShown && !Algo::Contains(CollapsedStates, Tree.States[State].Name));
+            const ImVec2 Children = DrawStates(Tree, Tree.States[State].Name, Depth + 1, Drawn, bShown && !Algo::Contains(CollapsedStates, Tree.States[State].Name));
+            if (!bShown || Children.y < Cards[State].Max.y)
+            {
+                continue;
+            }
+
+            // The card heads a frame around its children, so a group reads as the container it is.
+            const FCardLayout& Card = Cards[State];
+            const ImVec2 FrameMin(Card.Min.x - ContainerPadding, Card.Min.y - ContainerPadding);
+            const ImVec2 FrameMax(Math::Max(Card.Max.x, Children.x) + ContainerPadding, Children.y + ContainerPadding);
+            const ImVec4 Color = KindColor(Tree.States[State].Kind);
+            ImDrawList* DrawList = ImGui::GetWindowDrawList();
+            DrawList->ChannelsSetCurrent(0);
+            DrawList->AddRectFilled(FrameMin, FrameMax, EditorColors::U32(EditorColors::WithAlpha(Color, 0.05f)), CardRounding + ContainerPadding);
+            DrawList->AddRect(FrameMin, FrameMax, EditorColors::U32(EditorColors::WithAlpha(Color, 0.3f)), CardRounding + ContainerPadding);
+            DrawList->ChannelsSetCurrent(1);
+            Extent = ImMax(Extent, FrameMax);
+
+            ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, FrameMax.y + CardSpacing));
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
         }
+        return Extent;
+    }
+
+    float FStateTreeEditorTool::GetGutterWidth() const
+    {
+        return ArrowLaneWidth * (float)ArrowLanes + 10.0f;
     }
 
     void FStateTreeEditorTool::DrawStateCard(CStateTree& Tree, int32 State, int32 Depth)
     {
         const SStateTreeState& Source = Tree.States[State];
+        const TOptional<EStateTreeRunStatus> Active = Debugger.GetStateStatus(Tree, State);
+        const ImVec4 ActiveColor = Active ? FStateTreeDebugger::GetStatusColor(*Active) : EditorColors::Accent();
+
+        TVector<FCardRow> Rows;
+        auto AddNodeRow = [&](const auto& Nodes, EStateTreeSlot Slot, const char* Icon, const ImVec4& Color)
+        {
+            if (Nodes.IsEmpty())
+            {
+                return;
+            }
+            FCardRow& Row = Rows.EmplaceGetRef();
+            Row.Icon = Icon;
+            for (int32 Index = 0; Index < Nodes.Num(); ++Index)
+            {
+                const bool bTask = Slot == EStateTreeSlot::Task;
+                Row.Chips.Add({ bTask ? NodeLabel(Nodes[Index]) : ConditionLabel(Nodes[Index], Index), { State, Slot, Constants::kIndexNone, Index }, Color, bTask && Active.IsSet() });
+            }
+        };
+        AddNodeRow(Source.EnterConditions, EStateTreeSlot::EnterCondition, LE_ICON_FILTER, EditorColors::Warning());
+        AddNodeRow(Source.Tasks, EStateTreeSlot::Task, LE_ICON_PLAY, ActiveColor);
+        for (int32 Transition = 0; Transition < Source.Transitions.Num(); ++Transition)
+        {
+            const FStateTreeSelection Target = { State, EStateTreeSlot::Transition, Transition };
+            AddTransitionChips(Rows.EmplaceGetRef(), Source.Transitions[Transition], Target, LastTransition == Target);
+        }
+
+        const ImGuiStyle& Style = ImGui::GetStyle();
+        const CStateTree* Linked = Source.Kind == EStateTreeStateKind::LinkedSubtree ? Source.LinkedSubtree.Get() : nullptr;
+        const FString LinkedLabel = Linked != nullptr ? Format("{} {}", LE_ICON_ARROW_RIGHT_THIN, Linked->GetName()) : FString();
+        float ContentWidth = ImGui::GetTextLineHeight() + 2.0f + ImGui::CalcTextSize(KindIcon(Source.Kind)).x + Style.ItemSpacing.x + ImGui::CalcTextSize(*Source.Name.ToString()).x
+            + (Linked != nullptr ? Style.ItemSpacing.x + ImGui::CalcTextSize(*LinkedLabel).x : 0.0f) + (Active ? Style.ItemSpacing.x + ImGui::CalcTextSize(LE_ICON_LIGHTNING_BOLT).x : 0.0f);
+        for (const FCardRow& Row : Rows)
+        {
+            ContentWidth = Math::Max(ContentWidth, RowWidth(Row));
+        }
+
         const float LineHeight = ImGui::GetTextLineHeightWithSpacing();
-        const int32 NumLines = 1 + (Source.EnterConditions.IsEmpty() ? 0 : 1) + (Source.Tasks.IsEmpty() ? 0 : 1) + Source.Transitions.Num();
         const ImVec2 Start = ImGui::GetCursorScreenPos();
-        const ImVec2 Min(Start.x + GutterWidth + Depth * CardIndent, Start.y);
-        const ImVec2 Max(Start.x + Math::Max(ImGui::GetContentRegionAvail().x, GutterWidth + Depth * CardIndent + 120.0f), Start.y + NumLines * LineHeight + CardPadding * 2.0f);
+        const ImVec2 Min(Start.x + GetGutterWidth() + Depth * CardIndent, Start.y);
+        const float Width = Math::Max(CardMinWidth, ContentWidth + CardPadding * 2.0f + 4.0f);
+        const ImVec2 Max(Min.x + Math::Min(Width, Math::Max(CardMinWidth, Start.x + ImGui::GetContentRegionAvail().x - Min.x)), Start.y + (1 + Rows.Num()) * LineHeight + CardPadding * 2.0f);
 
         FCardLayout& Card = Cards[State];
         Card.Min = Min;
@@ -560,13 +681,21 @@ namespace Lumina
         AcceptStateDrop(Tree, State);
         DrawStateContextMenu(Tree, State);
 
-        const bool bSelected = Selection.State == State;
-        const TOptional<EStateTreeRunStatus> Active = Debugger.GetStateStatus(Tree, State);
-        const ImVec4 ActiveColor = Active ? FStateTreeDebugger::GetStatusColor(*Active) : EditorColors::Accent();
+        const bool bSelectedState = Selection.State == State && Selection.Slot == EStateTreeSlot::State;
         ImDrawList* DrawList = ImGui::GetWindowDrawList();
-        DrawList->AddRectFilled(Min, Max, EditorColors::U32(bSelected && Selection.Slot == EStateTreeSlot::State ? EditorColors::RowBgActive() : bHovered ? EditorColors::RowBgHovered() : EditorColors::RowBg()), CardRounding);
+        DrawList->AddRectFilled(Min, Max, EditorColors::U32(bSelectedState ? EditorColors::RowBgActive() : bHovered ? EditorColors::RowBgHovered() : EditorColors::RowBg()), CardRounding);
+        if (Active)
+        {
+            DrawList->AddRectFilled(Min, Max, EditorColors::U32(EditorColors::WithAlpha(ActiveColor, 0.16f)), CardRounding);
+        }
         DrawList->AddRectFilled(Min, ImVec2(Min.x + 3.0f, Max.y), EditorColors::U32(KindColor(Source.Kind)), CardRounding, ImDrawFlags_RoundCornersLeft);
-        DrawList->AddRect(Min, Max, EditorColors::U32(Active || bSelected ? ActiveColor : EditorColors::Border()), CardRounding, Active || bSelected ? 2.0f : 1.0f);
+        const bool bOutlined = Active || Selection.State == State;
+        DrawList->AddRect(Min, Max, EditorColors::U32(Active ? ActiveColor : bOutlined ? EditorColors::Accent() : EditorColors::Border()), CardRounding, bOutlined ? 2.0f : 1.0f);
+        if (bSelectedState)
+        {
+            const float Glow = 1.0f + SelectionGlow * 0.5f;
+            DrawList->AddRect(Min - ImVec2(Glow, Glow), Max + ImVec2(Glow, Glow), EditorColors::ScaleAlpha(EditorColors::U32(EditorColors::Accent()), 0.22f), CardRounding + Glow, SelectionGlow);
+        }
 
         ImGui::PushClipRect(Min, Max, true);
         const float X = Min.x + CardPadding + 4.0f;
@@ -623,60 +752,41 @@ namespace Lumina
         else
         {
             ImGui::TextUnformatted(*Source.Name.ToString());
-            if (const CStateTree* Linked = Source.LinkedSubtree.Get(); Linked != nullptr && Source.Kind == EStateTreeStateKind::LinkedSubtree)
+            if (Linked != nullptr)
             {
                 ImGui::SameLine();
-                ImGui::TextColored(EditorColors::TextDim(), "%s %s", LE_ICON_ARROW_RIGHT_THIN, *Linked->GetName());
+                ImGui::TextColored(EditorColors::TextDim(), "%s", *LinkedLabel);
+            }
+            if (Active)
+            {
+                ImGui::SameLine();
+                ImGui::TextColored(ActiveColor, "%s", LE_ICON_LIGHTNING_BOLT);
             }
         }
-        Y += LineHeight;
-
-        auto DrawNodeLine = [&](const auto& Nodes, EStateTreeSlot Slot, const char* Icon, const ImVec4& Color)
-        {
-            if (Nodes.IsEmpty())
-            {
-                return;
-            }
-            ImGui::SetCursorScreenPos(ImVec2(X, Y));
-            ImGui::TextColored(EditorColors::TextDim(), "%s", Icon);
-            ImVec2 Chip(ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x, Y);
-            for (int32 Index = 0; Index < Nodes.Num(); ++Index)
-            {
-                const SStateTreeConditionBase* Condition = Nodes[Index].template GetPtr<SStateTreeConditionBase>();
-                const FString Label = Condition != nullptr && Condition->bInvert ? Format("not {}", NodeLabel(Nodes[Index])) : NodeLabel(Nodes[Index]);
-                const FStateTreeSelection Node = { State, Slot, Constants::kIndexNone, Index };
-                if (DrawChip(Chip, (int32)Slot * 1000 + Index, Label, Color, Selection == Node))
-                {
-                    Select(Node);
-                }
-            }
-            Y += LineHeight;
-        };
-        DrawNodeLine(Source.EnterConditions, EStateTreeSlot::EnterCondition, LE_ICON_FILTER, EditorColors::Warning());
-        DrawNodeLine(Source.Tasks, EStateTreeSlot::Task, LE_ICON_PLAY, ActiveColor);
 
         Card.TransitionY.Reset();
-        for (int32 Transition = 0; Transition < Source.Transitions.Num(); ++Transition)
+        int32 ChipId = 0;
+        for (const FCardRow& Row : Rows)
         {
-            const SStateTreeTransition& Authored = Source.Transitions[Transition];
-            ImVec2 Chip(X, Y);
-            Card.TransitionY.Add(Y + LineHeight * 0.5f);
-            ImGui::PushID(Transition);
-            const FStateTreeSelection Selected = { State, EStateTreeSlot::Transition, Transition };
-            if (DrawChip(Chip, -1, TransitionLabel(Authored), TriggerColor(Authored.Trigger), Selection == Selected))
+            Y += LineHeight;
+            ImVec2 Pos(X, Y);
+            if (Row.Icon != nullptr)
             {
-                Select(Selected);
+                ImGui::SetCursorScreenPos(Pos);
+                ImGui::TextColored(EditorColors::TextDim(), "%s", Row.Icon);
+                Pos.x = ImGui::GetItemRectMax().x + Style.ItemSpacing.x;
             }
-            for (int32 Index = 0; Index < Authored.Conditions.Num(); ++Index)
+            if (Row.Chips[0].Target.Slot == EStateTreeSlot::Transition)
             {
-                const FStateTreeSelection Condition = { State, EStateTreeSlot::TransitionCondition, Transition, Index };
-                if (DrawChip(Chip, Index, Format("if {}", NodeLabel(Authored.Conditions[Index])), EditorColors::Warning(), Selection == Condition))
+                Card.TransitionY.Add(Y + LineHeight * 0.5f);
+            }
+            for (const FCardChip& Chip : Row.Chips)
+            {
+                if (DrawChip(Pos, ChipId++, Chip, Selection == Chip.Target))
                 {
-                    Select(Condition);
+                    Select(Chip.Target);
                 }
             }
-            ImGui::PopID();
-            Y += LineHeight;
         }
         ImGui::PopClipRect();
 
@@ -790,9 +900,8 @@ namespace Lumina
 
     void FStateTreeEditorTool::DrawTransitionArrows(const CStateTree& Tree)
     {
-        ImDrawList* DrawList = ImGui::GetWindowDrawList();
-        const float GutterLeft = ImGui::GetWindowPos().x + ImGui::GetCursorStartPos().x - ImGui::GetScrollX();
-        int32 Lane = 0;
+        Arrows.Reset();
+        TVector<int32> Arrivals(Tree.States.Num(), 0);
         for (int32 State = 0; State < Tree.States.Num(); ++State)
         {
             const FCardLayout& Card = Cards[State];
@@ -809,36 +918,92 @@ namespace Lumina
                 {
                     Target = Cards[Target].bVisible ? Target : Ancestor;
                 }
-                const FCardLayout& TargetCard = Cards[Target];
-                if (!TargetCard.bVisible)
+                if (!Cards[Target].bVisible)
                 {
                     continue;
                 }
+                const FStateTreeSelection Selected = { State, EStateTreeSlot::Transition, Transition };
+                Arrows.Add({ Card.Min.x, Card.TransitionY[Transition], 0.0f, 4.0f, Target, Constants::kIndexNone, EditorColors::U32(TriggerColor(Transitions[Transition].Trigger)),
+                    Selection == Selected, LastTransition == Selected });
+                ++Arrivals[Target];
+            }
+        }
 
-                const bool bSelected = Selection == FStateTreeSelection{ State, EStateTreeSlot::Transition, Transition };
-                const ImU32 Color = EditorColors::U32(bSelected ? EditorColors::TextPrimary() : TriggerColor(Transitions[Transition].Trigger));
-                const float LaneX = GutterLeft + GutterWidth - ArrowLaneWidth * (float)(Lane++ % ArrowLanes + 1);
-                const float FromY = Card.TransitionY[Transition];
-                const float ToX = TargetCard.Min.x - 1.0f;
-                const ImVec2 Points[] = { ImVec2(Card.Min.x, FromY), ImVec2(LaneX, FromY), ImVec2(LaneX, TargetCard.HeaderY), ImVec2(ToX - 5.0f, TargetCard.HeaderY) };
-                DrawList->AddPolyline(Points, IM_ARRAYSIZE(Points), Color, bSelected ? 2.5f : 1.5f);
-                DrawList->AddTriangleFilled(ImVec2(ToX - 6.0f, TargetCard.HeaderY - 4.0f), ImVec2(ToX - 6.0f, TargetCard.HeaderY + 4.0f), ImVec2(ToX, TargetCard.HeaderY), Color);
+        // Each arrow lands at its own height around the target's header, in the order the arrows leave, so none shares a segment.
+        Algo::Sort(Arrows, [](const FArrow& A, const FArrow& B) { return A.FromY < B.FromY; });
+        TVector<int32> Landed(Tree.States.Num(), 0);
+        for (FArrow& Arrow : Arrows)
+        {
+            const int32 Count = Arrivals[Arrow.Target];
+            const float Spacing = Math::Min(ArrivalSpacing, (ImGui::GetTextLineHeight() + CardPadding) / (float)Count);
+            Arrow.ToY = Cards[Arrow.Target].HeaderY + ((float)Landed[Arrow.Target]++ - (float)(Count - 1) * 0.5f) * Spacing;
+            Arrow.HeadSize = Math::Min(4.0f, Spacing * 0.5f);
+        }
+
+        // Shorter arrows take the lanes nearest the cards and longer ones go around them, each lane holding arrows whose spans do not touch.
+        auto Top = [](const FArrow& Arrow) { return Math::Min(Arrow.FromY, Arrow.ToY) - 2.0f; };
+        auto Bottom = [](const FArrow& Arrow) { return Math::Max(Arrow.FromY, Arrow.ToY) + 2.0f; };
+        Algo::Sort(Arrows, [&](const FArrow& A, const FArrow& B) { return Bottom(A) - Top(A) < Bottom(B) - Top(B); });
+        ArrowLanes = 1;
+        for (int32 Index = 0; Index < Arrows.Num(); ++Index)
+        {
+            FArrow& Arrow = Arrows[Index];
+            auto Collides = [&](const FArrow& Other) { return Other.Lane == Arrow.Lane && Top(Other) < Bottom(Arrow) && Top(Arrow) < Bottom(Other); };
+            Arrow.Lane = 0;
+            while (Algo::AnyOf(Arrows.begin(), Arrows.begin() + Index, Collides))
+            {
+                ++Arrow.Lane;
+            }
+            ArrowLanes = Math::Max(ArrowLanes, Arrow.Lane + 1);
+        }
+
+        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+        const float GutterRight = ImGui::GetWindowPos().x + ImGui::GetCursorStartPos().x - ImGui::GetScrollX() + GetGutterWidth();
+        const ImU32 Casing = EditorColors::U32(EditorColors::WindowBg());
+        const ImU32 SelectedGlow = EditorColors::ScaleAlpha(EditorColors::U32(EditorColors::Accent()), 0.85f);
+        const ImU32 LastTakenGlow = EditorColors::U32(EditorColors::WithAlpha(EditorColors::Warning(), 0.5f));
+        // Highlighted arrows go last so they cross over the rest, and every arrow is cased so the one on top at a crossing is plain.
+        for (const bool bHighlightedPass : { false, true })
+        {
+            for (const FArrow& Arrow : Arrows)
+            {
+                const bool bHighlighted = Arrow.bSelected || Arrow.bLastTaken;
+                if (bHighlighted != bHighlightedPass)
+                {
+                    continue;
+                }
+                const float LaneX = GutterRight - ArrowLaneWidth * (float)(Arrow.Lane + 1);
+                const float ToX = Cards[Arrow.Target].Min.x - 1.0f;
+                const ImVec2 Points[] = { ImVec2(Arrow.FromX, Arrow.FromY), ImVec2(LaneX, Arrow.FromY), ImVec2(LaneX, Arrow.ToY), ImVec2(ToX - Arrow.HeadSize, Arrow.ToY) };
+                const float Thickness = bHighlighted ? 2.0f : 1.5f;
+                DrawList->AddPolyline(Points, IM_ARRAYSIZE(Points), Casing, Thickness + 3.0f);
+                if (bHighlighted)
+                {
+                    DrawList->AddPolyline(Points, IM_ARRAYSIZE(Points), Arrow.bSelected ? SelectedGlow : LastTakenGlow, Thickness + 3.0f);
+                }
+                DrawList->AddPolyline(Points, IM_ARRAYSIZE(Points), Arrow.Color, Thickness);
+                DrawList->AddCircleFilled(Points[0], 2.5f, Arrow.Color);
+                DrawList->AddTriangleFilled(ImVec2(ToX - Arrow.HeadSize * 1.5f, Arrow.ToY - Arrow.HeadSize), ImVec2(ToX - Arrow.HeadSize * 1.5f, Arrow.ToY + Arrow.HeadSize), ImVec2(ToX, Arrow.ToY), Arrow.Color);
             }
         }
     }
 
     void FStateTreeEditorTool::DrawValidation()
     {
+        // The status closes the toolbar row on its right, and any issues list under it, above the cards they point at.
+        const int32 NumErrors = (int32)Algo::CountIf(Issues, [](const FStateTreeIssue& Issue) { return Issue.bError; });
+        const FString Status = Issues.IsEmpty() ? Format("{} Compiled", LE_ICON_CHECK_CIRCLE) : Format("{} {} errors, {} warnings", LE_ICON_ALERT_CIRCLE, NumErrors, Issues.Num() - NumErrors);
+        ImGui::SameLine();
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + Math::Max(0.0f, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(*Status).x));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(Issues.IsEmpty() ? EditorColors::Success() : NumErrors > 0 ? EditorColors::Danger() : EditorColors::Warning(), "%s", *Status);
         ImGui::Separator();
         if (Issues.IsEmpty())
         {
-            ImGui::TextColored(EditorColors::Success(), "%s Compiled with no issues", LE_ICON_CHECKBOX_MARKED);
             return;
         }
 
-        const int32 NumErrors = (int32)Algo::CountIf(Issues, [](const FStateTreeIssue& Issue) { return Issue.bError; });
-        ImGui::TextColored(NumErrors > 0 ? EditorColors::Danger() : EditorColors::Warning(), "%s %d errors, %d warnings", LE_ICON_ALERT_CIRCLE, NumErrors, Issues.Num() - NumErrors);
-        if (ImGui::BeginChild("##Issues"))
+        if (ImGui::BeginChild("##Issues", ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * Math::Min(Issues.Num(), MaxIssueRows))))
         {
             for (int32 Index = 0; Index < Issues.Num(); ++Index)
             {
@@ -890,7 +1055,7 @@ namespace Lumina
         CStateTree* Tree = GetTree();
         if (Tree == nullptr || !SelectionExists(*Tree, Selection))
         {
-            ImGui::TextDisabled("Select a state, a node or a transition.");
+            DrawEmptyState(LE_ICON_STATE_MACHINE, "Nothing selected", "Select a state, a node or a transition in the outline.");
             return;
         }
 

@@ -112,8 +112,8 @@ namespace Lumina
             return Candidate;
         }
 
-        // Capture the path after each `<Key>=`; left-anchored against an identifier-tail so `data-src=`/`nosrc=` don't false-match. Tolerates whitespace around `=`.
-        void ScanAttribute(FStringView Src, FStringView Key, TVector<FString>& Out)
+        // Finds each boundary-checked occurrence of Key, optionally requires Separator (skipping whitespace around it, '\0' for none), then captures the path that follows.
+        void ScanKeyed(FStringView Src, FStringView Key, char Separator, TVector<FString>& Out)
         {
             int32 Pos = 0;
             while (Pos < Src.Len())
@@ -125,9 +125,12 @@ namespace Lumina
                 if (!IsAttributeBoundary(Src, Hit)) continue;
 
                 int32 P = Pos;
-                while (P < Src.Len() && std::isspace(static_cast<unsigned char>(Src[P]))) ++P;
-                if (P >= Src.Len() || Src[P] != '=') continue;
-                ++P;
+                if (Separator != '\0')
+                {
+                    while (P < Src.Len() && std::isspace(static_cast<unsigned char>(Src[P]))) ++P;
+                    if (P >= Src.Len() || Src[P] != Separator) continue;
+                    ++P;
+                }
 
                 FStringView Path = ScanPath(Src, P);
                 if (!Path.IsEmpty())
@@ -136,75 +139,30 @@ namespace Lumina
                     Pos = P + Path.Len();
                 }
             }
+        }
+
+        // Capture the path after each `<Key>=`; left-anchored against an identifier-tail so `data-src=`/`nosrc=` don't false-match. Tolerates whitespace around `=`.
+        void ScanAttribute(FStringView Src, FStringView Key, TVector<FString>& Out)
+        {
+            ScanKeyed(Src, Key, '=', Out);
         }
 
         // A declaration such as the src of an @spritesheet, which names its texture without url().
         void ScanCssProperty(FStringView Src, FStringView Key, TVector<FString>& Out)
         {
-            int32 Pos = 0;
-            while (Pos < Src.Len())
-            {
-                int32 Hit = Src.Find(Key, Pos);
-                if (Hit == Constants::kIndexNone) return;
-                Pos = Hit + Key.Len();
-
-                if (!IsAttributeBoundary(Src, Hit)) continue;
-
-                int32 P = Pos;
-                while (P < Src.Len() && std::isspace(static_cast<unsigned char>(Src[P]))) ++P;
-                if (P >= Src.Len() || Src[P] != ':') continue;
-                ++P;
-
-                FStringView Path = ScanPath(Src, P);
-                if (!Path.IsEmpty())
-                {
-                    Out.Emplace(Path.GetData(), Path.Len());
-                    Pos = P + Path.Len();
-                }
-            }
+            ScanKeyed(Src, Key, ':', Out);
         }
 
         // A CSS function such as url( or RmlUi's image( decorator, in single, double and unquoted forms, boundary-checked against ident tails.
         void ScanCssFunction(FStringView Src, FStringView Tok, TVector<FString>& Out)
         {
-            int32 Pos = 0;
-            while (Pos < Src.Len())
-            {
-                int32 Hit = Src.Find(Tok, Pos);
-                if (Hit == Constants::kIndexNone) return;
-                Pos = Hit + Tok.Len();
-
-                if (!IsAttributeBoundary(Src, Hit)) continue;
-
-                FStringView Path = ScanPath(Src, Pos);
-                if (!Path.IsEmpty())
-                {
-                    Out.Emplace(Path.GetData(), Path.Len());
-                    Pos += Path.Len();
-                }
-            }
+            ScanKeyed(Src, Tok, '\0', Out);
         }
 
         // The UI material brush URI scheme, boundary-checked so ordinary prose cannot match it.
         void ScanMaterialUri(FStringView Src, TVector<FString>& Out)
         {
-            const FStringView Tok("material:");
-            int32 Pos = 0;
-            while (Pos < Src.Len())
-            {
-                int32 Hit = Src.Find(Tok, Pos);
-                if (Hit == Constants::kIndexNone) return;
-                Pos = Hit + Tok.Len();
-
-                if (!IsAttributeBoundary(Src, Hit)) continue;
-
-                FStringView Path = ScanPath(Src, Pos);
-                if (!Path.IsEmpty())
-                {
-                    Out.Emplace(Path.GetData(), Path.Len());
-                    Pos += Path.Len();
-                }
-            }
+            ScanKeyed(Src, FStringView("material:"), '\0', Out);
         }
 
         bool IsRmlOrRcss(FStringView VirtualPath)

@@ -2,7 +2,6 @@
 #include "SparseSet.h"
 
 #include "Core/Assertions/Assert.h"
-#include "Core/Threading/Thread.h"
 
 namespace Lumina::ECS
 {
@@ -17,55 +16,23 @@ namespace Lumina::ECS
         {
             return ElementAlignment > MinPayloadAlignment ? ElementAlignment : MinPayloadAlignment;
         }
-
-        // Never freed or reused, because a script view may still read the slot after its pool is destroyed.
-        uint32* AcquireLayoutEpochSlot()
-        {
-            constexpr uint32 SlotsPerChunk = 1024;
-            static FMutex Mutex;
-            static uint32* Chunk = nullptr;
-            static uint32 Used = SlotsPerChunk;
-
-            FScopeLock Lock(Mutex);
-            if (Used == SlotsPerChunk)
-            {
-                Chunk = static_cast<uint32*>(Memory::Malloc(sizeof(uint32) * SlotsPerChunk, alignof(uint32)));
-                Used = 0;
-            }
-
-            uint32* Slot = &Chunk[Used++];
-            *Slot = 1;
-            return Slot;
-        }
-
-        uint64 AcquireWriteEpochBase()
-        {
-            static std::atomic<uint32> NextPool{ 1 };
-            return static_cast<uint64>(NextPool.fetch_add(1, std::memory_order_relaxed)) << 32;
-        }
-
-        std::atomic<uint32>& ChangeClock()
-        {
-            static std::atomic<uint32> Clock{ 1 };
-            return Clock;
-        }
     }
 
     uint32 FSparseSet::GetChangeTick()
     {
-        return SparseSetInternal::ChangeClock().load(std::memory_order_relaxed);
+        return FComponentTypeRegistry::Get().GetChangeTick();
     }
 
     uint32 FSparseSet::AdvanceChangeTick()
     {
-        return SparseSetInternal::ChangeClock().fetch_add(1, std::memory_order_relaxed);
+        return FComponentTypeRegistry::Get().AdvanceChangeTick();
     }
 
     FSparseSet::FSparseSet(const FComponentTypeInfo& InTypeInfo)
     {
         ApplyLayout(InTypeInfo);
-        WriteEpoch.store(SparseSetInternal::AcquireWriteEpochBase(), std::memory_order_relaxed);
-        LayoutEpoch = SparseSetInternal::AcquireLayoutEpochSlot();
+        WriteEpoch.store(FComponentTypeRegistry::Get().AcquireWriteEpochBase(), std::memory_order_relaxed);
+        LayoutEpoch = FComponentTypeRegistry::Get().AcquireLayoutEpochSlot();
         if (TypeInfo.bRuntimeLayout)
         {
             FComponentTypeRegistry::Get().TrackPool(this);

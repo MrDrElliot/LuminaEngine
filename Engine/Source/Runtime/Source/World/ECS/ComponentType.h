@@ -127,6 +127,14 @@ namespace Lumina::ECS
         RUNTIME_API void TrackPool(FSparseSet* Pool);
         RUNTIME_API void UntrackPool(FSparseSet* Pool);
 
+        // Never freed or reused, because a script view may still read the slot after its pool is destroyed.
+        NODISCARD RUNTIME_API uint32* AcquireLayoutEpochSlot();
+
+        RUNTIME_API uint64 AcquireWriteEpochBase();
+
+        NODISCARD RUNTIME_API uint32 GetChangeTick() const;
+        RUNTIME_API uint32 AdvanceChangeTick();
+
     private:
 
         NODISCARD FComponentTypeID FindByNameLocked(const FName& Name) const;
@@ -140,6 +148,14 @@ namespace Lumina::ECS
         // Only pools of runtime-layout types, the ones a reshape has to reach.
         TVector<FSparseSet*> RuntimeLayoutPools;
         FMutex PoolLock;
+
+        static constexpr uint32 LayoutEpochSlotsPerChunk = 1024;
+        FMutex LayoutEpochLock;
+        uint32* LayoutEpochChunk = nullptr;
+        uint32 LayoutEpochUsed = LayoutEpochSlotsPerChunk;
+
+        std::atomic<uint32> NextWriteEpochPool{ 1 };
+        std::atomic<uint32> ChangeClock{ 1 };
     };
 
     template<typename T>

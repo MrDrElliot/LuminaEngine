@@ -108,6 +108,59 @@ TEST(NetPredictionBudget, TickBudgetsNeverExceedsTheCap)
     EXPECT_NEAR(Fixture.Prediction().Budget, Cap, 1.0e-4f);
 }
 
+TEST(NetPredictionBudget, TheHostClosesABacklogDeeperThanTheCapWhileTheClientKeepsMoving)
+{
+    FFixture Fixture;
+    constexpr uint32 LostTicks = NetPrediction::MaxMovesPerUpload * 2 + 6;
+    constexpr uint32 CatchUpTicks = 60;
+
+    uint32 NewestSeq = 0;
+    TVector<FNetMoveCommand> Window;
+    TVector<uint8> Packet;
+    auto Tick = [&](bool bDelivered)
+    {
+        NetPrediction::TickBudgets(Fixture.Registry, FixedDt, FixedDt);
+        ++NewestSeq;
+        if (!bDelivered)
+        {
+            return;
+        }
+
+        // The same window SendCommands uploads, the newest MaxMovesPerUpload moves the host has not confirmed.
+        const uint32 Oldest = Math::Max(Fixture.Prediction().LastProcessed + 1, NewestSeq + 1 - Math::Min(NewestSeq, NetPrediction::MaxMovesPerUpload));
+        Window.Reset();
+        for (uint32 Seq = Oldest; Seq <= NewestSeq; ++Seq)
+        {
+            Window.Add(NetPrediction::MakeMoveCommand(Seq, FVector3(1.0f, 0.0f, 0.0f), 0.0f, 0));
+        }
+        Packet.Reset();
+        NetPrediction::WriteMoveCommands(Packet, Guid, Window.GetData(), (uint32)Window.Num());
+        NetPrediction::ReceiveCommands(Fixture.Registry, Fixture.Scene, FixedDt, Sender, Packet.GetData(), (SIZE_T)Packet.Num());
+    };
+
+    for (uint32 Index = 0; Index < LostTicks; ++Index)
+    {
+        Tick(false);
+    }
+    Tick(true);
+    ASSERT_LT(Fixture.Prediction().LastProcessed, NewestSeq);
+
+    uint32 TicksToCatchUp = 0;
+    while (Fixture.Prediction().LastProcessed < NewestSeq && TicksToCatchUp < CatchUpTicks)
+    {
+        Tick(true);
+        ++TicksToCatchUp;
+    }
+    EXPECT_EQ(Fixture.Prediction().LastProcessed, NewestSeq);
+    EXPECT_GT(Fixture.Prediction().SkippedMoves, 0u);
+
+    for (uint32 Index = 0; Index < CatchUpTicks; ++Index)
+    {
+        Tick(true);
+        EXPECT_EQ(Fixture.Prediction().LastProcessed, NewestSeq);
+    }
+}
+
 TEST(NetPredictionBudget, CommandsFromAConnectionThatDoesNotOwnTheEntityAreIgnored)
 {
     FFixture Fixture;

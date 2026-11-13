@@ -4049,7 +4049,7 @@ namespace Lumina
         }
         else
         {
-            DrawEmptyState();
+            DrawEmptyState(LE_ICON_INBOX, "Nothing selected", "Select an entity to view properties");
         }
 
         ImGui::EndChild();
@@ -4403,32 +4403,6 @@ namespace Lumina
         DrawTagSection(Entity);
 
         DrawComponentList(Entity);
-    }
-
-    void FSceneEditorTool::DrawEmptyState()
-    {
-        const ImVec2 WindowSize = ImGui::GetWindowSize();
-        ImGui::SetCursorPosY(WindowSize.y * 0.5f - 40.0f);
-
-        auto DrawCentered = [&WindowSize](const char* Text)
-        {
-            ImGui::SetCursorPosX(Math::Max(ImGui::GetStyle().WindowPadding.x, (WindowSize.x - ImGui::CalcTextSize(Text).x) * 0.5f));
-            ImGui::TextUnformatted(Text);
-        };
-
-        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
-
-        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
-        DrawCentered(LE_ICON_INBOX);
-        ImGui::PopFont();
-
-        ImGui::Spacing();
-        DrawCentered("Nothing selected");
-        ImGui::Spacing();
-
-        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::WithAlpha(EditorColors::TextMuted(), 0.7f));
-        DrawCentered("Select an entity to view properties");
-        ImGui::PopStyleColor(2);
     }
 
     int32 FSceneEditorTool::CountOutlinerEntities() const

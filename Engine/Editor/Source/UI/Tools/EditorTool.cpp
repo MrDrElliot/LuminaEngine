@@ -127,6 +127,32 @@ namespace Lumina
         ImGui::DockBuilderDockWindow(*GetToolWindowName(InRightWindowName, InDockspaceID), RightDockID);
     }
 
+    void FEditorTool::DrawEmptyState(const char* Icon, const char* Title, const char* Hint)
+    {
+        const ImVec2 WindowSize = ImGui::GetWindowSize();
+        ImGui::SetCursorPosY(Math::Max(ImGui::GetCursorPosY(), WindowSize.y * 0.5f - 40.0f));
+
+        auto DrawCentered = [&WindowSize](const char* Text)
+        {
+            ImGui::SetCursorPosX(Math::Max(ImGui::GetStyle().WindowPadding.x, (WindowSize.x - ImGui::CalcTextSize(Text).x) * 0.5f));
+            ImGui::TextUnformatted(Text);
+        };
+
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
+
+        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+        DrawCentered(Icon);
+        ImGui::PopFont();
+
+        ImGui::Spacing();
+        DrawCentered(Title);
+        ImGui::Spacing();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::WithAlpha(EditorColors::TextMuted(), 0.7f));
+        DrawCentered(Hint);
+        ImGui::PopStyleColor(2);
+    }
+
     void FEditorTool::GenerateThumbnail(CPackage* Package)
     {
         if (!World || !World->GetRenderer())

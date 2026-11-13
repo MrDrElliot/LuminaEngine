@@ -45,6 +45,7 @@ namespace Lumina
         uint32                        LastProcessed = 0;
         uint32                        SkippedMoves  = 0;
         float                         Budget        = 0.0f;
+        float                         CatchUp       = 0.0f;     // budget the cap clipped, granted back a little per tick
         Physics::FCharacterNetState   AckState;
         uint32                        AckSeq        = 0;
         float                         TimeSinceAck  = 0.0f;

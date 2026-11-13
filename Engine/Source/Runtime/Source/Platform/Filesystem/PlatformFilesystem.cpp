@@ -228,7 +228,7 @@ namespace Lumina::Filesystem
             return false;
         }
 
-        const int32 SourceLength = From.Len();
+        const int32 SourceLength = Paths::TrimTrailingSeparators(From).Len();
         const FString Target(Paths::TrimTrailingSeparators(To));
 
         bool bSuccess = true;

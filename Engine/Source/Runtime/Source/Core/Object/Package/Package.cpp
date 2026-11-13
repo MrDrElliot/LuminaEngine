@@ -1108,9 +1108,10 @@ namespace Lumina
             Package->Rename(NewObjectName, nullptr);
 
             // The bytes really did move, so follow them or every later streamed read hits a missing path.
-            if (!Package->BulkSourcePath.IsEmpty())
+            FBulkRegion ExistingRegion;
+            if (!Package->GetBulkSource(&ExistingRegion).IsEmpty())
             {
-                Package->SetBulkSource(Package->GetBulkRegion(), NewPath);
+                Package->SetBulkSource(ExistingRegion, NewPath);
             }
         }
     }
@@ -1460,10 +1461,13 @@ namespace Lumina
 
             const TSpan<const uint8> TrailerBytes(reinterpret_cast<const uint8*>(&Trailer), sizeof(Trailer));
 
+            FBulkRegion SourceRegion;
+            const FFixedString SourcePath = Package->GetBulkSource(&SourceRegion);
+
             const bool bSpliced = !Package->bBulkDataUnresolved
-                && VFS::AtomicWriteFileSpliced(Path, DiskBinary, Package->BulkSourcePath,
-                                               (uint64)Package->BulkRegion.FileOffset,
-                                               (uint64)Package->BulkRegion.Size, TrailerBytes);
+                && VFS::AtomicWriteFileSpliced(Path, DiskBinary, SourcePath,
+                                               (uint64)SourceRegion.FileOffset,
+                                               (uint64)SourceRegion.Size, TrailerBytes);
 
             if (bSpliced)
             {
@@ -1651,7 +1655,8 @@ namespace Lumina
         }
 
         // Mid-rename the name points at a file not yet written, so resolving through it would fail.
-        const FFixedString Path = BulkSourcePath.IsEmpty() ? GetPackagePath() : BulkSourcePath;
+        const FFixedString BulkPath = GetBulkSource();
+        const FFixedString Path = BulkPath.IsEmpty() ? GetPackagePath() : BulkPath;
 
         if (!Bytes)
         {
@@ -1720,12 +1725,25 @@ namespace Lumina
         return BulkGeneration;
     }
 
+    FFixedString CPackage::GetBulkSource(FBulkRegion* OutRegion) const
+    {
+        FScopeLock Lock(BulkMutex);
+        if (OutRegion)
+        {
+            *OutRegion = BulkRegion;
+        }
+        return BulkSourcePath;
+    }
+
     bool CPackage::CanSpliceBulkRegion() const
     {
+        // Read through the lock because another thread's save or load can be mid SetBulkSource.
+        FBulkRegion Region;
+        const FFixedString SourcePath = GetBulkSource(&Region);
         return !bDirty
-            && BulkRegion.IsValid()
-            && !BulkSourcePath.IsEmpty()
-            && VFS::Exists(BulkSourcePath);
+            && Region.IsValid()
+            && !SourcePath.IsEmpty()
+            && VFS::Exists(SourcePath);
     }
 
     void CPackage::ConditionalDropLoader()

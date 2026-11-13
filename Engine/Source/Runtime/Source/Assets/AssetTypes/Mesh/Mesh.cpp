@@ -150,22 +150,36 @@ namespace Lumina
             return;
         }
 
-        ReplaceMeshResources(Move(NewResource));
-        GenerateBoundingBox();
+        // A first resource replaces nothing that draws, so code later in the scope can read it at once.
+        if (MeshResources == nullptr)
+        {
+            ReplaceMeshResources(Move(NewResource));
+            GenerateBoundingBox();
+        }
+        else
+        {
+            PendingMeshResources = Move(NewResource);
+        }
         FMeshBuildBatchScope::DeferMeshlets(this);
     }
 
     void CMesh::BuildDeferredMeshlets()
     {
-        if (MeshResources && MeshResources->MeshletData.IsEmpty() && !MeshResources->Indices.IsEmpty())
+        FMeshResource* Resource = PendingMeshResources ? PendingMeshResources.get() : MeshResources.get();
+        if (Resource && Resource->MeshletData.IsEmpty() && !Resource->Indices.IsEmpty())
         {
-            Import::Mesh::GenerateMeshlets(*MeshResources);
+            Import::Mesh::GenerateMeshlets(*Resource);
         }
     }
 
     void CMesh::UploadDeferredBuffers()
     {
-        if (MeshResources)
+        if (PendingMeshResources)
+        {
+            TUniquePtr<FMeshResource> Resource = Move(PendingMeshResources);
+            SetMeshResource(Move(Resource));
+        }
+        else if (MeshResources)
         {
             GenerateGPUBuffers();
         }

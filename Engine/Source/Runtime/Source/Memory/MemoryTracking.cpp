@@ -104,7 +104,7 @@ namespace Lumina::Memory
         FORCEINLINE uint32 CurrentCategory()
         {
             const int Depth = tlCategoryDepth;
-            return (Depth > 0 && Depth <= (int)kMaxCatDepth) ? tlCategoryStack[Depth - 1] : 0u;
+            return Depth > 0 ? tlCategoryStack[Math::Min(Depth, (int)kMaxCatDepth) - 1] : 0u;
         }
 
         // Caller must hold gCategoryMutex. Index 0 is reserved for "Default".
@@ -468,6 +468,10 @@ namespace Lumina::Memory
         if (tlCategoryDepth < (int)kMaxCatDepth)
         {
             tlCategoryStack[tlCategoryDepth] = CategoryId;
+        }
+        else
+        {
+            LOG_WARN_ONCE("Memory category scopes nested past {} deep; deeper scopes are attributed to the innermost recorded one", kMaxCatDepth);
         }
         ++tlCategoryDepth;
     }

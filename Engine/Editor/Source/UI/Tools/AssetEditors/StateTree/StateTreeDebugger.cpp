@@ -8,6 +8,7 @@
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "UI/Tools/EditorTool.h"
 #include "World/World.h"
 #include "World/WorldManager.h"
 #include "World/Entity/Components/NameComponent.h"
@@ -151,6 +152,33 @@ namespace Lumina
         return {};
     }
 
+    FStateTreeSelection FStateTreeDebugger::GetLastTransition(const CStateTree& Tree) const
+    {
+        const FStateTreeInstance* Instance = FindInstance(Tree);
+        const FStateTreeTrace* Trace = Instance != nullptr ? Instance->GetTrace() : nullptr;
+        if (Trace == nullptr)
+        {
+            return {};
+        }
+        const TRingBuffer<FStateTreeTraceRecord>& Records = Trace->GetRecords();
+        const FStateTreeRuntime& Runtime = *Instance->GetRuntime();
+        for (int32 Record = bLive ? Records.Num() - 1 : Trace->FindAt(ScrubTime); Record >= 0; --Record)
+        {
+            if (Records[Record].Kind != EStateTreeTraceKind::Transition)
+            {
+                continue;
+            }
+            const uint32 Taken = Records[Record].Value;
+            const int32 Source = Algo::IndexOfIf(Runtime.States, [Taken](const FStateTreeRuntimeState& Candidate)
+            {
+                return Candidate.Scope == 0 && Taken >= Candidate.FirstTransition && Taken < (uint32)(Candidate.FirstTransition + Candidate.NumTransitions);
+            });
+            const int32 State = Source != Constants::kIndexNone ? Algo::IndexOf(Tree.States, Runtime.States[Source].Name, &SStateTreeState::Name) : Constants::kIndexNone;
+            return State != Constants::kIndexNone ? FStateTreeSelection{ State, EStateTreeSlot::Transition, (int32)(Taken - Runtime.States[Source].FirstTransition) } : FStateTreeSelection();
+        }
+        return {};
+    }
+
     void FStateTreeDebugger::ScrubTo(double Time)
     {
         ScrubTime = Time;
@@ -163,7 +191,7 @@ namespace Lumina
         FStateTreeInstance* Instance = FindInstance(Tree);
         if (Instance == nullptr)
         {
-            ImGui::TextDisabled("Pick an entity running this tree during Play.");
+            FEditorTool::DrawEmptyState(LE_ICON_BUG, "Not debugging", "Pick an entity running this tree during Play.");
             return;
         }
         // Restarting the component during Play makes a new instance, which is traced from here on.

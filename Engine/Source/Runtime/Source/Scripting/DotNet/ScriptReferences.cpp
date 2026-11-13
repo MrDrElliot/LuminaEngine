@@ -288,6 +288,7 @@ namespace Lumina::DotNet
         }
 
         TVector<FString> Resolved;
+        bool bMissingAssembly = false;
         for (const FString& Assembly : Declared.Assemblies)
         {
             if (Filesystem::Exists(Assembly))
@@ -297,6 +298,7 @@ namespace Lumina::DotNet
             else
             {
                 LOG_ERROR("C#: unit '{}' references '{}', which does not exist.", UnitName, Assembly);
+                bMissingAssembly = true;
             }
         }
 
@@ -338,7 +340,10 @@ namespace Lumina::DotNet
             LOG_DISPLAY("C#: unit '{}' resolved {} package assembly(ies).", UnitName, Resolved.Num() - Before);
         }
 
-        StoreCachedResolution(UnitName, CacheKey, Resolved);
+        if (!bMissingAssembly)
+        {
+            StoreCachedResolution(UnitName, CacheKey, Resolved);
+        }
         for (const FString& Assembly : Resolved)
         {
             OutAssemblyPaths.Add(Assembly);

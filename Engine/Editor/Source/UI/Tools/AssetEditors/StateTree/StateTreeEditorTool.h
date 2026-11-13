@@ -38,6 +38,20 @@ namespace Lumina
             bool           bVisible = false;
         };
 
+        // One transition's arrow this frame, leaving its card's row for a lane in the gutter and landing on the target's header.
+        struct FArrow
+        {
+            float FromX      = 0.0f;
+            float FromY      = 0.0f;
+            float ToY        = 0.0f;
+            float HeadSize   = 4.0f;
+            int32 Target     = Constants::kIndexNone;
+            int32 Lane       = Constants::kIndexNone;
+            ImU32 Color      = 0;
+            bool  bSelected  = false;
+            bool  bLastTaken = false;
+        };
+
         CStateTree* GetTree() { return GetAsset<CStateTree>(); }
 
         // Every edit goes through here, so it is dirtied for undo and saving and the validation strip stays live.
@@ -57,12 +71,14 @@ namespace Lumina
 
         void DrawOutline();
         void DrawOutlineToolbar(CStateTree& Tree);
-        void DrawStates(CStateTree& Tree, FName Parent, int32 Depth, TVector<bool>& Drawn, bool bShown);
+        // Returns the lower right corner of what it drew, or -FLT_MAX when nothing was shown, so a parent can frame its children.
+        ImVec2 DrawStates(CStateTree& Tree, FName Parent, int32 Depth, TVector<bool>& Drawn, bool bShown);
         void DrawStateCard(CStateTree& Tree, int32 State, int32 Depth);
         void DrawStateContextMenu(CStateTree& Tree, int32 State);
         void AcceptStateDrop(CStateTree& Tree, int32 State);
         void DrawTransitionArrows(const CStateTree& Tree);
         void DrawValidation();
+        NODISCARD float GetGutterWidth() const;
         void HandleOutlineShortcuts();
 
         void DrawDetails();
@@ -77,6 +93,13 @@ namespace Lumina
         TVector<FStateTreeIssue>    Issues;
         TVector<FName>              CollapsedStates;
         TVector<FCardLayout>        Cards;
+        TVector<FArrow>             Arrows;
+
+        // The lanes the arrows needed last frame, which size the gutter the cards leave for them.
+        int32                       ArrowLanes = 1;
+
+        // Read once a frame for the cards and the arrows.
+        FStateTreeSelection         LastTransition;
 
         // Outline edits wait for the cards to finish drawing, since they reorder the states being drawn.
         TFunction<void()>           DeferredEdit;

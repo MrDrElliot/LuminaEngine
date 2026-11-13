@@ -5,6 +5,7 @@
 #include "Core/Math/Hash/Hash.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Log/Log.h"
+#include "Memory/Memcpy.h"
 #include "Memory/SmartPtr.h"
 
 namespace Lumina
@@ -19,7 +20,7 @@ namespace Lumina
             {
                 return false;
             }
-            std::memcpy(&Out, Data + Offset, sizeof(T));
+            Memory::Memcpy(&Out, Data + Offset, sizeof(T));
             Offset += static_cast<int64>(sizeof(T));
             return true;
         }
@@ -191,7 +192,7 @@ namespace Lumina
                 }
                 if (P.UncompressedSize > 0)
                 {
-                    std::memcpy(Dst, Src, (size_t)P.UncompressedSize);
+                    Memory::Memcpy(Dst, Src, (size_t)P.UncompressedSize);
                 }
             }
             else if (P.Method == (uint8)EPakCompression::Deflate)

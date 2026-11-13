@@ -93,7 +93,7 @@ namespace Lumina
         // Swaps the staged resource in once its upload batch is complete. True when nothing is left pending.
         bool PublishPendingMeshResource();
 
-        // Takes the resource and bounds now, and leaves meshlets and GPU buffers to an open FMeshBuildBatchScope.
+        // Leaves meshlets and GPU buffers to an open FMeshBuildBatchScope, which then stages the resource like SetMeshResource.
         void SetMeshResourceBatched(TUniquePtr<FMeshResource>&& NewResource);
 
         // Counts how often published geometry was replaced, so data built from the old geometry can tell it is stale.

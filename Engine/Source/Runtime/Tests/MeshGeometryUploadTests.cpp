@@ -1,11 +1,14 @@
 #include "gtest/gtest.h"
 
+#include "Assets/AssetTypes/Mesh/MeshBuildBatch.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Core/Object/ObjectCore.h"
 #include "Renderer/MeshData.h"
 #include "Renderer/SkeletonResource.h"
+#include "World/ECS/Registry.h"
+#include "World/Scene/RenderScene/MeshResolveCache.h"
 
 // No RHI here, so every upload batch reports complete and only the staged state can be observed.
 
@@ -31,6 +34,28 @@ TEST(MeshGeometryUpload, StagedResourceLeavesTheLiveOneInPlaceUntilPublished)
     EXPECT_EQ(Mesh->TryGetMeshResource(), Staged);
 }
 
+TEST(MeshGeometryUpload, BatchedReplacementKeepsTheLiveResourceUntilTheBatchUploads)
+{
+    CStaticMesh* Mesh = NewObject<CStaticMesh>();
+    Mesh->SetMeshResource(MakeUnique<FMeshResource>());
+    const FMeshResource* Live = Mesh->TryGetMeshResource();
+    const uint32 LiveVersion = Mesh->GetGeometryVersion();
+
+    TUniquePtr<FMeshResource> Replacement = MakeUnique<FMeshResource>();
+    const FMeshResource* Staged = Replacement.get();
+    {
+        ECS::FRegistry Registry;
+        FMeshBuildBatchScope Batch(Registry);
+        Mesh->SetMeshResourceBatched(Move(Replacement));
+
+        EXPECT_EQ(Mesh->TryGetMeshResource(), Live);
+        EXPECT_EQ(Mesh->GetGeometryVersion(), LiveVersion);
+    }
+
+    EXPECT_EQ(Mesh->TryGetMeshResource(), Staged);
+    EXPECT_EQ(Mesh->GetGeometryVersion(), LiveVersion + 1);
+}
+
 TEST(MeshGeometryUpload, FirstResourcePublishesAtOnce)
 {
     CStaticMesh* Mesh = NewObject<CStaticMesh>();
@@ -40,6 +65,23 @@ TEST(MeshGeometryUpload, FirstResourcePublishesAtOnce)
     Mesh->StageMeshResource(Move(First));
 
     EXPECT_EQ(Mesh->TryGetMeshResource(), Staged);
+}
+
+TEST(MeshGeometryUpload, ResolvingAMeshWhoseFirstResourceHasNotPublishedWaitsForThePublish)
+{
+    CSkeletalMesh* Mesh = NewObject<CSkeletalMesh>();
+    ASSERT_EQ(Mesh->TryGetMeshResource(), nullptr);
+
+    FMeshResolveCache& Cache = FMeshResolveCache::Get();
+    Cache.ApplyPendingInvalidations();
+    const uint32 Handle = Cache.Resolve(Mesh, {});
+    ASSERT_TRUE(Cache.IsValidHandle(Handle));
+    EXPECT_FALSE(Cache.GetEntry(Handle).bResolved);
+    EXPECT_NE(Cache.GetEntryState(Handle), MESH_RESOLVE_STATE_STALE);
+
+    Mesh->SetMeshResource(MakeUnique<FMeshResource>());
+    Cache.ApplyPendingInvalidations();
+    EXPECT_EQ(Cache.GetEntryState(Handle), MESH_RESOLVE_STATE_STALE);
 }
 
 namespace

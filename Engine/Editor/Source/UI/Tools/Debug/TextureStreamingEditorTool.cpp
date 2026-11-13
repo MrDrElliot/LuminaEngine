@@ -40,6 +40,20 @@ namespace Lumina
             if (Row.BudgetedFirstMip > Row.WantedFirstMip)    { return "budget-capped"; }
             return "settled";
         }
+
+        // -2 means no bindless slot exists, -1 means idle, otherwise it is the finest mip shaders asked for.
+        int32 FeedbackCoverageKey(const FTextureStreamingManager::FTextureSnapshot& Row)
+        {
+            if (!Row.bFeedbackValid)
+            {
+                return -2;
+            }
+            if (Row.FeedbackMask == 0u)
+            {
+                return -1;
+            }
+            return (int32)Math::CountTrailingZeros64(Row.FeedbackMask);
+        }
     }
 
     void FTextureStreamingEditorTool::OnInitialize()
@@ -273,17 +287,29 @@ namespace Lumina
         }
 
         ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("Texture", ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort);
-        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 100.0f);
-        ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-        ImGui::TableSetupColumn("Mips", ImGuiTableColumnFlags_WidthFixed, 130.0f);
-        ImGui::TableSetupColumn("Residency", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-        ImGui::TableSetupColumn("Resident", ImGuiTableColumnFlags_WidthFixed, 85.0f);
-        ImGui::TableSetupColumn("Full", ImGuiTableColumnFlags_WidthFixed, 85.0f);
-        ImGui::TableSetupColumn("CPU", ImGuiTableColumnFlags_WidthFixed, 85.0f);
-        ImGui::TableSetupColumn("Coverage", ImGuiTableColumnFlags_WidthFixed, 85.0f);
-        ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+        ImGui::TableSetupColumn("Texture", ImGuiTableColumnFlags_WidthStretch, 0.0f, Column_Texture);
+        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 100.0f, Column_Size);
+        ImGui::TableSetupColumn("Format", ImGuiTableColumnFlags_WidthFixed, 110.0f, Column_Format);
+        ImGui::TableSetupColumn("Mips", ImGuiTableColumnFlags_WidthFixed, 130.0f, Column_Mips);
+        ImGui::TableSetupColumn("Residency", ImGuiTableColumnFlags_WidthFixed, 120.0f, Column_Residency);
+        ImGui::TableSetupColumn("Resident",
+            ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending,
+            85.0f, Column_Resident);
+        ImGui::TableSetupColumn("Full", ImGuiTableColumnFlags_WidthFixed, 85.0f, Column_Full);
+        ImGui::TableSetupColumn("CPU", ImGuiTableColumnFlags_WidthFixed, 85.0f, Column_CPU);
+        ImGui::TableSetupColumn("Coverage", ImGuiTableColumnFlags_WidthFixed, 85.0f, Column_Coverage);
+        ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, 90.0f, Column_State);
         ImGui::TableHeadersRow();
+
+        if (ImGuiTableSortSpecs* Specs = ImGui::TableGetSortSpecs())
+        {
+            if (Specs->SpecsDirty && Specs->SpecsCount > 0)
+            {
+                SortColumn        = (int32)Specs->Specs[0].ColumnUserID;
+                bSortAscending    = Specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending;
+                Specs->SpecsDirty = false;
+            }
+        }
 
         // The question this answers most often is what is eating the pool, which is the top of the list.
         TVector<const FTextureStreamingManager::FTextureSnapshot*> Rows;
@@ -310,10 +336,29 @@ namespace Lumina
             Rows.Add(&Row);
         }
 
+        const int32 Column     = SortColumn;
+        const bool  bAscending = bSortAscending;
+
         Algo::Sort(Rows,
-            [](const FTextureStreamingManager::FTextureSnapshot* A, const FTextureStreamingManager::FTextureSnapshot* B)
+            [Column, bAscending](const FTextureStreamingManager::FTextureSnapshot* A, const FTextureStreamingManager::FTextureSnapshot* B)
             {
-                return A->ResidentBytes > B->ResidentBytes;
+                int32 Comparison = 0;
+                switch (Column)
+                {
+                case Column_Texture:   Comparison = strcmp(*A->Name, *B->Name); break;
+                case Column_Size:      Comparison = (int32)Math::Sign((int64)A->Width * A->Height - (int64)B->Width * B->Height); break;
+                case Column_Format:    Comparison = strcmp(RHI::Format::Info(A->Format).Name, RHI::Format::Info(B->Format).Name); break;
+                case Column_Mips:      Comparison = (int32)A->NumMips - (int32)B->NumMips; break;
+                case Column_Residency: Comparison = (int32)Math::Sign(ResidentFraction(*A) - ResidentFraction(*B)); break;
+                case Column_Resident:  Comparison = (int32)Math::Sign((int64)A->ResidentBytes - (int64)B->ResidentBytes); break;
+                case Column_Full:      Comparison = (int32)Math::Sign((int64)A->FullBytes - (int64)B->FullBytes); break;
+                case Column_CPU:       Comparison = (int32)Math::Sign((int64)A->CpuBytes - (int64)B->CpuBytes); break;
+                case Column_Coverage:  Comparison = FeedbackCoverageKey(*A) - FeedbackCoverageKey(*B); break;
+                case Column_State:     Comparison = strcmp(MipStateLabel(*A), MipStateLabel(*B)); break;
+                default: break;
+                }
+
+                return bAscending ? Comparison < 0 : Comparison > 0;
             });
 
         for (const FTextureStreamingManager::FTextureSnapshot* Row : Rows)

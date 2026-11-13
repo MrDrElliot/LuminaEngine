@@ -35,9 +35,26 @@ namespace Lumina
         void DrawTextureTable();
         void DrawPendingTable();
 
+        enum EColumn
+        {
+            Column_Texture,
+            Column_Size,
+            Column_Format,
+            Column_Mips,
+            Column_Residency,
+            Column_Resident,
+            Column_Full,
+            Column_CPU,
+            Column_Coverage,
+            Column_State,
+        };
+
         // Refreshed each frame from the manager; members rather than locals so sorting survives the frame.
         TVector<FTextureStreamingManager::FTextureSnapshot>  Snapshot;
         TVector<FTextureStreamingManager::FPendingSnapshot>  Pending;
+
+        int32 SortColumn = Column_Resident;
+        bool  bSortAscending = false;
 
         // Rolling history of resident bytes, in MiB, for the pool plot. A flat line while the camera moves
         // is the clearest single symptom of feedback not reaching the streamer.

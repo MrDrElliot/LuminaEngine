@@ -191,16 +191,9 @@ namespace Lumina
 
     bool FInputViewport::ForwardMouseEventToRmlUi(FEvent& Event)
     {
-        if (Event.IsA<FMouseMovedEvent>())
+        if (Event.IsA<FMouseMovedEvent>() && Context->GetMouseXRaw() == LastRmlMouseX && Context->GetMouseYRaw() == LastRmlMouseY)
         {
-            const double RawX = Context->GetMouseXRaw();
-            const double RawY = Context->GetMouseYRaw();
-            if (RawX == LastRmlMouseX && RawY == LastRmlMouseY)
-            {
-                return bLastRmlMoveConsumed;
-            }
-            LastRmlMouseX = RawX;
-            LastRmlMouseY = RawY;
+            return bLastRmlMoveConsumed;
         }
 
         // Event listeners can mutate the DOM that render reads concurrently, so hold the lock throughout.
@@ -223,6 +216,8 @@ namespace Lumina
             const double Px = (RTW > 0) ? (Cx / double(RTW)) * double(Dims.x) : Cx;
             const double Py = (RTH > 0) ? (Cy / double(RTH)) * double(Dims.y) : Cy;
             bLastRmlMoveConsumed = !Ctx->ProcessMouseMove(int(Px), int(Py), Mods);
+            LastRmlMouseX = Cx;
+            LastRmlMouseY = Cy;
             return bLastRmlMoveConsumed;
         }
         if (Event.IsA<FMouseButtonPressedEvent>())

@@ -1015,7 +1015,9 @@ namespace Lumina
         Out.Dependencies.Reset();
         Out.Dependencies.Add((const void*)Mesh);
 
-        if (Mesh->HasAnyFlag(OF_NeedsLoad))
+        // A freshly staged mesh has no resource until its upload publishes, which invalidates this entry.
+        const FMeshResource* LiveResource = Mesh->HasAnyFlag(OF_NeedsLoad) ? nullptr : Mesh->TryGetMeshResource();
+        if (LiveResource == nullptr)
         {
             Out.Surfaces.Reset();
             Out.MeshletHeaderSlot = 0;
@@ -1024,7 +1026,7 @@ namespace Lumina
             return;
         }
 
-        const FMeshResource& Resource = Mesh->GetMeshResource();
+        const FMeshResource& Resource = *LiveResource;
 
         const SAABB LocalBounds = Mesh->GetCullBounds();
         Out.LocalCenter = (LocalBounds.Min + LocalBounds.Max) * 0.5f;
@@ -1033,7 +1035,7 @@ namespace Lumina
             ? 0.0f
             : Math::Length(LocalBounds.Max - Out.LocalCenter);
 
-        Out.MeshletHeaderSlot = Mesh->GetMeshBuffers().MeshletHeaderSlot;
+        Out.MeshletHeaderSlot = Resource.MeshBuffers.MeshletHeaderSlot;
         Out.bAllMaterialsReady   = true;
 
         Out.Surfaces.Reset();

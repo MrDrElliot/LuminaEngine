@@ -20,6 +20,9 @@ namespace Lumina::NetPrediction
         // A client may run this far ahead of real time before its extra moves wait for the next frame.
         constexpr float MaxBudgetSeconds = 0.25f;
 
+        // A lagging client may run this much faster than real time while it works off budget the cap clipped.
+        constexpr float CatchUpRate = 0.5f;
+
         // Older unconfirmed moves than this are dropped, which only happens when the host stops answering.
         constexpr uint32 MaxPendingMoves = 240;
 
@@ -438,10 +441,16 @@ namespace Lumina::NetPrediction
     void TickBudgets(ECS::FRegistry& Registry, float FixedDt, float DeltaTime)
     {
         const float Cap = MaxBudgetSeconds / FixedDt + 4.0f;
+        const float Refill = DeltaTime / FixedDt;
         for (ECS::FEntity Entity : Registry.View<ECS::Write<FNetPredictionServer>>())
         {
             FNetPredictionServer& Prediction = Registry.Get<ECS::Write<FNetPredictionServer>>(Entity);
-            Prediction.Budget = Math::Min(Prediction.Budget + DeltaTime / FixedDt, Cap);
+
+            // Refill alone matches the client's step rate, so only budget the cap clipped can drain a backlog, and never past real time.
+            const float Grant = Math::Min(Prediction.CatchUp, Refill * CatchUpRate);
+            const float Owed = Prediction.Budget + Refill + Grant;
+            Prediction.Budget  = Math::Min(Owed, Cap);
+            Prediction.CatchUp = Math::Min(Prediction.CatchUp - Grant + Owed - Prediction.Budget, (float)MaxMovesPerUpload);
         }
     }
 

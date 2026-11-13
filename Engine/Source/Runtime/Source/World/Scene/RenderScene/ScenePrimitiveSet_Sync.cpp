@@ -180,7 +180,8 @@ namespace Lumina
                                               ? SkelMesh->Skeleton->GetSkeletonResource()
                                               : nullptr;
             Work.NewBoneCount      = SkelRes != nullptr ? (uint32)SkelRes->GetNumBones() : 0u;
-            Prim.RequiredBoneCount = SkelMesh != nullptr ? SkelMesh->GetMeshResource().RequiredBoneCount : 0u;
+            const FMeshResource* MeshRes = SkelMesh != nullptr ? SkelMesh->TryGetMeshResource() : nullptr;
+            Prim.RequiredBoneCount = MeshRes != nullptr ? MeshRes->RequiredBoneCount : 0u;
 
             if (Work.NewBoneCount != 0u && Prim.RequiredBoneCount > Work.NewBoneCount)
             {

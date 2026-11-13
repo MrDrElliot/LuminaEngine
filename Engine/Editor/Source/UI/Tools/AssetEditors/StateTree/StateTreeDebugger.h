@@ -30,6 +30,9 @@ namespace Lumina
         // The authored state's status on the path at the scrubbed time, or live, and none when it is off the path.
         NODISCARD TOptional<EStateTreeRunStatus> GetStateStatus(const CStateTree& Tree, int32 State) const;
 
+        // The authored transition taken last at the scrubbed time, or live, and none before the first one.
+        NODISCARD FStateTreeSelection GetLastTransition(const CStateTree& Tree) const;
+
         void ScrubTo(double Time);
         void ResumeLive() { bLive = true; }
 

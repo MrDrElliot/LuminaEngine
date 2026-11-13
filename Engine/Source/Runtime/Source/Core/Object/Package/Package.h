@@ -276,7 +276,8 @@ namespace Lumina
         // Bumped by every save, so a caller holding refs it captured earlier can tell they went stale.
         NODISCARD RUNTIME_API uint32 GetBulkGeneration() const;
 
-        NODISCARD RUNTIME_API const FBulkRegion& GetBulkRegion() const { return BulkRegion; }
+        // Returns a copy because BulkRegion is only safe to read under BulkMutex, same as GetBulkGeneration.
+        NODISCARD RUNTIME_API FBulkRegion GetBulkRegion() const { FScopeLock Lock(BulkMutex); return BulkRegion; }
 
         // Reports a payload that could not be read back, which makes SavePackage refuse rather than write it empty.
         RUNTIME_API void FlagUnresolvedBulkData() { bBulkDataUnresolved = true; }
@@ -381,6 +382,9 @@ namespace Lumina
 
         // Publishes the region and the file it lives in together, so a streaming worker never sees half a save.
         void SetBulkSource(const FBulkRegion& Region, FStringView Path);
+
+        // Copies the pair SetBulkSource publishes in one locked step, so the region always matches the path.
+        FFixedString GetBulkSource(FBulkRegion* OutRegion = nullptr) const;
 
         TAtomic<ELoadState>             LoadState{ELoadState::Unloaded};
 
