@@ -28,7 +28,11 @@ namespace Lumina
 
     void CMessageSubsystem::OnTeardown()
     {
-        Bus->Clear();
+        if (Bus)
+        {
+            Bus->Clear();
+            Bus.reset();
+        }
     }
 
     void CMessageSubsystem::OnDestroy()
