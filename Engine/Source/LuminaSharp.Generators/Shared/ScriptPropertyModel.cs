@@ -368,7 +368,7 @@ internal static class ScriptPropertyClassifier
         {
             return null;
         }
-        if (Classification.Access is EScriptAccess.ObjectPtr or EScriptAccess.MarshalledStruct)
+        if (Classification.Access is EScriptAccess.ObjectPtr or EScriptAccess.MarshalledStruct or EScriptAccess.AssetPath)
         {
             return null;
         }
@@ -385,9 +385,6 @@ internal static class ScriptPropertyClassifier
             EScriptAccess.Object =>
                 Prefix + "a bare wrapper is not a storable reference. Declare the element as "
                        + $"TStrongObjectPtr<{Referenced(Type)}>, which is what the native slot holds.",
-
-            EScriptAccess.AssetPath =>
-                Prefix + "an asset reference is stored as a path, not as bytes.",
 
             EScriptAccess.InputBinding =>
                 Prefix + "an input binding is a managed object; native stores only its action name.",

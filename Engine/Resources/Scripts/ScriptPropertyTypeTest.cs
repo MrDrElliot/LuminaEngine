@@ -149,6 +149,10 @@ public class ScriptPropertyTypeTest : CEntityScript
     [Property(Category = "Containers")]
     public TVector<TStrongObjectPtr<CWorld>> Worlds;
 
+    // Each slot is a native FSoftObjectPath, so the view copies paths rather than bytes.
+    [Property(Category = "Containers")]
+    public TVector<TSoftObjectPtr<CTexture>> TextureList;
+
     private int Failures;
 
     public override void OnReady()
@@ -489,11 +493,21 @@ public class ScriptPropertyTypeTest : CEntityScript
         Tags[0] = new FName("Gamma");
         Check("TVector<FName> indexer set", Tags[0] == new FName("Gamma"), Tags[0].ToString());
 
+        TextureList.Clear();
+        TextureList.Add(new TSoftObjectPtr<CTexture>("/Engine/Resources/Content/DefaultTexture"));
+        TextureList.Add(default);
+        Check("TVector<TSoftObjectPtr> read", TextureList.Count == 2 && TextureList.Get(0).Path.Path == "/Engine/Resources/Content/DefaultTexture",
+            TextureList.Count.ToString());
+        Check("TVector<TSoftObjectPtr> empty element", !TextureList.Get(1).IsValid, "invalid");
+        TextureList.Set(1, new TSoftObjectPtr<CTexture>("/Engine/Resources/Content/SomeTexture"));
+        Check("TVector<TSoftObjectPtr> set", TextureList.Get(1).Path.Path == "/Engine/Resources/Content/SomeTexture", TextureList.Get(1).Path.Path);
+
         IntList.Clear();
         VectorList.Clear();
         WeightByIndex.Clear();
         Names.Clear();
         Tags.Clear();
+        TextureList.Clear();
     }
 
     /// <summary>
