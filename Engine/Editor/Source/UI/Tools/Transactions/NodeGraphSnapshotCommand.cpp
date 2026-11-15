@@ -93,11 +93,6 @@ namespace Lumina
         Graph->CompiledContentVersion = CompiledContentVersion;
 
         Graph->FixupAfterRestore(Previous);
-
-        if (CPackage* Package = Graph->GetPackage())
-        {
-            Package->MarkDirty();
-        }
     }
 
     void FNodeGraphImage::VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func)
@@ -125,6 +120,18 @@ namespace Lumina
         {
             Image.Restore(Target);
             Target->RebaseUndoImage();
+        }
+    }
+
+    // Layout-only edits such as ties, moves and comment colors reach the package through here and nowhere else.
+    void FNodeGraphSnapshotCommand::MarkChanged() const
+    {
+        if (const CEdNodeGraph* Target = Graph.Get())
+        {
+            if (CPackage* Package = Target->GetPackage())
+            {
+                Package->MarkDirty();
+            }
         }
     }
 

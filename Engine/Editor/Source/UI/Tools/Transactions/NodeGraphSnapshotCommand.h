@@ -39,6 +39,7 @@ namespace Lumina
         void Undo() override;
         void Redo() override;
         bool IsNoOp() const override { return Before.Bytes == After.Bytes; }
+        void MarkChanged() const override;
 
         void VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func) override;
 
