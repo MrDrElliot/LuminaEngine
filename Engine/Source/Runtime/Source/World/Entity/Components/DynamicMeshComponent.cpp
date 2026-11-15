@@ -526,10 +526,18 @@ namespace Lumina
         
         ResolveMaterialsInto(*NewData);
 
+        TVector<FVector3> CommittedPositions = Move(NewData->Resource.Positions);
         NewData->Resource.ClearVertices();
-        NewData->Resource.Indices.Reset();
-        NewData->Resource.Indices.Shrink();
-        
+        if (bKeepCollisionTriangles)
+        {
+            NewData->Resource.Positions = Move(CommittedPositions);
+        }
+        else
+        {
+            NewData->Resource.Indices.Reset();
+            NewData->Resource.Indices.Shrink();
+        }
+
         if (!bKeepCPUMeshletData)
         {
             NewData->Resource.MeshletData.ClearAndShrink();

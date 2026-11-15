@@ -34,14 +34,8 @@ public static class ContentHash
 
     public static string OfFiles(IEnumerable<string> FilePaths)
     {
-        List<string> Parts = new();
-
-        foreach (string FilePath in FilePaths.OrderBy(P => P, StringComparer.OrdinalIgnoreCase))
-        {
-            FileItem Item = FileItem.Get(FilePath);
-            Parts.Add($"{Item.Location}|{Item.Timestamp.Ticks}|{Item.Length}");
-        }
-
-        return OfStrings(Parts);
+        return OfStrings(FilePaths.OrderBy(P => P, StringComparer.OrdinalIgnoreCase).Select(P => Signature(FileItem.Get(P))));
     }
+
+    public static string Signature(FileItem Item) => $"{Item.Location}|{Item.Timestamp.Ticks}|{Item.Length}";
 }

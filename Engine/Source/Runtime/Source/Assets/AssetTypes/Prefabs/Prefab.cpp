@@ -10,10 +10,10 @@
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Object/Package/Package.h"
-#include "GUID/GUID.h"
 #include "Scripting/EntityScript.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
+#include "World/Entity/Components/EntityGuidComponent.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -35,6 +35,8 @@ namespace Lumina
             if (ID == ECS::GetComponentTypeID<FSelectedInEditorComponent>()) return true;
             if (ID == ECS::GetComponentTypeID<FHideInSceneOutliner>()) return true;
             if (ID == ECS::GetComponentTypeID<FEditorComponent>()) return true;
+            // An entity's id is its own, so neither a prefab nor a copy of one may carry it.
+            if (ID == ECS::GetComponentTypeID<SEntityGuidComponent>()) return true;
             return false;
         }
 
@@ -48,11 +50,6 @@ namespace Lumina
             if (ID == ECS::GetComponentTypeID<FNeedsTransformUpdate>())    return true;
             if (ID == ECS::GetComponentTypeID<FNeedsPhysicsBodyUpdate>())  return true;
             return false;
-        }
-
-        FName GenerateStableID()
-        {
-            return FName(FGuid::New().ToShortString());
         }
 
         // Game thread only, since every writer runs from world init, the prefab editor or asset capture.
@@ -636,7 +633,7 @@ namespace Lumina
                 }
                 else
                 {
-                    StableID = GenerateStableID();
+                    StableID = ECS::Utils::NewStableID();
                 }
 
                 WorldRegistry.Remove<SPrefabComponent>(DestE);
@@ -646,6 +643,7 @@ namespace Lumina
                 Instance.StableID = StableID;
                 Instance.bIsRoot = (DestE == WorldRoot);
                 Instance.AppliedRevision = Revision;
+                TargetWorld->AssignNewEntityGuid(DestE);
             }
 
             // Rescue any extra parentless entities so the spawn has a single hierarchical root.
@@ -899,6 +897,7 @@ namespace Lumina
             const ECS::FEntity NewE = WorldRegistry.CreateInFreshSlot();
             InstanceByStableID[StableID] = NewE;
             Spawned.Add(NewE);
+            World->AssignNewEntityGuid(NewE);
 
             SPrefabInstanceComponent& Inst = WorldRegistry.Emplace<SPrefabInstanceComponent>(NewE);
             Inst.SourcePrefab = this;
@@ -1494,7 +1493,7 @@ namespace Lumina
             }
             if (StableID.IsNone() || !UsedIDs.TryAdd(StableID))
             {
-                StableID = GenerateStableID();
+                StableID = ECS::Utils::NewStableID();
                 UsedIDs.Add(StableID);
             }
             Registry.EmplaceOrReplace<SPrefabComponent>(*It).StableID = StableID;

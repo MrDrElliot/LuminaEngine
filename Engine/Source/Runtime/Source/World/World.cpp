@@ -45,6 +45,7 @@
 #include "Entity/Components/FoliageComponent.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
+#include "Entity/Components/EntityGuidComponent.h"
 #include "Entity/Components/EntityTags.h"
 #include "Entity/Components/LineBatcherComponent.h"
 #include "Entity/Components/TriangleBatcherComponent.h"
@@ -74,6 +75,8 @@
 #include "World/Net/NetRole.h"
 #include "Networking/INetworkRuntime.h"
 #include "Subsystems/WorldSettings.h"
+#include "Config/EngineSettings.h"
+#include "ExternalEntities/ExternalEntities.h"
 #include "Subsystems/CoroutineManager.h"
 #include "Subsystems/TimerManager.h"
 #include "Subsystems/TweenManager.h"
@@ -181,6 +184,12 @@ namespace Lumina
         bool NetIsServerMode(ENetMode Mode)
         {
             return Mode == ENetMode::ListenServer || Mode == ENetMode::DedicatedServer;
+        }
+
+        // A world's storage mode is fixed when its settings are made, so changing the project setting never moves its files.
+        void EmplaceNewWorldSettings(ECS::FRegistry& Registry, ECS::FEntity Entity)
+        {
+            Registry.Emplace<SDefaultWorldSettings>(Entity).bExternalEntities = GetDefault<CProjectSettings>()->bNewWorldsUseExternalEntities;
         }
     }
 
@@ -355,12 +364,33 @@ namespace Lumina
         {
             RegistryPending.Clear();
             ECS::Utils::SerializeRegistry(Ar, RegistryPending);
+            if (ExternalEntities::IsEnabled(RegistryPending))
+            {
+                ExternalEntities::Read(Ar, GetPackage(), RegistryPending);
+            }
+            // Seeded, so a world saved before entities had ids gets the same ones on every load until it is resaved.
+            ECS::Utils::AssignMissingEntityGuids(RegistryPending, GetGUID().ToString().View());
         }
         else
         {
-            // DuplicateWorld serializes pre-init, so write from whichever registry holds the data.
-            ECS::FRegistry& Source = (EntityRegistry.NumEntities() != 0) ? EntityRegistry : RegistryPending;
-            ECS::Utils::SerializeRegistry(Ar, Source);
+            ECS::FRegistry& Source = GetAuthoredRegistry();
+
+            // A world first saved before it was ever opened has no settings yet, so it takes the mode a new world gets here.
+            if (Source.View<SDefaultWorldSettings>().IsEmpty() && GetDefault<CProjectSettings>()->bNewWorldsUseExternalEntities)
+            {
+                EmplaceNewWorldSettings(Source, Source.Create());
+            }
+
+            // Unseeded, since a seed from the index could repeat an id a reordered earlier load handed out.
+            ECS::Utils::AssignMissingEntityGuids(Source);
+            if (ExternalEntities::IsEnabled(Source))
+            {
+                ExternalEntities::Write(Ar, GetPackage(), Source, ExternalEntityChanges);
+            }
+            else
+            {
+                ECS::Utils::SerializeRegistry(Ar, Source);
+            }
         }
     }
 
@@ -440,7 +470,7 @@ namespace Lumina
         if (!EntityRegistry.IsValid(SingletonEntity))
         {
             SingletonEntity = EntityRegistry.Create();
-            EntityRegistry.Emplace<SDefaultWorldSettings>(SingletonEntity);
+            EmplaceNewWorldSettings(EntityRegistry, SingletonEntity);
         }
         
         LineBatcherComponent = &EntityRegistry.Emplace<FLineBatcherComponent>(SingletonEntity);
@@ -809,8 +839,25 @@ namespace Lumina
      
         EntityRegistry.Emplace<SNameComponent>(NewEntity, Name);
         EntityRegistry.Emplace<STransformComponent>(NewEntity, Transform);
+        AssignNewEntityGuid(NewEntity);
 
         return NewEntity;
+    }
+
+    void CWorld::AssignNewEntityGuid(ECS::FEntity Entity)
+    {
+        if (WorldType == EWorldType::Editor || WorldType == EWorldType::None)
+        {
+            EntityRegistry.EmplaceOrReplace<SEntityGuidComponent>(Entity).Guid = ECS::Utils::NewStableID();
+        }
+    }
+
+    void CWorld::AssignNewEntityGuids()
+    {
+        GetAuthoredRegistry().View<SEntityGuidComponent>().ForEach([](ECS::FEntity, SEntityGuidComponent& Guid)
+        {
+            Guid.Guid = ECS::Utils::NewStableID();
+        });
     }
 
     bool CWorld::FractureEntity(ECS::FEntity Entity, FVector3 Origin, float Strength)
@@ -1089,8 +1136,8 @@ namespace Lumina
                     }
                 }
 
-                // Rigid bodies can't be bit-copied; re-emplaced below so on_construct fires fresh.
-                if (ID == ECS::GetComponentTypeID<SRigidBodyComponent>())
+                // Rigid bodies can't be bit-copied; re-emplaced below so on_construct fires fresh. A copy gets its own id.
+                if (ID == ECS::GetComponentTypeID<SRigidBodyComponent>() || ID == ECS::GetComponentTypeID<SEntityGuidComponent>())
                 {
                     continue;
                 }
@@ -1125,6 +1172,7 @@ namespace Lumina
             {
                 Copied->Signals.OnConstruct.Broadcast(EntityRegistry, NewEntity);
             }
+            AssignNewEntityGuid(NewEntity);
 
             if (NewParent != ECS::NullEntity)
             {

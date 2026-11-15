@@ -172,7 +172,17 @@ namespace Lumina
         // Lists the packages and unsaved file editors with a checkbox each, and saves, discards or cancels the pending exit.
         void OpenUnsavedChangesDialog(TVector<CPackage*> Packages, TVector<FEditorTool*> FileTools);
 
-        FEditorTool* FindAssetToolForPackage(const CPackage* Package) const;
+        // The asset editor of the package, else the tool whose world lives in it.
+        FEditorTool* FindToolForPackage(const CPackage* Package) const;
+
+        // Dirty, or an open world whose package stays clean while its external entities wait to be written.
+        NODISCARD bool IsPackageUnsaved(const CPackage* Package) const;
+        NODISCARD TVector<CPackage*> GatherUnsavedPackages() const;
+
+        static constexpr int32 MaxListedUnsavedItems = 8;
+
+        // A count line, then up to MaxListedUnsavedItems labels, then "+N more" for the rest.
+        NODISCARD static TVector<FString> DescribeUnsavedItems(const TVector<FString>& Labels);
 
         bool SaveToolBeforeClose(FEditorTool* Tool);
 

@@ -1,6 +1,7 @@
 ﻿#include <string>
 #include "World/World.h"
 #include "Tools/Import/ImportPaths.h"
+#include "Transactions/EntityStorageConvertCommand.h"
 #include "World/ECS/Registry.h"
 #include "WorldEditorTool.h"
 #include "Core/CoreEditorDelegates.h"
@@ -60,6 +61,7 @@
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/DirtyComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
+#include "World/Entity/Components/EntityGuidComponent.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
@@ -647,10 +649,7 @@ namespace Lumina
                 World->GetEntityRegistry().Remove<SScriptDisabledTag>(Data.Entity);
             }
 
-            if (World->GetPackage() != nullptr)
-            {
-                World->GetPackage()->MarkDirty();
-            }
+            ExternalEntities::MarkChanged(World.Get(), { Data.Entity });
         };
 
         OutlinerContext.HoveredFunction = [this](FTreeListView& Tree, FTreeNodeID Item)
@@ -1230,6 +1229,12 @@ namespace Lumina
                 PasteTransformToSelection();
             }, Hovered});
 
+        RegisterAction({"Convert Entity Storage", "World", "Switch the world between one package and one file per entity, undoable until saved",
+            FInputChord{}, [this]
+            {
+                ConvertEntityStorage();
+            }});
+
         // FEditorUI routes Ctrl+S to the focused tool, so a live callback here would save twice.
         RegisterAction({"Save World", "File", "Save the current world",
             FInputChord{ImGuiKey_S, true}, nullptr});
@@ -1489,6 +1494,7 @@ namespace Lumina
         DrawActionMenu(LE_ICON_AXIS_ARROW " Transform", "Transform");
         DrawActionMenu(LE_ICON_CURSOR_DEFAULT_OUTLINE " Selection", "Selection");
         DrawActionMenu(LE_ICON_VIDEO_OUTLINE " View", "View");
+        DrawActionMenu(LE_ICON_EARTH " World", "World");
     }
 
     void FWorldEditorTool::DrawHelpMenu()
@@ -2693,11 +2699,6 @@ namespace Lumina
         // Attaches by class, the same call for a C++ script and a C# one, with OnReady on the next tick.
         EntityScripts::Attach(Registry, Entity, FindObject<CClass>(FName(ScriptClass)));
         EndTransaction(bHad ? "Add Script" : "Attach Script");
-
-        if (World->GetPackage() != nullptr)
-        {
-            World->GetPackage()->MarkDirty();
-        }
         bDetailsDirty = true;
         // on_construct<SEntityScriptComponent> refreshes the outliner on a first attach; harmless to mark again.
         OutlinerListView.MarkTreeDirty();
@@ -2714,11 +2715,6 @@ namespace Lumina
         BeginComponentTransaction({ Entity }, SEntityScriptComponent::StaticStruct());
         Registry.Remove<SEntityScriptComponent>(Entity); // on_destroy refreshes the outliner
         EndTransaction("Remove Script");
-
-        if (World->GetPackage() != nullptr)
-        {
-            World->GetPackage()->MarkDirty();
-        }
         bDetailsDirty = true;
     }
 
@@ -2736,7 +2732,7 @@ namespace Lumina
             return;
         }
 
-        if (!World->GetPackage()->IsDirty())
+        if (!IsUnsavedDocument())
         {
             return;
         }
@@ -2754,7 +2750,7 @@ namespace Lumina
 
         FCoreEditorDelegates::OnAssetPreSave.Broadcast(World.Get());
 
-        if (CPackage::SavePackage(World->GetPackage(), World->GetPackage()->GetPackagePath()))
+        if (ExternalEntities::SaveChanges(World.Get()))
         {
             FAssetRegistry::Get().AssetSaved(World.Get());
             FCoreEditorDelegates::OnAssetSaved.Broadcast(World.Get());
@@ -3738,9 +3734,6 @@ namespace Lumina
 
     void FWorldEditorTool::OnPostUndoRedo()
     {
-        // An undo after a save changes the level again, so the next save must not skip it.
-        MarkSceneDirty();
-
         // A prefab update is the asset's, so stepping back past one must not leave its copies on the older data.
         CPrefab::RefreshStaleInstances(World.Get());
 
@@ -4410,8 +4403,31 @@ namespace Lumina
         }
     }
 
+    void FWorldEditorTool::ConvertEntityStorage()
+    {
+        // An unsaved world has no package and so nowhere to put entity files.
+        if (!CanTransact() || World->GetPackage() == nullptr)
+        {
+            return;
+        }
+
+        TUniquePtr<FEntityStorageConvertCommand> Command = MakeUnique<FEntityStorageConvertCommand>(World.Get());
+        Command->Redo();
+        TransactionManager.BeginTransaction(Command->GetName());
+        TransactionManager.Record(Move(Command));
+        TransactionManager.CommitTransaction();
+    }
+
     void FWorldEditorTool::DrawWorldSettings(bool bFocused)
     {
+        ImGui::BeginDisabled(!CanTransact() || World->GetPackage() == nullptr);
+        if (ImGui::Button(ExternalEntities::IsEnabled(World->GetEntityRegistry()) ? LE_ICON_EARTH " Store Entities In World" : LE_ICON_FILE_MULTIPLE " Store One File Per Entity"))
+        {
+            ConvertEntityStorage();
+        }
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Switches how the world stores its entities. Saving carries it out, and it can be undone until then.");
+
         WorldSettingsPropertyTable->DrawTree();
     }
 
@@ -4900,7 +4916,26 @@ namespace Lumina
 
     bool FWorldEditorTool::IsUnsavedDocument()
     {
-        return World && World->GetPackage() && World->GetPackage()->IsDirty();
+        return World && World->GetPackage() && (World->GetPackage()->IsDirty() || !World->GetExternalEntityChanges().IsEmpty());
+    }
+
+    TVector<FString> FWorldEditorTool::GetUnsavedItemLabels()
+    {
+        TVector<FString> Labels;
+        if (World == nullptr)
+        {
+            return Labels;
+        }
+
+        const FExternalEntityChanges& Changes = World->GetExternalEntityChanges();
+        World->GetEntityRegistry().View<SEntityGuidComponent, SNameComponent>().ForEach([&](ECS::FEntity, const SEntityGuidComponent& Guid, const SNameComponent& Name)
+        {
+            if (Changes.Dirty.Contains(Guid.Guid))
+            {
+                Labels.Add(FString(*Name.Name));
+            }
+        });
+        return Labels;
     }
 
     void FWorldEditorTool::GroupSelectedEntities()

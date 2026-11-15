@@ -17,6 +17,7 @@
 #include "Core/Object/InstancedStruct.h"
 #include "Core/Reflection/Type/Properties/ClassProperty.h"
 #include "Core/Reflection/Type/Properties/SubStructProperty.h"
+#include "Scripting/ScriptableObject.h"
 #include "Scripting/ScriptCallback.h"
 #include "Scripting/ScriptTypeRegistry.h"
 #include "Core/Object/SoftObjectPtr.h"
@@ -134,7 +135,7 @@ LUMINA_DOTNET_EXPORT(void*, FindClassByName)(const char* Name, int Len)
     {
         return nullptr;
     }
-    return FindObject<CClass>(FName(FStringView(Name, (size_t)Len)));
+    return FScriptableRegistry::ResolveClass(FName(FStringView(Name, (size_t)Len)));
 }
 
 // Constructs a CObject from script, in the transient package when Package is null, with no reference held for the caller.
@@ -372,7 +373,7 @@ LUMINA_DOTNET_EXPORT(void, StructAssign)(void* Dst, const void* Src, const char*
         return;
     }
 
-    CStruct* Struct = FindObject<CStruct>(FName(FStringView(TypeName, (size_t)Len)));
+    CStruct* Struct = ResolveStructByName(FName(FStringView(TypeName, (size_t)Len)));
     if (Struct == nullptr)
     {
         LOG_ERROR("StructAssign: no reflected struct named '{}'.", FStringView(TypeName, (size_t)Len));

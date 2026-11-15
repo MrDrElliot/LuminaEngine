@@ -140,6 +140,8 @@ public static class ProcessRunner
                 return null;
             }
 
+            Stopwatch Budget = Stopwatch.StartNew();
+
             // Both pipes drain together so a child that fills stderr cannot stall while stdout is read.
             Task<string> Output = Runner.StandardOutput.ReadToEndAsync();
             Task<string> Errors = Runner.StandardError.ReadToEndAsync();
@@ -151,7 +153,16 @@ public static class ProcessRunner
                 return null;
             }
 
-            Task.WaitAll(Output, Errors);
+            // The exit left the deadline this much to drain pipes whose write end a surviving child still holds open.
+            int RemainingMs = Math.Max(0, TimeoutMs - (int)Budget.ElapsedMilliseconds);
+
+            if (!Task.WaitAll(new Task[] { Output, Errors }, RemainingMs))
+            {
+                Log.Verbose("'{0}' exited but its output pipe stayed open past {1} ms and was killed.", StartInfo.FileName, TimeoutMs);
+                TryKill(Runner);
+                return null;
+            }
+
             return new ProcessResult { ExitCode = Runner.ExitCode, Output = Output.Result, Error = Errors.Result };
         }
         catch (Exception Ex) when (Ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
@@ -163,12 +174,10 @@ public static class ProcessRunner
 
     internal static void TryKill(Process Runner)
     {
+        // No HasExited guard, since descendants still holding inherited pipes outlive a root that already exited.
         try
         {
-            if (!Runner.HasExited)
-            {
-                Runner.Kill(entireProcessTree: true);
-            }
+            Runner.Kill(entireProcessTree: true);
         }
         catch (Exception Ex) when (Ex is InvalidOperationException or NotSupportedException or SystemException)
         {

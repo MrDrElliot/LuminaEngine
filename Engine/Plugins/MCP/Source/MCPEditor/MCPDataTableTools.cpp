@@ -307,13 +307,19 @@ namespace Lumina::MCP
                 return Agent::FToolResult::Error("A row needs a name.");
             }
 
-            if (Target.Table->HasRow(FName(In.NewName)))
+            const FName NewName(In.NewName);
+            const bool bSameName = Target.Table->Rows[Target.Index].Name == NewName;
+
+            if (!bSameName && Target.Table->HasRow(NewName))
             {
                 return Agent::FToolResult::Error(Lumina::Format("A row named '{}' already exists.", In.NewName));
             }
 
-            Target.Table->Rows[Target.Index].Name = FName(In.NewName);
-            MarkAssetDirty(Target.Table);
+            if (!bSameName)
+            {
+                Target.Table->Rows[Target.Index].Name = NewName;
+                MarkAssetDirty(Target.Table);
+            }
 
             Out.Row = In.NewName;
             return Agent::FToolResult::Ok(Lumina::Format("Renamed '{}' to '{}'.{}", In.Row, In.NewName, GDataTableSaveHint));

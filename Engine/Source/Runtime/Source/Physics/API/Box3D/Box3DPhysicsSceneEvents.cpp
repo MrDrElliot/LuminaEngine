@@ -354,6 +354,7 @@ namespace Lumina::Physics
             return;
         }
         b3DestroyBody(Body);
+        BodyGeometry.Remove(Handle);
         UnregisterBody(Handle);
         ClearBodyMaterial(Handle);
         if (Handle < static_cast<uint32>(BodyAwake.Num()))
@@ -365,7 +366,7 @@ namespace Lumina::Physics
     void FBox3DPhysicsScene::SynchronizeBodyGroups()
     {
         ECS::FRegistry& Registry = World->GetEntityRegistry();
-        for (const FPendingStaticGroup& Group : PendingStaticGroups)
+        for (FPendingStaticGroup& Group : PendingStaticGroups)
         {
             if (Registry.IsValid(Group.Owner)) { CommitStaticBodyGroup(Group.GroupID, Group.Owner, Group.Builds); }
             else { StaticBodyGroups.Remove(Group.GroupID); }

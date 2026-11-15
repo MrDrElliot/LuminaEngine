@@ -43,12 +43,12 @@ namespace Lumina
         BindStreamStride = FPose::StrideFor(NumBones);
         BindLocalStreams.Init(0.0f, (SIZE_T)BindStreamStride * FPose::NumStreams);
 
-        float* RESTRICT Streams = BindLocalStreams.GetData();
+        float* Streams = BindLocalStreams.GetData();
         for (int32 s = 0; s < FPose::NumStreams; ++s)
         {
             // The pad past the last bone holds an identity transform so no kernel ever sees a garbage lane.
             const float Identity = (s >= FPose::StreamSx && s <= FPose::StreamSz) || s == FPose::StreamRw ? 1.0f : 0.0f;
-            float* RESTRICT Stream = Streams + (SIZE_T)s * BindStreamStride;
+            float* Stream = Streams + (SIZE_T)s * BindStreamStride;
             for (int32 i = NumBones; i < BindStreamStride; ++i)
             {
                 Stream[i] = Identity;
@@ -154,7 +154,7 @@ namespace Lumina
         for (int32 s = 0; s < NumStreams; ++s)
         {
             const float Identity = (s >= StreamSx && s <= StreamSz) || s == StreamRw ? 1.0f : 0.0f;
-            float* RESTRICT Ptr = Stream(s);
+            float* Ptr = Stream(s);
             for (int32 i = First; i < Last; ++i)
             {
                 Ptr[i] = Identity;
@@ -559,7 +559,7 @@ namespace Lumina
     namespace Detail
     {
         // Bones[] is parents-before-children, so one linear pass resolves the whole chain.
-        static void ComputeComponentRotations(const FPose& Local, const FSkeletonResource* Skeleton, FQuat* Out, int32 Active)
+        static void ComputeComponentRotations(const FPose& Local, const FSkeletonResource* Skeleton, FQuat* RESTRICT Out, int32 Active)
         {
             for (int32 i = 0; i < Active; ++i)
             {
@@ -1324,15 +1324,15 @@ namespace Lumina
         }
     }
 
-    void AnimPose::ComposeLocalMatrices(const FPose& Pose, FMatrix4* OutMatrices, int32 NumMatrices)
+    void AnimPose::ComposeLocalMatrices(const FPose& Pose, FMatrix4* RESTRICT OutMatrices, int32 NumMatrices)
     {
         constexpr int32 kWidth = 8;
         const int32 NumBones = Detail::ResolveActiveBones(NumMatrices, Pose.GetNumBones());
 
-        const float* RESTRICT Tx = Pose.Tx(); const float* RESTRICT Ty = Pose.Ty(); const float* RESTRICT Tz = Pose.Tz();
-        const float* RESTRICT Sx = Pose.Sx(); const float* RESTRICT Sy = Pose.Sy(); const float* RESTRICT Sz = Pose.Sz();
-        const float* RESTRICT Rx = Pose.Rx(); const float* RESTRICT Ry = Pose.Ry(); const float* RESTRICT Rz = Pose.Rz();
-        const float* RESTRICT Rw = Pose.Rw();
+        const float* Tx = Pose.Tx(); const float* Ty = Pose.Ty(); const float* Tz = Pose.Tz();
+        const float* Sx = Pose.Sx(); const float* Sy = Pose.Sy(); const float* Sz = Pose.Sz();
+        const float* Rx = Pose.Rx(); const float* Ry = Pose.Ry(); const float* Rz = Pose.Rz();
+        const float* Rw = Pose.Rw();
 
         const __m256 One  = _mm256_set1_ps(1.0f);
         const __m256 Two  = _mm256_set1_ps(2.0f);
@@ -1410,8 +1410,10 @@ namespace Lumina
         {
             ComposeLocalMatrices(Pose, Globals.GetData(), Active);
 
-            const int32* RESTRICT    Parents = Skeleton->BoneParents.GetData();
-            const FMatrix4* RESTRICT InvBind = Skeleton->BoneInvBind.GetData();
+            const int32*    Parents = Skeleton->BoneParents.GetData();
+            const FMatrix4* InvBind = Skeleton->BoneInvBind.GetData();
+            FMatrix4*       GlobalsData = Globals.GetData();
+            FMatrix4*       OutMatricesData = OutMatrices.GetData();
 
             // Parents come first, so Globals[Parent] is already global while Globals[i] still holds the local.
             for (int32 i = 0; i < Active; ++i)
@@ -1419,9 +1421,9 @@ namespace Lumina
                 const int32 Parent = Parents[i];
                 if (Parent != Constants::kIndexNone)
                 {
-                    Globals[i] = Globals[Parent] * Globals[i];
+                    GlobalsData[i] = GlobalsData[Parent] * GlobalsData[i];
                 }
-                OutMatrices[Slot(i)] = Globals[i] * InvBind[i];
+                OutMatricesData[Slot(i)] = GlobalsData[i] * InvBind[i];
             }
         }
 

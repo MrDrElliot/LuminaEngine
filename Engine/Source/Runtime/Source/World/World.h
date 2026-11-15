@@ -14,6 +14,7 @@
 #include "World/ECS/CommandBus.h"
 #include "World/ECS/EventQueue.h"
 #include "World/ECS/Registry.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Systems/EntitySystem.h"
 #include "World/Entity/Systems/SystemContext.h"
@@ -296,6 +297,12 @@ namespace Lumina
         FUNCTION()
         ECS::FEntity DuplicateEntity(ECS::FEntity Source);
 
+        // Gives a created or copied entity its own persistent id, only in a world that gets saved, since play spawns never are.
+        void AssignNewEntityGuid(ECS::FEntity Entity);
+
+        // Gives every entity a new persistent id, so a copy of a whole world never shares one with its source.
+        void AssignNewEntityGuids();
+
         // Destroys Entity after Seconds, where 0 never does. A second call retimes it.
         FUNCTION()
         void SetEntityLifetime(ECS::FEntity Entity, float Seconds);
@@ -522,6 +529,7 @@ namespace Lumina
 
         NODISCARD auto& GetEntityRegistry(this auto& Self);
         NODISCARD ECS::FEventQueues& GetEventQueues() { return EventQueues; }
+        NODISCARD FExternalEntityChanges& GetExternalEntityChanges() { return ExternalEntityChanges; }
 
         NODISCARD auto& GetCommandBus(this auto& Self);
 
@@ -791,11 +799,15 @@ namespace Lumina
         // Logs Caller when Entity has no transform, for the script-facing transform setters.
         STransformComponent* FindScriptTransform(ECS::FEntity Entity, const char* Caller);
 
+        // A world serialized before InitializeWorld still holds its entities in RegistryPending.
+        ECS::FRegistry& GetAuthoredRegistry() { return EntityRegistry.NumEntities() != 0 ? EntityRegistry : RegistryPending; }
+
         //~ Entities and the buses that record against them, in construction order.
 
         ECS::FRegistry          RegistryPending;
         ECS::FRegistry          EntityRegistry;
         ECS::FEntity            SingletonEntity;
+        FExternalEntityChanges  ExternalEntityChanges;
 
         // After the registry it records against, before the context that hands it out.
         ECS::FCommandBus        CommandBus;

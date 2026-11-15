@@ -217,11 +217,8 @@ namespace Lumina::SkeletalUtils
         return Closest;
     }
 
-    void PackRenderBones(const FMatrix4* BoneTransforms, uint32 NumBones, FBoneTransform* OutBones)
+    void PackRenderBones(const FMatrix4* Src, uint32 NumBones, FBoneTransform* Out)
     {
-        FBoneTransform* RESTRICT Out = OutBones;
-        const FMatrix4* RESTRICT Src = BoneTransforms;
-
         // Chunked to keep the staging on the stack, and long enough for the wide half-conversion path.
         constexpr uint32 kChunk = 64;
         alignas(16) float  RowScratch[kChunk * 10];
@@ -245,7 +242,7 @@ namespace Lumina::SkeletalUtils
                 SIMD::VFloat4(R1).StoreAligned(Rows + 4);
                 SIMD::VFloat4(R2).StoreAligned(Rows + 8);
 
-                float* RESTRICT Dst = RowScratch + n * 10;
+                float* Dst = RowScratch + n * 10;
                 Dst[0] = Rows[0]; Dst[1] = Rows[1]; Dst[2] = Rows[2];
                 Dst[3] = Rows[4]; Dst[4] = Rows[5]; Dst[5] = Rows[6];
                 Dst[6] = Rows[8]; Dst[7] = Rows[9]; Dst[8] = Rows[10];
@@ -261,8 +258,8 @@ namespace Lumina::SkeletalUtils
 
             for (uint32 n = 0; n < Count; ++n)
             {
-                const uint32* RESTRICT Packed = PackScratch + n * 5;
-                uint32* RESTRICT       Rot    = Out[Base + n].Rot;
+                const uint32* Packed = PackScratch + n * 5;
+                uint32*       Rot    = Out[Base + n].Rot;
                 Rot[0] = Packed[0];
                 Rot[1] = Packed[1];
                 Rot[2] = Packed[2];

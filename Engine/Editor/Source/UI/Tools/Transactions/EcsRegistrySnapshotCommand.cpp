@@ -1,18 +1,19 @@
 #include "EcsRegistrySnapshotCommand.h"
 #include "World/ECS/Registry.h"
 
-#include "Core/Object/Package/Package.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "World/World.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/SingletonEntityComponent.h"
 
 namespace Lumina
 {
-    FEcsRegistrySnapshotCommand::FEcsRegistrySnapshotCommand(CWorld* InWorld)
+    FEcsRegistrySnapshotCommand::FEcsRegistrySnapshotCommand(CWorld* InWorld, TVector<ECS::FEntity> InEdited)
         : World(InWorld)
+        , Edited(Move(InEdited))
     {
         Capture(Before);
     }
@@ -73,11 +74,27 @@ namespace Lumina
         FMemoryReader Reader(In);
         FObjectProxyArchiver Ar(Reader, true);
         ECS::Utils::SerializeRegistry(Ar, Registry);
+    }
 
-        if (W->GetPackage())
+    void FEcsRegistrySnapshotCommand::MarkChanged() const
+    {
+        CWorld* W = World.Get();
+        if (W == nullptr)
         {
-            W->GetPackage()->MarkDirty();
+            return;
         }
+
+        // A restore rebuilds each entity under its own id, so the edited ones are still the right ones to mark after undo and redo.
+        if (!Edited.IsEmpty())
+        {
+            ExternalEntities::MarkChanged(W, Edited);
+            return;
+        }
+
+        // The image covers every entity and the world settings, so each one is marked, which also dirties the world package.
+        TVector<ECS::FEntity> Live;
+        W->GetEntityRegistry().ForEachEntityExcept<FEditorComponent>([&](ECS::FEntity E) { Live.Add(E); });
+        ExternalEntities::MarkChanged(W, Live);
     }
 
     void FEcsRegistrySnapshotCommand::Undo() { Restore(Before); }

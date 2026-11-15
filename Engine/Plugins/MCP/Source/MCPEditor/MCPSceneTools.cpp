@@ -851,7 +851,7 @@ namespace Lumina::MCP
                     }
                     ++Out.Changed;
                 }
-            }, SceneError);
+            }, SceneError, Entities);
 
             return Agent::FToolResult::Ok(Lumina::Format("{} '{}' {} {} entit{}.{}", bAdd ? "Added" : "Removed", In.Tag,
                 bAdd ? "to" : "from", Out.Changed, Out.Changed == 1 ? "y" : "ies",
@@ -947,14 +947,10 @@ namespace Lumina::MCP
             };
 
             FString SceneError;
-            // A script owns its own state outside any component record, so like the details panel it snapshots the scene.
+            // A script lives in the entity's script list, so like the details panel it records that component.
             if (Ops == nullptr)
             {
-                SessionOps::RunTransacted("Set Property (agent)", [&]()
-                {
-                    Apply();
-                    CPrefab::RecaptureComponentOverrides(Registry, Entity, SEntityScriptComponent::StaticStruct());
-                }, SceneError);
+                SessionOps::RunComponentTransacted("Set Property (agent)", Entity, SEntityScriptComponent::StaticStruct(), Apply, SceneError);
             }
             else
             {

@@ -385,7 +385,7 @@ namespace Lumina
         CStruct* Value = nullptr;
     };
 
-    class FEnumPropertyCustomization : public IPropertyTypeCustomization
+    class EDITOR_API FEnumPropertyCustomization : public IPropertyTypeCustomization
     {
     public:
         

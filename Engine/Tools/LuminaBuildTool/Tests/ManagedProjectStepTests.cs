@@ -46,4 +46,24 @@ public sealed class ManagedProjectStepTests : IDisposable
 
         Assert.Equal(WarningCountBefore + 1, Log.WarningCount);
     }
+
+    [Fact]
+    public void EnumerateProjectAndReferences_IncludesDirectoryBuildPropsAndTargetsBesideTheProject()
+    {
+        Directory.CreateDirectory(RootDirectory);
+
+        string ProjectFile = Path.Combine(RootDirectory, "Main.csproj");
+        File.WriteAllText(ProjectFile, "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>");
+
+        string BuildProps = Path.Combine(RootDirectory, "Directory.Build.props");
+        File.WriteAllText(BuildProps, "<Project></Project>");
+
+        string BuildTargets = Path.Combine(RootDirectory, "Directory.Build.targets");
+        File.WriteAllText(BuildTargets, "<Project></Project>");
+
+        FileItem[] Found = ManagedProjectStep.EnumerateProjectAndReferences(ProjectFile).ToArray();
+
+        Assert.Contains(Found, Item => Item.Location.Equals(BuildProps, StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(Found, Item => Item.Location.Equals(BuildTargets, StringComparison.OrdinalIgnoreCase));
+    }
 }

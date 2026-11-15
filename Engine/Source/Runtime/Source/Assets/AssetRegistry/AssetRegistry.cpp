@@ -20,6 +20,7 @@
 #include "TaskSystem/TaskSystem.h"
 #include "TaskSystem/ThreadedCallback.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 
 
 #include "Platform/Filesystem/PlatformFilesystem.h"
@@ -242,6 +243,7 @@ namespace Lumina
     {
         // Dropped before the registry is handed out or persisted.
         const size_t Reaped = ReapStaleEntries();
+        FoldEntityFiles();
 
         const uint32 Unchanged = DiscoveryUnchanged.load(std::memory_order_relaxed);
         const uint32 Rehashed  = DiscoveryRehashed.load(std::memory_order_relaxed);
@@ -298,20 +300,21 @@ namespace Lumina
         }
 
         // A classless entry was cached before its header was read; the UI font resolver keys on the class.
-        const FAssetDataPtr Data = GetAssetByPath(Path);
+        FWriteScopeLock Lock(AssetsMutex);
+        const FAssetDataPtr Data = FindSourceLocked(Path);
         return Data != nullptr && !Data->AssetClass.IsNone() && Data->SourceMTimeNs == MTimeNs && Data->FileSize == FileSize;
     }
 
     bool FAssetRegistry::RefreshStampIfContentUnchanged(FStringView Path, uint64 ContentHash, int64 MTimeNs, uint64 FileSize)
     {
         FWriteScopeLock Lock(AssetsMutex);
-        const FAssetDataPtr* Found = FindByPathLocked(Path);
-        if (Found == nullptr || (*Found)->AssetClass.IsNone() || (*Found)->ContentHash != ContentHash)
+        const FAssetDataPtr Found = FindSourceLocked(Path);
+        if (Found == nullptr || Found->AssetClass.IsNone() || Found->ContentHash != ContentHash)
         {
             return false;
         }
 
-        auto Restamped = MakeShared<FAssetData>(**Found);
+        auto Restamped = MakeShared<FAssetData>(*Found);
         Restamped->SourceMTimeNs = MTimeNs;
         Restamped->FileSize      = FileSize;
         InsertAssetLocked(Move(Restamped));
@@ -364,6 +367,8 @@ namespace Lumina
 
     void FAssetRegistry::DispatchRegistryChanged()
     {
+        FoldEntityFiles();
+
         // Asset creation runs on a worker, so broadcasting inline raced the main thread's redraw.
         if (Threading::IsMainThread())
         {
@@ -453,6 +458,24 @@ namespace Lumina
 
     void FAssetRegistry::InsertAssetLocked(FAssetDataPtr AssetData)
     {
+        if (const FFixedString WorldPath = ExternalEntities::OwningWorldPath(AssetData->Path); !WorldPath.IsEmpty())
+        {
+            FEntityFileOwner& Owner = EntityFileOwners[FString(VFS::RemoveExtension(WorldPath))];
+            Owner.Files[FString(VFS::RemoveExtension(AssetData->Path))] = Move(AssetData);
+            Owner.bFoldPending = true;
+            return;
+        }
+
+        if (FEntityFileOwner* Owner = EntityFileOwners.Find(VFS::RemoveExtension(AssetData->Path)))
+        {
+            Owner->World = AssetData;
+            Owner->bFoldPending = true;
+        }
+        InsertListedLocked(Move(AssetData));
+    }
+
+    void FAssetRegistry::InsertListedLocked(FAssetDataPtr AssetData)
+    {
         // A replace import or a file dropped over an old one leaves a new GUID at a known path, and two entries for one path make lookups pick either.
         FString PathKey(VFS::RemoveExtension(AssetData->Path));
         if (const FAssetDataPtr* Stale = FindByPathLocked(AssetData->Path))
@@ -477,6 +500,96 @@ namespace Lumina
         Assets.TryAdd(Move(AssetData));
     }
 
+    FAssetDataPtr FAssetRegistry::FindSourceLocked(FStringView Path) const
+    {
+        const FFixedString WorldPath = ExternalEntities::OwningWorldPath(Path);
+        const FEntityFileOwner* Owner = EntityFileOwners.Find(VFS::RemoveExtension(WorldPath.IsEmpty() ? Path : FStringView(*WorldPath, WorldPath.Len())));
+        if (!WorldPath.IsEmpty())
+        {
+            const FAssetDataPtr* File = Owner != nullptr ? Owner->Files.Find(VFS::RemoveExtension(Path)) : nullptr;
+            return File != nullptr ? *File : FAssetDataPtr();
+        }
+        if (Owner != nullptr && Owner->World != nullptr)
+        {
+            return Owner->World;
+        }
+        const FAssetDataPtr* Listed = FindByPathLocked(Path);
+        return Listed != nullptr ? *Listed : FAssetDataPtr();
+    }
+
+    void FAssetRegistry::ForgetEntityFileOwnerEntry(FStringView Path)
+    {
+        const FFixedString WorldPath = ExternalEntities::OwningWorldPath(Path);
+        FEntityFileOwner* Owner = EntityFileOwners.Find(VFS::RemoveExtension(WorldPath.IsEmpty() ? Path : FStringView(*WorldPath, WorldPath.Len())));
+        if (Owner == nullptr)
+        {
+            return;
+        }
+        if (WorldPath.IsEmpty())
+        {
+            Owner->World = nullptr;
+        }
+        else if (Owner->Files.Remove(VFS::RemoveExtension(Path)))
+        {
+            Owner->bFoldPending = true;
+        }
+    }
+
+    void FAssetRegistry::FoldEntityFiles()
+    {
+        FWriteScopeLock Lock(AssetsMutex);
+        bool bFolded = false;
+        for (auto& [WorldKey, Owner] : EntityFileOwners)
+        {
+            if (!Owner.bFoldPending)
+            {
+                continue;
+            }
+            Owner.bFoldPending = false;
+
+            // Until its first fold a world is listed only as its own package lists it.
+            if (Owner.World == nullptr)
+            {
+                if (!bPathIndexValid)
+                {
+                    RebuildPathIndex();
+                }
+                const FAssetDataPtr* Listed = PathIndex.Find(WorldKey);
+                if (Listed == nullptr)
+                {
+                    continue;
+                }
+                Owner.World = *Listed;
+            }
+
+            auto Folded = MakeShared<FAssetData>(*Owner.World);
+            for (const auto& [FileKey, File] : Owner.Files)
+            {
+                Folded->Dependencies.Append(File->Dependencies);
+                for (const FAssetBundleEntry& Entry : File->Bundles)
+                {
+                    if (!Algo::AnyOf(Folded->Bundles, [&](const FAssetBundleEntry& Listed) { return Listed.Bundle == Entry.Bundle && Listed.Target == Entry.Target; }))
+                    {
+                        Folded->Bundles.Add(Entry);
+                    }
+                }
+            }
+            Algo::Sort(Folded->Dependencies, [](const FAssetDependency& A, const FAssetDependency& B)
+            {
+                return A.TargetGUID != B.TargetGUID ? A.TargetGUID < B.TargetGUID : A.Type < B.Type;
+            });
+            Folded->Dependencies.SetNum(static_cast<int32>(Algo::Unique(Folded->Dependencies) - Folded->Dependencies.begin()));
+            InsertListedLocked(Move(Folded));
+            bFolded = true;
+        }
+
+        if (bFolded)
+        {
+            FWriteScopeLock RLock(ReverseMapMutex);
+            bReverseMapDirty = true;
+        }
+    }
+
     void FAssetRegistry::AssetDeleted(const FGuid& GUID)
     {
         {
@@ -484,13 +597,27 @@ namespace Lumina
             InvalidatePathIndex();
 
             auto It = Assets.FindAs(GUID, FGuidHash(), FAssetDataGuidEqual());
-            if (It == nullptr)
+            if (It != nullptr)
+            {
+                ForgetEntityFileOwnerEntry((*It)->Path);
+                Assets.Remove(*It);
+            }
+            else if (!Algo::AnyOf(EntityFileOwners, [&](auto& Pair)
+            {
+                FEntityFileOwner& Owner = Pair.Value;
+                auto File = Algo::FindIf(Owner.Files, [&](const auto& Entry) { return Entry.Value->AssetGUID == GUID; });
+                if (File == Owner.Files.end())
+                {
+                    return false;
+                }
+                Owner.Files.Remove(File);
+                Owner.bFoldPending = true;
+                return true;
+            }))
             {
                 LOG_WARN("AssetRegistry::AssetDeleted: GUID not present in registry; ignoring");
                 return;
             }
-
-            Assets.Remove(*It);
         }
 
         {
@@ -505,15 +632,16 @@ namespace Lumina
     {
         {
             FWriteScopeLock Lock(AssetsMutex);
-            const FAssetDataPtr* Found = FindByPathLocked(OldPath);
+            const FAssetDataPtr Found = FindSourceLocked(OldPath);
             if (Found == nullptr)
             {
                 LOG_WARN("AssetRegistry::AssetRenamed: no entry for {}; rename of {} -> {} not reflected in registry until next discovery", OldPath, OldPath, NewPath);
                 return;
             }
+            ForgetEntityFileOwnerEntry(OldPath);
 
             // Inserted as a new entry, which also drops any stale one already at NewPath.
-            auto Renamed = MakeShared<FAssetData>(**Found);
+            auto Renamed = MakeShared<FAssetData>(*Found);
             Renamed->Path         = NewPath;
             Renamed->AssetName    = VFS::FileName(NewPath, true);
             Renamed->OwningPlugin = ExtractOwningPlugin(NewPath);
@@ -578,6 +706,23 @@ namespace Lumina
             }
             EnsurePathIndex();
         }
+    }
+
+    TVector<FAssetDataPtr> FAssetRegistry::GetEntityFilesOf(FStringView WorldPath) const
+    {
+        TVector<FAssetDataPtr> Files;
+        {
+            FReadScopeLock Lock(AssetsMutex);
+            if (const FEntityFileOwner* Owner = EntityFileOwners.Find(VFS::RemoveExtension(WorldPath)))
+            {
+                for (const auto& [FileKey, File] : Owner->Files)
+                {
+                    Files.Add(File);
+                }
+            }
+        }
+        Algo::Sort(Files, [](const FAssetDataPtr& A, const FAssetDataPtr& B) { return A->AssetGUID < B->AssetGUID; });
+        return Files;
     }
 
     TVector<FAssetDataPtr> FAssetRegistry::FindByPredicate(const TFunction<bool(const FAssetData&)>& Predicate) const
@@ -833,40 +978,45 @@ namespace Lumina
         FWriteScopeLock Lock(AssetsMutex);
         InvalidatePathIndex();
 
+        auto IsStale = [&](const FFixedString& Path)
+        {
+            const FStringView PathView(*Path, Path.Len());
+            const bool bUnderWalkedRoot = Algo::AnyOf(LastDiscoveryWalkedRoots, [&](const FFixedString& Root)
+            {
+                return VFS::IsUnderDirectory(FStringView(*Root, Root.Len()), PathView);
+            });
+            return bUnderWalkedRoot && !Algo::BinarySearch(LastDiscoveryVisitedPaths, Path);
+        };
+
         size_t Reaped = 0;
         for (auto It = Assets.begin(); It != Assets.end(); )
         {
-            const FFixedString& Path = (*It)->Path;
-            const FStringView PathView(*Path, Path.Len());
-
-            bool bUnderWalkedRoot = false;
-            for (const FFixedString& Root : LastDiscoveryWalkedRoots)
+            if (IsStale((*It)->Path))
             {
-                const FStringView RootView(*Root, Root.Len());
-                if (VFS::IsUnderDirectory(RootView, PathView))
-                {
-                    bUnderWalkedRoot = true;
-                    break;
-                }
-            }
-            if (!bUnderWalkedRoot)
-            {
-                ++It;
-                continue;
-            }
-
-            const bool bVisited = Algo::BinarySearch(
-                LastDiscoveryVisitedPaths,
-                Path);
-
-            if (!bVisited)
-            {
+                ForgetEntityFileOwnerEntry((*It)->Path);
                 It = Assets.Remove(It);
                 ++Reaped;
             }
             else
             {
                 ++It;
+            }
+        }
+
+        for (auto& [WorldKey, Owner] : EntityFileOwners)
+        {
+            for (auto It = Owner.Files.begin(); It != Owner.Files.end(); )
+            {
+                if (IsStale(It->Value->Path))
+                {
+                    It = Owner.Files.Remove(It);
+                    Owner.bFoldPending = true;
+                    ++Reaped;
+                }
+                else
+                {
+                    ++It;
+                }
             }
         }
 
@@ -1047,6 +1197,7 @@ namespace Lumina
             FWriteScopeLock Lock(AssetsMutex);
             InvalidatePathIndex();
             Assets.Reset();
+            EntityFileOwners.Reset();
 
             {
                 FWriteScopeLock TextLock(TextAssetsMutex);
@@ -1349,12 +1500,26 @@ namespace Lumina
         Writer << Version;
 
         {
+            // Each file is cached as it lists itself, so a load can fold a world's entity files in again.
             FReadScopeLock Lock(AssetsMutex);
             uint32 Count = (uint32)Assets.Num();
+            for (const auto& [WorldKey, Owner] : EntityFileOwners)
+            {
+                Count += (uint32)Owner.Files.Num();
+            }
             Writer << Count;
             for (const FAssetDataPtr& Data : Assets)
             {
-                SerializeAssetEntry(Writer, const_cast<FAssetData&>(*Data), Version);
+                const FEntityFileOwner* Owner = EntityFileOwners.Find(VFS::RemoveExtension(Data->Path));
+                const FAssetDataPtr& Source = Owner != nullptr && Owner->World != nullptr ? Owner->World : Data;
+                SerializeAssetEntry(Writer, const_cast<FAssetData&>(*Source), Version);
+            }
+            for (const auto& [WorldKey, Owner] : EntityFileOwners)
+            {
+                for (const auto& [FileKey, File] : Owner.Files)
+                {
+                    SerializeAssetEntry(Writer, const_cast<FAssetData&>(*File), Version);
+                }
             }
         }
 
@@ -1435,10 +1600,18 @@ namespace Lumina
             FWriteScopeLock Lock(AssetsMutex);
             InvalidatePathIndex();
             Assets.Reset();
+            EntityFileOwners.Reset();
             Assets.Reserve(LoadedAssets.Num());
             for (FAssetDataPtr& Data : LoadedAssets)
             {
-                Assets.TryAdd(Move(Data));
+                if (ExternalEntities::OwningWorldPath(Data->Path).IsEmpty())
+                {
+                    Assets.TryAdd(Move(Data));
+                }
+                else
+                {
+                    InsertAssetLocked(Move(Data));
+                }
             }
         }
 

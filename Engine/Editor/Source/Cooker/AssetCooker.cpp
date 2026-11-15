@@ -42,6 +42,7 @@
 #include "Pak/PakWriter.h"
 #include "Renderer/ShaderCache.h"
 #include "World/World.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 #include "Containers/StringFormat.h"
 
 namespace Lumina
@@ -56,6 +57,12 @@ namespace Lumina
     {
         // The cooked AssetRegistry.bin already carries the sidecars' GUID table.
         if (TextAssetSidecar::IsSidecarPath(VirtualPath))
+        {
+            return true;
+        }
+
+        // The cook writes every entity into its world's package, so a game never reads an entity file.
+        if (!ExternalEntities::OwningWorldPath(VirtualPath).IsEmpty())
         {
             return true;
         }
@@ -175,9 +182,12 @@ namespace Lumina
             {
                 SourceHash ^= CParticleEmitter::GetSimulationTemplateHash();
             }
-            for (const FAssetDataPtr& Instance : Instances)
+            // A world's entity files are written into its cooked bytes, so editing one must miss the cache too.
+            TVector<FAssetDataPtr> Inputs = FAssetRegistry::Get().GetEntityFilesOf(VirtualPath);
+            Inputs.Append(Instances);
+            for (const FAssetDataPtr& Input : Inputs)
             {
-                SourceHash = Hash::GetHash64(&Instance->ContentHash, sizeof(Instance->ContentHash), SourceHash);
+                SourceHash = Hash::GetHash64(&Input->ContentHash, sizeof(Input->ContentHash), SourceHash);
             }
             const FCookInputHash Key = FCookDDC::ComputeKey(SourceHash);
 
@@ -341,7 +351,8 @@ namespace Lumina
         // A class whose cooked bytes equal its saved bytes minus the thumbnail, so its packages cook without being loaded.
         bool CooksWithoutLoading(const FAssetData* Data, THashMap<FName, bool>& ClassMemo, THashMap<const CStruct*, bool>& StructMemo)
         {
-            if (Data == nullptr)
+            // A world's own file lists only its entity files, so it is loaded to write every entity inline.
+            if (Data == nullptr || !FAssetRegistry::Get().GetEntityFilesOf(Data->Path).IsEmpty())
             {
                 return false;
             }
@@ -382,60 +393,63 @@ namespace Lumina
                 Filesystem::AtomicWriteFile(Stem + ".saved", TSpan<const uint8>(Saved.GetData(), Saved.Num()));
             }
         }
+    }
 
-        // Most packages only lose their thumbnail, which needs no load, so they cook in parallel and only the rest are loaded and saved.
-        void BundleChunkAssets(FPakWriter& Writer, const TVector<const FCookNode*>& Nodes, FCookResult& Result,
-                               const TFunction<void(FStringView)>& LogFunc)
+    void BundleChunkAssets(FPakWriter& Writer, const TVector<const FCookNode*>& Nodes, FCookResult& Result,
+                           const TFunction<void(FStringView)>& LogFunc)
+    {
+        const double Start = PlatformTime::Seconds();
+
+        THashMap<FName, bool> ClassMemo;
+        THashMap<const CStruct*, bool> StructMemo;
+        TVector<uint8> bTryStrip(Nodes.Num(), 0);
+        for (int32 i = 0; i < Nodes.Num(); ++i)
         {
-            const double Start = PlatformTime::Seconds();
-
-            THashMap<FName, bool> ClassMemo;
-            THashMap<const CStruct*, bool> StructMemo;
-            TVector<uint8> bTryStrip(Nodes.Num(), 0);
-            for (int32 i = 0; i < Nodes.Num(); ++i)
-            {
-                const FStringView Path(*Nodes[i]->Path, Nodes[i]->Path.Len());
-                bTryStrip[i] = CooksWithoutLoading(FAssetRegistry::Get().GetAssetByPath(Path).Get(), ClassMemo, StructMemo) ? 1 : 0;
-            }
-
-            TVector<TVector<uint8>> Stripped(Nodes.Num());
-            TVector<uint8> bStripped(Nodes.Num(), 0);
-            Jobs::ParallelFor((uint32)Nodes.Num(), [&](uint32 i)
-            {
-                if (bTryStrip[i] != 0)
-                {
-                    const FStringView Path(*Nodes[i]->Path, Nodes[i]->Path.Len());
-                    bStripped[i] = CPackage::StripPackageForCook(Path, Stripped[i]) ? 1 : 0;
-                }
-            }, 16);
-
-            // Added in graph order whichever path cooked them, so the pak stays deterministic.
-            int32 NumStripped = 0;
-            int32 NumLoaded = 0;
-            THashMap<FName, int32> Verified;
-            for (int32 i = 0; i < Nodes.Num(); ++i)
-            {
-                const FStringView Path(*Nodes[i]->Path, Nodes[i]->Path.Len());
-                if (bStripped[i] != 0 && Verified[Nodes[i]->AssetClass]++ < CVarCookVerifyStrip.GetValue())
-                {
-                    VerifyStrippedPackage(Path, Stripped[i], LogFunc);
-                }
-                if (bStripped[i] != 0)
-                {
-                    Writer.AddEntry(Path, Move(Stripped[i]), true);
-                    ++Result.NumAssetsCooked;
-                    ++NumStripped;
-                }
-                else if (BundleAssetCooked(Writer, Path, LogFunc))
-                {
-                    ++Result.NumAssetsCooked;
-                    ++NumLoaded;
-                }
-            }
-
-            LogCooker(LogFunc, *Format("  {} asset(s) cooked from their files, {} loaded and saved, in {:.1f} s",
-                NumStripped, NumLoaded, PlatformTime::Seconds() - Start));
+            const FStringView Path(*Nodes[i]->Path, Nodes[i]->Path.Len());
+            bTryStrip[i] = CooksWithoutLoading(FAssetRegistry::Get().GetAssetByPath(Path).Get(), ClassMemo, StructMemo) ? 1 : 0;
         }
+
+        TVector<TVector<uint8>> Stripped(Nodes.Num());
+        TVector<uint8> bStripped(Nodes.Num(), 0);
+        Jobs::ParallelFor((uint32)Nodes.Num(), [&](uint32 i)
+        {
+            if (bTryStrip[i] != 0)
+            {
+                const FStringView Path(*Nodes[i]->Path, Nodes[i]->Path.Len());
+                bStripped[i] = CPackage::StripPackageForCook(Path, Stripped[i]) ? 1 : 0;
+            }
+        }, 16);
+
+        // Added in graph order whichever path cooked them, so the pak stays deterministic.
+        int32 NumStripped = 0;
+        int32 NumLoaded = 0;
+        THashMap<FName, int32> Verified;
+        for (int32 i = 0; i < Nodes.Num(); ++i)
+        {
+            const FStringView Path(*Nodes[i]->Path, Nodes[i]->Path.Len());
+            if (bStripped[i] != 0 && Verified[Nodes[i]->AssetClass]++ < CVarCookVerifyStrip.GetValue())
+            {
+                VerifyStrippedPackage(Path, Stripped[i], LogFunc);
+            }
+            if (bStripped[i] != 0)
+            {
+                Writer.AddEntry(Path, Move(Stripped[i]), true);
+                ++Result.NumAssetsCooked;
+                ++NumStripped;
+            }
+            else if (BundleAssetCooked(Writer, Path, LogFunc))
+            {
+                ++Result.NumAssetsCooked;
+                ++NumLoaded;
+            }
+        }
+
+        LogCooker(LogFunc, *Format("  {} asset(s) cooked from their files, {} loaded and saved, in {:.1f} s",
+            NumStripped, NumLoaded, PlatformTime::Seconds() - Start));
+    }
+
+    namespace
+    {
 
         // Every entry of a pak, one per line, so what shipped can be checked without opening the pak.
         void WritePakContents(const FPakWriter& Writer, const FString& PakPath, const TFunction<void(FStringView)>& LogFunc)

@@ -412,7 +412,7 @@ namespace Lumina
     {
         if (Host != nullptr)
         {
-            Host->MarkVisualizerSceneDirty();
+            Host->MarkVisualizerSceneDirty(Entity);
         }
     }
 

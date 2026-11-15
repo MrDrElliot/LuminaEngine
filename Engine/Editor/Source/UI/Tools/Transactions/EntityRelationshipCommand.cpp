@@ -1,8 +1,8 @@
 #include "EntityRelationshipCommand.h"
 #include "World/ECS/Registry.h"
 
-#include "Core/Object/Package/Package.h"
 #include "World/World.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/TransformComponent.h"
 
@@ -119,11 +119,11 @@ namespace Lumina
             }
         }
         Links.Apply(Registry);
+    }
 
-        if (W->GetPackage())
-        {
-            W->GetPackage()->MarkDirty();
-        }
+    void FEntityRelationshipCommand::MarkChanged() const
+    {
+        ExternalEntities::MarkChanged(World.Get(), Entities);
     }
 
     void FEntityRelationshipCommand::Undo() { Apply(Before); }

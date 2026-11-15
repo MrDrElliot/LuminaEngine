@@ -3599,29 +3599,19 @@ namespace Lumina
     {
         FSaveAllResult Result;
 
-        TVector<CPackage*> DirtyPackages;
-        for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
-        {
-            CPackage* Package = *Itr;
-            if (!Package->HasAnyFlag(OF_MarkedDestroy) && Package->IsDirty())
-            {
-                DirtyPackages.Add(Package);
-            }
-        }
-
         // Same routing as Save All, so an open tool still does its type-specific save work.
-        for (const auto& [Asset, Tool] : ActiveAssetTools)
+        for (CPackage* Package : GatherUnsavedPackages())
         {
-            CPackage* Package = (Asset != nullptr && Tool != nullptr) ? Asset->GetPackage() : nullptr;
-            if (Package != nullptr && Package->IsDirty() && !Package->HasAnyFlag(OF_MarkedDestroy))
+            if (FEditorTool* Tool = FindToolForPackage(Package))
             {
                 Tool->OnSave();
             }
-        }
+            else if (IsPackageUnsaved(Package))
+            {
+                (void)CPackage::SavePackage(Package, Package->GetPackagePath());
+            }
 
-        for (CPackage* Package : DirtyPackages)
-        {
-            if (Package->IsDirty() && !CPackage::SavePackage(Package, Package->GetPackagePath()))
+            if (IsPackageUnsaved(Package))
             {
                 Result.FailedPaths.Emplace(*Package->GetPackagePath());
                 continue;
@@ -3639,12 +3629,7 @@ namespace Lumina
 
     void FEditorUI::SaveAllDirtyPackages()
     {
-        TVector<CPackage*> DirtyPackages;
-        for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
-        {
-            DirtyPackages.Add(*Itr);
-        }
-        SavePackages(Move(DirtyPackages));
+        SavePackages(GatherUnsavedPackages());
     }
 
     void FEditorUI::OpenSettings(CClass* Page)
@@ -3660,11 +3645,7 @@ namespace Lumina
 
     void FEditorUI::SavePackages(TVector<CPackage*> Packages)
     {
-        // Marked for destroy = a deleted asset awaiting the deferred drain; nothing to write.
-        Packages.RemoveAll([](CPackage* Package)
-        {
-            return Package == nullptr || Package->HasAnyFlag(OF_MarkedDestroy) || !Package->IsDirty();
-        });
+        Packages.RemoveAll([this](CPackage* Package) { return !IsPackageUnsaved(Package); });
 
         if (Packages.IsEmpty())
         {
@@ -3683,29 +3664,14 @@ namespace Lumina
             return;
         }
 
-        // A tool's OnSave carries thumbnail capture and registry notification a raw package write skips.
-        THashSet<CPackage*> HandledByTool;
-        for (const auto& [Asset, Tool] : ActiveAssetTools)
-        {
-            if (Asset == nullptr || Tool == nullptr)
-            {
-                continue;
-            }
-
-            CPackage* Package = Asset->GetPackage();
-            if (Package != nullptr && Package->IsDirty() && Algo::Contains(Packages, Package))
-            {
-                Tool->OnSave();
-                HandledByTool.Add(Package);
-            }
-        }
-
         uint32 Saved  = 0;
         uint32 Failed = 0;
         for (CPackage* Package : Packages)
         {
-            if (HandledByTool.Contains(Package))
+            // A tool's OnSave carries thumbnail capture and registry notification a raw package write skips.
+            if (FEditorTool* Tool = FindToolForPackage(Package))
             {
+                Tool->OnSave();
                 continue;
             }
 
@@ -3732,23 +3698,7 @@ namespace Lumina
 
     void FEditorUI::VerifyDirtyPackages()
     {
-        TVector<CPackage*> DirtyPackages;
-        DirtyPackages.Reserve(4);
-        for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
-        {
-            CPackage* Package = *Itr;
-
-            // A package awaiting the deferred destroy drain has nothing to save, so never prompt for it.
-            if (Package->HasAnyFlag(OF_MarkedDestroy))
-            {
-                continue;
-            }
-
-            if (Package->IsDirty())
-            {
-                DirtyPackages.Add(Package);
-            }
-        }
+        TVector<CPackage*> DirtyPackages = GatherUnsavedPackages();
 
         TVector<FEditorTool*> FileTools;
         for (FEditorTool* Tool : EditorTools)
@@ -3765,7 +3715,48 @@ namespace Lumina
         }
     }
 
-    FEditorTool* FEditorUI::FindAssetToolForPackage(const CPackage* Package) const
+    bool FEditorUI::IsPackageUnsaved(const CPackage* Package) const
+    {
+        // A package awaiting the deferred destroy drain has nothing to save.
+        if (Package == nullptr || Package->HasAnyFlag(OF_MarkedDestroy))
+        {
+            return false;
+        }
+        if (Package->IsDirty())
+        {
+            return true;
+        }
+
+        const FEditorTool* Tool = FindToolForPackage(Package);
+        CWorld* ToolWorld = Tool != nullptr ? Tool->GetWorld() : nullptr;
+        return ToolWorld != nullptr && ToolWorld->GetPackage() == Package && !ToolWorld->GetExternalEntityChanges().IsEmpty();
+    }
+
+    TVector<CPackage*> FEditorUI::GatherUnsavedPackages() const
+    {
+        TVector<CPackage*> Packages;
+        for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
+        {
+            CPackage* Package = *Itr;
+            if (!Package->HasAnyFlag(OF_MarkedDestroy) && Package->IsDirty())
+            {
+                Packages.Add(Package);
+            }
+        }
+
+        for (FEditorTool* Tool : EditorTools)
+        {
+            CWorld* ToolWorld = Tool != nullptr ? Tool->GetWorld() : nullptr;
+            CPackage* WorldPackage = ToolWorld != nullptr ? ToolWorld->GetPackage() : nullptr;
+            if (!Algo::Contains(Packages, WorldPackage) && IsPackageUnsaved(WorldPackage))
+            {
+                Packages.Add(WorldPackage);
+            }
+        }
+        return Packages;
+    }
+
+    FEditorTool* FEditorUI::FindToolForPackage(const CPackage* Package) const
     {
         for (const auto& [Asset, Tool] : ActiveAssetTools)
         {
@@ -3774,7 +3765,55 @@ namespace Lumina
                 return Tool;
             }
         }
+        for (FEditorTool* Tool : EditorTools)
+        {
+            if (Tool != nullptr && Tool->GetWorld() != nullptr && Tool->GetWorld()->GetPackage() == Package)
+            {
+                return Tool;
+            }
+        }
         return nullptr;
+    }
+
+    TVector<FString> FEditorUI::DescribeUnsavedItems(const TVector<FString>& Labels)
+    {
+        TVector<FString> Lines;
+        if (Labels.IsEmpty())
+        {
+            return Lines;
+        }
+
+        const int32 Count = Labels.Num();
+        const int32 Listed = Math::Min(Count, MaxListedUnsavedItems);
+        Lines.Reserve(Listed + 2);
+        Lines.Add(Lumina::Format("{} {} changed", Count, Count == 1 ? "entity" : "entities"));
+        for (int32 Index = 0; Index < Listed; ++Index)
+        {
+            Lines.Add(Labels[Index]);
+        }
+        if (Count > Listed)
+        {
+            Lines.Add(Lumina::Format("+{} more", Count - Listed));
+        }
+        return Lines;
+    }
+
+    static void DrawUnsavedItems(const TVector<FString>& Lines)
+    {
+        if (Lines.IsEmpty())
+        {
+            return;
+        }
+
+        ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextDim());
+        ImGui::Indent();
+        ImGui::TextUnformatted(*Lines[0]);
+        for (int32 Index = 1; Index < Lines.Num(); ++Index)
+        {
+            ImGui::BulletText("%s", *Lines[Index]);
+        }
+        ImGui::Unindent();
+        ImGui::PopStyleColor();
     }
 
     bool FEditorUI::SaveToolBeforeClose(FEditorTool* Tool)
@@ -3811,21 +3850,32 @@ namespace Lumina
             return;
         }
 
-        const float DialogHeight = Math::Min(150.0f + 22.0f * (float)Unsaved.Num(), 420.0f);
-        ModalManager.CreateDialogue("Save Changes?", ImVec2(480, DialogHeight), [this, Unsaved = Move(Unsaved)]() -> bool
+        int32 NumLines = Unsaved.Num();
+        TVector<TVector<FString>> UnsavedItems;
+        UnsavedItems.Reserve(Unsaved.Num());
+        for (FEditorTool* Tool : Unsaved)
+        {
+            UnsavedItems.Add(DescribeUnsavedItems(Tool->GetUnsavedItemLabels()));
+            NumLines += UnsavedItems.Last().Num();
+        }
+
+        const float DialogHeight = Math::Min(150.0f + 22.0f * (float)NumLines, 420.0f);
+        ModalManager.CreateDialogue("Save Changes?", ImVec2(480, DialogHeight), [this, Unsaved = Move(Unsaved), UnsavedItems = Move(UnsavedItems)]() -> bool
         {
             const auto IsOpen = [this](FEditorTool* Tool) { return Algo::Contains(EditorTools, Tool); };
 
             ImGui::TextUnformatted(Unsaved.Num() == 1 ? "This tab has unsaved changes:" : "These tabs have unsaved changes:");
             ImGui::Spacing();
-            for (FEditorTool* Tool : Unsaved)
+            for (int32 Index = 0; Index < Unsaved.Num(); ++Index)
             {
+                FEditorTool* Tool = Unsaved[Index];
                 if (IsOpen(Tool))
                 {
                     const FStringView Name(*Tool->GetToolName());
                     const int32 IdStart = Name.Find("###");
                     const FStringView Shown = IdStart == Constants::kIndexNone ? Name : Name.Left(IdStart);
                     ImGui::BulletText("%.*s", Shown.Len(), Shown.GetData());
+                    DrawUnsavedItems(UnsavedItems[Index]);
                 }
             }
             ImGui::Spacing();
@@ -3895,6 +3945,7 @@ namespace Lumina
         const size_t RowCount = Packages.Num() + FileTools.Num();
         TVector<bool>       Selection(IntCastChecked<int32>(RowCount), true);
         TVector<ESaveState> States(IntCastChecked<int32>(RowCount), ESaveState::Pending);
+        TVector<TVector<FString>> RowItems(IntCastChecked<int32>(RowCount));
         for (int32 Index = 0; Index < Packages.Num(); ++Index)
         {
             const FFixedString Path = Packages[Index]->GetPackagePath();
@@ -3902,10 +3953,14 @@ namespace Lumina
             {
                 States[Index] = ESaveState::ReadOnly;
             }
+            if (FEditorTool* Owner = FindToolForPackage(Packages[Index]))
+            {
+                RowItems[Index] = DescribeUnsavedItems(Owner->GetUnsavedItemLabels());
+            }
         }
 
         ModalManager.CreateDialogue("Unsaved Changes", ImVec2(560, 380),
-            [this, Packages = Move(Packages), FileTools = Move(FileTools), Selection = Move(Selection), States = Move(States)]() mutable -> bool
+            [this, Packages = Move(Packages), FileTools = Move(FileTools), Selection = Move(Selection), States = Move(States), RowItems = Move(RowItems)]() mutable -> bool
         {
             const uint32 NumPackageRows = (uint32)Packages.Num();
             const uint32 NumPackages = (uint32)(Packages.Num() + FileTools.Num());
@@ -3985,6 +4040,7 @@ namespace Lumina
                     ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextMuted());
                     ImGui::TextUnformatted(*RowPath);
                     ImGui::PopStyleColor();
+                    DrawUnsavedItems(RowItems[Index]);
 
                     ImGui::TableSetColumnIndex(0);
                     ImGui::BeginDisabled(bLocked);
@@ -4066,10 +4122,9 @@ namespace Lumina
                     {
                         bSaved = FileTools[Index - NumPackageRows]->SaveFileChanges();
                     }
-                    else if (FEditorTool* Owner = FindAssetToolForPackage(Packages[Index]))
+                    else if (FEditorTool* Owner = FindToolForPackage(Packages[Index]))
                     {
-                        Owner->OnSave();
-                        bSaved = !Packages[Index]->IsDirty();
+                        bSaved = SaveToolBeforeClose(Owner);
                     }
                     else
                     {

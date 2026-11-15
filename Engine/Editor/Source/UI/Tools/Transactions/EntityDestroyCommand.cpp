@@ -2,10 +2,10 @@
 #include "World/ECS/Registry.h"
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
-#include "Core/Object/Package/Package.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "World/World.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 #include "World/Entity/EntityUtils.h"
 
 namespace Lumina
@@ -55,6 +55,7 @@ namespace Lumina
 
             FEntry Entry;
             Entry.Entity = Candidate;
+            Entry.Guid = ExternalEntities::GuidOf(Registry, Candidate);
             Entry.Offset = Ar.Tell();
 
             ECS::FEntity Mutable = Candidate;
@@ -120,11 +121,6 @@ namespace Lumina
         {
             CPrefab::MarkInstanceStale(Registry, Entry.Entity);
         }
-
-        if (W->GetPackage())
-        {
-            W->GetPackage()->MarkDirty();
-        }
     }
 
     void FEntityDestroyCommand::Redo()
@@ -147,10 +143,17 @@ namespace Lumina
                 Registry.Destroy(It->Entity);
             }
         }
+    }
 
-        if (W->GetPackage())
+    void FEntityDestroyCommand::MarkChanged() const
+    {
+        TVector<ECS::FEntity> Entities;
+        TVector<FName> Guids;
+        for (const FEntry& Entry : Entries)
         {
-            W->GetPackage()->MarkDirty();
+            Entities.Add(Entry.Entity);
+            Guids.Add(Entry.Guid);
         }
+        ExternalEntities::MarkChanged(World.Get(), Entities, Guids);
     }
 }

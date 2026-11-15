@@ -147,6 +147,11 @@ public sealed class ActionHistory
         return !InputFingerprints.TryGetValue(OutputFile, out string? Recorded) || Recorded != Fingerprint;
     }
 
+    public string GetInputFingerprint(string OutputFile)
+    {
+        return InputFingerprints.TryGetValue(OutputFile, out string? Recorded) ? Recorded : string.Empty;
+    }
+
     public void Forget(string OutputFile)
     {
         bool bRemoved = CommandKeys.TryRemove(OutputFile, out _);

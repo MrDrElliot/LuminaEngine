@@ -35,9 +35,12 @@ namespace Lumina
         PROPERTY(Editable, Category = "Replication")
         bool bEnableExtrapolation = kDefaultEnableExtrapolation;
 
+        // Shared with the null-fallback at NetMovementInterpSystem's call site, so a rename can't silently diverge.
+        static constexpr float kDefaultTeleportDistance = 3.0f;
+
         // A proxy that moved farther than this between two updates snaps instead of interpolating, so a teleport stays a teleport.
         PROPERTY(Editable, Category = "Replication", ClampMin = 0.0f, Units = "m")
-        float TeleportDistance = 3.0f;
+        float TeleportDistance = kDefaultTeleportDistance;
 
         // Most entities one client holds at once, keeping the nearest. Zero holds everything in range.
         PROPERTY(Editable, Category = "Replication", ClampMin = 0, ClampMax = 65535)
@@ -55,13 +58,19 @@ namespace Lumina
         PROPERTY(Editable, Category = "Replication", ClampMin = 1.0f, ClampMax = 120.0f, Units = "Hz")
         float MoveAckRate = 20.0f;
 
+        // Shared with the null-fallback at NetMovementInterpSystem's call site, so a rename can't silently diverge.
+        static constexpr float kDefaultMaxExtrapolation = 0.25f;
+
         /** Maximum seconds to extrapolate past the newest sample before clamping. */
         PROPERTY(Editable, Category = "Replication", ClampMin = 0.0f, ClampMax = 1.0f)
-        float MaxExtrapolation = 0.25f;
+        float MaxExtrapolation = kDefaultMaxExtrapolation;
+
+        // Shared with the null-fallback at NetMovementInterpSystem's call site, so a rename can't silently diverge.
+        static constexpr float kDefaultInterpBufferIntervals = 1.5f;
 
         /** Per-entity interpolation buffer depth, in multiples of the entity's measured send interval. */
         PROPERTY(Editable, Category = "Replication", ClampMin = 1.0f, ClampMax = 3.0f)
-        float InterpBufferIntervals = 1.5f;
+        float InterpBufferIntervals = kDefaultInterpBufferIntervals;
 
         // Shared with the null-fallback at NetworkSystem::ReplicateDirtyProperties, so a rename can't silently diverge.
         static constexpr int32 kDefaultMaxReliablePropertyBytesPerTick = 32768;

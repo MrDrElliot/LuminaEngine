@@ -8,6 +8,7 @@
 namespace Lumina
 {
     class CObjectBase;
+    class IObjectReferenceProvider;
 }
 
 namespace Lumina::Object::Internal
@@ -95,6 +96,7 @@ namespace Lumina::Object::Internal
         mutable FSlotShard          SlotShards[SlotShardCount];
 
         THashMap<FObjectHandle, FObjectHandle> ReinstanceRedirects;
+        TVector<IObjectReferenceProvider*> ReferenceProviders;
         bool                        bInitialized = false;
         bool                        bShuttingDown = false;
     
@@ -176,6 +178,9 @@ namespace Lumina::Object::Internal
         int32 GetMaxObjects() const;
 
         FORCEINLINE bool IsShuttingDown() const { return bShuttingDown; }
+
+        // The holders the reflected graph cannot reach on its own, such as an ECS registry or an editor selection.
+        NODISCARD TVector<IObjectReferenceProvider*>& GetReferenceProviders() { return ReferenceProviders; }
     
         template<typename Func>
         requires std::is_invocable_v<Func, CObjectBase*, int32>
@@ -219,6 +224,7 @@ namespace Lumina::Object::Internal
     RUNTIME_API int32 GetNumAliveObjects();
     RUNTIME_API int32 GetMaxObjects();
     RUNTIME_API bool IsShuttingDown();
+    RUNTIME_API TVector<IObjectReferenceProvider*>& GetReferenceProviders();
 
     // Downgrades the stale-reference assert to a log for this thread, for tests that stage one on purpose.
     class FScopedStaleReferenceTolerance

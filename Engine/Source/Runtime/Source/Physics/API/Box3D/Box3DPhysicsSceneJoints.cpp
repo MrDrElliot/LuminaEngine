@@ -38,11 +38,6 @@ namespace Lumina::Physics
                                  FVector4(0.0f, 0.0f, 0.0f, 1.0f));
             const FQuat WorldRotation = Math::ToQuat(Basis);
 
-            if (!b3Body_IsValid(Body))
-            {
-                return Box3DUtils::ToB3Transform(WorldAnchor, WorldRotation);
-            }
-
             const b3Vec3 LocalPoint = b3Body_GetLocalPoint(Body, Box3DUtils::ToB3Vec3(WorldAnchor));
             const b3Quat BodyRotation = b3Body_GetRotation(Body);
             const FQuat LocalRotation = Math::Normalize(Math::Inverse(Box3DUtils::FromB3Quat(BodyRotation)) * WorldRotation);
@@ -94,22 +89,28 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        const b3BodyId BodyA = Desc.BodyA == ECS::NullEntity ? b3_nullBodyId : ResolveBody(FindEntityBody(Desc.BodyA));
-        const b3BodyId BodyB = Desc.BodyB == ECS::NullEntity ? b3_nullBodyId : ResolveBody(FindEntityBody(Desc.BodyB));
+        // Box3D has no world body, so a joint anchored to the world hangs off one shared static body at the origin.
+        if (Desc.BodyA == ECS::NullEntity && !b3Body_IsValid(WorldAnchorBody))
+        {
+            b3BodyDef AnchorDef = b3DefaultBodyDef();
+            AnchorDef.type = b3_staticBody;
+            WorldAnchorBody = b3CreateBody(WorldId, &AnchorDef);
+        }
 
-        // Box3D has no world anchor body, so the constrained side must at least exist.
-        if (!b3Body_IsValid(BodyB) || (Desc.BodyA != ECS::NullEntity && !b3Body_IsValid(BodyA)))
+        const b3BodyId BodyA = Desc.BodyA == ECS::NullEntity ? WorldAnchorBody : ResolveBody(FindEntityBody(Desc.BodyA));
+        const b3BodyId BodyB = Desc.BodyB == ECS::NullEntity ? b3_nullBodyId : ResolveBody(FindEntityBody(Desc.BodyB));
+        if (!b3Body_IsValid(BodyA) || !b3Body_IsValid(BodyB))
         {
             return 0;
         }
 
         b3JointDef Base{};
-        Base.bodyIdA = b3Body_IsValid(BodyA) ? BodyA : BodyB;
+        Base.bodyIdA = BodyA;
         Base.bodyIdB = BodyB;
         Base.collideConnected = false;
         Base.forceThreshold = Desc.BreakForce > 0.0f ? Desc.BreakForce : FLT_MAX;
         Base.torqueThreshold = FLT_MAX;
-        Base.localFrameA = MakeLocalFrame(Base.bodyIdA, Desc.Anchor, Desc.Axis);
+        Base.localFrameA = MakeLocalFrame(BodyA, Desc.Anchor, Desc.Axis);
         Base.localFrameB = MakeLocalFrame(BodyB, Desc.Anchor, Desc.Axis);
 
         if (Desc.LimitFrequency > 0.0f)
@@ -588,7 +589,7 @@ namespace Lumina::Physics
             }
             if (Instance.Collision)
             {
-                BuildMeshCollision(*Instance.Collision, Instance.Scale, Build.Shapes);
+                BuildMeshCollision(*Instance.Collision, Instance.Scale, Build);
             }
             else if (Instance.Mesh && Instance.bConvex)
             {
@@ -619,12 +620,12 @@ namespace Lumina::Physics
         return GroupID;
     }
 
-    void FBox3DPhysicsScene::CommitStaticBodyGroup(uint32 GroupID, ECS::FEntity Owner, TSpan<const FRigidBodyBuildResult> Builds)
+    void FBox3DPhysicsScene::CommitStaticBodyGroup(uint32 GroupID, ECS::FEntity Owner, TSpan<FRigidBodyBuildResult> Builds)
     {
         auto It = StaticBodyGroups.Find(GroupID);
         if (It == nullptr) { return; }
         auto& Handles = (*It);
-        for (const FRigidBodyBuildResult& Build : Builds)
+        for (FRigidBodyBuildResult& Build : Builds)
         {
             if (!HasBodyCapacity(1)) { break; }
             const b3BodyId Body = b3CreateBody(WorldId, &Build.BodyDef);
@@ -642,6 +643,7 @@ namespace Lumina::Physics
                     default: break;
                 }
             }
+            AdoptBodyGeometry(Handle, Build);
             Handles.Add(Handle);
         }
     }
@@ -668,12 +670,7 @@ namespace Lumina::Physics
         {
             for (uint32 Handle : Handles)
             {
-                const b3BodyId BodyId = ResolveBody(Handle);
-                if (b3Body_IsValid(BodyId))
-                {
-                    b3DestroyBody(BodyId);
-                }
-                UnregisterBody(Handle);
+                DestroyBodyHandle(Handle);
             }
         }
 

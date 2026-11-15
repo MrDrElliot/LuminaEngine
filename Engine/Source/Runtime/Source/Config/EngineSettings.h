@@ -38,6 +38,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Maps")
         TSoftObjectPtr<CWorld> EditorStartupMap;
 
+        // Whether a new world saves one package per entity, which each world then keeps however this changes.
+        PROPERTY(Editable, Category = "Maps")
+        bool bNewWorldsUseExternalEntities = false;
+
         /** Worlds the cooker walks from to build the shipped PAK. */
         PROPERTY(Editable, Category = "Maps")
         TVector<TSoftObjectPtr<CWorld>> CookRoots;

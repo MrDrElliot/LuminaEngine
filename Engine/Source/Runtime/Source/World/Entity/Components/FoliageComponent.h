@@ -179,6 +179,9 @@ namespace Lumina
         // Instances a game has hidden at runtime, such as a felled tree, kept apart from Instances so no rebake is owed.
         TVector<uint8>  HiddenInstances;
 
+        // False keeps instances, collision and nav but leaves the whole set out of the render scene. Change it through SetFoliageRendered.
+        bool bRendered = true;
+
         // Transient physics bake, owned by CFoliageCollisionSystem. Never serialized.
         uint32 CollisionGroupID     = 0;        // static body group handle, 0 = none
         uint32 CollisionBakedVersion = 0;       // InstancesVersion the bodies were built from
@@ -219,4 +222,7 @@ namespace Lumina
 
     // Hides or shows one painted instance at runtime and tells the render scene, which then flips only that instance's slots.
     RUNTIME_API void SetFoliageInstanceHidden(CWorld& World, ECS::FEntity Entity, SFoliageComponent& Foliage, uint32 Index, bool bHidden);
+
+    // Adds or drops the whole set in the render scene without a version bump, so collision and nav never rebuild for it.
+    RUNTIME_API void SetFoliageRendered(CWorld& World, ECS::FEntity Entity, SFoliageComponent& Foliage, bool bRendered);
 }

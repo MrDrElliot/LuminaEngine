@@ -140,6 +140,55 @@ public sealed class ActionGraphTests : IDisposable
     }
 
     [Fact]
+    public void InputChangeNamesTheMostRecentlyEditedInput()
+    {
+        BuildAction First = Compile("First.cpp", "First.h");
+        BuildUpToDate(First);
+
+        // The source moves past the output first, as a rebuilt tool does when its run leaves the output alone.
+        DateTime OutputTime = First.ProducedItems[0].Timestamp;
+        FileItem Source = First.PrerequisiteItems[0];
+        FileItem Header = FileItem.Get(Path.Combine(TempDirectory, "First.h"));
+        File.SetLastWriteTimeUtc(Source.Location, OutputTime.AddMinutes(1));
+        File.SetLastWriteTimeUtc(Header.Location, OutputTime.AddMinutes(2));
+        Source.Invalidate();
+        Header.Invalidate();
+
+        Assert.True(ActionGraph.IsOutdated(First, History, Dependencies, out string Reason));
+        Assert.Equal("'First.h' changed", Reason);
+    }
+
+    [Fact]
+    public void InputChangeNamesTheEditedInputEvenWhenAnUnchangedToolHasTheNewerTimestamp()
+    {
+        BuildAction Action = new(ActionType.Generate, "Test") { StatusText = "Reflection" };
+        FileItem Tool = WriteFile("Reflector.exe", "tool");
+        FileItem Header = WriteFile("Header.h", "before");
+        Action.PrerequisiteItems.Add(Tool);
+        Action.PrerequisiteItems.Add(Header);
+
+        // Write-if-changed, so this primary output keeps an old stamp no later check should be measured against.
+        Action.ProducedItems.Add(WriteFile("Shard0.gen.cpp", "shard"));
+
+        BuildUpToDate(Action);
+        DateTime BaseTime = Header.Timestamp;
+
+        // The tool is rebuilt and that rebuild is absorbed, so its newer timestamp is already recorded.
+        File.SetLastWriteTimeUtc(Tool.Location, BaseTime.AddMinutes(10));
+        Tool.Invalidate();
+        History.RecordInputFingerprint(Action.HistoryKey, ActionGraph.ComputeInputFingerprint(Action, Dependencies));
+        Assert.False(ActionGraph.IsOutdated(Action, History, Dependencies, out _));
+
+        // The header is edited after that, but a sync or snapshot can still leave its own stamp short of the tool's.
+        File.WriteAllText(Header.Location, "after an edit");
+        File.SetLastWriteTimeUtc(Header.Location, BaseTime.AddMinutes(5));
+        Header.Invalidate();
+
+        Assert.True(ActionGraph.IsOutdated(Action, History, Dependencies, out string Reason));
+        Assert.Equal("'Header.h' changed", Reason);
+    }
+
+    [Fact]
     public void OrderDependencyCycleThrowsWithCyclePath()
     {
         BuildAction Lead = Compile("Lead.cpp", "Lead.h");

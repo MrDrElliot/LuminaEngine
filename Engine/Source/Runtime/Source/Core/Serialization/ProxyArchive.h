@@ -43,9 +43,18 @@ namespace Lumina
         bool IsWriting() const override { return InnerArchive.IsWriting(); }
         bool HasError() const override { return InnerArchive.HasError(); }
         void SetHasError(bool bIsError) override { InnerArchive.SetHasError(bIsError); }
-        
-        // Keeps the base overloads this class does not forward (CObject*&, FFixedString&, the
-        // container and enum templates) visible instead of hidden by the ones below.
+
+        bool DescribeCutBytes(FPortableBytes& Cut) const override { return InnerArchive.DescribeCutBytes(Cut); }
+
+        void RegisterSoftAssetReference(const FGuid& AssetGUID) override { InnerArchive.RegisterSoftAssetReference(AssetGUID); }
+        FStringView SetSoftReferenceBundles(FStringView Bundles) override { return InnerArchive.SetSoftReferenceBundles(Bundles); }
+        bool RewriteSoftAssetReference(FString& Path, FGuid& AssetGUID) override { return InnerArchive.RewriteSoftAssetReference(Path, AssetGUID); }
+
+        bool SupportsBulkData() const override { return InnerArchive.SupportsBulkData(); }
+        bool WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size) override { return InnerArchive.WriteBulkData(OutRef, Data, Size); }
+        void FlagUnresolvedBulkData() override { InnerArchive.FlagUnresolvedBulkData(); }
+
+        // Keeps the base overloads this class does not forward (FFixedString&, container and enum templates) visible.
         using FArchive::operator<<;
 
         // Each forward returns this archive, so a chained `Ar << A << B` never falls through to the inner one.
@@ -64,6 +73,7 @@ namespace Lumina
         FArchive& operator<<(FName& Value) override { InnerArchive << Value; return *this; }
         FArchive& operator<<(FField*& Value) override { InnerArchive << Value; return *this; }
         FArchive& operator<<(FObjectHandle& Value) override { InnerArchive << Value; return *this; }
+        FArchive& operator<<(CObject*& Value) override { InnerArchive << Value; return *this; }
     
     
     protected:

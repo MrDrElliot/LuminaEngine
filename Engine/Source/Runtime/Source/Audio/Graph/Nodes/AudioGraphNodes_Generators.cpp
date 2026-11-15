@@ -272,6 +272,8 @@ namespace Lumina
                 const float Pitch = Math::Clamp(*PitchIn, 0.01f, 8.0f);
                 const bool  bLoop = *LoopIn != 0;
 
+                float* RESTRICT LeftSamples = OutLeft;
+                float* RESTRICT RightSamples = OutRight;
                 for (uint32 Frame = 0; Frame < Context.NumFrames; ++Frame)
                 {
                     if (PlayCursor.Consume(*PlayIn, Frame))
@@ -287,12 +289,12 @@ namespace Lumina
 
                     if (!bPlaying)
                     {
-                        OutLeft[Frame]  = 0.0f;
-                        OutRight[Frame] = 0.0f;
+                        LeftSamples[Frame]  = 0.0f;
+                        RightSamples[Frame] = 0.0f;
                         continue;
                     }
 
-                    Sample(OutLeft[Frame], OutRight[Frame]);
+                    Sample(LeftSamples[Frame], RightSamples[Frame]);
                     Position += (double)Wave->SampleRate / (double)Context.SampleRate * (double)Pitch;
 
                     if (bLoop && Position >= LoopEnd)

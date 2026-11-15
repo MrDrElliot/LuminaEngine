@@ -29,9 +29,12 @@ float SampleWorkingDepth(float2 UV, float MipLevel)
     return Pass().WorkingDepth.SampleLevel(Samplers::PointClamp, UV, MipLevel).x;
 }
 
+// Total occlusion is never right for a pixel the camera can see, and it wrecks the denoise weights.
+static const float kMinVisibility = 0.03;
+
 void StoreVisibility(uint2 PixCoord, float Visibility)
 {
-    const float Packed = saturate(Visibility / XE_GTAO_OCCLUSION_TERM_SCALE);
+    const float Packed = saturate(max(kMinVisibility, Visibility) / XE_GTAO_OCCLUSION_TERM_SCALE);
     Pass().AOTerm[PixCoord] = float4(Packed, 0.0, 0.0, 0.0);
 }
 
@@ -125,9 +128,6 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     Visibility /= float(SliceCount);
     Visibility = pow(Visibility, Pass().FinalValuePower);
-
-    // Total occlusion is never right for a pixel the camera can see, and it wrecks the denoise weights.
-    Visibility = max(0.03, Visibility);
 
     StoreVisibility(PixCoord, Visibility);
 #endif

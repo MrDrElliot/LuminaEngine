@@ -11,6 +11,7 @@
 #include "FileSystem/FileSystem.h"
 #include "Paths/Paths.h"
 #include "UI/Tools/EditorToolContext.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 #include "World/World.h"
 #include "World/WorldManager.h"
 
@@ -27,20 +28,6 @@ namespace Lumina::AssetOps
 
             // A prefix match is only real on a path boundary, or "/Game/ContentPacks" would pass.
             return VirtualPath.Len() == Root.Len() || VirtualPath[Root.Len()] == '/';
-        }
-
-        FPathOpResult MoveAssetPackage(FStringView OldPath, FStringView NewPath)
-        {
-            // RenamePackage owns the disk move plus the in-memory rename, so the registry follows it.
-            if (!CPackage::RenamePackage(OldPath, NewPath))
-            {
-                return FPathOpResult::Fail(Lumina::Format("Could not move the package at {}.", OldPath));
-            }
-
-            FAssetRegistry::Get().AssetRenamed(OldPath, NewPath);
-            FCoreEditorDelegates::OnAssetRenamed.Broadcast(OldPath, NewPath);
-
-            return FPathOpResult::Ok(1);
         }
 
         FPathOpResult MoveFolder(FStringView OldFolder, FStringView NewFolder)
@@ -91,6 +78,41 @@ namespace Lumina::AssetOps
             return FPathOpResult::Ok((uint32)Entries.Num());
         }
 
+        FPathOpResult MoveAssetPackage(FStringView OldPath, FStringView NewPath)
+        {
+            // A world renamed below rereads its entity files from beside its new path, so they move first.
+            const FFixedString OldEntities = ExternalEntities::EntitiesDirectory(OldPath);
+            const FFixedString NewEntities = ExternalEntities::EntitiesDirectory(NewPath);
+            const bool bHasEntities = VFS::IsDirectory(OldEntities);
+            if (bHasEntities)
+            {
+                if (VFS::Exists(NewEntities))
+                {
+                    return FPathOpResult::Fail(Lumina::Format("{} already exists.", NewEntities));
+                }
+                VFS::CreateDir(VFS::Parent(NewEntities, true));
+                if (FPathOpResult Moved = MoveFolder(OldEntities, NewEntities); !Moved.bSucceeded)
+                {
+                    return Moved;
+                }
+            }
+
+            // RenamePackage owns the disk move plus the in-memory rename, so the registry follows it.
+            if (!CPackage::RenamePackage(OldPath, NewPath))
+            {
+                if (bHasEntities && !MoveFolder(NewEntities, OldEntities).bSucceeded)
+                {
+                    return FPathOpResult::Fail(Lumina::Format("Could not move the package at {}, and its entity files are left at {}.", OldPath, NewEntities));
+                }
+                return FPathOpResult::Fail(Lumina::Format("Could not move the package at {}.", OldPath));
+            }
+
+            FAssetRegistry::Get().AssetRenamed(OldPath, NewPath);
+            FCoreEditorDelegates::OnAssetRenamed.Broadcast(OldPath, NewPath);
+
+            return FPathOpResult::Ok(1);
+        }
+
         FPathOpResult MoveLooseFile(FStringView OldPath, FStringView NewPath)
         {
             if (!VFS::Rename(OldPath, NewPath))
@@ -134,6 +156,12 @@ namespace Lumina::AssetOps
             if (VFS::IsReadOnlyOnDisk(VirtualPath))
             {
                 ReadOnly.Emplace(VirtualPath.GetData(), VirtualPath.Len());
+            }
+
+            // A world's entity files move and go with it.
+            if (const FFixedString Entities = ExternalEntities::EntitiesDirectory(VirtualPath); VFS::IsDirectory(Entities))
+            {
+                ReadOnly.Append(FindReadOnlyFiles(Entities));
             }
             return ReadOnly;
         }
@@ -416,6 +444,10 @@ namespace Lumina::AssetOps
         FCoreEditorDelegates::OnAssetDeleted.Broadcast(AssetPath);
 
         Result.bDeleted = true;
+        if (!ExternalEntities::DeleteEntityFiles(AssetPath))
+        {
+            Result.Error = Lumina::Format("{} was deleted, but some of its entity files remain in {}.", AssetPath, ExternalEntities::EntitiesDirectory(AssetPath));
+        }
         return Result;
     }
 }

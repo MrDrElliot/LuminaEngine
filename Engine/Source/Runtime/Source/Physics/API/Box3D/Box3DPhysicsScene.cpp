@@ -154,24 +154,6 @@ namespace Lumina::Physics
         DestroyGeometryCaches();
     }
 
-    void FBox3DPhysicsScene::TrackOwnedHull(b3HullData* Hull)
-    {
-        FScopeLock Lock(OwnedGeometryMutex);
-        OwnedHulls.Add(Hull);
-    }
-
-    void FBox3DPhysicsScene::TrackOwnedMesh(b3MeshData* Mesh)
-    {
-        FScopeLock Lock(OwnedGeometryMutex);
-        OwnedMeshes.Add(Mesh);
-    }
-
-    void FBox3DPhysicsScene::TrackOwnedHeightField(b3HeightFieldData* Field)
-    {
-        FScopeLock Lock(OwnedGeometryMutex);
-        OwnedHeightFields.Add(Field);
-    }
-
     void FBox3DPhysicsScene::DestroyGeometryCaches()
     {
         for (auto& [Key, Hull] : HullCache)
@@ -191,24 +173,7 @@ namespace Lumina::Physics
             b3DestroyMesh(Mesh);
         }
         MeshCache.Reset();
-
-        for (b3HeightFieldData* Field : OwnedHeightFields)
-        {
-            b3DestroyHeightField(Field);
-        }
-        OwnedHeightFields.Reset();
-
-        for (b3HullData* Hull : OwnedHulls)
-        {
-            b3DestroyHull(Hull);
-        }
-        OwnedHulls.Reset();
-
-        for (b3MeshData* Mesh : OwnedMeshes)
-        {
-            b3DestroyMesh(Mesh);
-        }
-        OwnedMeshes.Reset();
+        BodyGeometry.Reset();
     }
 
     bool FBox3DPhysicsScene::WorldSettingsChanged(const Lumina::SDefaultWorldSettings& Settings)

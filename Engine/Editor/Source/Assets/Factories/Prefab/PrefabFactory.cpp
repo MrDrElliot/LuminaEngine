@@ -4,9 +4,9 @@
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
-#include "GUID/GUID.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/EntityUtils.h"
 
 namespace Lumina
 {
@@ -23,7 +23,7 @@ namespace Lumina
         ECS::FEntity Root = Prefab->Registry.Create();
         Prefab->Registry.Emplace<SNameComponent>(Root).Name = FName("Root");
         Prefab->Registry.Emplace<STransformComponent>(Root);
-        Prefab->Registry.Emplace<SPrefabComponent>(Root).StableID = FName(FGuid::New().ToShortString());
+        Prefab->Registry.Emplace<SPrefabComponent>(Root).StableID = ECS::Utils::NewStableID();
 
         return Prefab;
     }

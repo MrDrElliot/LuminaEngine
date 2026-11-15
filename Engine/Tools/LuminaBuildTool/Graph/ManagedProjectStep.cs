@@ -170,6 +170,16 @@ public static class ManagedProjectStep
                 yield return FileItem.Get(Source);
             }
         }
+
+        // MSBuild imports these implicitly, so they are compile inputs even though they are not *.cs.
+        foreach (string Name in new[] { "Directory.Build.props", "Directory.Build.targets" })
+        {
+            string ImplicitImport = Path.Combine(ProjectDirectory, Name);
+            if (File.Exists(ImplicitImport))
+            {
+                yield return FileItem.Get(ImplicitImport);
+            }
+        }
     }
 
     /// <summary>The generated bindings this assembly compiles.</summary>

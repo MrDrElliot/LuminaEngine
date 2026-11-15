@@ -7,6 +7,7 @@
 #include "UI/RmlUiBridge.h"
 #include "World/Entity/Components/SingletonEntityComponent.h"
 #include "World/Entity/Systems/EntitySystem.h"
+#include "World/Subsystems/WorldSettings.h"
 #include "World/World.h"
 
 namespace Lumina
@@ -28,6 +29,14 @@ namespace Lumina
         static void CreateSingletonEntity(CWorld& World)
         {
             World.SingletonEntity = World.EntityRegistry.Create();
+            World.EntityRegistry.Emplace<FSingletonEntityTag>(World.SingletonEntity);
+        }
+
+        // InitializeWorld also moves a loaded world's entities in and makes its settings entity the singleton.
+        static void AdoptLoadedEntities(CWorld& World)
+        {
+            World.EntityRegistry.Swap(World.RegistryPending);
+            World.SingletonEntity = *World.EntityRegistry.View<SDefaultWorldSettings>().begin();
             World.EntityRegistry.Emplace<FSingletonEntityTag>(World.SingletonEntity);
         }
 

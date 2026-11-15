@@ -414,7 +414,7 @@ namespace Lumina
         const int32 NumParams = State.Parameters.Num();
         const int32 NumPose   = Graph->NumPoseRegisters;
 
-        float* RESTRICT Scalars = State.ScalarRegisters.GetData();
+        float* Scalars = State.ScalarRegisters.GetData();
 
         // Object registers are pure dataflow within one call, so they are scratch, not per-instance state.
         const SIZE_T NumObjectRegs = Graph->NumObjectRegisters;
@@ -606,7 +606,7 @@ namespace Lumina
             return Row;
         };
 
-        const auto SampleClipCurvesInto = [&](float* RESTRICT Dst, const CAnimation* Clip, const FAnimGraphClipCurveMap* Map, float Time)
+        const auto SampleClipCurvesInto = [&](float* Dst, const CAnimation* Clip, const FAnimGraphClipCurveMap* Map, float Time)
         {
             if (Dst == nullptr)
             {

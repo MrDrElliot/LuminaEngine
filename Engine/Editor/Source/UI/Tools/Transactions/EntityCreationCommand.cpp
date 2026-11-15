@@ -3,10 +3,10 @@
 
 #include <algorithm>
 
-#include "Core/Object/Package/Package.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "World/World.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/EditorComponent.h"
 
@@ -41,6 +41,7 @@ namespace Lumina
     void FEntityCreationCommand::Finalize()
     {
         Created.Reset();
+        CreatedGuids.Reset();
         CreatedData.Reset();
 
         CWorld* W = World.Get();
@@ -59,6 +60,7 @@ namespace Lumina
             if (!Algo::BinarySearch(LiveBefore, E))
             {
                 Created.Add(E);
+                CreatedGuids.Add(ExternalEntities::GuidOf(Registry, E));
             }
         }
 
@@ -108,11 +110,6 @@ namespace Lumina
                 ECS::Utils::DestroyEntityHierarchy(Registry, E);
             }
         }
-
-        if (W->GetPackage())
-        {
-            W->GetPackage()->MarkDirty();
-        }
     }
 
     void FEntityCreationCommand::Redo()
@@ -138,10 +135,10 @@ namespace Lumina
             ECS::Utils::SerializeEntity(Ar, Registry, Entity, &Links);
         }
         Links.Apply(Registry);
+    }
 
-        if (W->GetPackage())
-        {
-            W->GetPackage()->MarkDirty();
-        }
+    void FEntityCreationCommand::MarkChanged() const
+    {
+        ExternalEntities::MarkChanged(World.Get(), Created, CreatedGuids);
     }
 }

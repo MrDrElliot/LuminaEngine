@@ -2,6 +2,8 @@
 
 #include "Core/Object/ObjectCore.h"
 #include "GUID/GUID.h"
+#include "HierarchicalTags/GameplayMessageBus.h"
+#include "World/Subsystems/MessageSubsystem.h"
 #include "World/World.h"
 #include "World/Entity/Components/TransformComponent.h"
 
@@ -81,4 +83,23 @@ TEST(WorldApi, EngineSubsystemsExistEvenForAnUninitializedWorld)
     EXPECT_EQ(World->GetSubsystem<CPhysicsSubsystem>(), Physics);
     EXPECT_NE(World->GetTweens(), nullptr);
     EXPECT_NE(World->GetMessageBus(), nullptr);
+}
+
+TEST(WorldApi, MessageBusLeavesTheRegistryAtTeardown)
+{
+    CWorld* World = NewWorld();
+    const ECS::FComponentSignal& EntityDestroyed = World->OnEntityDestroy();
+    ASSERT_TRUE(EntityDestroyed.IsEmpty()) << "a bare world has no entity destroyed listeners";
+
+    CMessageSubsystem* Messages = World->GetMessageBus();
+    ASSERT_FALSE(EntityDestroyed.IsEmpty());
+
+    // A C# event field can hold the subsystem past the world, so teardown is the last time the registry is alive.
+    Messages->OnTeardown();
+    EXPECT_TRUE(EntityDestroyed.IsEmpty());
+
+    uint32 Payload = 7;
+    Messages->Send((uint32)EGameplayMessageRoute::Broadcast, ECS::NullEntity, 1, (uint32)EGameplayMessagePayload::Bytes, 0, &Payload, sizeof(Payload), nullptr, true);
+    Messages->UnsubscribeAll(World->CreateEntity());
+    EXPECT_FALSE(Messages->Unsubscribe(1));
 }

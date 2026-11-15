@@ -90,9 +90,9 @@ namespace Lumina
             const VFloat8 VT        = VFloat8::Broadcast(T);
             const VFloat8 VNegFive  = VFloat8::Broadcast(-5.0f);
 
-            const float* RESTRICT X0Ptr = Set.X0();
-            const float* RESTRICT V0Ptr = Set.V0();
-            float* RESTRICT       Out   = Set.Eval();
+            const float* X0Ptr = Set.X0();
+            const float* V0Ptr = Set.V0();
+            float*       Out   = Set.Eval();
 
             if (Duration <= 1e-5f)
             {
@@ -395,10 +395,10 @@ namespace Lumina
 
             // Rotation stays scalar, since a decayed bone skips the axis-angle build entirely.
             const int32 RotLanes = In.Rot.NumLanes();
-            const float* RESTRICT RotEval = In.Rot.Eval();
-            const float* RESTRICT RotDirX = In.Rot.DirX();
-            const float* RESTRICT RotDirY = In.Rot.DirY();
-            const float* RESTRICT RotDirZ = In.Rot.DirZ();
+            const float* RotEval = In.Rot.Eval();
+            const float* RotDirX = In.Rot.DirX();
+            const float* RotDirY = In.Rot.DirY();
+            const float* RotDirZ = In.Rot.DirZ();
 
             for (int32 i = 0; i < N; ++i)
             {
@@ -485,9 +485,13 @@ namespace Lumina
             const float Alpha = U * U * (3.0f - 2.0f * U);
             const float Travel = DecayedTravel(T, Dead.HalfLife);
 
+            const FVector3* RotVel = Dead.RotVel.GetData();
+            const FVector3* TransVel = Dead.TransVel.GetData();
+            const FVector3* ScaleVel = Dead.ScaleVel.GetData();
+
             for (int32 i = 0; i < N; ++i)
             {
-                const FVector3 RotV = Dead.RotVel[i];
+                const FVector3 RotV = RotVel[i];
                 const float Speed = Math::Length(RotV);
 
                 FQuat SourceRot = Dead.Source.GetRotation(i);
@@ -496,8 +500,8 @@ namespace Lumina
                     SourceRot = Math::Normalize(Math::AngleAxis(Speed * Travel, RotV * (1.0f / Speed)) * SourceRot);
                 }
 
-                const FVector3 SourceTrans = Dead.Source.GetTranslation(i) + Dead.TransVel[i] * Travel;
-                const FVector3 SourceScale = Dead.Source.GetScale(i) + Dead.ScaleVel[i] * Travel;
+                const FVector3 SourceTrans = Dead.Source.GetTranslation(i) + TransVel[i] * Travel;
+                const FVector3 SourceScale = Dead.Source.GetScale(i) + ScaleVel[i] * Travel;
                 const FVector3 TargetTrans = Target.GetTranslation(i);
                 const FVector3 TargetScale = Target.GetScale(i);
 

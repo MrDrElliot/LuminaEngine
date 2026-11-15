@@ -103,6 +103,15 @@ TEST_F(MCPDataTableToolsTest, RenameRefusesATakenNameThenRemoveDropsTheRow)
     EXPECT_EQ(Table->GetRowNameAt(0), FName("Shield"));
 }
 
+TEST_F(MCPDataTableToolsTest, RenameToItsOwnCurrentNameSucceeds)
+{
+    RowAction(R"("Name":"Sword")");
+
+    const FJsonValue Renamed = RowAction(R"("Action":"Rename","Row":"Sword","NewName":"Sword")");
+    EXPECT_EQ(FString(Renamed["structuredContent"]["Row"].AsString()), FString("Sword"));
+    EXPECT_TRUE(Table->HasRow(FName("Sword")));
+}
+
 TEST_F(MCPDataTableToolsTest, SetRowPropertyWritesAndGetRowReadsItBack)
 {
     RowAction(R"("Name":"Sword")");

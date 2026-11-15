@@ -201,6 +201,10 @@ namespace Lumina
 
         virtual void OnSave() {}
         NODISCARD virtual bool IsUnsavedDocument() { return false; }
+
+        // Names the unsaved items inside the document, for a save prompt to list.
+        NODISCARD virtual TVector<FString> GetUnsavedItemLabels() { return {}; }
+
         NODISCARD virtual bool HasUnsavedFileChanges() { return false; }
         virtual bool SaveFileChanges() { OnSave(); return !HasUnsavedFileChanges(); }
         virtual bool ShouldGenerateThumbnailOnSave() const { return false; }
@@ -322,7 +326,8 @@ namespace Lumina
         // Play and Simulate run on a transient world that is discarded on stop, so only an editor world is transacted.
         bool CanTransact() const;
 
-        virtual void BeginTransaction();
+        // Edited names the entities the step changes so only their files are rewritten, or is empty when it may change any of them.
+        virtual void BeginTransaction(TVector<ECS::FEntity> Edited = {});
 
         // Only these entities' transforms, so grabbing the gizmo in a large level does not serialize the registry.
         void BeginTransformTransaction(const TVector<ECS::FEntity>& Entities);

@@ -168,7 +168,9 @@ namespace Lumina
 
     void FInputContext::SetGamepadState(const FGamepadState& State)
     {
-        Gamepad = State;
+        Gamepad.bConnected = State.bConnected;
+        Gamepad.Family = State.Family;
+        Gamepad.Axes = State.Axes;
         for (float Axis : Gamepad.Axes)
         {
             if (Math::Abs(Axis) >= kDeviceSwitchAxis)
@@ -177,8 +179,10 @@ namespace Lumina
             }
         }
 
+        // Advance derives the edge instead of overwriting, so a held button still reports Released first.
         for (uint32 Button = 0; Button < (uint32)EGamepadButton::Num; ++Button)
         {
+            Gamepad.Buttons[Button] = Input::Advance(Gamepad.Buttons[Button], Input::IsDown(State.Buttons[Button]));
             const Input::EButtonState ButtonState = Gamepad.Buttons[Button];
             if (ButtonState != Input::EButtonState::Pressed && ButtonState != Input::EButtonState::Released)
             {

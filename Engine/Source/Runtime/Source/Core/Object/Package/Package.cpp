@@ -998,15 +998,25 @@ namespace Lumina
             }
         }
 
-        // Rebuilt from what is still alive, since the sweep may have freed pointers in the old list.
+        PackageToDestroy->Unload();
+
+        return true;
+    }
+
+    void CPackage::Unload()
+    {
+        // Flagged first, so a later load or create at this path makes a new package instead of finding this one.
+        SetFlag(OF_MarkedDestroy);
+
+        // Gathered now rather than earlier, since a caller's reference sweep may have freed objects an older list held.
         TVector<CObject*> SurvivingExports;
         SurvivingExports.Reserve(20);
-        GetObjectsWithPackage(PackageToDestroy, SurvivingExports);
+        GetObjectsWithPackage(this, SurvivingExports);
 
         // A no-op for any still held by a non-reflected strong ref, such as an open editor.
         for (CObject* ExportObject : SurvivingExports)
         {
-            if (ExportObject == nullptr || ExportObject == PackageToDestroy)
+            if (ExportObject == nullptr || ExportObject == this)
             {
                 continue;
             }
@@ -1020,13 +1030,11 @@ namespace Lumina
             ExportObject->ConditionalBeginDestroy();
         }
 
-        PackageToDestroy->ExportTable.Reset();
-        PackageToDestroy->ImportTable.Reset();
+        ExportTable.Reset();
+        ImportTable.Reset();
 
         // The root set holds the package's last strong reference, so unrooting is what destroys it.
-        PackageToDestroy->RemoveFromRoot();
-
-        return true;
+        RemoveFromRoot();
     }
 
     CPackage* CPackage::FindPackageByPath(FStringView Path)

@@ -26,6 +26,7 @@ namespace Lumina
         void Finalize() override;
 
         bool IsNoOp() const override;
+        void MarkChanged() const override;
 
         // Every entity whose links an edit on Seeds can rewrite, siblings of both parents included.
         static void CollectAffected(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Seeds,

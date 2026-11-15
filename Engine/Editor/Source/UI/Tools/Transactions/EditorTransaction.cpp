@@ -22,6 +22,7 @@ namespace Lumina
             }
         }
         Open.Commands = Move(Kept);
+        Open.MarkChanged();
 
         if (!Open.Commands.IsEmpty())
         {
@@ -48,6 +49,7 @@ namespace Lumina
         {
             return;
         }
+        Command->MarkChanged();
 
         if (UndoStack.IsEmpty())
         {

@@ -31,6 +31,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "Tools/Export/AssetExport.h"
 #include "World/WorldManager.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 #include <string.h>
 #include <cstdarg>
 #include "Platform/Filesystem/PlatformFilesystem.h"
@@ -510,7 +511,7 @@ namespace Lumina
         // Build / IDE directories that never belong in the browser (regenerated on demand).
         bool IsHiddenBrowserDirectory(FStringView Name)
         {
-            static constexpr const char* kHidden[] = { "bin", "obj", ".vs", ".vscode", ".idea", ".git" };
+            static constexpr const char* kHidden[] = { "bin", "obj", ".vs", ".vscode", ".idea", ".git", ExternalEntities::kFolderName };
             for (const char* S : kHidden)
             {
                 if (IEquals(Name, S)) { return true; }

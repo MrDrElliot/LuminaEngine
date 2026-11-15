@@ -194,7 +194,13 @@ namespace Lumina::Physics
         [&]<typename... TColliders>(ECS::TTypeList<TColliders...>) { (Func.template operator()<TColliders>(), ...); }(FColliderTypes{});
     }
 
-    // Flattens a mesh resource's LOD-0 meshlets into positions, and triangles when the caller needs them.
+    // A dynamic mesh may keep only its committed triangles, which collision falls back to when the meshlets are gone.
+    inline bool HasCollisionGeometry(const FMeshResource& Resource)
+    {
+        return !Resource.MeshletData.IsEmpty() || (!Resource.Positions.IsEmpty() && !Resource.Indices.IsEmpty());
+    }
+
+    // Flattens a mesh resource's LOD-0 meshlets, or else its kept triangles, into positions and triangles when the caller needs them.
     bool GatherMeshResourceGeometry(const FMeshResource& Resource, const FVector3& Scale,
                                     TVector<b3Vec3>& OutPositions, TVector<int32>* OutIndices);
 }

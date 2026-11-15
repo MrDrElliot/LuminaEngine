@@ -282,21 +282,21 @@ namespace Lumina
         bool IsAsset() const override { return true; }
         
         /** Writes (Global * InvBind) per bone; bones without channels keep their bind-pose local transform. */
-        void SamplePose(float Time, FSkeletonResource* RESTRICT InSkeleton, TVector<FMatrix4>& RESTRICT OutBoneTransforms) const;
+        void SamplePose(float Time, FSkeletonResource* InSkeleton, TVector<FMatrix4>& OutBoneTransforms) const;
 
         /** Samples the clip into a local-space TRS pose, or into its additive delta when the clip is additive. */
         // MaxBones < 0 samples every animated bone; otherwise only channels targeting bones below
         // MaxBones are sampled and the rest stay at bind pose (skeleton LOD for distant meshes).
-        void SampleLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones = -1) const;
+        void SampleLocalPose(float Time, FSkeletonResource* InSkeleton, FPose& OutPose, int32 MaxBones = -1) const;
 
         /** Samples the authored pose as-is, ignoring the additive settings. */
-        void SampleRawLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones = -1) const;
+        void SampleRawLocalPose(float Time, FSkeletonResource* InSkeleton, FPose& OutPose, int32 MaxBones = -1) const;
 
         /** Samples the clip's delta against its configured base pose. Yields an identity delta on a non-additive clip. */
-        void SampleAdditiveDelta(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutDelta, int32 MaxBones = -1) const;
+        void SampleAdditiveDelta(float Time, FSkeletonResource* InSkeleton, FPose& OutDelta, int32 MaxBones = -1) const;
 
         /** Samples the base pose an additive clip is authored against, at the clip time Time maps to. */
-        void SampleAdditiveBasePose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutBase, int32 MaxBones = -1) const;
+        void SampleAdditiveBasePose(float Time, FSkeletonResource* InSkeleton, FPose& OutBase, int32 MaxBones = -1) const;
 
         bool IsAdditive() const { return AdditiveAnimType != EAdditiveAnimType::None; }
 
@@ -307,7 +307,7 @@ namespace Lumina
         float GetAdditiveBaseTime(float Time) const;
 
         /** Samples a single bone's local TRS at Time, falling back to its bind-pose value for untouched channels. */
-        void SampleBoneLocal(float Time, FSkeletonResource* RESTRICT InSkeleton, int32 BoneIndex,
+        void SampleBoneLocal(float Time, FSkeletonResource* InSkeleton, int32 BoneIndex,
                              FVector3& OutT, FQuat& OutR, FVector3& OutS) const;
 
         // The skeleton this clip was authored against, which sampling compares binds with when posing another.

@@ -38,6 +38,13 @@ namespace Lumina
         FString                   ErrorMessage;
     };
 
+    class FPakWriter;
+    struct FCookNode;
+
+    // Most packages only lose their thumbnail, which needs no load, so they cook in parallel and only the rest are loaded and saved.
+    EDITOR_API void BundleChunkAssets(FPakWriter& Writer, const TVector<const FCookNode*>& Nodes, FCookResult& Result,
+                                      const TFunction<void(FStringView)>& LogFunc);
+
     // Sidecars, IDE state, build output, project files and source-control markers, none of which a game reads.
     EDITOR_API bool IsDevelopmentOnlyGameFile(FStringView VirtualPath, bool bKeepScriptSources);
 

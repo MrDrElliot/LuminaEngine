@@ -6,6 +6,7 @@
 #include "Core/Object/Package/Package.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/Package/PackageSaver.h"
+#include "Core/Serialization/ProxyArchive.h"
 #include "Platform/Time/PlatformTime.h"
 #include "TaskSystem/CoroutineAssets.h"
 #include "TaskSystem/ThreadedCallback.h"
@@ -92,6 +93,30 @@ TEST(AssetBundles, AnImportFromBeforeBundlesReadsWithNone)
     EXPECT_EQ(Read.ObjectGUID, Written.ObjectGUID);
     EXPECT_TRUE(Read.Bundles.IsEmpty());
     EXPECT_EQ(Reader.Tell(), (int64)Bytes.Num()) << "an older package has no bundle list to read past";
+}
+
+TEST(ProxyArchive, APlainProxyForwardsAnObjectReferenceAndASoftReferenceToTheImportTable)
+{
+    CDataAsset* Target = NewObject<CDataAsset>(CPackage::CreatePackage("/ProxyArchiveTests/Target"), "Target");
+    const FGuid SoftGuid = FGuid::New();
+
+    TVector<uint8> Bytes;
+    FPackageSaver Saver(Bytes, nullptr);
+    FProxyArchive Proxy(Saver);
+
+    CObject* Obj = Target;
+    Proxy << Obj;
+    Proxy.RegisterSoftAssetReference(SoftGuid);
+
+    TVector<FObjectImport> Imports;
+    Saver.PopulateImportTable(Imports);
+
+    const FObjectImport* HardImport = FindImport(Imports, Target->GetGUID());
+    const FObjectImport* SoftImport = FindImport(Imports, SoftGuid);
+    ASSERT_NE(HardImport, nullptr) << "a proxy that drops CObject*& loses the import entirely";
+    ASSERT_NE(SoftImport, nullptr) << "a proxy that drops RegisterSoftAssetReference loses the soft edge";
+    EXPECT_EQ(HardImport->Type, EDependencyType::Hard);
+    EXPECT_EQ(SoftImport->Type, EDependencyType::Soft);
 }
 
 TEST(AssetHandles, AnObjectStaysExactlyAsLongAsAHandleHoldsIt)

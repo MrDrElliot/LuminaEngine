@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <chrono>
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Core/Object/ObjectCore.h"
 #include "Log/Log.h"
@@ -9,7 +10,9 @@
 #include "Renderer/SkeletonResource.h"
 #include "World/World.h"
 #include "World/Entity/Components/CharacterComponent.h"
+#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Events/CollisionEvent.h"
 #include "World/Scene/RenderScene/SceneMeshes.h"
@@ -247,6 +250,96 @@ TEST_F(PhysicsSceneLifecycle, MeshCollidersFollowReimportedGeometry)
     }
 }
 
+// A dynamic mesh that dropped its meshlet streams after upload still collides from the triangles it kept.
+TEST_F(PhysicsSceneLifecycle, DynamicMeshColliderBuildsFromKeptTrianglesWithoutMeshlets)
+{
+    for (bool bConvex : { true, false })
+    {
+        const ECS::FEntity Entity = Registry->Create();
+        Registry->Emplace<STransformComponent>(Entity);
+        Registry->Emplace<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
+
+        TSharedPtr<FDynamicMeshRenderData> Data = MakeShared<FDynamicMeshRenderData>();
+        TUniquePtr<FMeshResource> Cube = MakeCubeResource(1.0f);
+        Data->Resource.Positions = Move(Cube->Positions);
+        Data->Resource.Indices = Move(Cube->Indices);
+        Data->MeshletHeaderSlot = 1;
+        Registry->Emplace<SDynamicMeshComponent>(Entity).PublishRenderData(Move(Data));
+        Registry->Emplace<SDynamicMeshColliderComponent>(Entity).bConvex = bConvex;
+
+        // The cook runs on a background job, so the body lands some frames later.
+        const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Pending && std::chrono::steady_clock::now() < Deadline)
+        {
+            Scene->Update(0.0);
+        }
+
+        EXPECT_EQ(Scene->GetBodyStatus(Entity), Physics::EPhysicsBodyStatus::Ready) << "convex " << bConvex;
+        const auto Hit = Scene->CastRay(Ray(0.1f));
+        ASSERT_TRUE(Hit.IsSet()) << "convex " << bConvex;
+        EXPECT_NEAR(Hit->Location.z, -0.5f, 0.05f);
+
+        Registry->Destroy(Entity);
+        Scene->Update(Dt);
+    }
+}
+
+TEST_F(PhysicsSceneLifecycle, RebuiltAndDestroyedBodiesFreeTheGeometryBuiltForThem)
+{
+    CStaticMesh* Mesh = NewObject<CStaticMesh>();
+    Mesh->SetMeshResource(MakeCubeResource(1.0f));
+    SMeshCollision& Collision = Mesh->Collision;
+    Collision.bUseTriangleMesh = true;
+    Collision.TriangleVertices = { FVector3(-1.0f, 0.0f, -1.0f), FVector3(1.0f, 0.0f, -1.0f), FVector3(1.0f, 0.0f, 1.0f), FVector3(-1.0f, 0.0f, 1.0f) };
+    Collision.TriangleIndices = { 0, 2, 1, 0, 3, 2 };
+    SCollisionPrimitive& Hull = Collision.Primitives.AddDefaultedGetRef();
+    Hull.Type = ECollisionPrimitiveType::ConvexHull;
+    Hull.HullPoints = { FVector3(0.0f), FVector3(1.0f, 0.0f, 0.0f), FVector3(0.0f, 1.0f, 0.0f), FVector3(0.0f, 0.0f, 1.0f) };
+
+    const ECS::FEntity MeshBody = Registry->Create();
+    Registry->Emplace<STransformComponent>(MeshBody);
+    Registry->Emplace<SRigidBodyComponent>(MeshBody).BodyType = EBodyType::Static;
+    Registry->Emplace<SMeshColliderComponent>(MeshBody).Mesh = Mesh;
+
+    const ECS::FEntity Terrain = Registry->Create();
+    Registry->Emplace<STransformComponent>(Terrain).SetLocation(FVector3(20.0f, 0.0f, 0.0f));
+    Registry->Emplace<SRigidBodyComponent>(Terrain).BodyType = EBodyType::Static;
+    STerrainComponent& Tile = Registry->Emplace<STerrainComponent>(Terrain);
+    Tile.Resolution = 2;
+    Tile.TileWorldSize = 8.0f;
+    Tile.MaxHeight = 1.0f;
+    Tile.Heightmap = { 0.0f, 0.0f, 0.0f, 0.0f };
+    Registry->Emplace<STerrainColliderComponent>(Terrain);
+
+    Scene->Update(Dt);
+    ASSERT_EQ(Scene->GetBodyGeometryCount(), 2);
+
+    Physics::FStaticInstanceDesc Instances[1];
+    Instances[0].Position = FVector3(-20.0f, 0.0f, 0.0f);
+    Instances[0].Collision = &Collision;
+    const ECS::FEntity Owner = Registry->Create();
+
+    for (int32 Round = 0; Round < 8; ++Round)
+    {
+        Registry->Patch<SMeshColliderComponent>(MeshBody, [](auto&) {});
+        Registry->Patch<STerrainColliderComponent>(Terrain, [](auto&) {});
+        const uint32 Group = Scene->CreateStaticBodyGroup(Owner, Instances);
+        ASSERT_NE(Group, 0u);
+        Scene->Update(Dt);
+        EXPECT_EQ(Scene->GetBodyGeometryCount(), 3);
+        EXPECT_EQ(Scene->GetBodyCount(), 3u);
+
+        Scene->DestroyStaticBodyGroup(Group);
+        Scene->Update(Dt);
+        EXPECT_EQ(Scene->GetBodyGeometryCount(), 2);
+    }
+
+    Registry->Destroy(MeshBody);
+    Registry->Destroy(Terrain);
+    Scene->Update(Dt);
+    EXPECT_EQ(Scene->GetBodyGeometryCount(), 0);
+}
+
 TEST_F(PhysicsSceneLifecycle, BodiesPastTheCapWarnOnceAndLeaveExistingBodiesAlone)
 {
     Scene->StopSimulate();
@@ -336,6 +429,19 @@ TEST_F(PhysicsSceneLifecycle, ConstraintsWaitForBothPendingBodies)
     Scene->DestroyConstraint(Constraint);
     Scene->Update(0.0);
     EXPECT_EQ((int)Scene->GetLiveJointCount(), 0);
+}
+
+TEST_F(PhysicsSceneLifecycle, AConstraintWithNoTargetHoldsTheBodyToTheWorld)
+{
+    const ECS::FEntity Entity = Spawn(3.0f);
+    Registry->Get<SRigidBodyComponent>(Entity).bUseGravity = true;
+    Registry->Emplace<SPhysicsConstraintComponent>(Entity).Type = EPhysicsConstraintType::Point;
+    for (int Step = 0; Step < 60; ++Step)
+    {
+        Scene->Update(Dt);
+    }
+    EXPECT_EQ((int)Scene->GetLiveJointCount(), 1);
+    EXPECT_LT(Math::Length(Scene->GetBodyPosition(Entity) - FVector3(3.0f, 0.0f, 0.0f)), 0.05f);
 }
 
 TEST_F(PhysicsSceneLifecycle, RagdollRequestsOwnTemporaryPoseDataAndFilterByOwner)

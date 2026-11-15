@@ -2,7 +2,7 @@
 
 #include "Includes/SceneGlobals.slang"
 #include "Includes/TerrainCommon.slang"
-#include "Includes/WaveAtomics.slang"
+#include "Includes/AppendBuffer.slang"
 #include "Includes/Culling.slang"
 
 #define LOCAL_SIZE_X 8
@@ -15,7 +15,7 @@ struct FGrassScatterPushConstants
     GPUSpan<FInstanceCullEntry> OutCullEntries;
     GPUSpan<FTransform3x4>      OutTransforms;
     GPUSpan<FInstanceStatic>    OutStatic;
-    GPUSpan<uint>               OutCursor;      // blades appended so far in this species' block
+    GPUSpan<uint>               OutCursor;      // blades wanted so far, which can run past the block's capacity
 
     FTexture2D      Heightmap;
     FTexture2D      NormalMap;
@@ -195,11 +195,9 @@ void main(uint3 Tid : SV_DispatchThreadID)
         TiltQuat.w * YawQuat.xyz + YawQuat.w * TiltQuat.xyz + cross(TiltQuat.xyz, YawQuat.xyz),
         TiltQuat.w * YawQuat.w - dot(TiltQuat.xyz, YawQuat.xyz));
 
-    const uint Slot = WaveInterlockedAdd((P->OutCursor).At(0u), 1u);
-    if (!(P->OutCullEntries).Contains(Slot))
+    const uint Slot = AppendReserve(P->OutCursor, P->OutCullEntries, /*Base*/ 0u);
+    if (Slot == kAppendFull)
     {
-        // Over budget, so hold the cursor at capacity and nothing writes past the reserved block.
-        InterlockedMin((P->OutCursor).At(0u)[0], P->OutCullEntries.Count);
         return;
     }
 

@@ -20,6 +20,10 @@ namespace Lumina
         PROPERTY(Hidden)
         TVector<FName> DisabledSystems;
 
+        // Saves each entity to its own package beside the world, seeded from the project setting and switched only by the world editor's convert.
+        PROPERTY(ReadOnly, Category = "Storage")
+        bool bExternalEntities = false;
+
         /** Entities below this Y position are automatically destroyed. */
         PROPERTY(Editable)
         float WorldKillHeight = -5'000;

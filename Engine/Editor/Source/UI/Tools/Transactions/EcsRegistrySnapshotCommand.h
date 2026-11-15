@@ -1,5 +1,7 @@
 #pragma once
 
+#include "World/ECS/Registry.h"
+
 #include "EditorTransaction.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -13,7 +15,8 @@ namespace Lumina
     {
     public:
 
-        explicit FEcsRegistrySnapshotCommand(CWorld* InWorld);
+        // Edited names the entities the step changes, or is empty when it may change any of them.
+        explicit FEcsRegistrySnapshotCommand(CWorld* InWorld, TVector<ECS::FEntity> InEdited = {});
 
         void Undo() override;
         void Redo() override;
@@ -29,6 +32,8 @@ namespace Lumina
         // cannot report a real change as a no-op.
         bool IsNoOp() const override { return Before == After; }
 
+        void MarkChanged() const override;
+
     private:
 
         void Capture(TVector<uint8>& Out) const;
@@ -36,6 +41,7 @@ namespace Lumina
 
         // Weak, since a strong ref would keep a torn-down world alive and stop a stale undo from no-opping.
         TWeakObjectPtr<CWorld> World;
+        TVector<ECS::FEntity> Edited;
         TVector<uint8>     Before;
         TVector<uint8>     After;
     };

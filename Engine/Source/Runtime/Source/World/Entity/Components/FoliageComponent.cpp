@@ -160,4 +160,15 @@ namespace Lumina
         Foliage.HiddenInstances[Index] = bHidden ? 1 : 0;
         FRenderDirtyTracker::Ensure(World.GetEntityRegistry()).MarkInstanceVisibility(Entity, Index);
     }
+
+    void SetFoliageRendered(CWorld& World, ECS::FEntity Entity, SFoliageComponent& Foliage, bool bRendered)
+    {
+        if (Foliage.bRendered == bRendered)
+        {
+            return;
+        }
+        Foliage.bRendered = bRendered;
+        FRenderDirtyTracker::Ensure(World.GetEntityRegistry()).Mark(Entity, EPrimitiveSource::Foliage,
+                                                                    EPrimitiveDirty::Data | EPrimitiveDirty::Membership);
+    }
 }

@@ -180,9 +180,13 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering")
         bool bGenerateTangents = true;
 
-        /** Keeps the CPU meshlet streams after Commit uploads them, which a dynamic mesh collider builds from; turn it off for a render-only mesh. */
+        /** Keeps the CPU meshlet streams after Commit uploads them, which navigation and a dynamic mesh collider read; turn it off for a render-only mesh. */
         PROPERTY(Editable, Category = "Rendering")
         bool bKeepCPUMeshletData = true;
+
+        // Keeps the committed positions and indices, which a dynamic mesh collider builds from once the meshlet streams are dropped.
+        PROPERTY(Editable, Category = "Physics")
+        bool bKeepCollisionTriangles = false;
 
         /// Takes a ref on the currently published data (null until the first successful Commit). Every
         /// reader outside this component goes through this rather than touching the pointer: Commit can

@@ -331,7 +331,7 @@ public sealed class ActionGraph
 
         if (History.HasInputsChanged(Action.HistoryKey, ComputeInputFingerprint(Action, Dependencies)))
         {
-            Reason = DescribeInputChange(Action, Dependencies);
+            Reason = DescribeInputChange(Action, Dependencies, History);
             return true;
         }
 
@@ -342,8 +342,15 @@ public sealed class ActionGraph
     /// <summary>Identity of everything this action reads.</summary>
     public static string ComputeInputFingerprint(BuildAction Action, DependencyCache Dependencies)
     {
-        return ContentHash.OfFiles(EnumerateInputs(Action, Dependencies).Select(Input => Input.Location));
+        // One short hash per input, so a later check can name which input moved.
+        return string.Concat(EnumerateInputs(Action, Dependencies)
+            .OrderBy(Input => Input.Location, StringComparer.OrdinalIgnoreCase)
+            .Select(HashInput));
     }
+
+    private const int InputHashLength = 8;
+
+    private static string HashInput(FileItem Input) => ContentHash.OfString(ContentHash.Signature(Input))[..InputHashLength];
 
     private static IEnumerable<FileItem> EnumerateInputs(BuildAction Action, DependencyCache Dependencies)
     {
@@ -369,23 +376,24 @@ public sealed class ActionGraph
     }
 
     /// <summary>Names a likely culprit for the log.</summary>
-    private static string DescribeInputChange(BuildAction Action, DependencyCache Dependencies)
+    private static string DescribeInputChange(BuildAction Action, DependencyCache Dependencies, ActionHistory History)
     {
-        DateTime OutputTime = Action.ProducedItems[0].Timestamp;
+        List<FileItem> Inputs = EnumerateInputs(Action, Dependencies).ToList();
 
-        foreach (FileItem Input in EnumerateInputs(Action, Dependencies))
+        if (Inputs.FirstOrDefault(Input => !Input.Exists) is FileItem Missing)
         {
-            if (!Input.Exists)
-            {
-                return $"'{Input.Name}' is missing";
-            }
-
-            if (Input.Timestamp > OutputTime)
-            {
-                return $"'{Input.Name}' changed";
-            }
+            return $"'{Missing.Name}' is missing";
         }
 
-        return "inputs differ from the last build";
+        // Output stamps are no baseline since a write-if-changed tool leaves them old, so compare each input against its recorded hash.
+        HashSet<string> Recorded = History.GetInputFingerprint(Action.HistoryKey)
+            .Chunk(InputHashLength)
+            .Select(Hash => new string(Hash))
+            .ToHashSet();
+        FileItem? Newest = Inputs.Where(Input => !Recorded.Contains(HashInput(Input))).MaxBy(Input => Input.Timestamp);
+
+        return Newest is not null
+            ? $"'{Newest.Name}' changed"
+            : "inputs differ from the last build";
     }
 }

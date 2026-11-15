@@ -26,6 +26,7 @@ namespace Lumina
         void Finalize() override;
 
         bool IsNoOp() const override { return Entries.IsEmpty(); }
+        void MarkChanged() const override;
 
         // The candidates plus their descendants, which is the widest set a delete can reach.
         static void CollectCandidates(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Roots,
@@ -36,6 +37,7 @@ namespace Lumina
         struct FEntry
         {
             ECS::FEntity Entity = ECS::NullEntity;
+            FName        Guid;
             int64        Offset = 0;
             int64        Size = 0;
         };

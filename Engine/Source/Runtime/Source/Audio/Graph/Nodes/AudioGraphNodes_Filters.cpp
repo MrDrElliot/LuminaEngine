@@ -33,10 +33,12 @@ namespace Lumina
                 const float Cutoff  = Math::Clamp(*CutoffIn, 1.0f, Nyquist * 0.99f);
                 const float Coefficient = 1.0f - Math::Exp(-2.0f * kFilterPi * Cutoff * Context.InverseSampleRate);
 
+                const float* RESTRICT InSamples = In;
+                float* RESTRICT OutSamples = Out;
                 for (uint32 Frame = 0; Frame < Context.NumFrames; ++Frame)
                 {
-                    State += Coefficient * (In[Frame] - State);
-                    Out[Frame] = bHighPass ? In[Frame] - State : State;
+                    State += Coefficient * (InSamples[Frame] - State);
+                    OutSamples[Frame] = bHighPass ? InSamples[Frame] - State : State;
                 }
             }
 
@@ -81,9 +83,11 @@ namespace Lumina
             {
                 UpdateCoefficients(Context);
 
+                const float* RESTRICT InSamples = In;
+                float* RESTRICT OutSamples = Out;
                 for (uint32 Frame = 0; Frame < Context.NumFrames; ++Frame)
                 {
-                    const float X = In[Frame];
+                    const float X = InSamples[Frame];
                     const float Y = B0 * X + B1 * X1 + B2 * X2 - A1 * Y1 - A2 * Y2;
 
                     X2 = X1;
@@ -91,7 +95,7 @@ namespace Lumina
                     Y2 = Y1;
                     Y1 = Y;
 
-                    Out[Frame] = Y;
+                    OutSamples[Frame] = Y;
                 }
 
                 // Denormals in the feedback path cost hundreds of cycles a sample once the tail decays.

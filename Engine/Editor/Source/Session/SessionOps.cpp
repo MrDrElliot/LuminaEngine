@@ -246,14 +246,14 @@ namespace Lumina::SessionOps
         return Tool != nullptr && Tool->IsPlaySessionPaused();
     }
 
-    bool RunTransacted(FName Label, const TFunction<void()>& Mutate, FString& OutError)
+    bool RunTransacted(FName Label, const TFunction<void()>& Mutate, FString& OutError, TVector<ECS::FEntity> Edited)
     {
         FSceneEditorTool* Tool = RequireSceneTarget(OutError);
         if (Tool == nullptr)
         {
             return false;
         }
-        Tool->RunTransacted(Label, Mutate);
+        Tool->RunTransacted(Label, Mutate, Move(Edited));
         return true;
     }
 
@@ -616,10 +616,9 @@ namespace Lumina::SessionOps
     TVector<FString> GetDirtyPackagePaths()
     {
         TVector<FString> Paths;
-        for (TObjectIterator<CPackage> Itr; Itr; ++Itr)
+        if (FEditorUI* UI = FindUI())
         {
-            CPackage* Package = *Itr;
-            if (!Package->HasAnyFlag(OF_MarkedDestroy) && Package->IsDirty())
+            for (CPackage* Package : UI->GatherUnsavedPackages())
             {
                 Paths.Emplace(*Package->GetPackagePath());
             }

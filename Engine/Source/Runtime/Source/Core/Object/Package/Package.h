@@ -231,6 +231,9 @@ namespace Lumina
 
         RUNTIME_API static bool DestroyPackage(CPackage* PackageToDestroy);
 
+        // Destroys every export and lets the package go, leaving its file on disk.
+        RUNTIME_API void Unload();
+
         RUNTIME_API static CPackage* FindPackageByPath(FStringView Path);
 
         // Atomic in-memory and on-disk rename, crash-safe by write-then-remove, false on collision or IO error.

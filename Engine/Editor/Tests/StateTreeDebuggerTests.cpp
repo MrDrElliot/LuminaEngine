@@ -139,4 +139,27 @@ namespace LuminaStateTreeDebuggerTests
         Debugger.ResumeLive();
         EXPECT_FALSE(StatusOf(Debugger, "DebugRoot").IsSet());
     }
+
+    TEST_F(FStateTreeDebuggerTest, RepickingTheSameTargetKeepsItsTrace)
+    {
+        FStateTreeDebugger Debugger;
+        Debugger.SetTarget(World, Entity);
+        TickWithEvent(0.5, "StateTreeDebugTest.Other");
+        const FStateTreeTrace* Trace = Instance().GetTrace();
+        const int32 RecordCount = Trace->GetRecords().Num();
+
+        Debugger.SetTarget(World, Entity);
+        EXPECT_EQ(Instance().GetTrace(), Trace) << "re-picking the same entity must not reset its trace";
+        EXPECT_EQ(Instance().GetTrace()->GetRecords().Num(), RecordCount);
+
+        ECS::FEntity Other = World->GetEntityRegistry().Create();
+        FStateTreeRunningInstance& OtherRunning = World->GetEntityRegistry().Emplace<SStateTreeComponent>(Other).Running;
+        OtherRunning.Tree = Tree;
+        OtherRunning.Instance = MakeUnique<FStateTreeInstance>();
+        OtherRunning.Instance->Start(Tree->GetRuntime(), World, Other, 0.0);
+
+        Debugger.SetTarget(World, Other);
+        EXPECT_EQ(Instance().GetTrace(), nullptr) << "switching away untraces the previous instance";
+        EXPECT_NE(OtherRunning.Instance->GetTrace(), nullptr) << "switching to a new target traces it";
+    }
 }

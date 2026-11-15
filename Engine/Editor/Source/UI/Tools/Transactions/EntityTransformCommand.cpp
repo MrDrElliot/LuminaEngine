@@ -1,8 +1,8 @@
 #include "EntityTransformCommand.h"
 #include "World/ECS/Registry.h"
 
-#include "Core/Object/Package/Package.h"
 #include "World/World.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/TransformComponent.h"
 
@@ -67,11 +67,11 @@ namespace Lumina
             // The cached dirty signal can fail to raise bAnyDirty, leaving the render primitive pre-undo.
             Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
         }
+    }
 
-        if (W->GetPackage())
-        {
-            W->GetPackage()->MarkDirty();
-        }
+    void FEntityTransformCommand::MarkChanged() const
+    {
+        ExternalEntities::MarkChanged(World.Get(), Entities);
     }
 
     void FEntityTransformCommand::Undo() { Apply(Before); }

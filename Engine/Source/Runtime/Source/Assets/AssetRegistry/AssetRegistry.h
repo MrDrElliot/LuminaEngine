@@ -107,6 +107,9 @@ namespace Lumina
 		void GetAssetsByPath(TSpan<const FStringView> Paths, TSpan<FAssetDataPtr> OutAssets) const;
 		TVector<FAssetDataPtr> FindByPredicate(const TFunction<bool(const FAssetData&)>& Predicate) const;
 
+		// The One File Per Entity files of the world at WorldPath, sorted by GUID, which no other lookup lists.
+		TVector<FAssetDataPtr> GetEntityFilesOf(FStringView WorldPath) const;
+
 		// --- Text assets (.rml/.rcss): GUID identity sourced from hidden .lmeta sidecars. ---
 
 		// Editor-only; not called in cooked runtime, where the shipped registry already carries the table.
@@ -191,13 +194,36 @@ namespace Lumina
 		// Under a held write lock of AssetsMutex.
 		const FAssetDataPtr* FindByPathLocked(FStringView Path) const;
 
-		// Inserts under the held AssetsMutex, replacing any entry with the same path or GUID and keeping PathIndex valid.
+		// Inserts under the held AssetsMutex, filing an entity file under its world and anything else through InsertListedLocked.
 		void InsertAssetLocked(FAssetDataPtr AssetData);
+
+		// Lists under the held AssetsMutex, replacing any entry with the same path or GUID and keeping PathIndex valid.
+		void InsertListedLocked(FAssetDataPtr AssetData);
+
+		// The entry as Path's own file lists it, which for a world is the one before its entity files were folded in.
+		FAssetDataPtr FindSourceLocked(FStringView Path) const;
+
+		// Lists each world whose entity files changed with their dependencies folded into its own.
+		void FoldEntityFiles();
+
+		// Under a held write lock of AssetsMutex, so a later fold cannot list a world or entity file that is gone.
+		void ForgetEntityFileOwnerEntry(FStringView Path);
 
 		mutable FSharedMutex			AssetsMutex;
 		FAssetDataMap 					Assets;
 		mutable THashMap<FString, FAssetDataPtr> PathIndex;
 		mutable bool					bPathIndexValid = false;
+
+		// A world that keeps its entities in their own files, as its own package lists it, with those files by path key.
+		struct FEntityFileOwner
+		{
+			FAssetDataPtr						World;
+			THashMap<FString, FAssetDataPtr>	Files;
+			bool								bFoldPending = false;
+		};
+
+		// By world path key, and kept out of Assets so no listing or lookup shows an entity file.
+		THashMap<FString, FEntityFileOwner> EntityFileOwners;
 
 		// Inserts under the held TextAssetsMutex unless the GUID is already listed.
 		void AddTextAssetLocked(FTextAssetDataPtr Data);

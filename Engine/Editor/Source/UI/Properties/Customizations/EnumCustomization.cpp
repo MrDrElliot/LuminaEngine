@@ -91,7 +91,7 @@ namespace Lumina
                 return FFixedString(*Enum->GetNameAtIndex(Index));
             }, LE_ICON_RHOMBUS_OUTLINE);
 
-            if (Picked != Constants::kIndexNone)
+            if (Picked != Constants::kIndexNone && Picked != CurrentIndex)
             {
                 CachedValue = (int64)Enum->GetValueAtIndex(Picked);
                 bWasChanged = true;

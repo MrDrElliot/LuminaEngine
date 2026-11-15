@@ -56,7 +56,7 @@ namespace Lumina::AssetOps
     // The prefab variants whose parent is the prefab at AssetPath, comma separated, or empty when it has none.
     NODISCARD EDITOR_API FString FindDependentPrefabVariants(FStringView AssetPath);
 
-    // Rename and move are one operation, since both only change the full path.
+    // Rename and move are one operation, since both only change the full path, and a world's entity files follow it.
     NODISCARD EDITOR_API FPathOpResult MovePath(FStringView OldPath, FStringView NewPath);
 
     NODISCARD EDITOR_API FPathOpResult CreateFolder(FStringView VirtualPath);
@@ -65,6 +65,6 @@ namespace Lumina::AssetOps
 
     NODISCARD EDITOR_API bool IsLoadedWorldAsset(FStringView AssetPath);
 
-    // Destroys one .lasset: prefab instances first, then its editor, its package and its file. Not undoable.
+    // Destroys one .lasset after its prefab instances and editor, taking a world's entity files with it. Not undoable.
     NODISCARD EDITOR_API FDeleteAssetResult DeleteAsset(FStringView AssetPath, IEditorToolContext* Context);
 }

@@ -100,10 +100,29 @@ namespace Lumina::Physics
     bool GatherMeshResourceGeometry(const FMeshResource& Resource, const FVector3& Scale,
                                     TVector<b3Vec3>& OutPositions, TVector<int32>* OutIndices)
     {
-            const FMeshletData& MD = Resource.MeshletData;
-            if (MD.IsEmpty() || Resource.bSkinnedMesh)
+            if (Resource.bSkinnedMesh || !HasCollisionGeometry(Resource))
             {
                 return false;
+            }
+
+            const FMeshletData& MD = Resource.MeshletData;
+            if (MD.IsEmpty())
+            {
+                OutPositions.Reserve(Resource.Positions.Num());
+                for (const FVector3& P : Resource.Positions)
+                {
+                    OutPositions.Add(Box3DUtils::ToB3Vec3(P * Scale));
+                }
+
+                if (OutIndices != nullptr)
+                {
+                    OutIndices->Reserve(Resource.Indices.Num());
+                    for (uint32 Index : Resource.Indices)
+                    {
+                        OutIndices->Add((int32)Index);
+                    }
+                }
+                return true;
             }
 
             for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
@@ -264,8 +283,9 @@ namespace Lumina::Physics
         return !OutShapes.IsEmpty();
     }
 
-    bool FBox3DPhysicsScene::BuildMeshCollision(const SMeshCollision& Collision, const FVector3& Scale, TVector<FPendingShape>& OutShapes)
+    bool FBox3DPhysicsScene::BuildMeshCollision(const SMeshCollision& Collision, const FVector3& Scale, FRigidBodyBuildResult& Out)
     {
+        TVector<FPendingShape>& OutShapes = Out.Shapes;
         const float UniformScale = Math::Max(Math::Max(Math::Abs(Scale.x), Math::Abs(Scale.y)), Math::Abs(Scale.z));
 
         for (const SCollisionPrimitive& Primitive : Collision.Primitives)
@@ -310,7 +330,7 @@ namespace Lumina::Physics
                     // A hull point set belongs to one asset, so there is nothing a shared cache could hit.
                     if (b3HullData* Hull = b3CreateHull(Points.GetData(), Points.Num(), B3_MAX_HULL_VERTICES))
                     {
-                        TrackOwnedHull(Hull);
+                        Out.OwnedHulls.Emplace(Hull);
                         OutShapes.Add(MakeHullShape(Hull, Offset, Rotation));
                     }
                     break;
@@ -343,13 +363,12 @@ namespace Lumina::Physics
             Def.weldVertices = true;
             Def.identifyEdges = true;
 
-            if (b3MeshData* Built = b3CreateMesh(&Def, nullptr, 0))
+            Out.Geometry.Mesh.Reset(b3CreateMesh(&Def, nullptr, 0));
+            if (Out.Geometry.Mesh)
             {
-                TrackOwnedMesh(Built);
-
                 FPendingShape Shape;
                 Shape.Type = b3_meshShape;
-                Shape.Mesh = Built;
+                Shape.Mesh = Out.Geometry.Mesh.Get();
                 Shape.Scale = Box3DUtils::ToB3Vec3(Scale);
                 OutShapes.Add(Shape);
             }

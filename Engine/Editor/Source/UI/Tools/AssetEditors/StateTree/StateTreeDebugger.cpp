@@ -97,6 +97,10 @@ namespace Lumina
 
     void FStateTreeDebugger::SetTarget(CWorld* InWorld, ECS::FEntity InEntity)
     {
+        if (World.Get() == InWorld && Entity == InEntity)
+        {
+            return;
+        }
         if (FStateTreeRunningInstance* Previous = FindTarget())
         {
             Previous->Instance->SetTraced(false);

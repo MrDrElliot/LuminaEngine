@@ -74,6 +74,10 @@ namespace Lumina::Physics
     {
         // No zone, since this runs per body across all workers and the zone would cost more than the work.
 
+        Out.Shapes.Reset();
+        Out.OwnedHulls.Reset();
+        Out.Geometry = {};
+
         const SRigidBodyComponent* RigidBody = Registry.TryGet<SRigidBodyComponent>(Entity);
         if (RigidBody == nullptr)
         {
@@ -90,8 +94,6 @@ namespace Lumina::Physics
         {
             return EBodyBuildStatus::Defer;
         }
-
-        Out.Shapes.Reset();
 
         FVector3 ColliderTranslationOffset(0.0f);
         FVector3 ColliderRotationOffset(0.0f);
@@ -241,7 +243,7 @@ namespace Lumina::Physics
                 {
                     ResolvedMaterial = Collision->PhysicsMaterial.Get();
                 }
-                if (!BuildMeshCollision(*Collision, Scale, Out.Shapes))
+                if (!BuildMeshCollision(*Collision, Scale, Out))
                 {
                     LOG_ERROR("Failed to build the mesh collision of the MeshCollider on Entity: {}", (Entity).Value);
                     return EBodyBuildStatus::Error;
@@ -284,12 +286,12 @@ namespace Lumina::Physics
 
             const SDynamicMeshComponent* DM = Registry.TryGet<SDynamicMeshComponent>(Entity);
             const TSharedPtr<FDynamicMeshRenderData> MeshData = DM ? DM->LoadRenderData() : nullptr;
-            if (!MeshData || MeshData->Resource.MeshletData.IsEmpty())
+            if (!MeshData || !HasCollisionGeometry(MeshData->Resource))
             {
                 if (MeshData && MeshData->MeshletHeaderSlot != 0)
                 {
-                    LOG_ERROR("Entity {} needs the dynamic mesh CPU meshlet data, which was dropped after upload. "
-                              "Set bKeepCPUMeshletData on the SDynamicMeshComponent.", (Entity).Value);
+                    LOG_ERROR("Entity {} needs CPU geometry from its dynamic mesh, which was dropped after upload. "
+                              "Set bKeepCollisionTriangles or bKeepCPUMeshletData on the SDynamicMeshComponent.", (Entity).Value);
                     return EBodyBuildStatus::Error;
                 }
                 return EBodyBuildStatus::Defer;
@@ -306,28 +308,26 @@ namespace Lumina::Physics
             FDynamicMeshCook& Cook = *CookIt->Cook;
             if (DMC->bConvex)
             {
-                b3HullData* Hull = std::exchange(Cook.Hull, nullptr);
-                if (Hull == nullptr)
+                if (!Cook.Hull)
                 {
                     LOG_ERROR("Failed to create DynamicMeshCollider shape for Entity: {}", (Entity).Value);
                     return EBodyBuildStatus::Error;
                 }
-                TrackOwnedHull(Hull);
-                Out.Shapes.Add(MakeHullShape(Hull, FVector3(0.0f), FQuat::Identity()));
+                Out.Shapes.Add(MakeHullShape(Cook.Hull.Get(), FVector3(0.0f), FQuat::Identity()));
+                Out.OwnedHulls.Add(Move(Cook.Hull));
             }
             else
             {
-                b3MeshData* Built = std::exchange(Cook.Mesh, nullptr);
-                if (Built == nullptr)
+                if (!Cook.Mesh)
                 {
                     LOG_ERROR("Failed to create DynamicMeshCollider shape for Entity: {}", (Entity).Value);
                     return EBodyBuildStatus::Error;
                 }
-                TrackOwnedMesh(Built);
 
                 FPendingShape Shape;
                 Shape.Type = b3_meshShape;
-                Shape.Mesh = Built;
+                Shape.Mesh = Cook.Mesh.Get();
+                Out.Geometry.Mesh = Move(Cook.Mesh);
                 Out.Shapes.Add(Shape);
                 bMustBeStatic = true;
             }
@@ -350,17 +350,16 @@ namespace Lumina::Physics
                 return EBodyBuildStatus::Error;
             }
 
-            b3HeightFieldData* Field = BuildTerrainHeightField(*Terrain);
-            if (Field == nullptr)
+            Out.Geometry.HeightField.Reset(BuildTerrainHeightField(*Terrain));
+            if (!Out.Geometry.HeightField)
             {
                 LOG_ERROR("Failed to create TerrainCollider shape for Entity: {}", (Entity).Value);
                 return EBodyBuildStatus::Error;
             }
-            TrackOwnedHeightField(Field);
 
             FPendingShape Shape;
             Shape.Type = b3_heightShape;
-            Shape.HeightField = Field;
+            Shape.HeightField = Out.Geometry.HeightField.Get();
             // Box3D indexes the grid from a corner, so it is recentered onto the tile.
             Shape.Transform.p = b3Vec3{ Terrain->TileWorldSize * -0.5f, 0.0f, Terrain->TileWorldSize * -0.5f };
             Out.Shapes.Add(Shape);
@@ -591,20 +590,17 @@ namespace Lumina::Physics
         }
 
         StoreBodyMaterial(Handle, Build);
+        AdoptBodyGeometry(Handle, Build);
 
         return Handle;
     }
 
-    FBox3DPhysicsScene::FDynamicMeshCook::~FDynamicMeshCook()
+    void FBox3DPhysicsScene::AdoptBodyGeometry(uint32 Handle, FRigidBodyBuildResult& Build)
     {
-        // Only a cook nobody consumed still owns its result, as when the entity went away mid-build.
-        if (Mesh != nullptr)
+        Build.OwnedHulls.Reset();
+        if (Build.Geometry.Mesh || Build.Geometry.HeightField)
         {
-            b3DestroyMesh(Mesh);
-        }
-        if (Hull != nullptr)
-        {
-            b3DestroyHull(Hull);
+            BodyGeometry.Add(Handle, Move(Build.Geometry));
         }
     }
 
@@ -619,7 +615,7 @@ namespace Lumina::Physics
         FDynamicMeshCook& Cook = *Pending.Cook;
         if (Pending.bConvex)
         {
-            Cook.Hull = b3CreateHull(Pending.Positions.GetData(), Pending.Positions.Num(), B3_MAX_HULL_VERTICES);
+            Cook.Hull.Reset(b3CreateHull(Pending.Positions.GetData(), Pending.Positions.Num(), B3_MAX_HULL_VERTICES));
         }
         else
         {
@@ -630,7 +626,7 @@ namespace Lumina::Physics
             Def.triangleCount = Pending.Indices.Num() / 3;
             Def.weldVertices  = true;
             Def.identifyEdges = true;
-            Cook.Mesh = b3CreateMesh(&Def, nullptr, 0);
+            Cook.Mesh.Reset(b3CreateMesh(&Def, nullptr, 0));
         }
         Cook.bDone.store(true, std::memory_order_release);
     }
@@ -649,7 +645,7 @@ namespace Lumina::Physics
             }
 
             TSharedPtr<FDynamicMeshRenderData> MeshData = DM->LoadRenderData();
-            if (!MeshData || MeshData->Resource.MeshletData.IsEmpty())
+            if (!MeshData || !HasCollisionGeometry(MeshData->Resource))
             {
                 continue;
             }

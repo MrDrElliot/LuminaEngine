@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "Config/NetworkSettings.h"
 #include "Core/Object/ObjectCore.h"
 #include "Systems/NetMovementInterpSystem.h"
 #include "World/Entity/Components/DirtyComponent.h"
@@ -102,4 +103,13 @@ TEST(NetMovementInterpSystem, AutonomousProxyIsSkipped)
     Fixture.Tick();
     EXPECT_EQ(Fixture.ProxyLocalLocation(), FVector3(0.0f));
     EXPECT_FALSE(Fixture.ProxyNeedsTransformUpdate());
+}
+
+TEST(NetMovementInterpSystem, NullFallbackConstantsMatchSettingsDefaults)
+{
+    TStrongObjectPtr<CNetworkSettings> Settings(NewObject<CNetworkSettings>());
+
+    EXPECT_FLOAT_EQ(Settings->TeleportDistance, CNetworkSettings::kDefaultTeleportDistance);
+    EXPECT_FLOAT_EQ(Settings->MaxExtrapolation, CNetworkSettings::kDefaultMaxExtrapolation);
+    EXPECT_FLOAT_EQ(Settings->InterpBufferIntervals, CNetworkSettings::kDefaultInterpBufferIntervals);
 }

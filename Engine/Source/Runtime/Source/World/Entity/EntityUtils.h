@@ -46,7 +46,8 @@ namespace Lumina::ECS::Utils
 
 	// Without Links, a loaded parent link is attached at once, so its parent has to exist already.
 	RUNTIME_API bool SerializeEntity(FArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity& Entity, FParentLinks* Links = nullptr);
-	RUNTIME_API bool SerializeRegistry(FArchive& Ar, ECS::FRegistry& Registry);
+	// A write skips every entity ShouldWrite refuses.
+	RUNTIME_API bool SerializeRegistry(FArchive& Ar, ECS::FRegistry& Registry, bool (*ShouldWrite)(const ECS::FRegistry&, ECS::FEntity) = nullptr);
 
 	//-------------------------------------------------------------------------
 	// Hierarchy
@@ -63,6 +64,12 @@ namespace Lumina::ECS::Utils
 	RUNTIME_API void DestroyEntity(ECS::FRegistry& Registry, ECS::FEntity Entity);
 	RUNTIME_API void DestroyEntityHierarchy(ECS::FRegistry& Registry, ECS::FEntity Entity);
 	RUNTIME_API void DetachImmediateChildren(ECS::FRegistry& Registry, ECS::FEntity Entity);
+
+	// A new id for a prefab node or an authored entity, the same every time for the same Seed.
+	NODISCARD RUNTIME_API FName NewStableID(FStringView Seed = {});
+
+	// Gives each entity without an SEntityGuidComponent one, derived from Seed and its index when Seed is set.
+	RUNTIME_API void AssignMissingEntityGuids(ECS::FRegistry& Registry, FStringView Seed = {});
 
 	//-------------------------------------------------------------------------
 	// Transform resolve

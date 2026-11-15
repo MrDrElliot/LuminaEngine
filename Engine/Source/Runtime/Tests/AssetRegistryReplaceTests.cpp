@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
+#include "AssetRegistryTestAccess.h"
 #include "Assets/AssetRegistry/AssetData.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/DataTable/DataTable.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
+#include "GUID/GUID.h"
 #include <thread>
 
 using namespace Lumina;
@@ -101,6 +103,26 @@ TEST(AssetRegistryReplace, ARenameOnAnotherThreadLeavesAHeldEntryUnchanged)
     EXPECT_EQ(Registry.GetAssetByPath(OldPath), nullptr);
 
     Registry.AssetDeleted(Table->GetGUID());
+}
+
+// Renaming an entity file to beside a different world, the way a world rename moves its entity folder, must drop it from the old owner.
+TEST(AssetRegistryReplace, RenamingAnEntityFileDropsItFromTheOldOwner)
+{
+    FAssetRegistry& Registry = FAssetRegistry::Get();
+
+    const char* OldEntityPath = "/RegistryReplace/EntityRename/__ExternalEntities__/Level/AB/AB1234.lasset";
+    const char* NewEntityPath = "/RegistryReplace/EntityRename/__ExternalEntities__/Renamed/AB/AB1234.lasset";
+
+    const FGuid EntityGuid = FGuid::New();
+    FAssetRegistryTestAccess::ReplaceEntry(Registry, FAssetData{ .AssetGUID = EntityGuid, .Path = FFixedString(OldEntityPath) });
+    ASSERT_NE(FAssetRegistryTestAccess::FindSource(Registry, OldEntityPath), nullptr);
+
+    Registry.AssetRenamed(OldEntityPath, NewEntityPath);
+
+    EXPECT_EQ(FAssetRegistryTestAccess::FindSource(Registry, OldEntityPath), nullptr) << "the old owner must not still list the moved entity file";
+    EXPECT_NE(FAssetRegistryTestAccess::FindSource(Registry, NewEntityPath), nullptr);
+
+    Registry.AssetDeleted(EntityGuid);
 }
 
 // A dot in a folder name is not an extension, so listing an asset under it leaves the asset the folder name looks like alone.

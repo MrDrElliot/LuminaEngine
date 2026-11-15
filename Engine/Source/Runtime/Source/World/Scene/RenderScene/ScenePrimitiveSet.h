@@ -205,7 +205,7 @@ namespace Lumina
         uint32                      Extent = 0;
     };
 
-    class FScenePrimitiveSet
+    class RUNTIME_API FScenePrimitiveSet
     {
     public:
 
@@ -260,6 +260,7 @@ namespace Lumina
         const FSceneBatchRegistry&          GetBatches() const { return Batches; }
 
         uint32                              GetSkinnedPrimitiveCount() const { return (uint32)SkeletalIndices.Num(); }
+        uint32                              GetFoliageInstanceCount() const { return FoliageInstanceCount; }
 
         // Primitives drawn into custom depth, so the renderer adds the view and the pass only while one exists.
         uint32                              GetCustomDepthPrimitiveCount() const { return CustomDepthCount; }

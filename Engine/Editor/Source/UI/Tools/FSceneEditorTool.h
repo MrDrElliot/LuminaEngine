@@ -48,7 +48,7 @@ namespace Lumina
         NODISCARD ECS::FRegistry& GetSceneEntityRegistry() const { return GetSceneRegistry(); }
 
         // Mutations from outside the tool, so an agent edit lands on the same undo stack as a panel edit.
-        void RunTransacted(FName Label, const TFunction<void()>& Mutate);
+        void RunTransacted(FName Label, const TFunction<void()>& Mutate, TVector<ECS::FEntity> Edited = {});
         void RunCreationTransacted(FName Label, const TFunction<void()>& Mutate);
         void RunDestroyTransacted(FName Label, const TVector<ECS::FEntity>& Doomed, const TFunction<void()>& Mutate);
         void RunComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType, const TFunction<void()>& Mutate);
@@ -82,7 +82,7 @@ namespace Lumina
         NODISCARD bool HasVisualizerSubSelection() const;
         void BeginVisualizerTransaction(ECS::FEntity Entity, CStruct* ComponentType) override;
         void EndVisualizerTransaction(FName Label) override;
-        void MarkVisualizerSceneDirty() override;
+        void MarkVisualizerSceneDirty(ECS::FEntity Entity) override;
 
         // Public so a subclass can bind them on its registry through &FSceneEditorTool::On..., which protected access blocks.
         void OnOutlinerEntityConstructed(ECS::FRegistry& Registry, ECS::FEntity Entity);
@@ -165,6 +165,9 @@ namespace Lumina
         NODISCARD bool DrawsViewModeInViewportToolbar() const override { return true; }
 
         void MarkSceneDirty();
+
+        // Records Entities as edited in a world saved in place, whose transactions already mark theirs, or dirties the package of a scene saved elsewhere such as a prefab.
+        void MarkSceneEntitiesDirty(TSpan<const ECS::FEntity> Entities = {});
 
         // The world the outliner, details and selection inspect, which the world editor can point at another live world.
         NODISCARD CWorld* GetObservedWorld() const { return ObservedWorld != nullptr ? ObservedWorld : World.Get(); }

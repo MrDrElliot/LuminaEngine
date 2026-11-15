@@ -159,7 +159,7 @@ namespace Lumina
 			uint64 PlayedFrames = 0;
 		};
 
-		void RenderBlock(float* Out, uint32 Frames);
+		void RenderBlock(float* RESTRICT Out, uint32 Frames);
 		void DrainStarts();
 		void DrainCommands();
 		void ApplyCommand(const FAudioCommand& Cmd);

@@ -5,6 +5,7 @@
 #include "Components/CharacterComponent.h"
 #include "Components/DirtyComponent.h"
 #include "Components/EditorComponent.h"
+#include "Components/EntityGuidComponent.h"
 #include "Components/EntityTags.h"
 #include "Components/MissingComponents.h"
 #include "Components/PhysicsComponent.h"
@@ -19,6 +20,7 @@
 #include "Core/Assertions/Assert.h"
 #include "Containers/ConcurrentQueue.h"
 #include "Core/Threading/Sync.h"
+#include "GUID/GUID.h"
 #include "TaskSystem/Fork/ForkRuntime.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Object/Class.h"
@@ -250,12 +252,14 @@ namespace Lumina::ECS::Utils
                     Entries.Emplace(&Set, StructType, StructIdentity(StructType));
                 }
             }
+
+            // Storage order follows first use, so sorting by name is what makes the same entity write the same bytes.
+            Algo::StableSort(Entries, [](const FEntry& A, const FEntry& B) { return FStringView(*A.Name) < FStringView(*B.Name); });
         }
     };
 
     // A null cache builds one for this entity alone, which is pointless for a bulk save.
-    static bool SerializeEntityWrite(FArchive& RESTRICT Ar, ECS::FRegistry& RESTRICT Registry,
-                                     ECS::FEntity& RESTRICT Entity, const FComponentTypeCache* Cache);
+    static bool SerializeEntityWrite(FArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity& Entity, const FComponentTypeCache* Cache);
 
     LUM_DISABLE_DEPRECATION_WARNINGS
     // Goes with REGISTRY_PARENT_LINKS's predecessor format, so it is deleted together with FRelationshipComponent.
@@ -332,7 +336,7 @@ namespace Lumina::ECS::Utils
         Links.Reset();
     }
 
-    bool SerializeEntity(FArchive& RESTRICT Ar, ECS::FRegistry& RESTRICT Registry, ECS::FEntity& RESTRICT Entity, FParentLinks* Links)
+    bool SerializeEntity(FArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity& Entity, FParentLinks* Links)
     {
         if (Ar.IsWriting())
         {
@@ -340,7 +344,7 @@ namespace Lumina::ECS::Utils
         }
         else if (Ar.IsReading())
         {
-            Ar << Entity;
+            Ar.SerializeEntityId(Entity.Value);
 
             if (!Registry.IsValid(Entity))
             {
@@ -353,7 +357,8 @@ namespace Lumina::ECS::Utils
             {
                 ECS::FEntity Parent;
                 uint32 SiblingIndex = 0;
-                Ar << Parent << SiblingIndex;
+                Ar.SerializeEntityId(Parent.Value);
+                Ar << SiblingIndex;
                 if (!Parent.IsNull())
                 {
                     if (Links != nullptr)
@@ -454,10 +459,9 @@ namespace Lumina::ECS::Utils
         return !Ar.HasError();
     }
 
-    static bool SerializeEntityWrite(FArchive& RESTRICT Ar, ECS::FRegistry& RESTRICT Registry,
-                                     ECS::FEntity& RESTRICT Entity, const FComponentTypeCache* Cache)
+    static bool SerializeEntityWrite(FArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity& Entity, const FComponentTypeCache* Cache)
     {
-        Ar << Entity;
+        Ar.SerializeEntityId(Entity.Value);
 
         ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity);
         uint32 SiblingIndex = 0;
@@ -465,7 +469,8 @@ namespace Lumina::ECS::Utils
         {
             SiblingIndex = Cache != nullptr ? Cache->SiblingIndices[Entity.GetIndex()] : Registry.GetHierarchy().GetSiblingIndex(Entity);
         }
-        Ar << Parent << SiblingIndex;
+        Ar.SerializeEntityId(Parent.Value);
+        Ar << SiblingIndex;
 
         int64 NumComponentsPos = Ar.Tell();
         size_t NumComponents = 0;
@@ -520,7 +525,7 @@ namespace Lumina::ECS::Utils
         return !Ar.HasError();
     }
 
-    bool SerializeRegistry(FArchive& Ar, ECS::FRegistry& Registry)
+    bool SerializeRegistry(FArchive& Ar, ECS::FRegistry& Registry, bool (*ShouldWrite)(const ECS::FRegistry&, ECS::FEntity))
     {
         LUMINA_PROFILE_SCOPE();
         if (Ar.IsWriting())
@@ -539,6 +544,11 @@ namespace Lumina::ECS::Utils
 
             Registry.ForEachEntityExcept<FEditorComponent>([&](ECS::FEntity Entity)
             {
+                if (ShouldWrite != nullptr && !ShouldWrite(Registry, Entity))
+                {
+                    return;
+                }
+
                 int64 PreEntityPos = Ar.Tell();
 
                 int64 EntitySaveSize = 0;
@@ -1893,6 +1903,23 @@ namespace Lumina::ECS::Utils
     void DestroyEntity(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         Registry.Destroy(Entity);
+    }
+
+    FName NewStableID(FStringView Seed)
+    {
+        const FGuid Guid = Seed.IsEmpty() ? FGuid::New() : FGuid::NewDeterministic(Seed);
+        return FName(Guid.ToShortString());
+    }
+
+    void AssignMissingEntityGuids(ECS::FRegistry& Registry, FStringView Seed)
+    {
+        TVector<ECS::FEntity> Missing;
+        Registry.ForEachEntityExcept<SEntityGuidComponent>([&](ECS::FEntity Entity) { Missing.Add(Entity); });
+        for (ECS::FEntity Entity : Missing)
+        {
+            const FString EntitySeed = Seed.IsEmpty() ? FString() : Format("{}/{}", Seed, Entity.GetIndex());
+            Registry.Emplace<SEntityGuidComponent>(Entity).Guid = NewStableID(EntitySeed.View());
+        }
     }
 
     void SetEntityBodyType(ECS::FRegistry& Registry, ECS::FEntity Entity)

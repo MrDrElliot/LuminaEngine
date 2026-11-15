@@ -1610,12 +1610,12 @@ namespace Lumina
                 const uint8 ReadbackSlot = CurrentFrameSlot;
                 if (const uint32* Landed = State.CursorReadback[ReadbackSlot].CpuAs<const uint32>())
                 {
-                    if (*Landed >= Binding.Capacity && !State.bWarnedOverBudget)
+                    if (*Landed > Binding.Capacity && !State.bWarnedOverBudget)
                     {
                         State.bWarnedOverBudget = true;
-                        LOG_WARN("Grass: {} wanted more than its {} instance budget and lost blades. Raise the terrain's "
+                        LOG_WARN("Grass: {} lost blades, {} needed, capacity {}. Raise the terrain's "
                                  "MaxInstancesPerSpecies, lower Density or CullDistance, or start the thinning nearer with a smaller nonzero FullDensityDistance.",
-                                 Species.TypeName.ToString(), Binding.Capacity);
+                                 Species.TypeName.ToString(), *Landed, Binding.Capacity);
                     }
                 }
                 else if (State.CursorReadback[ReadbackSlot].Gpu == 0)

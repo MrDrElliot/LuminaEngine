@@ -40,6 +40,7 @@ namespace Lumina
 
         // Nothing was created -> no undo step, same contract as the registry snapshot's.
         bool IsNoOp() const override { return Created.IsEmpty(); }
+        void MarkChanged() const override;
 
     private:
 
@@ -53,6 +54,9 @@ namespace Lumina
 
         // What the operation added, in handle order.
         TVector<ECS::FEntity>   Created;
+
+        // The persistent id of each entry in Created, which outlives the entity an undo destroys.
+        TVector<FName>          CreatedGuids;
 
         // Serialized image of every entity in Created, for Redo.
         TVector<uint8>          CreatedData;

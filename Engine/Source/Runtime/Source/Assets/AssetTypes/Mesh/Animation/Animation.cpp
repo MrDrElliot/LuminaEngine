@@ -443,7 +443,7 @@ namespace Lumina
         return Index != Constants::kIndexNone ? AnimationResource->Curves[Index].Curve.Evaluate(Time) : Default;
     }
 
-    void CAnimation::SamplePose(float Time, FSkeletonResource* RESTRICT InSkeleton, TVector<FMatrix4>& RESTRICT OutBoneTransforms) const
+    void CAnimation::SamplePose(float Time, FSkeletonResource* InSkeleton, TVector<FMatrix4>& OutBoneTransforms) const
     {
         const int32 NumBones = InSkeleton->GetNumBones();
         OutBoneTransforms.SetNum(NumBones);
@@ -564,7 +564,7 @@ namespace Lumina
         return Base != this ? Base : nullptr;
     }
 
-    void CAnimation::SampleLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones) const
+    void CAnimation::SampleLocalPose(float Time, FSkeletonResource* InSkeleton, FPose& OutPose, int32 MaxBones) const
     {
         if (IsAdditive())
         {
@@ -587,7 +587,7 @@ namespace Lumina
         return Duration > 0.0f ? (Time / Duration) * BaseClip->GetDuration() : 0.0f;
     }
 
-    void CAnimation::SampleAdditiveBasePose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutBase, int32 MaxBones) const
+    void CAnimation::SampleAdditiveBasePose(float Time, FSkeletonResource* InSkeleton, FPose& OutBase, int32 MaxBones) const
     {
         const CAnimation* BaseClip = GetAdditiveBaseAnimation();
         if (BaseClip == nullptr)
@@ -599,7 +599,7 @@ namespace Lumina
         BaseClip->SampleRawLocalPose(GetAdditiveBaseTime(Time), InSkeleton, OutBase, MaxBones);
     }
 
-    void CAnimation::SampleAdditiveDelta(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutDelta, int32 MaxBones) const
+    void CAnimation::SampleAdditiveDelta(float Time, FSkeletonResource* InSkeleton, FPose& OutDelta, int32 MaxBones) const
     {
         // Per-thread scratch, since the executor samples inside a ParallelFor.
         thread_local FPose SourceScratch;
@@ -633,7 +633,7 @@ namespace Lumina
         }
     }
 
-    void CAnimation::SampleRawLocalPose(float Time, FSkeletonResource* RESTRICT InSkeleton, FPose& RESTRICT OutPose, int32 MaxBones) const
+    void CAnimation::SampleRawLocalPose(float Time, FSkeletonResource* InSkeleton, FPose& OutPose, int32 MaxBones) const
     {
         const int32 NumBones = InSkeleton->GetNumBones();
         OutPose.SetNumBones(NumBones);
@@ -661,8 +661,8 @@ namespace Lumina
         uint32 BatchOffsets[kBatch];
         int32  BatchCount = 0;
 
-        float* RESTRICT Rx = OutPose.Rx(); float* RESTRICT Ry = OutPose.Ry();
-        float* RESTRICT Rz = OutPose.Rz(); float* RESTRICT Rw = OutPose.Rw();
+        float* Rx = OutPose.Rx(); float* Ry = OutPose.Ry();
+        float* Rz = OutPose.Rz(); float* Rw = OutPose.Rw();
 
         const auto FlushRotations = [&]
         {
@@ -787,7 +787,7 @@ namespace Lumina
         }
     }
 
-    void CAnimation::SampleBoneLocal(float Time, FSkeletonResource* RESTRICT InSkeleton, int32 BoneIndex,
+    void CAnimation::SampleBoneLocal(float Time, FSkeletonResource* InSkeleton, int32 BoneIndex,
                                      FVector3& OutT, FQuat& OutR, FVector3& OutS) const
     {
         AnimPose::GetBindLocalTRS(InSkeleton, BoneIndex, OutT, OutR, OutS);

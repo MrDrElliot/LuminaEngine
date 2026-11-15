@@ -28,7 +28,8 @@ namespace Lumina
 
     void CMessageSubsystem::OnTeardown()
     {
-        Bus->Clear();
+        // A script's event field can keep this subsystem alive past the registry the bus listens to.
+        Bus.reset();
     }
 
     void CMessageSubsystem::OnDestroy()
@@ -46,7 +47,7 @@ namespace Lumina
 
     uint64 CMessageSubsystem::Subscribe(uint32 Channel, ECS::FEntity Owner, uint64 Type, bool bExactMatch, SScriptCallback Listener)
     {
-        if (!Listener.IsBound())
+        if (!Listener.IsBound() || Bus == nullptr)
         {
             Scripting::ReleaseScriptCallback(Listener);
             return 0;
@@ -66,12 +67,15 @@ namespace Lumina
 
     bool CMessageSubsystem::Unsubscribe(uint64 Id)
     {
-        return Bus->Unsubscribe(Id);
+        return Bus != nullptr && Bus->Unsubscribe(Id);
     }
 
     void CMessageSubsystem::UnsubscribeAll(ECS::FEntity Owner)
     {
-        Bus->UnsubscribeAll(Owner);
+        if (Bus != nullptr)
+        {
+            Bus->UnsubscribeAll(Owner);
+        }
     }
 
     void CMessageSubsystem::Send(uint32 Route, ECS::FEntity Target, uint32 Channel, uint32 Kind, uint64 Type,
@@ -84,7 +88,7 @@ namespace Lumina
         Payload.Kind   = (EGameplayMessagePayload)Kind;
         Payload.Struct = static_cast<const CStruct*>(Struct);
 
-        if (Route > (uint32)EGameplayMessageRoute::To)
+        if (Route > (uint32)EGameplayMessageRoute::To || Bus == nullptr)
         {
             if (Payload.Kind == EGameplayMessagePayload::Managed)
             {

@@ -282,7 +282,7 @@ namespace Lumina
         const FPrimitiveCullData* Culls   = ScenePrimitives.GetCullData();
 
         // Dense, since the range indexes skeletal primitives rather than the whole table.
-        const uint32* RESTRICT Skeletal = SkeletalPrimitiveIndices;
+        const uint32* Skeletal = SkeletalPrimitiveIndices;
 
         // A skeleton on a layer no view draws is never skinned.
         const bool   bOtherViews  = !Frame.Views.CaptureViews.IsEmpty() || Frame.ReflectionProbes.BakingProbe >= 0;

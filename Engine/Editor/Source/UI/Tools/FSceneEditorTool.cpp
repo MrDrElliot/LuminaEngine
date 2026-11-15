@@ -123,6 +123,19 @@ namespace Lumina
         }
     }
 
+    void FSceneEditorTool::MarkSceneEntitiesDirty(TSpan<const ECS::FEntity> Entities)
+    {
+        CPackage* Package = GetScenePackage();
+        if (Package != nullptr && World != nullptr && Package == World->GetPackage())
+        {
+            ExternalEntities::MarkChanged(World.Get(), Entities);
+        }
+        else if (Package != nullptr)
+        {
+            Package->MarkDirty();
+        }
+    }
+
     namespace SceneEditorToolInternal
     {
         // The ops a picked component list entry creates through, resolved by name since the list hands out its reflected struct.
@@ -495,7 +508,7 @@ namespace Lumina
             BeginComponentTransaction({ DropTarget }, SEntityScriptComponent::StaticStruct());
             EntityScripts::Attach(Registry, DropTarget, ScriptClass);
             EndTransaction("Drop Script");
-            MarkSceneDirty();
+            MarkSceneEntitiesDirty();
         }
 
         SetSingleSelectedEntity(DropTarget);
@@ -881,7 +894,7 @@ namespace Lumina
         }
         EndTransaction("Add Collision");
 
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty();
         OutlinerListView.MarkTreeDirty();
         bDetailsDirty = true;
     }
@@ -1020,7 +1033,7 @@ namespace Lumina
                     SceneEditorToolInternal::ApplyComponentValues(Type, Data, Values);
                 }
                 EndTransaction(StepLabel);
-                MarkSceneDirty();
+                MarkSceneEntitiesDirty();
                 bDetailsDirty = true;
             };
 
@@ -1179,7 +1192,7 @@ namespace Lumina
             AddSelectedEntity(New);
         }
         EndTransaction(Label);
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty();
         OutlinerListView.MarkTreeDirty();
     }
 
@@ -1227,7 +1240,7 @@ namespace Lumina
             {
                 bDetailsDirty = true;
             }
-            MarkSceneDirty();
+            MarkSceneEntitiesDirty();
         }
         else
         {
@@ -1550,7 +1563,7 @@ namespace Lumina
                 // The panel owns ONE search box, or a per-table box would sit above each component header.
                 Entry.Table->SetShowSearchBar(false);
                 Entry.Table->SetOwnerHeading(FName(*SceneEditorToolInternal::FriendlyComponentName(Row.Title)));
-                Entry.Table->SetPostEditCallback([&](const FPropertyChangedEvent& Event)   { OnPostPropertyChangeEvent(Event); MarkSceneDirty(); });
+                Entry.Table->SetPostEditCallback([&](const FPropertyChangedEvent& Event)   { OnPostPropertyChangeEvent(Event); MarkSceneEntitiesDirty(); });
                 Entry.Table->SetStartEditCallback([this, Layout = Row.Layout](const FPropertyChangedEvent& Event) { BeginPropertyEditTransaction(Layout); });
                 Entry.Table->SetFinishEditCallback([&](const FPropertyChangedEvent& Event) { EndTransaction(Event.PropertyName); });
 
@@ -2561,7 +2574,7 @@ namespace Lumina
             }
         }
 
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty(Contents);
     }
 
     void FSceneEditorTool::DrawFolderContextMenu(uint32 FolderID)
@@ -2733,18 +2746,18 @@ namespace Lumina
         return GetCameraSpawnTransform();
     }
 
-    void FSceneEditorTool::RunTransacted(FName Label, const TFunction<void()>& Mutate)
+    void FSceneEditorTool::RunTransacted(FName Label, const TFunction<void()>& Mutate, TVector<ECS::FEntity> Edited)
     {
         if (!Mutate)
         {
             return;
         }
 
-        BeginTransaction();
+        BeginTransaction(Move(Edited));
         Mutate();
         EndTransaction(Label);
 
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty();
         OutlinerListView.MarkTreeDirty();
         bDetailsDirty = true;
     }
@@ -2760,7 +2773,7 @@ namespace Lumina
         Mutate();
         EndTransaction(Label);
 
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty();
         OutlinerListView.MarkTreeDirty();
         bDetailsDirty = true;
     }
@@ -2777,7 +2790,7 @@ namespace Lumina
         Mutate();
         EndTransaction(Label);
 
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty();
         OutlinerListView.MarkTreeDirty();
         bDetailsDirty = true;
     }
@@ -2836,7 +2849,7 @@ namespace Lumina
         EndTransaction("Reparent");
 
         ReparentEntityInOutliner(Entity);
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty();
         bDetailsDirty = true;
         return true;
     }
@@ -2861,7 +2874,7 @@ namespace Lumina
         Mutate();
         EndTransaction(Label);
 
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty();
         OutlinerListView.MarkTreeDirty();
         bDetailsDirty = true;
     }
@@ -2897,7 +2910,7 @@ namespace Lumina
         if (Created != ECS::NullEntity)
         {
             SetSingleSelectedEntity(Created);
-            MarkSceneDirty();
+            MarkSceneEntitiesDirty();
         }
 
         return Created;
@@ -3009,7 +3022,7 @@ namespace Lumina
                 (uint32)Plan.Missing.Num(), Plan.AlreadyPresent);
         }
 
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty();
         OutlinerListView.MarkTreeDirty();
         bDetailsDirty = true;
     }
@@ -3880,9 +3893,9 @@ namespace Lumina
         EndTransaction(Label);
     }
 
-    void FSceneEditorTool::MarkVisualizerSceneDirty()
+    void FSceneEditorTool::MarkVisualizerSceneDirty(ECS::FEntity Entity)
     {
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty({ Entity });
     }
 
     void FSceneEditorTool::DrawComponentVisualizerOverlay(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize,
@@ -4127,7 +4140,7 @@ namespace Lumina
         CPrefab::RecaptureComponentOverrides(Registry, Entity, SNameComponent::StaticStruct());
         EndTransaction("Rename");
 
-        MarkSceneDirty();
+        MarkSceneEntitiesDirty();
 
         // Update just this entity's row label rather than rebuilding the whole tree.
         if (auto* Node = EntityToTreeNode.Find(Entity))
@@ -4181,7 +4194,7 @@ namespace Lumina
                 RunTransacted("Add Tag", [&]()
                 {
                     Registry.NamedStorage<STagComponent>(Tag).Emplace(Entity).Tag = Tag;
-                });
+                }, { Entity });
                 return true;
             }
 
@@ -4250,7 +4263,7 @@ namespace Lumina
             RunTransacted("Remove Tag", [&]()
             {
                 Registry.NamedStorage<STagComponent>(Removed).RemoveEntity(Entity);
-            });
+            }, { Entity });
         }
 
         ImGui::Spacing();

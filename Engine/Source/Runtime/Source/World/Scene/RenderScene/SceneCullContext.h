@@ -62,11 +62,11 @@ namespace Lumina
 
         // Eight at once against the two frusta everything pays for; OutMaybe still needs the scalar path.
         FORCEINLINE void ShouldKeepBatch8(
-            const float* RESTRICT CenterX,
-            const float* RESTRICT CenterY,
-            const float* RESTRICT CenterZ,
-            const float* RESTRICT Radius,
-            const float* RESTRICT MaxDrawDistance,
+            const float*          CenterX,
+            const float*          CenterY,
+            const float*          CenterZ,
+            const float*          Radius,
+            const float*          MaxDrawDistance,
             uint32                CasterMask,
             const FVector3&       CameraPosition,
             uint32&               OutKeep,

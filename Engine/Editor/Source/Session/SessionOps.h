@@ -81,7 +81,7 @@ namespace Lumina::SessionOps
 
     //~ Scene mutation, each snapshotting for undo the way the editor's own tools do.
 
-    EDITOR_API bool RunTransacted(FName Label, const TFunction<void()>& Mutate, FString& OutError);
+    EDITOR_API bool RunTransacted(FName Label, const TFunction<void()>& Mutate, FString& OutError, TVector<ECS::FEntity> Edited = {});
     EDITOR_API bool RunCreationTransacted(FName Label, const TFunction<void()>& Mutate, FString& OutError);
     EDITOR_API bool RunDestroyTransacted(FName Label, const TVector<ECS::FEntity>& Doomed,
         const TFunction<void()>& Mutate, FString& OutError);

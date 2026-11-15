@@ -17,6 +17,16 @@ namespace Lumina
 
         static size_t ReapStaleEntries(FAssetRegistry& Registry) { return Registry.ReapStaleEntries(); }
 
+        // Reads Path the way FindSourceLocked does, including an entity file kept out of Assets under its owning world.
+        static FAssetDataPtr FindSource(FAssetRegistry& Registry, FStringView Path)
+        {
+            FReadScopeLock Lock(Registry.AssetsMutex);
+            return Registry.FindSourceLocked(Path);
+        }
+
+        // Reads the package at Path the way a discovery pass does.
+        static void ProcessPackagePath(FAssetRegistry& Registry, FStringView Path) { Registry.ProcessPackagePath(Path); }
+
         // Lists Data in place of the entry sharing its GUID, as a rescan of the edited file would.
         static void ReplaceEntry(FAssetRegistry& Registry, FAssetData Data)
         {

@@ -69,6 +69,23 @@ namespace Lumina::Physics
         b3Vec3                  Scale{ 1.0f, 1.0f, 1.0f };
     };
 
+    struct FBox3DGeometryDeleter
+    {
+        void operator()(b3HullData* Hull) const { b3DestroyHull(Hull); }
+        void operator()(b3MeshData* Mesh) const { b3DestroyMesh(Mesh); }
+        void operator()(b3HeightFieldData* Field) const { b3DestroyHeightField(Field); }
+    };
+
+    template <typename T>
+    using TOwnedGeometry = TUniquePtr<T, FBox3DGeometryDeleter>;
+
+    // Box3D keeps pointing at a mesh or height field while the shape lives, so the body holds what was built for it alone.
+    struct FBodyGeometry
+    {
+        TOwnedGeometry<b3MeshData>          Mesh;
+        TOwnedGeometry<b3HeightFieldData>   HeightField;
+    };
+
     struct FRigidBodyBuildResult
     {
         b3BodyDef               BodyDef{};
@@ -76,6 +93,9 @@ namespace Lumina::Physics
         TVector<FPendingShape>  Shapes;
         // A box collider's hull lives here until commit, since Box3D clones it on shape creation and the shared cache's lock serialized parallel builds.
         TUniquePtr<b3BoxHull>   BoxHull;
+        // Cloned by Box3D on shape creation like BoxHull, so they are freed at commit.
+        TVector<TOwnedGeometry<b3HullData>> OwnedHulls;
+        FBodyGeometry           Geometry;
 
         FVector3                LastBodyPosition = FVector3(0.0f);
         FQuat                   LastBodyRotation = FQuat::Identity();
@@ -298,7 +318,10 @@ namespace Lumina::Physics
         const b3MeshData* GetOrCreateTriangleMesh(const CMesh* Mesh);
 
         bool BuildCompoundShapes(const SCompoundColliderComponent& Comp, const STransformComponent& Transform, TVector<FPendingShape>& OutShapes);
-        bool BuildMeshCollision(const SMeshCollision& Collision, const FVector3& Scale, TVector<FPendingShape>& OutShapes);
+        bool BuildMeshCollision(const SMeshCollision& Collision, const FVector3& Scale, FRigidBodyBuildResult& Out);
+
+        // Geometry held by live bodies, built for each body alone rather than drawn from a shared cache.
+        int32 GetBodyGeometryCount() const { return BodyGeometry.Num(); }
 
         struct FBodyMaterialEntry
         {
@@ -324,7 +347,8 @@ namespace Lumina::Physics
         bool ReadBodyState(b3BodyId Body, FPhysicsBodyState& Out) const;
         void SynchronizeBodies();
         void SynchronizeBodyGroups();
-        void CommitStaticBodyGroup(uint32 GroupID, ECS::FEntity Owner, TSpan<const FRigidBodyBuildResult> Builds);
+        void CommitStaticBodyGroup(uint32 GroupID, ECS::FEntity Owner, TSpan<FRigidBodyBuildResult> Builds);
+        void AdoptBodyGeometry(uint32 Handle, FRigidBodyBuildResult& Build);
 
         struct FPendingStaticGroup
         {
@@ -451,31 +475,15 @@ namespace Lumina::Physics
         // Keyed by geometry version, so a replaced mesh builds fresh while bodies still holding the old entry stay valid.
         static FHullKey MakeMeshGeometryKey(const CMesh* Mesh);
 
-        TVector<b3HeightFieldData*>                         OwnedHeightFields;
-
-        void TrackOwnedHull(b3HullData* Hull);
-        void TrackOwnedMesh(b3MeshData* Mesh);
-        void TrackOwnedHeightField(b3HeightFieldData* Field);
-
-        // Geometry unique to one asset or component, so a shared cache would never hit; freed with the scene.
-        // Guarded because the parallel body build appends to them.
-        mutable FMutex                                      OwnedGeometryMutex;
-        TVector<b3HullData*>                                OwnedHulls;
-        TVector<b3MeshData*>                                OwnedMeshes;
+        // Keyed by body handle and released in DestroyBodyHandle, after the shapes pointing at it.
+        THashMap<uint32, FBodyGeometry>                     BodyGeometry;
 
         // A dynamic mesh collider's shape, built on a worker so a streamed-in chunk never welds and partitions on the game thread.
         struct FDynamicMeshCook
         {
-            TAtomic<bool>   bDone{ false };
-            b3MeshData*     Mesh = nullptr;
-            b3HullData*     Hull = nullptr;
-
-            ~FDynamicMeshCook();
-            FDynamicMeshCook() = default;
-            FDynamicMeshCook(const FDynamicMeshCook&) = delete;
-            FDynamicMeshCook& operator=(const FDynamicMeshCook&) = delete;
-            FDynamicMeshCook(FDynamicMeshCook&&) = delete;
-            FDynamicMeshCook& operator=(FDynamicMeshCook&&) = delete;
+            TAtomic<bool>                   bDone{ false };
+            TOwnedGeometry<b3MeshData>      Mesh;
+            TOwnedGeometry<b3HullData>      Hull;
         };
 
         struct FDynamicMeshCookEntry
@@ -650,6 +658,7 @@ namespace Lumina::Physics
         FMutex                                  ConstraintsMutex;
         THashMap<uint32, FBox3DConstraint>      Constraints;
         uint32                                  NextConstraintID = 1;
+        b3BodyId                                WorldAnchorBody = b3_nullBodyId;
 
         FMutex                                  PendingConstraintMutex;
         TVector<ECS::FEntity>                   PendingConstraintCreations;

@@ -271,23 +271,6 @@ namespace
         (void)bReady;
     }
 
-    void RetireCompatPackage(CPackage* Package)
-    {
-        TVector<CObject*> Objects;
-        GetObjectsWithPackage(Package, Objects);
-        for (CObject* Object : Objects)
-        {
-            if (Object != Package)
-            {
-                Object->ConditionalBeginDestroy();
-            }
-        }
-        Package->ExportTable.Reset();
-        Package->ImportTable.Reset();
-        // The root set holds the only strong reference, so unrooting is what destroys it.
-        Package->RemoveFromRoot();
-    }
-
     void RoundTripAtVersion(const char* Tag, int32 ForcedVersion)
     {
         EnsureCompatMount();
@@ -318,7 +301,7 @@ namespace
             SetForcedPackageSaveVersion(0);
 
             ASSERT_TRUE(bSaved) << Tag;
-            RetireCompatPackage(Package);
+            Package->Unload();
         }
 
         CPackage* Loaded = CPackage::LoadPackage(Path);
@@ -336,7 +319,7 @@ namespace
         EXPECT_FALSE(Read->bBillboardToCamera) << Tag;
         EXPECT_EQ(Read->MaxParticles, 1234) << Tag;
 
-        RetireCompatPackage(Loaded);
+        Loaded->Unload();
     }
 }
 
@@ -369,7 +352,7 @@ TEST(PackageNameTable, AContainerReaderDecodesTheExportTableWithoutAPackage)
         Guid = Emitter->GetGUID();
 
         ASSERT_TRUE(CPackage::SavePackage(Package, Path));
-        RetireCompatPackage(Package);
+        Package->Unload();
     }
 
     TVector<uint8> Bytes;
@@ -426,7 +409,7 @@ namespace
             CPackage* Package = CPackage::CreatePackage(Path);
             EXPECT_NE(NewObject(CParticleEmitter::StaticClass(), Package, "Graph", Guid), nullptr) << Tag;
             EXPECT_TRUE(CPackage::SavePackage(Package, Path)) << Tag;
-            RetireCompatPackage(Package);
+            Package->Unload();
         }
 
         CPackage* Loaded = CPackage::LoadPackage(Path);
@@ -442,7 +425,7 @@ namespace
         EXPECT_EQ(Loaded->LoadObject(Guid), nullptr) << Tag;
         const int32 Errors = CountLoggedMessages(ELogLevel::Error, "CUnregisteredNodeGraph");
 
-        RetireCompatPackage(Loaded);
+        Loaded->Unload();
         return Errors;
     }
 }
@@ -471,7 +454,7 @@ TEST(PackageNameTable, AContainerReadWithoutItsNameTableDoesNotInventNames)
         ASSERT_NE(Package, nullptr);
         ASSERT_NE(NewObject(CParticleEmitter::StaticClass(), Package, "Unscanned", FGuid::New()), nullptr);
         ASSERT_TRUE(CPackage::SavePackage(Package, Path));
-        RetireCompatPackage(Package);
+        Package->Unload();
     }
 
     TVector<uint8> Bytes;
@@ -519,7 +502,7 @@ namespace
 
         // The collider's reference would otherwise free the material while the world is destroyed, ahead of its own retire.
         Registry.Clear();
-        RetireCompatPackage(Package);
+        Package->Unload();
     }
 
     int32 NewerThanThisEngine()
@@ -583,7 +566,7 @@ TEST(WorldLoad, AnExportOfAnUnresolvedClassLoadsAsNull)
     }
     EXPECT_EQ(Boxes, 1);
 
-    RetireCompatPackage(Loaded);
+    Loaded->Unload();
 }
 
 TEST(WorldLoad, AWorldFromANewerEngineIsRefusedBeforeItsEntities)
@@ -599,7 +582,7 @@ TEST(WorldLoad, AWorldFromANewerEngineIsRefusedBeforeItsEntities)
 
     if (CPackage* Refused = CPackage::FindPackageByPath(Path))
     {
-        RetireCompatPackage(Refused);
+        Refused->Unload();
     }
 }
 
@@ -626,7 +609,7 @@ TEST(WorldLoad, AFileReplacedByANewerEngineIsRefusedOnReread)
     EXPECT_EQ(FWorldTestAccess::PendingRegistry(*World).NumEntities(), 0);
     EXPECT_EQ(CountLoggedMessages(ELogLevel::Error, "newer engine"), 1);
 
-    RetireCompatPackage(Loaded);
+    Loaded->Unload();
 }
 
 // Properties and components that no longer exist are skipped, and the ones that remain still load.

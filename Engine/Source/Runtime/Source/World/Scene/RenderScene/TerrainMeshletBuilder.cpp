@@ -84,7 +84,7 @@ namespace Lumina::TerrainMeshletBuilder
 
             for (int32 Y = Y0; Y <= Y1; ++Y)
             {
-                const float* RESTRICT Row = Heightmap.GetData() + (size_t)Y * (size_t)L.Resolution + (size_t)X0;
+                const float* Row = Heightmap.GetData() + (size_t)Y * (size_t)L.Resolution + (size_t)X0;
 
                 int32 x = 0;
                 for (; x + 8 <= Span; x += 8)

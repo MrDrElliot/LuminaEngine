@@ -3,11 +3,11 @@
 
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Core/Object/Class.h"
-#include "Core/Object/Package/Package.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
 #include "Scripting/EntityScript.h"
 #include "World/World.h"
+#include "World/ExternalEntities/ExternalEntities.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -228,11 +228,11 @@ namespace Lumina
             // Unconditional, so a component that went away since the capture skips its bytes cleanly.
             Ar.Seek(DataStart + Size);
         }
+    }
 
-        if (W->GetPackage())
-        {
-            W->GetPackage()->MarkDirty();
-        }
+    void FEntityComponentSnapshotCommand::MarkChanged() const
+    {
+        ExternalEntities::MarkChanged(World.Get(), Entities);
     }
 
     void FEntityComponentSnapshotCommand::Undo() { Restore(Before, OverridesBefore); }

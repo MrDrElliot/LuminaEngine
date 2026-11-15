@@ -104,6 +104,26 @@ namespace Lumina
             if (ImGui::IsWindowAppearing())
             {
                 ImGui::SetKeyboardFocusHere();
+
+                CachedGroups.Reset();
+                if (RequiredGroup.IsNone())
+                {
+                    Manager.GetGroups(CachedGroups);
+                    Algo::Sort(CachedGroups, [](const FName& A, const FName& B) { return strcmp(*A, *B) < 0; });
+                }
+                else
+                {
+                    CachedGroups.Add(RequiredGroup);
+                }
+
+                CachedGroupMembers.Reset();
+                CachedGroupMembers.SetNum(CachedGroups.Num());
+                for (int32 Index = 0; Index < CachedGroups.Num(); ++Index)
+                {
+                    TVector<SAssetId>& Members = CachedGroupMembers[Index];
+                    Manager.GetGroup(CachedGroups[Index], Members);
+                    Algo::Sort(Members, [](const SAssetId& A, const SAssetId& B) { return strcmp(*A.Name, *B.Name) < 0; });
+                }
             }
             SearchFilter.Draw("##Search", -1.0f);
 
@@ -112,23 +132,11 @@ namespace Lumina
                 Assign({});
             }
 
-            TVector<FName> Groups;
-            if (RequiredGroup.IsNone())
-            {
-                Manager.GetGroups(Groups);
-                Algo::Sort(Groups, [](const FName& A, const FName& B) { return strcmp(*A, *B) < 0; });
-            }
-            else
-            {
-                Groups.Add(RequiredGroup);
-            }
-
             uint32 Shown = 0;
-            for (const FName& Group : Groups)
+            for (int32 Index = 0; Index < CachedGroups.Num(); ++Index)
             {
-                TVector<SAssetId> Members;
-                Manager.GetGroup(Group, Members);
-                Algo::Sort(Members, [](const SAssetId& A, const SAssetId& B) { return strcmp(*A.Name, *B.Name) < 0; });
+                const FName& Group = CachedGroups[Index];
+                const TVector<SAssetId>& Members = CachedGroupMembers[Index];
 
                 bool bHeader = false;
                 for (const SAssetId& Member : Members)
@@ -157,7 +165,7 @@ namespace Lumina
 
             if (Shown == 0)
             {
-                ImGui::TextDisabled("%s", Groups.IsEmpty() ? "No asset class declares REFLECT(Group = ...)." : "Nothing matches.");
+                ImGui::TextDisabled("%s", CachedGroups.IsEmpty() ? "No asset class declares REFLECT(Group = ...)." : "Nothing matches.");
             }
             ImGui::EndCombo();
         }

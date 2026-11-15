@@ -44,6 +44,7 @@ namespace Lumina
         // snapshot's, but an exact comparison rather than a conservative one: these are the actual
         // transforms, so equal really does mean nothing happened.
         bool IsNoOp() const override { return Before == After; }
+        void MarkChanged() const override;
 
     private:
 

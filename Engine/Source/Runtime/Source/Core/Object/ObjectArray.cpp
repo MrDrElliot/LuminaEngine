@@ -35,6 +35,7 @@ namespace Lumina::Object::Internal
     int32 GetNumAliveObjects() { return GObjectArray.GetNumAliveObjects(); }
     int32 GetMaxObjects() { return GObjectArray.GetMaxObjects(); }
     bool IsShuttingDown() { return GObjectArray.IsShuttingDown(); }
+    TVector<IObjectReferenceProvider*>& GetReferenceProviders() { return GObjectArray.GetReferenceProviders(); }
 
     void FChunkedFixedCObjectArray::Initialize(int32 InMaxElements)
     {

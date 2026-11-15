@@ -185,9 +185,11 @@ namespace Lumina
                 const float Attack  = SmoothingCoefficient(Math::Max(*AttackIn, 0.0f), Context.SampleRate);
                 const float Release = SmoothingCoefficient(Math::Max(*ReleaseIn, 0.0f), Context.SampleRate);
 
+                const float* RESTRICT InSamples = In;
+                float* RESTRICT SignalSamples = SignalOut;
                 for (uint32 Frame = 0; Frame < Context.NumFrames; ++Frame)
                 {
-                    SignalOut[Frame] = Detector.Step(Math::Abs(In[Frame]), Attack, Release);
+                    SignalSamples[Frame] = Detector.Step(Math::Abs(InSamples[Frame]), Attack, Release);
                 }
 
                 *EnvelopeOut = Detector.Value;

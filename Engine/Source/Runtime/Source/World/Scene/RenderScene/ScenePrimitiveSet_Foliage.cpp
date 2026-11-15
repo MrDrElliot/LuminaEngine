@@ -87,7 +87,7 @@ namespace Lumina
         ++SyncStats.SyncFoliageCalls;
 
         SFoliageComponent* Foliage = Registry.IsValid(Entity) ? Pools.Foliage->TryGet(Entity) : nullptr;
-        if (Foliage == nullptr || Pools.Disabled->Contains(Entity))
+        if (Foliage == nullptr || !Foliage->bRendered || Pools.Disabled->Contains(Entity))
         {
             RemoveFoliageEntity(Entity);
             return;

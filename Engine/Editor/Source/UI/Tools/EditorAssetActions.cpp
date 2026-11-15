@@ -21,6 +21,7 @@
 #include "Paths/Paths.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
+#include "World/World.h"
 
 namespace Lumina
 {
@@ -117,13 +118,21 @@ namespace Lumina
         {
             return Source == PrimaryAsset ? DestAssetName : Source->GetName();
         });
-        if (Remap.IsEmpty() || !CPackage::SavePackage(DestPackage, DestPath))
+        CObject* Copy = Remap.IsEmpty() ? nullptr : Remap.FindChecked(PrimaryAsset);
+
+        // The copy's entities are new entities, so its save writes them under new ids into its own entity files.
+        if (CWorld* World = Cast<CWorld>(Copy))
+        {
+            World->AssignNewEntityGuids();
+        }
+
+        if (Copy == nullptr || !CPackage::SavePackage(DestPackage, DestPath))
         {
             CFactory::DiscardNewPackage(DestPackage);
             return nullptr;
         }
 
-        return Remap.FindChecked(PrimaryAsset);
+        return Copy;
     }
 
     CObject* DuplicateAsset(FStringView SourcePath, FFixedString& OutPath)

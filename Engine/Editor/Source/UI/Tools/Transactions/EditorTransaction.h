@@ -25,6 +25,9 @@ namespace Lumina
         // A command whose before-image equals its after-image is dropped at commit (the drag-that-didn't-move).
         virtual bool IsNoOp() const { return false; }
 
+        // Marks what the command touched as unsaved, run once it is done and after every undo and redo.
+        virtual void MarkChanged() const {}
+
         virtual FName GetName() const { return FName(); }
 
         /** Objects this command will act on when it is undone or redone, so they can be repointed. */
@@ -68,8 +71,11 @@ namespace Lumina
                 }
             }
         }
-        void Undo() { for (auto It = Commands.rbegin(); It != Commands.rend(); ++It) { (*It)->Undo(); } }
-        void Redo() { for (TUniquePtr<IUndoableCommand>& C : Commands) { C->Redo(); } }
+        void Undo() { for (auto It = Commands.rbegin(); It != Commands.rend(); ++It) { (*It)->Undo(); } MarkChanged(); }
+        void Redo() { for (TUniquePtr<IUndoableCommand>& C : Commands) { C->Redo(); } MarkChanged(); }
+
+        // Run after the whole step is applied, so each command sees which of its entities ended up alive.
+        void MarkChanged() const { for (const TUniquePtr<IUndoableCommand>& C : Commands) { C->MarkChanged(); } }
     };
 
     // Domain-blind undo/redo owner on FEditorTool; domains contribute IUndoableCommands.

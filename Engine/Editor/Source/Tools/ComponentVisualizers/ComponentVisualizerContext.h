@@ -99,7 +99,7 @@ namespace Lumina
 
         virtual void BeginVisualizerTransaction(ECS::FEntity Entity, CStruct* ComponentType) = 0;
         virtual void EndVisualizerTransaction(FName Label) = 0;
-        virtual void MarkVisualizerSceneDirty() = 0;
+        virtual void MarkVisualizerSceneDirty(ECS::FEntity Entity) = 0;
     };
 
     // Handle hover, drag and sub-element selection, all of which must survive between frames.

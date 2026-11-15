@@ -14,7 +14,6 @@
 #include "UI/Tools/EditorEntityUtils.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
-#include "GUID/GUID.h"
 #include "Core/Math/Math.h"
 #include "Tools/ComponentVisualizers/ComponentVisualizer.h"
 #include "Tools/PrimitiveManager/PrimitiveManager.h"
@@ -404,7 +403,7 @@ namespace Lumina
             ECS::FEntity Root = WorldRegistry.Create();
             WorldRegistry.Emplace<SNameComponent>(Root).Name = FName("Root");
             WorldRegistry.Emplace<STransformComponent>(Root);
-            WorldRegistry.Emplace<SPrefabComponent>(Root).StableID = FName(FGuid::New().ToShortString());
+            WorldRegistry.Emplace<SPrefabComponent>(Root).StableID = ECS::Utils::NewStableID();
             SetSingleSelectedEntity(Root);
             return;
         }
@@ -714,7 +713,7 @@ namespace Lumina
         // Resolve the root BEFORE tagging the new entity, or it becomes a root candidate itself.
         const ECS::FEntity Root = FindPrefabRoot();
 
-        Registry.Emplace<SPrefabComponent>(Entity).StableID = FName(FGuid::New().ToShortString());
+        Registry.Emplace<SPrefabComponent>(Entity).StableID = ECS::Utils::NewStableID();
 
         // One the spawn already parented, such as a drop onto a row, is inside the prefab already.
         if (Root != ECS::NullEntity && Root != Entity && Registry.GetHierarchy().GetParent(Entity) == ECS::NullEntity)
@@ -907,7 +906,7 @@ namespace Lumina
 
         if (!Registry.HasAny<SPrefabComponent>(Entity))
         {
-            Registry.Emplace<SPrefabComponent>(Entity).StableID = FName(FGuid::New().ToShortString());
+            Registry.Emplace<SPrefabComponent>(Entity).StableID = ECS::Utils::NewStableID();
         }
 
         // Authored data, not a placed copy. Captured as-is these would spawn an instance of another prefab.
@@ -974,7 +973,7 @@ namespace Lumina
         {
             if (SPrefabComponent* Prefab = Registry.TryGet<SPrefabComponent>(E))
             {
-                Prefab->StableID = FName(FGuid::New().ToShortString());
+                Prefab->StableID = ECS::Utils::NewStableID();
             }
         };
         FreshenStableID(NewEntity);

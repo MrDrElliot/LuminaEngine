@@ -19,19 +19,17 @@ namespace Lumina
             Power,
         };
 
-        FORCEINLINE float ApplyMathOp(EAudioMathOp Op, float A, float B)
+        // Resolved at compile time, because MSVC will not vectorize a block loop around an inlined switch.
+        template <EAudioMathOp Op>
+        FORCEINLINE float ApplyMathOp(float A, float B)
         {
-            switch (Op)
-            {
-            case EAudioMathOp::Add:      return A + B;
-            case EAudioMathOp::Subtract: return A - B;
-            case EAudioMathOp::Multiply: return A * B;
-            case EAudioMathOp::Divide:   return B != 0.0f ? A / B : 0.0f;
-            case EAudioMathOp::Min:      return Math::Min(A, B);
-            case EAudioMathOp::Max:      return Math::Max(A, B);
-            case EAudioMathOp::Power:    return Math::Pow(A, B);
-            default:                     return A;
-            }
+            if constexpr (Op == EAudioMathOp::Add)           { return A + B; }
+            else if constexpr (Op == EAudioMathOp::Subtract) { return A - B; }
+            else if constexpr (Op == EAudioMathOp::Multiply) { return A * B; }
+            else if constexpr (Op == EAudioMathOp::Divide)   { return B != 0.0f ? A / B : 0.0f; }
+            else if constexpr (Op == EAudioMathOp::Min)      { return Math::Min(A, B); }
+            else if constexpr (Op == EAudioMathOp::Max)      { return Math::Max(A, B); }
+            else                                             { return Math::Pow(A, B); }
         }
 
         template <EAudioMathOp Op>
@@ -47,7 +45,7 @@ namespace Lumina
 
             void Execute(const FAudioGraphBlockContext&) override
             {
-                *Out = ApplyMathOp(Op, *A, *B);
+                *Out = ApplyMathOp<Op>(*A, *B);
             }
 
         private:
@@ -70,9 +68,12 @@ namespace Lumina
 
             void Execute(const FAudioGraphBlockContext& Context) override
             {
+                const float* RESTRICT ASamples = A;
+                const float* RESTRICT BSamples = B;
+                float* RESTRICT OutSamples = Out;
                 for (uint32 Frame = 0; Frame < Context.NumFrames; ++Frame)
                 {
-                    Out[Frame] = ApplyMathOp(Op, A[Frame], B[Frame]);
+                    OutSamples[Frame] = ApplyMathOp<Op>(ASamples[Frame], BSamples[Frame]);
                 }
             }
 
@@ -240,9 +241,10 @@ namespace Lumina
             {
                 Smoothed.Begin(*Value, Context.NumFrames);
 
+                float* RESTRICT OutSamples = Out;
                 for (uint32 Frame = 0; Frame < Context.NumFrames; ++Frame)
                 {
-                    Out[Frame] = Smoothed.Next();
+                    OutSamples[Frame] = Smoothed.Next();
                 }
 
                 Smoothed.End();

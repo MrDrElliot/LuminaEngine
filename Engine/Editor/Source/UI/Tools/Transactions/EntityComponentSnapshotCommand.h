@@ -32,6 +32,7 @@ namespace Lumina
 
         // An edit that ended where it started leaves no undo step.
         bool IsNoOp() const override { return Before == After; }
+        void MarkChanged() const override;
 
     private:
 

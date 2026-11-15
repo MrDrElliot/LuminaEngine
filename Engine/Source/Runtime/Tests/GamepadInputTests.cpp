@@ -204,6 +204,23 @@ TEST(InputGamepad, UIModeHidesThePadFromGameplayQueries)
     EXPECT_TRUE(Context.IsGamepadButtonDown(Lumina::EGamepadButton::Start));
 }
 
+TEST(InputGamepad, FocusLossStepsThroughReleasedBeforeGoingUp)
+{
+    FInputContext Context;
+    FGamepadState State = Pad();
+    State.Buttons[(uint32)Lumina::EGamepadButton::FaceBottom] = Input::EButtonState::Held;
+    Context.SetGamepadState(State);
+    EXPECT_TRUE(Context.IsGamepadButtonDown(Lumina::EGamepadButton::FaceBottom));
+
+    Context.SetGamepadState(FGamepadState());
+    EXPECT_TRUE(Context.IsGamepadButtonReleased(Lumina::EGamepadButton::FaceBottom));
+    EXPECT_FALSE(Context.IsGamepadButtonDown(Lumina::EGamepadButton::FaceBottom));
+
+    Context.SetGamepadState(FGamepadState());
+    EXPECT_FALSE(Context.IsGamepadButtonReleased(Lumina::EGamepadButton::FaceBottom));
+    EXPECT_FALSE(Context.IsGamepadButtonDown(Lumina::EGamepadButton::FaceBottom));
+}
+
 TEST(InputGamepad, ResetDropsThePad)
 {
     FInputContext Context;

@@ -14,7 +14,6 @@
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
 #include "Assets/Factories/Factory.h"
-#include "GUID/GUID.h"
 #include "World/Entity/EntityUtils.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/EnvironmentComponent.h"
@@ -868,7 +867,7 @@ namespace Lumina
             const ECS::FEntity Entity = Registry.Create();
             Registry.Emplace<SNameComponent>(Entity, Name);
             Registry.Emplace<STransformComponent>(Entity, Transform);
-            Registry.Emplace<SPrefabComponent>(Entity).StableID = FName(FGuid::New().ToShortString());
+            Registry.Emplace<SPrefabComponent>(Entity).StableID = ECS::Utils::NewStableID();
             return Entity;
         };
 

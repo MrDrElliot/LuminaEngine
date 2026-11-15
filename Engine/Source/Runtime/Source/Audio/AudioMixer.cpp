@@ -122,6 +122,14 @@ namespace Lumina
 				Out[c] = 0.0f;
 			}
 		}
+
+		void AccumulateScaled(float* RESTRICT Dst, const float* RESTRICT Src, float Gain, size_t Count)
+		{
+			for (size_t s = 0; s < Count; ++s)
+			{
+				Dst[s] += Src[s] * Gain;
+			}
+		}
 	}
 
 	FAudioMixer::~FAudioMixer()
@@ -884,7 +892,7 @@ namespace Lumina
 		Voice.PlayedFrames += Produced;
 	}
 
-	void FAudioMixer::RenderBlock(float* Out, uint32 Frames)
+	void FAudioMixer::RenderBlock(float* RESTRICT Out, uint32 Frames)
 	{
 		const size_t BlockSamples = (size_t)Frames * NumChannels;
 		const size_t StrideSamples = (size_t)BlockFrames * NumChannels;
@@ -970,29 +978,19 @@ namespace Lumina
 			}
 
 			const float Send = BusReverbSends[i].load(Atomic::MemoryOrderRelaxed);
-			for (int32 s = 0, Limit = IntCastChecked<int32>(BlockSamples); s < Limit; ++s)
-			{
-				MasterAccum[s] += Source[s] * Gain;
-			}
+			AccumulateScaled(MasterAccum.GetData(), Source, Gain, BlockSamples);
 
 			if (Send > 0.0f)
 			{
 				bAnyReverb = true;
-				const float WetGain = Gain * Send;
-				for (int32 s = 0, Limit = IntCastChecked<int32>(BlockSamples); s < Limit; ++s)
-				{
-					ReverbInput[s] += Source[s] * WetGain;
-				}
+				AccumulateScaled(ReverbInput.GetData(), Source, Gain * Send, BlockSamples);
 			}
 		}
 
 		if (bAnyReverb && Reverb.IsInitialized())
 		{
 			Reverb.Process(ReverbInput.GetData(), ReverbOutput.GetData(), Frames);
-			for (int32 s = 0, Limit = IntCastChecked<int32>(BlockSamples); s < Limit; ++s)
-			{
-				MasterAccum[s] += ReverbOutput[s];
-			}
+			AccumulateScaled(MasterAccum.GetData(), ReverbOutput.GetData(), 1.0f, BlockSamples);
 		}
 
 		const float MasterGain = BusMuted[(uint32)EAudioBus::Master].load(Atomic::MemoryOrderRelaxed)

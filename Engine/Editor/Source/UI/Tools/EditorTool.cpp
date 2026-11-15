@@ -2248,7 +2248,7 @@ namespace Lumina
         InfoTable::Row(Label, Text);
     }
 
-    void FEditorTool::BeginTransaction()
+    void FEditorTool::BeginTransaction(TVector<ECS::FEntity> Edited)
     {
         if (!CanTransact())
         {
@@ -2256,7 +2256,7 @@ namespace Lumina
         }
 
         TransactionManager.BeginTransaction(FName());
-        TransactionManager.Record(MakeUnique<FEcsRegistrySnapshotCommand>(World.Get()));
+        TransactionManager.Record(MakeUnique<FEcsRegistrySnapshotCommand>(World.Get(), Move(Edited)));
     }
 
     void FEditorTool::BeginTransformTransaction(const TVector<ECS::FEntity>& Entities)
@@ -2290,7 +2290,7 @@ namespace Lumina
 
         if (!FEntityComponentSnapshotCommand::CanSnapshotComponent(ComponentType))
         {
-            BeginTransaction();
+            BeginTransaction(Entities);
             return;
         }
 
@@ -2378,8 +2378,8 @@ namespace Lumina
         TransactionManager.SetOpenTransactionName(Name);
         TransactionManager.CommitTransaction();
 
-        // Dirty the world package so the unsaved-document indicator appears (most world sites rely on this).
-        if (World != nullptr && World->GetPackage())
+        // An external-entity world's commands mark only the entities they touched, so only an inline world dirties its package here.
+        if (World != nullptr && World->GetPackage() && !ExternalEntities::IsEnabled(World->GetEntityRegistry()))
         {
             World->GetPackage()->MarkDirty();
         }
