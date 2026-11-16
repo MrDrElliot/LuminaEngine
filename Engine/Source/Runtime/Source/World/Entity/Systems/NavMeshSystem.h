@@ -7,7 +7,6 @@
 #include "Core/Object/ObjectMacros.h"
 #include "Memory/SmartPtr.h"
 #include "World/Entity/Components/CharacterComponent.h"
-#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/FoliageComponent.h"
 #include "World/Entity/Components/NavLinkComponent.h"
 #include "World/Entity/Components/NavMeshComponent.h"
@@ -51,7 +50,7 @@ namespace Lumina
             TSource<SBoxColliderComponent>                                  Boxes;
             TSource<SSphereColliderComponent>                               Spheres;
             TSource<SMeshColliderComponent, SStaticMeshComponent>           MeshColliders;
-            TSource<SDynamicMeshColliderComponent, SDynamicMeshComponent>   DynamicMeshColliders;
+            TSource<SDynamicMeshColliderComponent>                          DynamicMeshColliders;
             TSource<SCapsuleColliderComponent>                              Capsules;
             TSource<SCylinderColliderComponent>                             Cylinders;
             TSource<SCharacterPhysicsComponent>                             Characters;
@@ -62,12 +61,10 @@ namespace Lumina
 
             ECS::TQuery<ECS::Read<SFoliageComponent>>               Foliage;
             ECS::TQuery<ECS::Read<STerrainColliderComponent>>       TerrainPool;
-            ECS::TQuery<ECS::Read<SDynamicMeshColliderComponent>>   DynamicMeshPool;
 
             // Lookups only, each strict to its one component, for what a source reads beside its collider.
             ECS::TQuery<ECS::Read<SRigidBodyComponent>>             RigidBodies;
             ECS::TQuery<ECS::Read<STerrainComponent>>               Terrains;
-            ECS::TQuery<ECS::Read<SDynamicMeshComponent>>           DynamicMeshes;
 
             // Watched only, so a world of moving props never reaches the drain.
             FMovedTransforms Moved{ EMovedTransforms::Watched };

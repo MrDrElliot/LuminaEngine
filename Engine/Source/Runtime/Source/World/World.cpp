@@ -778,7 +778,17 @@ namespace Lumina
     {
         LUMINA_PROFILE_SCOPE();
 
-        if (bPaused || PhysicsScene == nullptr)
+        // Nothing cooks without a scene, so committed collision triangles are freed rather than held.
+        if (PhysicsScene == nullptr)
+        {
+            for (auto [Entity, Collider] : EntityRegistry.View<SDynamicMeshColliderComponent>().Each())
+            {
+                (void)Collider.TakeNewTriangles();
+            }
+            return;
+        }
+
+        if (bPaused)
         {
             return;
         }

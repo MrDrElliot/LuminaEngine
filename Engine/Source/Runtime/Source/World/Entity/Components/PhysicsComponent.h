@@ -3,6 +3,8 @@
 #include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
+#include "Containers/Vector.h"
+#include "Memory/SmartPtr.h"
 #include "Physics/PhysicsTypes.h"
 #include "World/Entity/Events/CollisionEvent.h"
 #include "PhysicsComponent.generated.h"
@@ -11,6 +13,7 @@ namespace Lumina
 {
     class CStaticMesh;
     class CPhysicsMaterial;
+    namespace Physics { class FCollisionShape; }
 
     REFLECT(Component, Category = "Physics")
     struct RUNTIME_API CACHE_ALIGN SRigidBodyComponent
@@ -366,17 +369,21 @@ namespace Lumina
         bool bAffectsNavigation = true;
     };
 
-    /** Static collider built from an STerrainComponent's heightmap (height field). Requires both components on the same entity. */
-    // Collision built from an SDynamicMeshComponent's committed geometry on the same entity. The mesh has
-    // no CMesh to point at (it owns its render data outright), so unlike SMeshColliderComponent there is no
-    // asset reference -- the shape is rebuilt from whatever that component last committed.
+    // Triangles handed to a collider, held only until its physics scene cooks or drops them.
+    struct FDynamicMeshCollisionInput
+    {
+        TVector<FVector3> Positions;
+        TVector<uint32>   Indices;
+    };
+
+    // Collision from triangles handed over through Commit, cooked off the game thread. Needs no SDynamicMeshComponent.
     REFLECT(Component, Category = "Physics")
     struct RUNTIME_API SDynamicMeshColliderComponent
     {
         GENERATED_BODY()
 
         /** Build a convex hull (allows dynamic bodies). False builds a concave triangle mesh: static/kinematic only,
-            which is what terrain wants. */
+            which is what terrain wants. Read when the cook takes the triangles, so a change needs another Commit. */
         PROPERTY(Editable)
         bool bConvex = false;
 
@@ -392,11 +399,30 @@ namespace Lumina
         PROPERTY(Editable, Category = "Navigation")
         bool bAffectsNavigation = true;
 
-        /** Render data version the collision body was built from, so a re-commit rebuilds it. Not authored. */
-        PROPERTY(ReadOnly)
+        // Any thread, one at a time per component. Moves the triangles in; the next cook takes them and frees them.
+        void Commit(TVector<FVector3>&& Positions, TVector<uint32>&& Indices);
+
+        // Game thread, for the physics scene or a world without one. Null when nothing was committed since the last take.
+        TSharedPtr<FDynamicMeshCollisionInput> TakeNewTriangles();
+
+        // Acquire-load paired with the release in Commit, so a new version comes with its triangles.
+        uint32 LoadGeometryVersion() const;
+
+        // Bumped by every Commit.
         uint32 GeometryVersion = 0;
+
+        // What the last cook built, null until one lands. The physics scene patches it in, so OnUpdate announces a new shape.
+        TSharedPtr<const Physics::FCollisionShape> Shape;
+
+    private:
+
+        // Reached only through the atomic exchange, since Commit may run on a worker.
+        TSharedPtr<FDynamicMeshCollisionInput> PendingTriangles;
+
+        uint32 TakenGeometryVersion = 0;
     };
 
+    /** Static collider built from an STerrainComponent's heightmap (height field). Requires both components on the same entity. */
     REFLECT(Component, Category = "Physics")
     struct RUNTIME_API STerrainColliderComponent
     {

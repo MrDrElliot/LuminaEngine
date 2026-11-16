@@ -4,6 +4,7 @@
 #include "PhysicsTypes.h"
 #include "Core/Templates/Optional.h"
 #include "Containers/Function.h"
+#include "Containers/FunctionRef.h"
 #include "Containers/Span.h"
 #include "Containers/Vector.h"
 #include "Memory/SmartPtr.h"
@@ -25,6 +26,20 @@ namespace Lumina
 
 namespace Lumina::Physics
 {
+    // A cooked collision shape at unit scale, never changed after the cook; colliders, bodies and navmesh bakes share it.
+    class RUNTIME_API FCollisionShape
+    {
+    public:
+        virtual ~FCollisionShape() = default;
+
+        // Each triangle's corners in shape space, a hull's faces fanned.
+        virtual void ForEachTriangle(TFunctionRef<void(const FVector3&, const FVector3&, const FVector3&)> Func) const = 0;
+
+        FVector3 LocalMin = FVector3(0.0f);
+        FVector3 LocalMax = FVector3(0.0f);
+        bool     bConvex  = false;
+    };
+
     // Inputs to build one ragdoll. Backend neutral so gameplay and world code can drive it.
     struct FRagdollDesc
     {

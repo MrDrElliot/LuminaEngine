@@ -23,6 +23,7 @@ namespace Lumina
     {
         static void GatherDirty(CBlockoutSystem& System) { System.GatherDirty(); }
         static const TVector<ECS::FEntity>& DirtyScratch(const CBlockoutSystem& System) { return System.DirtyScratch; }
+        static const TVector<ECS::FEntity>& ColliderScratch(const CBlockoutSystem& System) { return System.ColliderScratch; }
     };
 }
 
@@ -73,7 +74,6 @@ namespace
             Shape.bBuilt = true;
             Shape.BuiltHash = BlockoutMesh::HashParameters(Shape);
             Shape.BuiltMaterial = Shape.Material.Get();
-            Registry().Get<SDynamicMeshComponent>(Entity).bKeepCPUMeshletData = false;
         }
 
         void GatherDirty()
@@ -84,6 +84,11 @@ namespace
         const TVector<ECS::FEntity>& DirtyScratch() const
         {
             return FBlockoutSystemTestAccess::DirtyScratch(*System);
+        }
+
+        const TVector<ECS::FEntity>& ColliderScratch() const
+        {
+            return FBlockoutSystemTestAccess::ColliderScratch(*System);
         }
     };
 }
@@ -99,7 +104,7 @@ TEST(BlockoutSystem, UnbuiltShapeIsQueued)
     EXPECT_TRUE(W.DirtyScratch().Contains(Entity));
 }
 
-TEST(BlockoutSystem, ColliderAddedAfterTheBuildQueuesExactlyOnce)
+TEST(BlockoutSystem, ColliderAddedAfterTheBuildQueuesOnlyItsCollision)
 {
     FBlockoutTestWorld W;
     const ECS::FEntity Entity = W.SpawnShape();
@@ -109,8 +114,23 @@ TEST(BlockoutSystem, ColliderAddedAfterTheBuildQueuesExactlyOnce)
     W.AddCollider(Entity);
     W.GatherDirty();
 
-    EXPECT_EQ(W.DirtyScratch().Num(), 1) << "the collider must queue the shape exactly once";
-    EXPECT_TRUE(W.DirtyScratch().Contains(Entity));
+    EXPECT_TRUE(W.DirtyScratch().IsEmpty()) << "a late collider must not rebuild the mesh";
+    EXPECT_EQ(W.ColliderScratch().Num(), 1);
+    EXPECT_TRUE(W.ColliderScratch().Contains(Entity));
+}
+
+TEST(BlockoutSystem, ColliderAlreadyCommittedIsNotQueued)
+{
+    FBlockoutTestWorld W;
+    const ECS::FEntity Entity = W.SpawnShape();
+    W.GatherDirty();
+    W.SettleAsBuiltWithoutCollider(Entity);
+
+    W.AddCollider(Entity);
+    W.Registry().Get<SDynamicMeshColliderComponent>(Entity).Commit({ FVector3(0.0f) }, {});
+    W.GatherDirty();
+
+    EXPECT_TRUE(W.ColliderScratch().IsEmpty()) << "a caller that built with the collider in place already committed it";
 }
 
 TEST(BlockoutSystem, ShapeChangedAndColliderAddedInTheSamePassStillQueuesOnce)
@@ -127,6 +147,7 @@ TEST(BlockoutSystem, ShapeChangedAndColliderAddedInTheSamePassStillQueuesOnce)
 
     EXPECT_EQ(W.DirtyScratch().Num(), 1) << "a shape touched by both paths in the same pass must still be queued only once";
     EXPECT_TRUE(W.DirtyScratch().Contains(Entity));
+    EXPECT_TRUE(W.ColliderScratch().IsEmpty()) << "the rebuild commits the collider itself";
 }
 
 TEST(BlockoutSystem, SettledShapeIsNeverRequeued)
@@ -182,7 +203,8 @@ namespace
         W.GatherDirty();
         const auto T1 = std::chrono::high_resolution_clock::now();
 
-        EXPECT_EQ(W.DirtyScratch().Num(), Count * 2);
+        EXPECT_EQ(W.DirtyScratch().Num(), Count);
+        EXPECT_EQ(W.ColliderScratch().Num(), Count);
         return std::chrono::duration<double, std::milli>(T1 - T0).count();
     }
 

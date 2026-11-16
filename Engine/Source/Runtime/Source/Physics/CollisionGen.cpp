@@ -66,17 +66,9 @@ namespace Lumina::Physics::CollisionGen
             return false;
         }
 
-        if (Resource.MeshletData.IsEmpty())
+        for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
         {
-            OutPositions.Append(Resource.Positions.GetData(), Resource.Positions.Num());
-            OutIndices.Append(Resource.Indices.GetData(), Resource.Indices.Num());
-        }
-        else
-        {
-            for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
-            {
-                AppendSurface(Resource, Surface, OutPositions, OutIndices);
-            }
+            AppendSurface(Resource, Surface, OutPositions, OutIndices);
         }
 
         return !OutPositions.IsEmpty() && OutIndices.Num() >= 3;

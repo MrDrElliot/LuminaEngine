@@ -10,7 +10,6 @@
 #include "Renderer/SkeletonResource.h"
 #include "World/World.h"
 #include "World/Entity/Components/CharacterComponent.h"
-#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -250,31 +249,43 @@ TEST_F(PhysicsSceneLifecycle, MeshCollidersFollowReimportedGeometry)
     }
 }
 
-// A dynamic mesh that dropped its meshlet streams after upload still collides from the triangles it kept.
-TEST_F(PhysicsSceneLifecycle, DynamicMeshColliderBuildsFromKeptTrianglesWithoutMeshlets)
+namespace
+{
+    void CommitCube(SDynamicMeshColliderComponent& Collider, float Scale)
+    {
+        TUniquePtr<FMeshResource> Cube = MakeCubeResource(Scale);
+        Collider.Commit(Move(Cube->Positions), Move(Cube->Indices));
+    }
+
+    // The cook runs on a background job, so a shape lands some updates after its commit.
+    bool UpdateUntil(Physics::FBox3DPhysicsScene& Scene, const TFunction<bool()>& Done)
+    {
+        const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!Done() && std::chrono::steady_clock::now() < Deadline)
+        {
+            Scene.Update(0.0);
+        }
+        return Done();
+    }
+}
+
+// A collider with no dynamic mesh collides from its own commit, and the cook frees the triangles it took.
+TEST_F(PhysicsSceneLifecycle, DynamicMeshColliderCollidesFromItsOwnCommit)
 {
     for (bool bConvex : { true, false })
     {
         const ECS::FEntity Entity = Registry->Create();
         Registry->Emplace<STransformComponent>(Entity);
         Registry->Emplace<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
-
-        TSharedPtr<FDynamicMeshRenderData> Data = MakeShared<FDynamicMeshRenderData>();
-        TUniquePtr<FMeshResource> Cube = MakeCubeResource(1.0f);
-        Data->Resource.Positions = Move(Cube->Positions);
-        Data->Resource.Indices = Move(Cube->Indices);
-        Data->MeshletHeaderSlot = 1;
-        Registry->Emplace<SDynamicMeshComponent>(Entity).PublishRenderData(Move(Data));
         Registry->Emplace<SDynamicMeshColliderComponent>(Entity).bConvex = bConvex;
+        CommitCube(Registry->Get<SDynamicMeshColliderComponent>(Entity), 1.0f);
 
-        // The cook runs on a background job, so the body lands some frames later.
-        const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        while (Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Pending && std::chrono::steady_clock::now() < Deadline)
-        {
-            Scene->Update(0.0);
-        }
+        EXPECT_TRUE(UpdateUntil(*Scene, [&] { return Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready; })) << "convex " << bConvex;
+        SDynamicMeshColliderComponent& Collider = Registry->Get<SDynamicMeshColliderComponent>(Entity);
+        ASSERT_TRUE(Collider.Shape) << "convex " << bConvex;
+        EXPECT_EQ(Collider.Shape->bConvex, bConvex);
+        EXPECT_FALSE(Collider.TakeNewTriangles()) << "the cook takes the triangles";
 
-        EXPECT_EQ(Scene->GetBodyStatus(Entity), Physics::EPhysicsBodyStatus::Ready) << "convex " << bConvex;
         const auto Hit = Scene->CastRay(Ray(0.1f));
         ASSERT_TRUE(Hit.IsSet()) << "convex " << bConvex;
         EXPECT_NEAR(Hit->Location.z, -0.5f, 0.05f);
@@ -282,6 +293,80 @@ TEST_F(PhysicsSceneLifecycle, DynamicMeshColliderBuildsFromKeptTrianglesWithoutM
         Registry->Destroy(Entity);
         Scene->Update(Dt);
     }
+}
+
+// A unit-scale shape is shared, so a rescaled body rebuilds at once without cooking again.
+TEST_F(PhysicsSceneLifecycle, DynamicMeshColliderRebuildsAtNewScaleFromTheSameShape)
+{
+    const ECS::FEntity Entity = Registry->Create();
+    Registry->Emplace<STransformComponent>(Entity);
+    Registry->Emplace<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
+    CommitCube(Registry->Emplace<SDynamicMeshColliderComponent>(Entity), 1.0f);
+    ASSERT_TRUE(UpdateUntil(*Scene, [&] { return Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready; }));
+
+    const Physics::FCollisionShape* Cooked = Registry->Get<SDynamicMeshColliderComponent>(Entity).Shape.Get();
+    Registry->Get<STransformComponent>(Entity).SetScale(FVector3(4.0f));
+    SRigidBodyComponent Body = Registry->Get<SRigidBodyComponent>(Entity);
+    Registry->EmplaceOrReplace<SRigidBodyComponent>(Entity, Body);
+    Scene->Update(Dt);
+
+    EXPECT_EQ(Registry->Get<SDynamicMeshColliderComponent>(Entity).Shape.Get(), Cooked);
+    const auto Hit = Scene->CastRay(Ray(0.1f));
+    ASSERT_TRUE(Hit.IsSet());
+    EXPECT_NEAR(Hit->Location.z, -2.0f, 0.05f);
+}
+
+// A recommit replaces the shape, and the body follows once the new cook lands.
+TEST_F(PhysicsSceneLifecycle, DynamicMeshColliderRecommitReplacesTheShape)
+{
+    const ECS::FEntity Entity = Registry->Create();
+    Registry->Emplace<STransformComponent>(Entity);
+    Registry->Emplace<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
+    CommitCube(Registry->Emplace<SDynamicMeshColliderComponent>(Entity), 1.0f);
+    ASSERT_TRUE(UpdateUntil(*Scene, [&] { return Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready; }));
+
+    const TSharedPtr<const Physics::FCollisionShape> FirstShape = Registry->Get<SDynamicMeshColliderComponent>(Entity).Shape;
+    CommitCube(Registry->Get<SDynamicMeshColliderComponent>(Entity), 4.0f);
+    ASSERT_TRUE(UpdateUntil(*Scene, [&] { return Registry->Get<SDynamicMeshColliderComponent>(Entity).Shape != FirstShape; }));
+    Scene->Update(Dt);
+
+    const auto Hit = Scene->CastRay(Ray(0.1f));
+    ASSERT_TRUE(Hit.IsSet());
+    EXPECT_NEAR(Hit->Location.z, -2.0f, 0.05f);
+}
+
+// Box3D keeps pointing at the cooked mesh, so a removed collider's body must hold it until the body goes.
+TEST_F(PhysicsSceneLifecycle, DynamicMeshColliderBodyHoldsItsShapeUntilDestroyed)
+{
+    const ECS::FEntity Entity = Registry->Create();
+    Registry->Emplace<STransformComponent>(Entity);
+    Registry->Emplace<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
+    CommitCube(Registry->Emplace<SDynamicMeshColliderComponent>(Entity), 1.0f);
+    ASSERT_TRUE(UpdateUntil(*Scene, [&] { return Scene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready; }));
+    EXPECT_EQ(Scene->GetBodyGeometryCount(), 1);
+
+    const TWeakPtr<const Physics::FCollisionShape> Shape = Registry->Get<SDynamicMeshColliderComponent>(Entity).Shape;
+    Registry->Remove<SDynamicMeshColliderComponent>(Entity);
+    EXPECT_FALSE(Shape.IsExpired()) << "the body still collides against it";
+    EXPECT_TRUE(Scene->CastRay(Ray(0.1f)).IsSet());
+
+    Scene->Update(Dt);
+    EXPECT_TRUE(Shape.IsExpired());
+    EXPECT_EQ(Scene->GetBodyGeometryCount(), 0);
+}
+
+// Editor worlds have no physics scene, so committed triangles are freed rather than held.
+TEST_F(PhysicsSceneLifecycle, AWorldWithNoPhysicsSceneFreesCommittedTriangles)
+{
+    ASSERT_EQ(World->GetPhysicsScene(), nullptr);
+    const ECS::FEntity Entity = Registry->Create();
+    CommitCube(Registry->Emplace<SDynamicMeshColliderComponent>(Entity), 1.0f);
+
+    World->TickPhysics();
+
+    SDynamicMeshColliderComponent& Collider = Registry->Get<SDynamicMeshColliderComponent>(Entity);
+    EXPECT_FALSE(Collider.TakeNewTriangles()) << "the world took them already";
+    EXPECT_FALSE(Collider.Shape);
 }
 
 TEST_F(PhysicsSceneLifecycle, RebuiltAndDestroyedBodiesFreeTheGeometryBuiltForThem)

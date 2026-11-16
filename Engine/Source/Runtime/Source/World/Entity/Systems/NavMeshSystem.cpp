@@ -24,7 +24,7 @@
 #include "Renderer/Vertex.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
-#include "World/Entity/Components/DynamicMeshComponent.h"
+#include "Physics/PhysicsScene.h"
 #include "World/Entity/Components/FoliageComponent.h"
 #include "World/Entity/Components/NavLinkComponent.h"
 #include "World/Entity/Components/NavMeshComponent.h"
@@ -728,7 +728,8 @@ namespace Lumina
             ENavColliderType                Type  = ENavColliderType::Box;
             FMatrix4                        World = FMatrix4(1.0f);
             FVector3                        Shape = FVector3(0.0f);   // Box half-extent, or Radius and HalfHeight
-            TSharedPtr<FDynamicMeshRenderData> DynamicMesh;          // held so a re-commit on the game thread cannot free it under the bake
+            // A dynamic mesh collider's cooked shape, held so a recook or a destroyed body frees nothing under the bake.
+            TSharedPtr<const Physics::FCollisionShape> CollisionShape;
             // World space, except under Mesh and Foliage, where it is in mesh space and placed by World.
             TSharedPtr<TVector<FVector3>>   TriangleSoup;
             TSharedPtr<FNavTerrainPatch>    TerrainPatch;
@@ -736,8 +737,6 @@ namespace Lumina
             TSharedPtr<FNavOffMeshLink>     Link;
             // Foliage type, shared by every instance of a species in its local space and placed by World.
             TSharedPtr<const TVector<FNavSourcePrim>> Children;
-            // A dynamic mesh collider wrapped in one hull, as its physics body is.
-            bool                            bConvex = false;
         };
 
         bool IsAnnotation(ENavColliderType Type)
@@ -764,13 +763,12 @@ namespace Lumina
                 case ENavColliderType::Sphere: EmitSphereGeometry(P.World, P.Shape.x, BakeMin, BakeMax, Acc); break;
                 case ENavColliderType::Mesh:   if (P.TriangleSoup) EmitLocalTriangles(P.World, *P.TriangleSoup, BakeMin, BakeMax, Acc); break;
                 case ENavColliderType::DynamicMesh:
-                    if (P.DynamicMesh)
+                    if (P.CollisionShape)
                     {
-                        FVector3 LocalMin, LocalMax;
-                        if (const TSharedPtr<TVector<FVector3>> Soup = BuildFallbackTriangles(P.DynamicMesh->Resource, P.bConvex, LocalMin, LocalMax))
+                        P.CollisionShape->ForEachTriangle([&](const FVector3& A, const FVector3& B, const FVector3& C)
                         {
-                            EmitLocalTriangles(P.World, *Soup, BakeMin, BakeMax, Acc);
-                        }
+                            EmitTri(Acc, BakeMin, BakeMax, FVector3(P.World * FVector4(A, 1.0f)), FVector3(P.World * FVector4(B, 1.0f)), FVector3(P.World * FVector4(C, 1.0f)));
+                        });
                     }
                     break;
                 case ENavColliderType::Capsule:
@@ -1293,22 +1291,18 @@ namespace Lumina
                 Out.Add(Move(Entry));
             });
 
-            // Fingerprinted on the render-data version so a re-commit with unchanged bounds still dirties the tile.
-            ForEachNavSource(Queries.DynamicMeshColliders, Only, [&](ECS::FEntity E, const SDynamicMeshColliderComponent& DMC, const STransformComponent& X, const SDynamicMeshComponent* DMFound)
+            // Fingerprinted on the shape, which the record holds, so a freed address cannot come back as the same id.
+            ForEachNavSource<SDynamicMeshColliderComponent>(Queries.DynamicMeshColliders, Only, [&](ECS::FEntity E, const SDynamicMeshColliderComponent& DMC, const STransformComponent& X)
             {
-                if (!DMC.bAffectsNavigation || (DMC.bConvex && IsSimulated(E)) || DMFound == nullptr) return;
-                const SDynamicMeshComponent& DM = *DMFound;
-                TSharedPtr<FDynamicMeshRenderData> MeshData = DM.LoadRenderData();
-                if (!MeshData || (MeshData->Resource.MeshletData.IsEmpty() && MeshData->Resource.Indices.IsEmpty())) return;
+                if (!DMC.bAffectsNavigation || !DMC.Shape || (DMC.Shape->bConvex && IsSimulated(E))) return;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::DynamicMesh);
-                Entry.ContentId = DM.LoadRenderDataVersion();
+                Entry.ContentId = (uint64)(uintptr_t)DMC.Shape.Get();
                 Entry.Prim.Type = ENavColliderType::DynamicMesh;
                 Entry.Prim.World = X.GetWorldMatrix();
-                Entry.Prim.DynamicMesh = MeshData;
-                Entry.Prim.bConvex = DMC.bConvex;
-                const FVector3& Mn = MeshData->LocalMin;
-                const FVector3& Mx = MeshData->LocalMax;
+                Entry.Prim.CollisionShape = DMC.Shape;
+                const FVector3& Mn = DMC.Shape->LocalMin;
+                const FVector3& Mx = DMC.Shape->LocalMax;
                 const FVector3 Corners[8] = {
                     {Mn.x, Mn.y, Mn.z}, {Mx.x, Mn.y, Mn.z}, {Mn.x, Mx.y, Mn.z}, {Mx.x, Mx.y, Mn.z},
                     {Mn.x, Mn.y, Mx.z}, {Mx.x, Mn.y, Mx.z}, {Mn.x, Mx.y, Mx.z}, {Mx.x, Mx.y, Mx.z},
@@ -1532,7 +1526,6 @@ namespace Lumina
         TVector<TVector<ECS::FEntity>>          PollBuckets;
         // Last version polled per dense slot of each pool, so an unchanged source costs no record lookup.
         TVector<FPolledVersion>                 PolledTerrain;
-        TVector<FPolledVersion>                 PolledDynamicMeshes;
         TVector<FPolledVersion>                 PolledFoliage;
         TVector<NavMeshSystemInternal::FNavSourceEntry> EntryScratch;
         TVector<ECS::FEntity>                   SweepOrder;
@@ -1579,7 +1572,7 @@ namespace Lumina
             {
                 (WatchSourceComponent<TComponents>(Registry, Sources, bWatch), ...);
             }(ECS::TTypeList<SBoxColliderComponent, SSphereColliderComponent, SMeshColliderComponent, SCapsuleColliderComponent, SCylinderColliderComponent,
-                SCharacterPhysicsComponent, STerrainColliderComponent, STerrainComponent, SStaticMeshComponent, SDynamicMeshColliderComponent, SDynamicMeshComponent,
+                SCharacterPhysicsComponent, STerrainColliderComponent, STerrainComponent, SStaticMeshComponent, SDynamicMeshColliderComponent,
                 SCompoundColliderComponent, SNavModifierComponent, SNavLinkComponent, SFoliageComponent, SRigidBodyComponent>{});
         }
 
@@ -1788,7 +1781,7 @@ namespace Lumina
             }
         }
 
-        // Content that changes without a move or a signal, a sculpted heightmap or a re-committed dynamic mesh, polled by version.
+        // Content that changes without a move or a signal, such as a sculpted heightmap, polled by version.
         void QueueVersionedSources(CNavMeshSystem::FSourceQueries& Queries, FNavSourceTracker& Sources, THashSet<ECS::FEntity>& Work)
         {
             auto RecordedContent = [&Sources](uint64 Key, uint64 ContentId)
@@ -1807,18 +1800,6 @@ namespace Lumina
                 [&](ECS::FEntity E, const STerrainColliderComponent&, uint32 Current)
                 {
                     return RecordedContent(PackSourceKey(E, ENavColliderType::Terrain), Current);
-                });
-
-            QueueStaleSources<SDynamicMeshColliderComponent>(Queries.DynamicMeshPool, Sources, Sources.PolledDynamicMeshes, Work,
-                [&](ECS::FEntity E, const SDynamicMeshColliderComponent&, uint32& Out)
-                {
-                    const SDynamicMeshComponent* Mesh = Queries.DynamicMeshes.TryGet<SDynamicMeshComponent>(E);
-                    Out = Mesh != nullptr ? Mesh->LoadRenderDataVersion() : 0u;
-                    return Mesh != nullptr;
-                },
-                [&](ECS::FEntity E, const SDynamicMeshColliderComponent&, uint32 Current)
-                {
-                    return RecordedContent(PackSourceKey(E, ENavColliderType::DynamicMesh), Current);
                 });
 
             // Gated on the instance version, so a re-imported species shape with no instance edit waits for the sweep.

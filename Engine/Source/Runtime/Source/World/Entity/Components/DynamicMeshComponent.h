@@ -88,8 +88,9 @@ namespace Lumina
         FUNCTION()
         void ClearMesh();
 
-        /** Finalize the staged data: generate meshlets/LODs and upload the GPU buffers. Returns false if
-         *  there is nothing renderable (no positions or no indices). Call after setting the streams.
+        /** Finalize the staged data: generate meshlets/LODs and upload the GPU buffers, deferring the upload
+         *  while RenderLayers is empty. Returns false if there is nothing renderable (no positions or no
+         *  indices). Call after setting the streams. Collision is the collider's own Commit.
          *
          *  Callable from any worker thread, and concurrently across DIFFERENT components -- which is the
          *  point, since this is the expensive call and chunked geometry commits many of them at once. The
@@ -180,13 +181,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering")
         bool bGenerateTangents = true;
 
-        /** Keeps the CPU meshlet streams after Commit uploads them, which navigation and a dynamic mesh collider read; turn it off for a render-only mesh. */
+        // Keeps the CPU meshlet streams after upload for a caller that samples the geometry; a hidden mesh keeps them until shown.
         PROPERTY(Editable, Category = "Rendering")
-        bool bKeepCPUMeshletData = true;
-
-        // Keeps the committed positions and indices, which a dynamic mesh collider builds from once the meshlet streams are dropped.
-        PROPERTY(Editable, Category = "Physics")
-        bool bKeepCollisionTriangles = false;
+        bool bKeepCPUMeshletData = false;
 
         /// Takes a ref on the currently published data (null until the first successful Commit). Every
         /// reader outside this component goes through this rather than touching the pointer: Commit can
@@ -217,6 +214,9 @@ namespace Lumina
 
         // Game thread, for the resolve pass. Republishes a copy with the material half re-resolved against the current overrides.
         void RefreshResolvedMaterials();
+
+        // Render-scene sync. Data committed with no render layers is uploaded once it has some, and republished with its GPU slot.
+        void UploadOnShow();
 
     private:
 

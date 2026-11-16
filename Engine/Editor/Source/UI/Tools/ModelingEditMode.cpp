@@ -281,14 +281,10 @@ namespace Lumina
         Shape.BuiltMaterial = nullptr;
 
         SDynamicMeshComponent& Mesh = World->EmplaceComponent<SDynamicMeshComponent>(Entity);
-
-        if (bCreateCollision)
-        {
-            World->EmplaceComponent<SDynamicMeshColliderComponent>(Entity);
-        }
+        SDynamicMeshColliderComponent* Collider = bCreateCollision ? &World->EmplaceComponent<SDynamicMeshColliderComponent>(Entity) : nullptr;
 
         // Built now rather than on the next system tick so the shape is visible under the cursor immediately.
-        CBlockoutSystem::Rebuild(Shape, Mesh, bCreateCollision);
+        CBlockoutSystem::Rebuild(Shape, Mesh, Collider);
 
         if (Context != nullptr)
         {

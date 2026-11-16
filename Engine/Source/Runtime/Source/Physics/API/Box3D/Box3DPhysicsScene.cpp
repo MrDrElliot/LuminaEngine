@@ -17,7 +17,6 @@
 #include "Log/Log.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
-#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/RagdollComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"

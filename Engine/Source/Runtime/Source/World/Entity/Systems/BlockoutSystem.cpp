@@ -31,7 +31,7 @@ namespace Lumina
         RequireUpdate(EUpdateStage::Paused);
     }
 
-    bool CBlockoutSystem::Rebuild(SBlockoutComponent& Shape, SDynamicMeshComponent& Mesh, bool bKeepCPUData)
+    bool CBlockoutSystem::Rebuild(SBlockoutComponent& Shape, SDynamicMeshComponent& Mesh, SDynamicMeshColliderComponent* Collider)
     {
         using BlockoutSystemInternal::ApplyMaterial;
 
@@ -44,18 +44,27 @@ namespace Lumina
         if (Data.IsEmpty())
         {
             Mesh.ClearMesh();
+            if (Collider != nullptr)
+            {
+                Collider->Commit({}, {});
+            }
             return false;
         }
 
         // The override has to land before the commit, which is what resolves the surface's material.
         ApplyMaterial(Shape, Mesh);
 
-        Mesh.bKeepCPUMeshletData = bKeepCPUData;
         Mesh.ClearMesh();
         Mesh.SetPositionsData(reinterpret_cast<const float*>(Data.Positions.GetData()), Data.Positions.Num() * 3);
         Mesh.SetNormalsData(reinterpret_cast<const float*>(Data.Normals.GetData()), Data.Normals.Num() * 3);
         Mesh.SetUVsData(reinterpret_cast<const float*>(Data.UVs.GetData()), Data.UVs.Num() * 2);
         Mesh.SetIndicesData(Data.Indices.GetData(), Data.Indices.Num());
+
+        // The setters copied the streams, so the collider takes them outright.
+        if (Collider != nullptr)
+        {
+            Collider->Commit(Move(Data.Positions), Move(Data.Indices));
+        }
 
         return Mesh.Commit();
     }
@@ -63,23 +72,16 @@ namespace Lumina
     void CBlockoutSystem::GatherDirty()
     {
         DirtyScratch.Reset();
+        ColliderScratch.Reset();
         MaterialScratch.Reset();
         DirtyLookup.BeginPass(ChangedShapes.View(), NewColliders.View());
 
-        const auto MarkDirty = [&](ECS::FEntity Entity)
+        ChangedShapes.ForEach([&](ECS::FEntity Entity, const SBlockoutComponent& Shape, const SDynamicMeshComponent&)
         {
-            DirtyScratch.Add(Entity);
-            DirtyLookup.ByEntityIndex[Entity.GetIndex()] = { Entity, DirtyLookup.Stamp };
-        };
-
-        ChangedShapes.ForEach([&](ECS::FEntity Entity, const SBlockoutComponent& Shape, const SDynamicMeshComponent& Mesh)
-        {
-            // A collider added after the build has no meshlet streams to read, so the mesh owes it a rebuild.
-            const bool bColliderStarved = !Mesh.bKeepCPUMeshletData && NewColliders.TryGet<SDynamicMeshColliderComponent>(Entity) != nullptr;
-
-            if (!Shape.bBuilt || bColliderStarved || Shape.BuiltHash != BlockoutMesh::HashParameters(Shape))
+            if (!Shape.bBuilt || Shape.BuiltHash != BlockoutMesh::HashParameters(Shape))
             {
-                MarkDirty(Entity);
+                DirtyScratch.Add(Entity);
+                DirtyLookup.ByEntityIndex[Entity.GetIndex()] = { Entity, DirtyLookup.Stamp };
             }
             else if (Shape.BuiltMaterial != Shape.Material.Get())
             {
@@ -87,11 +89,13 @@ namespace Lumina
             }
         });
 
-        NewColliders.ForEach([&](ECS::FEntity Entity, const SBlockoutComponent&, const SDynamicMeshComponent& Mesh)
+        // A rebuild already commits the collider, and so does a caller that built with it in place.
+        NewColliders.ForEach([&](ECS::FEntity Entity, const SBlockoutComponent&, const SDynamicMeshComponent&)
         {
-            if (!Mesh.bKeepCPUMeshletData && DirtyLookup.Find(Entity) == nullptr)
+            const SDynamicMeshColliderComponent& Collider = NewColliders.Get<SDynamicMeshColliderComponent>(Entity);
+            if (DirtyLookup.Find(Entity) == nullptr && Collider.LoadGeometryVersion() == 0)
             {
-                MarkDirty(Entity);
+                ColliderScratch.Add(Entity);
             }
         });
     }
@@ -109,6 +113,11 @@ namespace Lumina
             Mesh.MarkRenderStateDirty();
         }
 
+        for (ECS::FEntity Entity : ColliderScratch)
+        {
+            CommitCollision(Builds.Get<SBlockoutComponent>(Entity), Colliders.Get<SDynamicMeshColliderComponent>(Entity));
+        }
+
         if (DirtyScratch.IsEmpty())
         {
             return;
@@ -117,12 +126,16 @@ namespace Lumina
         const auto RebuildOne = [&](uint32 Index)
         {
             const ECS::FEntity Entity = DirtyScratch[Index];
-
-            // The collider builds from the CPU meshlet streams, so only a collided shape pays to keep them.
-            const bool bKeepCPUData = NewColliders.TryGet<SDynamicMeshColliderComponent>(Entity) != nullptr;
-            Rebuild(Builds.Get<SBlockoutComponent>(Entity), Builds.Get<SDynamicMeshComponent>(Entity), bKeepCPUData);
+            Rebuild(Builds.Get<SBlockoutComponent>(Entity), Builds.Get<SDynamicMeshComponent>(Entity), Colliders.TryGet<SDynamicMeshColliderComponent>(Entity));
         };
 
         Jobs::ParallelForOrSerial((uint32)DirtyScratch.Num(), kParallelThreshold, RebuildOne, 1);
+    }
+
+    void CBlockoutSystem::CommitCollision(const SBlockoutComponent& Shape, SDynamicMeshColliderComponent& Collider)
+    {
+        FBlockoutMeshData Data;
+        BlockoutMesh::Build(Shape, Data);
+        Collider.Commit(Move(Data.Positions), Move(Data.Indices));
     }
 }

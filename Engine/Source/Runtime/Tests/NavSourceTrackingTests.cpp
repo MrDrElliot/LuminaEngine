@@ -9,7 +9,7 @@
 #include "Renderer/MeshData.h"
 #include "World/Scene/RenderScene/SceneMeshes.h"
 #include "NavWorldTestUtil.h"
-#include "World/Entity/Components/DynamicMeshComponent.h"
+#include "Physics/PhysicsScene.h"
 #include "World/Entity/Components/NavModifierComponent.h"
 #include "World/Entity/Components/PathFollowComponent.h"
 #include "World/Subsystems/NavigationSubsystem.h"
@@ -671,8 +671,8 @@ TEST(NavSourceTracking, AConcaveMeshColliderWithoutAuthoredCollisionBakesItsTria
     ExpectTwoBlockGap(false, true);
 }
 
-// A dynamic mesh can drop its CPU meshlets and keep only the triangles physics cooks, which nav reads too.
-TEST(NavSourceTracking, ADynamicMeshKeepingOnlyCollisionTrianglesCarvesTheMesh)
+// A dynamic mesh collider bakes the shape physics cooked from its own commit, with no dynamic mesh beside it.
+TEST(NavSourceTracking, ADynamicMeshColliderCarvesTheMeshFromItsCookedShape)
 {
     NavTest::FNavWorld World;
     World.Create(64.0f);
@@ -683,19 +683,92 @@ TEST(NavSourceTracking, ADynamicMeshKeepingOnlyCollisionTrianglesCarvesTheMesh)
     Registry.Emplace<STransformComponent>(Entity, Transform);
     Registry.Emplace<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
 
-    TSharedPtr<FDynamicMeshRenderData> Data = MakeShared<FDynamicMeshRenderData>();
     TUniquePtr<FMeshResource> Blocks = MakeTwoBlockResource();
-    Data->Resource.Positions = Move(Blocks->Positions);
-    Data->Resource.Indices = Move(Blocks->Indices);
-    Data->LocalMin = FVector3(-6.0f, -0.7f, -1.0f);
-    Data->LocalMax = FVector3(6.0f, 0.7f, 1.0f);
-    Data->MeshletHeaderSlot = 1;
-    Registry.Emplace<SDynamicMeshComponent>(Entity).PublishRenderData(Move(Data));
-    Registry.Emplace<SDynamicMeshColliderComponent>(Entity);
+    Registry.Emplace<SDynamicMeshColliderComponent>(Entity).Commit(Move(Blocks->Positions), Move(Blocks->Indices));
+
+    if (Physics::GetPhysicsContext() == nullptr)
+    {
+        Physics::Initialize();
+    }
+    Physics::IPhysicsScene* Scene = World.World->EnsurePhysicsScene();
+    PlatformTime::FStopwatch Watch;
+    while (!Registry.Get<SDynamicMeshColliderComponent>(Entity).Shape && Watch.ElapsedMilliseconds() < 10000.0)
+    {
+        Scene->Update(0.0);
+    }
+    ASSERT_TRUE(Registry.Get<SDynamicMeshColliderComponent>(Entity).Shape);
+
     World.Start();
     ASSERT_TRUE(World.WaitReady());
 
     EXPECT_FALSE(World.IsGroundWalkable(-5.0f, 12.0f));
     EXPECT_TRUE(World.IsGroundWalkable(0.0f, 12.0f));
+    World.Stop();
+}
+
+// A recook after the bake reaches the navmesh through the collider's OnUpdate, with no version to poll.
+TEST(NavSourceTracking, ARecookedDynamicMeshColliderRebakesItsTiles)
+{
+    NavTest::FNavWorld World;
+    World.Create(64.0f);
+    ECS::FRegistry& Registry = World.Registry();
+    const ECS::FEntity Entity = Registry.Create();
+    FTransform Transform;
+    Transform.SetLocation(FVector3(0.0f, 0.7f, 12.0f));
+    Registry.Emplace<STransformComponent>(Entity, Transform);
+    Registry.Emplace<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
+
+    if (Physics::GetPhysicsContext() == nullptr)
+    {
+        Physics::Initialize();
+    }
+    Physics::IPhysicsScene* Scene = World.World->EnsurePhysicsScene();
+    const auto CookBlocks = [&](float OffsetX)
+    {
+        TUniquePtr<FMeshResource> Blocks = MakeTwoBlockResource();
+        for (FVector3& Position : Blocks->Positions)
+        {
+            Position.x += OffsetX;
+        }
+        const TSharedPtr<const Physics::FCollisionShape> Previous = Registry.Get<SDynamicMeshColliderComponent>(Entity).Shape;
+        Registry.Get<SDynamicMeshColliderComponent>(Entity).Commit(Move(Blocks->Positions), Move(Blocks->Indices));
+        PlatformTime::FStopwatch Watch;
+        while (Registry.Get<SDynamicMeshColliderComponent>(Entity).Shape == Previous && Watch.ElapsedMilliseconds() < 10000.0)
+        {
+            Scene->Update(0.0);
+        }
+        return Registry.Get<SDynamicMeshColliderComponent>(Entity).Shape != Previous;
+    };
+
+    Registry.Emplace<SDynamicMeshColliderComponent>(Entity);
+    ASSERT_TRUE(CookBlocks(0.0f));
+    World.Start();
+    ASSERT_TRUE(World.WaitReady());
+    EXPECT_FALSE(World.IsGroundWalkable(-5.0f, 12.0f));
+
+    ASSERT_TRUE(CookBlocks(10.0f));
+    ASSERT_TRUE(World.WaitSettled());
+    EXPECT_TRUE(World.IsGroundWalkable(-5.0f, 12.0f)) << "the old shape's tiles were not rebaked";
+    EXPECT_FALSE(World.IsGroundWalkable(15.0f, 12.0f)) << "the new shape was not baked";
+    World.Stop();
+}
+
+// Nothing cooks without a physics scene, so an editor world's navmesh leaves the collider out.
+TEST(NavSourceTracking, AnUncookedDynamicMeshColliderIsLeftOut)
+{
+    NavTest::FNavWorld World;
+    World.Create(64.0f);
+    ECS::FRegistry& Registry = World.Registry();
+    const ECS::FEntity Entity = Registry.Create();
+    FTransform Transform;
+    Transform.SetLocation(FVector3(0.0f, 0.7f, 12.0f));
+    Registry.Emplace<STransformComponent>(Entity, Transform);
+    TUniquePtr<FMeshResource> Blocks = MakeTwoBlockResource();
+    Registry.Emplace<SDynamicMeshColliderComponent>(Entity).Commit(Move(Blocks->Positions), Move(Blocks->Indices));
+
+    World.Start();
+    ASSERT_TRUE(World.WaitReady());
+
+    EXPECT_TRUE(World.IsGroundWalkable(-5.0f, 12.0f));
     World.Stop();
 }

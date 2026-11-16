@@ -10,7 +10,6 @@
 
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
-#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "Log/Log.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
@@ -323,25 +322,15 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::RebuildStaleMeshBodies(ECS::FRegistry& Registry)
     {
-        auto RebuildIfStale = [&](ECS::FEntity Entity, uint32& BuiltVersion, uint32 Version)
-        {
-            if (Version != BuiltVersion)
-            {
-                BuiltVersion = Version;
-                OnRigidBodyComponentUpdated(Registry, Entity);
-            }
-        };
-
-        for (auto [Entity, Collider, Mesh, Body] : Registry.View<SDynamicMeshColliderComponent, SDynamicMeshComponent, SRigidBodyComponent>().Each())
-        {
-            RebuildIfStale(Entity, Collider.GeometryVersion, Mesh.LoadRenderDataVersion());
-        }
+        CookDynamicMeshColliders(Registry);
 
         for (auto [Entity, Collider, Body] : Registry.View<SMeshColliderComponent, SRigidBodyComponent>().Each())
         {
-            if (const CStaticMesh* Mesh = ResolveColliderMesh(Registry, Entity, Collider))
+            const CStaticMesh* Mesh = ResolveColliderMesh(Registry, Entity, Collider);
+            if (Mesh != nullptr && Mesh->GetGeometryVersion() != Collider.GeometryVersion)
             {
-                RebuildIfStale(Entity, Collider.GeometryVersion, Mesh->GetGeometryVersion());
+                Collider.GeometryVersion = Mesh->GetGeometryVersion();
+                OnRigidBodyComponentUpdated(Registry, Entity);
             }
         }
     }
@@ -424,21 +413,11 @@ namespace Lumina::Physics
         }
         PendingDrainScratch.SetNum(Count);
 
-        StartDynamicMeshCooks(Registry, PendingDrainScratch);
-
-        Count = 0;
         for (ECS::FEntity Entity : PendingDrainScratch)
         {
             FBodyRecord& Record = RigidBodies.FindChecked(Entity);
             if (Record.bRebuild)
             {
-                // The old body keeps colliding until its replacement is cooked, so a rebuilt chunk never drops what stands on it.
-                if (IsDynamicMeshCookPending(Entity))
-                {
-                    PendingRigidBodies.Add(Entity);
-                    continue;
-                }
-
                 const b3BodyId Old = ResolveBody(Record.Handle);
                 if (b3Body_IsValid(Old) && b3Body_GetType(Old) == b3_dynamicBody)
                 {
@@ -450,9 +429,7 @@ namespace Lumina::Physics
                 Record.Status = EPhysicsBodyStatus::Pending;
                 Record.bRebuild = false;
             }
-            PendingDrainScratch[Count++] = Entity;
         }
-        PendingDrainScratch.SetNum(Count);
         CreateRigidBodiesBatched(PendingDrainScratch);
 
         for (const FCarriedMotion& Motion : CarriedMotion)
@@ -517,11 +494,6 @@ namespace Lumina::Physics
         {
             const ECS::FEntity Entity = Entities[Index];
 
-            if (BatchStatusScratch[Index] != EBodyBuildStatus::Defer)
-            {
-                DynamicMeshCooks.Remove(Entity);
-            }
-
             switch (BatchStatusScratch[Index])
             {
                 case EBodyBuildStatus::Success:
@@ -570,8 +542,9 @@ namespace Lumina::Physics
         });
 
         bCookDynamicMeshesInline = true;
-        SynchronizeBodies();
+        CookDynamicMeshColliders(Registry);
         bCookDynamicMeshesInline = false;
+        SynchronizeBodies();
     }
 
 }

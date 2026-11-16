@@ -234,6 +234,7 @@ namespace Lumina
             return false;
         }
         ScenePrimitiveSetInternal::ReadCommonMeshState(Prim, Cull, *Component);
+        Component->UploadOnShow();
 
         // A worker can publish after this frame's upload flush, so new data waits for its batch rather than draw an unwritten header.
         const uint32 Version = Component->LoadRenderDataVersion();

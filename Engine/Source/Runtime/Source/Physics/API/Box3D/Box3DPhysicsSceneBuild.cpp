@@ -8,12 +8,13 @@
 #include "Box3DInternal.h"
 #include "Box3DUtils.h"
 
+#include "Containers/Algorithm.h"
+
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Assets/AssetTypes/PhysicsMaterial/PhysicsMaterial.h"
 #include "Log/Log.h"
 #include "Physics/CollisionGen.h"
 #include "TaskSystem/TaskSystem.h"
-#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
@@ -284,53 +285,32 @@ namespace Lumina::Physics
             bColliderIsTrigger = DMC->bIsTrigger;
             ResolvedMaterial = DMC->PhysicsMaterial.Get();
 
-            const SDynamicMeshComponent* DM = Registry.TryGet<SDynamicMeshComponent>(Entity);
-            const TSharedPtr<FDynamicMeshRenderData> MeshData = DM ? DM->LoadRenderData() : nullptr;
-            if (!MeshData || !HasCollisionGeometry(MeshData->Resource))
+            // The landing cook queues this entity again.
+            if (!DMC->Shape)
             {
-                if (MeshData && MeshData->MeshletHeaderSlot != 0)
-                {
-                    LOG_ERROR("Entity {} needs CPU geometry from its dynamic mesh, which was dropped after upload. "
-                              "Set bKeepCollisionTriangles or bKeepCPUMeshletData on the SDynamicMeshComponent.", (Entity).Value);
-                    return EBodyBuildStatus::Error;
-                }
-                return EBodyBuildStatus::Defer;
+                return EBodyBuildStatus::NoCollider;
             }
 
-            // StartDynamicMeshCooks launched the build, and the entity waits in the pending list until it lands.
-            const auto CookIt = DynamicMeshCooks.Find(Entity);
-            if (CookIt == nullptr || CookIt->RenderData != MeshData
-                || !CookIt->Cook->bDone.load(std::memory_order_acquire))
+            const FBox3DCollisionShape& Cooked = static_cast<const FBox3DCollisionShape&>(*DMC->Shape);
+            if (Cooked.bConvex != DMC->bConvex)
             {
-                return EBodyBuildStatus::Defer;
+                LOG_WARN_ONCE("Dynamic mesh collider on Entity {} changed bConvex after its cook, so it keeps its old shape until it is committed again", Entity.Value);
             }
 
-            FDynamicMeshCook& Cook = *CookIt->Cook;
-            if (DMC->bConvex)
+            FPendingShape Shape;
+            if (Cooked.Hull)
             {
-                if (!Cook.Hull)
-                {
-                    LOG_ERROR("Failed to create DynamicMeshCollider shape for Entity: {}", (Entity).Value);
-                    return EBodyBuildStatus::Error;
-                }
-                Out.Shapes.Add(MakeHullShape(Cook.Hull.Get(), FVector3(0.0f), FQuat::Identity()));
-                Out.OwnedHulls.Add(Move(Cook.Hull));
+                Shape = MakeHullShape(Cooked.Hull.Get(), FVector3(0.0f), FQuat::Identity());
             }
             else
             {
-                if (!Cook.Mesh)
-                {
-                    LOG_ERROR("Failed to create DynamicMeshCollider shape for Entity: {}", (Entity).Value);
-                    return EBodyBuildStatus::Error;
-                }
-
-                FPendingShape Shape;
                 Shape.Type = b3_meshShape;
-                Shape.Mesh = Cook.Mesh.Get();
-                Out.Geometry.Mesh = Move(Cook.Mesh);
-                Out.Shapes.Add(Shape);
+                Shape.Mesh = Cooked.Mesh.Get();
                 bMustBeStatic = true;
             }
+            Shape.Scale = Box3DUtils::ToB3Vec3(Scale);
+            Out.Shapes.Add(Shape);
+            Out.Geometry.Shape = DMC->Shape;
         }
         else if (const STerrainColliderComponent* TC = Registry.TryGet<STerrainColliderComponent>(Entity))
         {
@@ -598,101 +578,155 @@ namespace Lumina::Physics
     void FBox3DPhysicsScene::AdoptBodyGeometry(uint32 Handle, FRigidBodyBuildResult& Build)
     {
         Build.OwnedHulls.Reset();
-        if (Build.Geometry.Mesh || Build.Geometry.HeightField)
+        if (Build.Geometry.Mesh || Build.Geometry.HeightField || Build.Geometry.Shape)
         {
             BodyGeometry.Add(Handle, Move(Build.Geometry));
         }
     }
 
-    bool FBox3DPhysicsScene::IsDynamicMeshCookPending(ECS::FEntity Entity) const
+    void FBox3DCollisionShape::ForEachTriangle(TFunctionRef<void(const FVector3&, const FVector3&, const FVector3&)> Func) const
     {
-        const auto It = DynamicMeshCooks.Find(Entity);
-        return It != nullptr && !It->Cook->bDone.load(std::memory_order_acquire);
+        if (Mesh)
+        {
+            const b3Vec3*         Vertices  = b3GetMeshVertices(Mesh.Get());
+            const b3MeshTriangle* Triangles = b3GetMeshTriangles(Mesh.Get());
+            for (int32 i = 0; i < Mesh->triangleCount; ++i)
+            {
+                const b3MeshTriangle& T = Triangles[i];
+                Func(Box3DUtils::FromB3Vec3(Vertices[T.index1]), Box3DUtils::FromB3Vec3(Vertices[T.index2]), Box3DUtils::FromB3Vec3(Vertices[T.index3]));
+            }
+            return;
+        }
+
+        if (!Hull)
+        {
+            return;
+        }
+
+        const b3Vec3*         Points = b3GetHullPoints(Hull.Get());
+        const b3HullHalfEdge* Edges  = b3GetHullEdges(Hull.Get());
+        const b3HullFace*     Faces  = b3GetHullFaces(Hull.Get());
+        for (int32 f = 0; f < Hull->faceCount; ++f)
+        {
+            const uint8   First = Faces[f].edge;
+            const FVector3 Apex = Box3DUtils::FromB3Vec3(Points[Edges[First].origin]);
+            for (uint8 e = Edges[First].next; Edges[e].next != First; e = Edges[e].next)
+            {
+                Func(Apex, Box3DUtils::FromB3Vec3(Points[Edges[e].origin]), Box3DUtils::FromB3Vec3(Points[Edges[Edges[e].next].origin]));
+            }
+        }
     }
 
-    void FBox3DPhysicsScene::RunDynamicMeshCook(FPendingDynamicMeshCook& Pending)
+    void FBox3DPhysicsScene::RunDynamicMeshCook(FDynamicMeshCook& Cook)
     {
-        FDynamicMeshCook& Cook = *Pending.Cook;
-        if (Pending.bConvex)
+        LUMINA_PROFILE_SCOPE();
+
+        // Freed when the cook ends, whatever it built.
+        const TSharedPtr<FDynamicMeshCollisionInput> Input = Move(Cook.Input);
+        TVector<FVector3>& Positions = Input->Positions;
+        TVector<uint32>&   Indices   = Input->Indices;
+
+        const uint32 VertexCount = (uint32)Positions.Num();
+        const bool bIndicesValid = Algo::AllOf(Indices, [VertexCount](uint32 Index) { return Index < VertexCount; });
+        if (VertexCount == 0 || !bIndicesValid || (!Cook.bConvex && Indices.Num() < 3))
         {
-            Cook.Hull.Reset(b3CreateHull(Pending.Positions.GetData(), Pending.Positions.Num(), B3_MAX_HULL_VERTICES));
+            Cook.bFailed = VertexCount != 0;
+            Cook.bDone.store(true, std::memory_order_release);
+            return;
+        }
+
+        static_assert(sizeof(FVector3) == sizeof(b3Vec3));
+        b3Vec3* Points = reinterpret_cast<b3Vec3*>(Positions.GetData());
+
+        TSharedPtr<FBox3DCollisionShape> Shape = MakeShared<FBox3DCollisionShape>();
+        Shape->bConvex = Cook.bConvex;
+        if (Cook.bConvex)
+        {
+            Shape->Hull.Reset(b3CreateHull(Points, (int32)VertexCount, B3_MAX_HULL_VERTICES));
         }
         else
         {
             b3MeshDef Def = b3MeshDef{};
-            Def.vertices      = Pending.Positions.GetData();
-            Def.vertexCount   = Pending.Positions.Num();
-            Def.indices       = Pending.Indices.GetData();
-            Def.triangleCount = Pending.Indices.Num() / 3;
+            Def.vertices      = Points;
+            Def.vertexCount   = (int32)VertexCount;
+            Def.indices       = reinterpret_cast<int32*>(Indices.GetData());
+            Def.triangleCount = Indices.Num() / 3;
             Def.weldVertices  = true;
             Def.identifyEdges = true;
-            Cook.Mesh.Reset(b3CreateMesh(&Def, nullptr, 0));
+            Shape->Mesh.Reset(b3CreateMesh(&Def, nullptr, 0));
         }
+
+        if (Shape->Hull || Shape->Mesh)
+        {
+            Shape->LocalMin = Positions[0];
+            Shape->LocalMax = Positions[0];
+            for (const FVector3& P : Positions)
+            {
+                Shape->LocalMin = Math::Min(Shape->LocalMin, P);
+                Shape->LocalMax = Math::Max(Shape->LocalMax, P);
+            }
+            Cook.Shape = Move(Shape);
+        }
+        Cook.bFailed = !Cook.Shape;
         Cook.bDone.store(true, std::memory_order_release);
     }
 
-    void FBox3DPhysicsScene::StartDynamicMeshCooks(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Entities)
+    void FBox3DPhysicsScene::CookDynamicMeshColliders(ECS::FRegistry& Registry)
     {
-        TVector<FPendingDynamicMeshCook> Cooks;
-        for (ECS::FEntity Entity : Entities)
+        LUMINA_PROFILE_SCOPE();
+
+        TVector<FDynamicMeshCook*> InlineCooks;
+        for (auto [Entity, Collider] : Registry.View<SDynamicMeshColliderComponent>().Each())
         {
-            const SDynamicMeshColliderComponent* DMC       = Registry.TryGet<SDynamicMeshColliderComponent>(Entity);
-            const SDynamicMeshComponent*         DM        = Registry.TryGet<SDynamicMeshComponent>(Entity);
-            const STransformComponent*           Transform = Registry.TryGet<STransformComponent>(Entity);
-            if (DMC == nullptr || DM == nullptr || Transform == nullptr)
-            {
-                continue;
-            }
-
-            TSharedPtr<FDynamicMeshRenderData> MeshData = DM->LoadRenderData();
-            if (!MeshData || !HasCollisionGeometry(MeshData->Resource))
-            {
-                continue;
-            }
-
-            const FVector3 Scale   = Transform->ComputeWorldTransform().GetScale();
-            const bool     bConvex = DMC->bConvex;
-
-            FDynamicMeshCookEntry& Entry = DynamicMeshCooks[Entity];
-            if (Entry.Cook && Entry.RenderData == MeshData && Entry.Scale == Scale && Entry.bConvex == bConvex)
+            TSharedPtr<FDynamicMeshCollisionInput> Input = Collider.TakeNewTriangles();
+            if (!Input)
             {
                 continue;
             }
 
             TSharedPtr<FDynamicMeshCook> Cook = MakeShared<FDynamicMeshCook>();
-            Entry.Cook       = Cook;
-            Entry.RenderData = MeshData;
-            Entry.Scale      = Scale;
-            Entry.bConvex    = bConvex;
+            Cook->bConvex = Collider.bConvex;
+            Cook->Input   = Move(Input);
+            DynamicMeshCooks[Entity] = Cook;
 
-            // Copied here, because the worker must not read a snapshot whose CPU data a later commit may drop.
-            TVector<b3Vec3> Positions;
-            TVector<int32>  Indices;
-            if (!GatherMeshResourceGeometry(MeshData->Resource, Scale, Positions, bConvex ? nullptr : &Indices))
+            if (bCookDynamicMeshesInline)
             {
-                Cook->bDone.store(true, std::memory_order_release);
+                InlineCooks.Add(Cook.Get());
                 continue;
             }
 
-            Cooks.Emplace(Cook, Move(Positions), Move(Indices), bConvex);
-        }
-
-        if (bCookDynamicMeshesInline)
-        {
-            Jobs::ParallelFor((uint32)Cooks.Num(), [&Cooks](uint32 Index)
+            Jobs::Spawn(Jobs::EJobPriority::Background, [](TSharedPtr<FDynamicMeshCook> Pending) -> Jobs::TTask<void>
             {
-                RunDynamicMeshCook(Cooks[Index]);
-            });
-            return;
-        }
-
-        for (FPendingDynamicMeshCook& Pending : Cooks)
-        {
-            Jobs::Spawn(Jobs::EJobPriority::Background, [](FPendingDynamicMeshCook Cook) -> Jobs::TTask<void>
-            {
-                RunDynamicMeshCook(Cook);
+                RunDynamicMeshCook(*Pending);
                 co_return;
-            }, Move(Pending));
+            }, Move(Cook));
         }
+
+        Jobs::ParallelFor((uint32)InlineCooks.Num(), [&InlineCooks](uint32 Index)
+        {
+            RunDynamicMeshCook(*InlineCooks[Index]);
+        });
+
+        DynamicMeshCooks.RemoveAll([&](const auto& Pair)
+        {
+            FDynamicMeshCook& Cook = *Pair.Value;
+            if (!Cook.bDone.load(std::memory_order_acquire))
+            {
+                return false;
+            }
+
+            if (!Registry.HasAll<SDynamicMeshColliderComponent>(Pair.Key))
+            {
+                return true;
+            }
+
+            if (Cook.bFailed)
+            {
+                LOG_WARN("Dynamic mesh collider on Entity {} committed triangles no shape could be cooked from, so it has no collision", Pair.Key.Value);
+            }
+            // OnUpdate rebuilds the body and rebakes the navmesh under it.
+            Registry.Patch<SDynamicMeshColliderComponent>(Pair.Key, [&](SDynamicMeshColliderComponent& Collider) { Collider.Shape = Move(Cook.Shape); });
+            return true;
+        });
     }
 }

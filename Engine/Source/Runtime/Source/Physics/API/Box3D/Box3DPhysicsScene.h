@@ -23,7 +23,7 @@
 
 namespace Lumina
 {
-    struct FDynamicMeshRenderData;
+    struct FDynamicMeshCollisionInput;
     struct SCharacterMovementComponent;
     struct SCharacterPhysicsComponent;
     struct SCompoundColliderComponent;
@@ -79,11 +79,22 @@ namespace Lumina::Physics
     template <typename T>
     using TOwnedGeometry = TUniquePtr<T, FBox3DGeometryDeleter>;
 
-    // Box3D keeps pointing at a mesh or height field while the shape lives, so the body holds what was built for it alone.
+    // A dynamic mesh collider's cooked hull or triangle mesh, shared by the collider, its bodies and navmesh bakes.
+    class FBox3DCollisionShape final : public FCollisionShape
+    {
+    public:
+        void ForEachTriangle(TFunctionRef<void(const FVector3&, const FVector3&, const FVector3&)> Func) const override;
+
+        TOwnedGeometry<b3MeshData> Mesh;
+        TOwnedGeometry<b3HullData> Hull;
+    };
+
+    // Box3D keeps pointing at a mesh or height field while the shape lives, so the body holds what was built for it, or a ref on what it shares.
     struct FBodyGeometry
     {
         TOwnedGeometry<b3MeshData>          Mesh;
         TOwnedGeometry<b3HeightFieldData>   HeightField;
+        TSharedPtr<const FCollisionShape>   Shape;
     };
 
     struct FRigidBodyBuildResult
@@ -485,39 +496,26 @@ namespace Lumina::Physics
         // Keyed by body handle and released in DestroyBodyHandle, after the shapes pointing at it.
         THashMap<uint32, FBodyGeometry>                     BodyGeometry;
 
-        // A dynamic mesh collider's shape, built on a worker so a streamed-in chunk never welds and partitions on the game thread.
+        // A dynamic mesh collider's shape, cooked on a worker so a streamed-in chunk never welds and partitions on the game thread.
         struct FDynamicMeshCook
         {
-            TAtomic<bool>                   bDone{ false };
-            TOwnedGeometry<b3MeshData>      Mesh;
-            TOwnedGeometry<b3HullData>      Hull;
+            TAtomic<bool>                           bDone{ false };
+            bool                                    bConvex = false;
+            // Triangles were committed but cooked into nothing, unlike an empty commit, which clears the shape.
+            bool                                    bFailed = false;
+            TSharedPtr<FDynamicMeshCollisionInput>  Input;
+            TSharedPtr<FBox3DCollisionShape>        Shape;
         };
 
-        struct FDynamicMeshCookEntry
-        {
-            TSharedPtr<FDynamicMeshCook> Cook;
-            // Held, not just compared, so a freed snapshot's address cannot be mistaken for the current one.
-            TSharedPtr<FDynamicMeshRenderData> RenderData;
-            FVector3                     Scale = FVector3(1.0f);
-            bool                         bConvex = false;
-        };
+        // The latest cook per collider; a recommit replaces it, and the job it orphans finishes into nothing.
+        THashMap<ECS::FEntity, TSharedPtr<FDynamicMeshCook>> DynamicMeshCooks;
 
-        // Written only by the serial pass before the parallel build, so the build reads it without a lock.
-        THashMap<ECS::FEntity, FDynamicMeshCookEntry> DynamicMeshCooks;
+        static void RunDynamicMeshCook(FDynamicMeshCook& Cook);
 
-        struct FPendingDynamicMeshCook
-        {
-            TSharedPtr<FDynamicMeshCook> Cook;
-            TVector<b3Vec3>              Positions;
-            TVector<int32>               Indices;
-            bool                         bConvex = false;
-        };
-        static void RunDynamicMeshCook(FPendingDynamicMeshCook& Pending);
-
-        void StartDynamicMeshCooks(ECS::FRegistry& Registry, const TVector<ECS::FEntity>& Entities);
+        // Takes newly committed triangles into cooks, and hands landed shapes to their colliders.
+        void CookDynamicMeshColliders(ECS::FRegistry& Registry);
         // Set while the level's bodies are created in bulk, so nothing spawns over ground that has no collision yet.
         bool bCookDynamicMeshesInline = false;
-        bool IsDynamicMeshCookPending(ECS::FEntity Entity) const;
 
         struct FDeferredBodyUpdate
         {

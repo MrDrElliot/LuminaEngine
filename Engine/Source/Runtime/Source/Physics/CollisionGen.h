@@ -38,7 +38,7 @@ namespace Lumina
         RUNTIME_API bool BuildHullTriangles(const TVector<FVector3>& Points, TVector<FVector3>& OutVertices,
                                             TVector<uint32>& OutIndices);
 
-        // LOD 0's meshlets, or a dynamic mesh's kept triangles once its meshlets are gone; physics, navigation and the generators all read this.
+        // LOD 0's meshlets as positions and triangles; physics, navigation and the generators all read this.
         RUNTIME_API bool GatherResourceGeometry(const FMeshResource& Resource, TVector<FVector3>& OutPositions, TVector<uint32>& OutIndices);
 
         // Every LOD-0 position in the mesh, and the triangles indexing them. Both generators below read
