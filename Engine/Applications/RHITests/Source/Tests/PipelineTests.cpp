@@ -445,7 +445,7 @@ namespace Lumina::RHITests
         });
     }
 
-    RHI_TEST(Pipelines, MeshShaderDraw)
+    RHI_MESH_TEST(Pipelines, MeshShaderDraw)
     {
         const TVector<uint32> MSSpirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             struct FVertexOut { float4 Position : SV_Position; };
@@ -487,7 +487,7 @@ namespace Lumina::RHITests
         });
     }
 
-    RHI_TEST(Pipelines, MeshShaderDrawIndirect)
+    RHI_MESH_TEST(Pipelines, MeshShaderDrawIndirect)
     {
         const TVector<uint32> MSSpirv = Ctx.CompileShader(*WithPrelude(R"SLANG(
             struct FVertexOut { float4 Position : SV_Position; };

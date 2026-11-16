@@ -16,7 +16,7 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
     }
 
     const FRainSplash Splash = RainArgs().Splashes.Get(InstanceIndex);
-    const float Scale    = f16tof32(Splash.PackedLightB >> 16u);
+    const float Scale    = UnpackHalf(Splash.PackedLightB >> 16u);
     const float Lifetime = 0.45 + 0.45 * saturate(Scale);
     const float Age      = GetTime() - Splash.SpawnTime;
     if (Splash.Seed == 0u || Age < 0.0 || Age > Lifetime)
@@ -27,7 +27,7 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
     const float  T       = Age / Lifetime;
     const float3 Normal  = UnpackNormal(Splash.PackedNormal);
     const float2 LightRG = UnpackHalf2(Splash.PackedLightRG);
-    const float3 Color   = float3(LightRG, f16tof32(Splash.PackedLightB & 0xFFFFu));
+    const float3 Color   = float3(LightRG, UnpackHalf(Splash.PackedLightB));
     // Faded right at the lens, where a splash would fill the screen.
     const float  Distance = length(Splash.Position - GetCameraPosition());
     const float  Opacity  = saturate((Distance - 0.3) / 1.0);

@@ -40,8 +40,7 @@ uint ShareOfArena(uint Offset, uint TotalDemand, uint Capacity)
     {
         return 0u;
     }
-    const double Scale = (double)Capacity / (double)TotalDemand;
-    return min((uint)floor((double)Offset * Scale), Capacity);
+    return (uint)min(uint64_t(Offset) * Capacity / TotalDemand, uint64_t(Capacity));
 }
 
 [shader("compute")]

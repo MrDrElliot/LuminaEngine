@@ -5,6 +5,7 @@
 #include "Core/Math/Hash/Hash.h"
 #include "ShaderLibrary.h"
 #include "ShaderPaths.h"
+#include "SpirvStrip.h"
 #include "RenderResource.h"
 #include "RHI.h"
 #include "slang-com-ptr.h"
@@ -633,6 +634,12 @@ namespace Lumina
         if (Binaries.IsEmpty())
         {
             LOG_ERROR("Slang: '{}' compiled to empty SPIR-V", DebugName);
+            return false;
+        }
+
+        if (const char* Forbidden = Spirv::FindForbiddenCapability(Binaries))
+        {
+            LOG_ERROR("Slang: '{}' needs the SPIR-V capability {}, which the device is never created with", DebugName, Forbidden);
             return false;
         }
 

@@ -13,7 +13,7 @@ namespace Lumina::RHITests
         RHI_CHECK(Info.VendorID != 0);
     }
 
-    RHI_TEST(Device, MeshWorkGroupLimitIsUsable)
+    RHI_MESH_TEST(Device, MeshWorkGroupLimitIsUsable)
     {
         // Every meshlet draw folds its grid against this. Zero would silently drop every draw.
         RHI_CHECK(RHI::GetMaxMeshWorkGroupCount() > 0);

@@ -99,7 +99,7 @@ namespace Lumina::RHITests
 
     struct FTestRegistrar
     {
-        FTestRegistrar(const char* Group, const char* Name, FTestFn Fn, bool bExpectValidationError = false);
+        FTestRegistrar(const char* Group, const char* Name, FTestFn Fn, bool bExpectValidationError = false, bool bNeedsMeshShaders = false);
     };
 
     // Returns the failure count. Filter takes --gtest_filter's colon-separated Group.Name wildcard patterns.
@@ -114,6 +114,13 @@ namespace Lumina::RHITests
     static void RHITest_##Group##_##Name(Lumina::RHITests::FTestContext& Ctx);                             \
     static const Lumina::RHITests::FTestRegistrar GRHITestReg_##Group##_##Name(                            \
         #Group, #Name, &RHITest_##Group##_##Name);                                                         \
+    static void RHITest_##Group##_##Name(Lumina::RHITests::FTestContext& Ctx)
+
+// Skipped on a device without mesh shaders, such as a GTX 10-series card or a run with -nomeshshaders.
+#define RHI_MESH_TEST(Group, Name)                                                                        \
+    static void RHITest_##Group##_##Name(Lumina::RHITests::FTestContext& Ctx);                             \
+    static const Lumina::RHITests::FTestRegistrar GRHITestReg_##Group##_##Name(                            \
+        #Group, #Name, &RHITest_##Group##_##Name, /*bExpectValidationError*/ false, /*bNeedsMeshShaders*/ true); \
     static void RHITest_##Group##_##Name(Lumina::RHITests::FTestContext& Ctx)
 
 //~ A NEGATIVE CONTROL: the body deliberately breaks a rule, and the test passes only if the validation

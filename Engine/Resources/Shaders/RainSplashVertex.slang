@@ -22,7 +22,7 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
     const float  T       = Age / kSplashLifetime;
     const float3 Normal  = UnpackNormal(Splash.PackedNormal);
     const float2 LightRG = UnpackHalf2(Splash.PackedLightRG);
-    const float3 Color   = float3(LightRG, f16tof32(Splash.PackedLightB)) * W.RainTint.rgb * W.RainLook.y;
+    const float3 Color   = float3(LightRG, UnpackHalf(Splash.PackedLightB)) * W.RainTint.rgb * W.RainLook.y;
     // Faded out right at the lens, where a centimeter ring would fill the screen, and past where a crown is resolvable.
     const float  Distance = length(Splash.Position - GetCameraPosition());
     const float  Opacity  = W.RainLook.z * saturate((Distance - 0.5) / 1.5);

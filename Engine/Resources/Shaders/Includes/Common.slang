@@ -515,7 +515,7 @@ struct FInstanceCullEntry
     property int ForcedLODIndex { get { return int(LODAndThinning & INSTANCE_FORCED_LOD_MASK) - 1; } }
 
     // Past this camera distance a foliage instance thins out, 0 never.
-    property float ThinningStartDistance { get { return f16tof32(LODAndThinning >> 16u); } }
+    property float ThinningStartDistance { get { return UnpackHalf(LODAndThinning >> 16u); } }
 
     // Clear for the Default layer, which is nearly everything, so only the rest load their mask from FInstanceStatic.
     property bool bCustomLayers { get { return (LODAndThinning & INSTANCE_CUSTOM_LAYERS_BIT) != 0u; } }
@@ -1252,14 +1252,25 @@ float3 OctDecode01(float2 Enc)
 }
 
 
+// f16tof32 and f32tof16 lower through a half type, which declares Float16 and fails device creation on Pascal.
 uint PackHalf2(float2 V)
 {
-    return f32tof16(V.x) | (f32tof16(V.y) << 16u);
+    return spirv_asm { result:$$uint = OpExtInst glsl450 PackHalf2x16 $V };
 }
 
 float2 UnpackHalf2(uint P)
 {
-    return float2(f16tof32(P & 0xFFFFu), f16tof32(P >> 16u));
+    return spirv_asm { result:$$float2 = OpExtInst glsl450 UnpackHalf2x16 $P };
+}
+
+uint PackHalf(float V)
+{
+    return PackHalf2(float2(V, 0.0));
+}
+
+float UnpackHalf(uint P)
+{
+    return UnpackHalf2(P & 0xFFFFu).x;
 }
 
 float2 UnpackUV(uint Packed)

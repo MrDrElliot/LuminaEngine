@@ -87,7 +87,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         const float3 Light  = RainLightAt(Impact.Position + Normal * 0.1);
         const float  Scale  = Impact.Scale * lerp(0.35, 1.0, saturate(Water)) * (Impact.Surface == kSurfaceWater ? 1.0 : 0.55);
         Splash.PackedLightRG = PackHalf2(Light.rg);
-        Splash.PackedLightB  = f32tof16(Light.b) | (f32tof16(Scale) << 16u);
+        Splash.PackedLightB  = PackHalf2(float2(Light.b, Scale));
         Splash.Seed          = Impact.Seed | 1u;
     }
 

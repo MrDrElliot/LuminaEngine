@@ -21,6 +21,8 @@ namespace Lumina::Spirv
             OpExtension           = 10,
             OpExtInstImport       = 11,
             OpExtInst             = 12,
+            OpCapability          = 17,
+            OpFunction            = 54,
             OpDecorate            = 71,
             OpMemberDecorate      = 72,
             OpNoLine              = 317,
@@ -164,5 +166,39 @@ namespace Lumina::Spirv
         }
 
         Words = Move(Out);
+    }
+
+    const char* FindForbiddenCapability(TSpan<const uint32> Words)
+    {
+        constexpr struct { uint32 Capability; const char* Name; } kForbidden[] =
+        {
+            { 9,    "Float16 (use PackHalf2 and UnpackHalf2, not f16tof32, f32tof16 or half)" },
+            { 10,   "Float64 (64-bit integers give exact ratios instead)" },
+            { 5288, "ComputeDerivativeGroupQuadsKHR (no ddx, ddy or implicit sampling in compute)" },
+            { 5350, "ComputeDerivativeGroupLinearKHR (no ddx, ddy or implicit sampling in compute)" },
+        };
+
+        const uint32 Num = static_cast<uint32>(Words.Num());
+        for (uint32 Offset = kHeaderWords; Offset < Num;)
+        {
+            const uint32 Op    = Words[Offset] & 0xFFFFu;
+            const uint32 Count = Words[Offset] >> 16;
+            if (Count == 0 || Offset + Count > Num || Op == OpFunction)
+            {
+                break;
+            }
+            if (Op == OpCapability && Count >= 2)
+            {
+                for (const auto& Entry : kForbidden)
+                {
+                    if (Words[Offset + 1] == Entry.Capability)
+                    {
+                        return Entry.Name;
+                    }
+                }
+            }
+            Offset += Count;
+        }
+        return nullptr;
     }
 }

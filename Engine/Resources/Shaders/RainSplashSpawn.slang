@@ -104,7 +104,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     Splash.PackedNormal  = PackNormal(Normal);
     const float3 Light   = RainLightAt(Center + Normal * 0.05);
     Splash.PackedLightRG = PackHalf2(Light.rg);
-    Splash.PackedLightB  = f32tof16(Light.b);
+    Splash.PackedLightB  = PackHalf(Light.b);
     Splash.Seed          = PCGHash(Seed) | 1u;
 
     const uint Capacity = Pass().Splashes.Count;

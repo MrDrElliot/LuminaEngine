@@ -494,7 +494,6 @@ namespace Lumina::RHI
     {
         None                  = 0,
         MeshShading           = BIT(0),
-        ComputeDerivatives    = BIT(1),
         DeviceAddressCommands = BIT(2),
         PipelineStatistics    = BIT(3),
         MemoryPriority        = BIT(4),

@@ -333,11 +333,11 @@ FSkinRows IdentitySkinRows()
 
 FSkinRows UnpackBoneRows(FBoneTransform B)
 {
-    const float2 A = float2(f16tof32(B.Rot[0] & 0xFFFFu), f16tof32(B.Rot[0] >> 16u));
-    const float2 C = float2(f16tof32(B.Rot[1] & 0xFFFFu), f16tof32(B.Rot[1] >> 16u));
-    const float2 D = float2(f16tof32(B.Rot[2] & 0xFFFFu), f16tof32(B.Rot[2] >> 16u));
-    const float2 E = float2(f16tof32(B.Rot[3] & 0xFFFFu), f16tof32(B.Rot[3] >> 16u));
-    const float  F = f16tof32(B.Rot[4] & 0xFFFFu);
+    const float2 A = UnpackHalf2(B.Rot[0]);
+    const float2 C = UnpackHalf2(B.Rot[1]);
+    const float2 D = UnpackHalf2(B.Rot[2]);
+    const float2 E = UnpackHalf2(B.Rot[3]);
+    const float  F = UnpackHalf(B.Rot[4]);
 
     FSkinRows Rows;
     Rows.R0 = float4(A.x, A.y, C.x, B.Tx);

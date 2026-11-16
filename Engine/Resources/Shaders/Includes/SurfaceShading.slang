@@ -43,12 +43,11 @@ float3 MeshletDebugColor(uint Index)
     );
 }
 
-// CosTheta and F0 are both in [0,1], so fp16 is ample.
-half3 FresnelSchlickHalf(half CosTheta, half3 F0)
+float3 FresnelSchlick(float CosTheta, float3 F0)
 {
-    half x  = saturate(half(1.0) - CosTheta);
-    half x2 = x * x;
-    return F0 + (half3(1.0) - F0) * (x2 * x2 * x);
+    float x  = saturate(1.0 - CosTheta);
+    float x2 = x * x;
+    return F0 + (1.0 - F0) * (x2 * x2 * x);
 }
 
 // The frame is built in ParallaxOcclusion.slang so POM and normal decode share it.
@@ -327,16 +326,16 @@ float SpecVisibility(FSpecLobe Lobe, float NdotL)
     return 0.5 * rcp(NdotL * Lobe.VisA + Lobe.VisB);
 }
 
-// Terms that do not change across the light loop; BRDF weights are half to halve loop register pressure.
+// Terms that do not change across the light loop.
 struct FShadingContext
 {
     float3 N;
     float3 V;
     float  NdotV;        // max(dot(N,V), 1e-4)
     float  Roughness;    // surface value, before any per-light floor
-    half3  F0;
-    half3  DiffuseBase;  // Albedo * (1-Metallic) / PI
-    half3  EnergyComp;   // multi-scatter compensation (Turquin 2019)
+    float3 F0;
+    float3 DiffuseBase;  // Albedo * (1-Metallic) / PI
+    float3 EnergyComp;   // multi-scatter compensation (Turquin 2019)
 };
 
 // Distance window times spot cone, zero wherever the light cannot reach, which lets callers skip its shadow and BRDF.
@@ -524,17 +523,15 @@ void EvaluateRadianceContributionSplit(FLight Light, FShadingContext S, float3 L
     float Denom = NdotH * NdotH * (Lobe.A2 - 1.0) + 1.0;
     float NDF   = Lobe.A2 / (PI * Denom * Denom);
 
-    // Fresnel and the diffuse/spec tint are [0,1], so fp16 covers them.
-    half  HdotV = (half)max(dot(H, S.V), 0.0);
-    half3 F     = FresnelSchlickHalf(HdotV, S.F0);
+    float  HdotV = max(dot(H, S.V), 0.0);
+    float3 F     = FresnelSchlick(HdotV, S.F0);
 
-    half3 SpecTint = F * S.EnergyComp;
-    half3 Diffuse  = S.DiffuseBase * (half)BurleyDiffuseScale(NdotLf, S.NdotV, (float)HdotV, S.Roughness);
+    float3 SpecTint = F * S.EnergyComp;
+    float3 Diffuse  = S.DiffuseBase * BurleyDiffuseScale(NdotLf, S.NdotV, HdotV, S.Roughness);
 
-    // Recombine in float; NDF and the visibility term carry the HDR dynamic range between them.
-    float3 Spec = float3(SpecTint) * (NDF * SpecVisibility(Lobe, NdotLf));
+    float3 Spec = SpecTint * (NDF * SpecVisibility(Lobe, NdotLf));
 
-    OutDiffuse  = float3(Diffuse) * Radiance * NdotLf;
+    OutDiffuse  = Diffuse * Radiance * NdotLf;
     OutSpecular = Spec * Radiance * NdotLf;
 }
 
@@ -656,10 +653,10 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     Ctx.V           = V;
     Ctx.NdotV       = max(NdotV_EC, 1e-4);
     Ctx.Roughness   = Roughness;
-    Ctx.F0          = (half3)F0;
-    Ctx.DiffuseBase = (half3)(Albedo * (1.0 - Metallic) * INV_PI);
+    Ctx.F0          = F0;
+    Ctx.DiffuseBase = Albedo * (1.0 - Metallic) * INV_PI;
     float3 EnergyComp = 1.0 + F0 * (1.0 / max(DFG_EC.x + DFG_EC.y, 1e-4) - 1.0);
-    Ctx.EnergyComp  = (half3)EnergyComp;
+    Ctx.EnergyComp  = EnergyComp;
 
     // Clamps to ZNear, since a fragment below it wraps ZTile past Clusters() and faults the MMU.
     uint  ClusterIndex = ComputeClusterIndex(ViewPosition.z, ScreenPos);

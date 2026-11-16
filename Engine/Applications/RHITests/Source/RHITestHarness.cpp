@@ -18,6 +18,7 @@ namespace Lumina::RHITests
             const char* Name  = nullptr;
             FTestFn     Fn    = nullptr;
             bool        bExpectValidationError = false;
+            bool        bNeedsMeshShaders = false;
         };
 
         // Function-local so registration from another TU's static init cannot race construction order.
@@ -99,9 +100,9 @@ namespace Lumina::RHITests
         }
     }
 
-    FTestRegistrar::FTestRegistrar(const char* Group, const char* Name, FTestFn Fn, bool bExpectValidationError)
+    FTestRegistrar::FTestRegistrar(const char* Group, const char* Name, FTestFn Fn, bool bExpectValidationError, bool bNeedsMeshShaders)
     {
-        Registry().Emplace(Group, Name, Fn, bExpectValidationError);
+        Registry().Emplace(Group, Name, Fn, bExpectValidationError, bNeedsMeshShaders);
     }
 
     RHI::FTextureDesc MakeSampledDesc(uint32 Size, EFormat Format, RHI::EImageUsageFlags Extra)
@@ -285,6 +286,13 @@ namespace Lumina::RHITests
 
             if ((bFiltered && !MatchesFilter(Filter, Qualified)) || (!bSelfTestNamed && std::strcmp(Test.Group, "SelfTest") == 0))
             {
+                ++Skipped;
+                continue;
+            }
+
+            if (Test.bNeedsMeshShaders && !RHI::SupportsMeshShaders())
+            {
+                std::printf("[ SKIPPED  ] %s (no mesh shaders on this device)\n", Qualified);
                 ++Skipped;
                 continue;
             }

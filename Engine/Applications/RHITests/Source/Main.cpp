@@ -27,6 +27,7 @@ namespace
             "                     One exact name bisects anything that can take the device down, as the\n"
             "                     smallest workload the harness can submit. SelfTest runs only when named.\n"
             "  --novalidation     Bring the device up without the validation layer.\n"
+            "  -nomeshshaders     Leave mesh shaders off, as on a GTX 10-series card; mesh tests are skipped.\n"
             "  --nogpuvalidation  Drop GPU-assisted validation (on by default, as in the engine).\n"
             "\n"
             "GPU-AV runs by default with its SPIR-V shader instrumentation OFF -- buffer, copy, indirect\n"
@@ -97,8 +98,7 @@ int main(int ArgC, char** ArgV)
         .bValidation    = bValidation,
         .bDebugUtils    = true,
         .bHeadless      = true,
-        // Pipelines/MeshShaderDraw covers the mesh path, so the suite needs a device that has it.
-        .RequiredFeatures = RHI::EDeviceFeature::MeshShading,
+        .DisabledFeatures = ParsedCommandLine.Has("nomeshshaders") ? RHI::EDeviceFeature::MeshShading : RHI::EDeviceFeature::None,
     });
     
     FSpirVShaderCompiler ShaderCompiler;

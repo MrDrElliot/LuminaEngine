@@ -160,8 +160,9 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         if (Bucket.DrawCursor > Bucket.DrawCapacity && Bucket.DrawDemand > 0u && Pass().Totals.Contains(8u))
         {
             // Capped per cycle, since one starved bucket must not ask for a list the whole scene could never fill.
-            const double Needed = min((double)Bucket.DrawCursor / (double)Bucket.DrawDemand, 4.0) * (double)Pass().Totals.Get(2u);
-            InterlockedMax(Pass().Totals.At(8u)[0], (uint)min(Needed, 4294967295.0));
+            const uint64_t Grown  = min(uint64_t(Bucket.DrawCursor), uint64_t(Bucket.DrawDemand) * 4u);
+            const uint64_t Needed = Grown * Pass().Totals.Get(2u) / Bucket.DrawDemand;
+            InterlockedMax(Pass().Totals.At(8u)[0], (uint)min(Needed, uint64_t(0xFFFFFFFFu)));
         }
         Bucket.SliceCount[Slice] = (Written > Start) ? (Written - Start) : 0u;
 

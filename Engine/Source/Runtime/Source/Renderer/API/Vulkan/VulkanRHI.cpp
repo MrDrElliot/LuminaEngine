@@ -1348,6 +1348,92 @@ namespace Lumina::RHI
         return DeviceLocal;
     }
 
+    template <typename TFeatures>
+    struct TRequiredFeature
+    {
+        const char*             Name;
+        VkBool32 TFeatures::*   Member;
+    };
+
+#define LUMINA_REQUIRED_FEATURE(Struct, Field) TRequiredFeature<Struct>{ #Field, &Struct::Field }
+
+    // Selection turns down a device missing any of these, and CreateDevice enables every one.
+    constexpr TRequiredFeature<VkPhysicalDeviceFeatures> kRequiredFeatures10[] =
+    {
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, fragmentStoresAndAtomics),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, samplerAnisotropy),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, sampleRateShading),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, fillModeNonSolid),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, imageCubeArray),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, multiViewport),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, multiDrawIndirect),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, shaderStorageImageWriteWithoutFormat),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, shaderStorageImageReadWithoutFormat),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, shaderStorageImageExtendedFormats),
+        // Gathers carrying a constant offset, which is how the GTAO passes read a whole quad in one tap.
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, shaderImageGatherExtended),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, drawIndirectFirstInstance),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, vertexPipelineStoresAndAtomics),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, shaderInt16),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, shaderInt64),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, independentBlend),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceFeatures, pipelineStatisticsQuery),
+    };
+
+    constexpr TRequiredFeature<VkPhysicalDeviceVulkan11Features> kRequiredFeatures11[] =
+    {
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan11Features, shaderDrawParameters),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan11Features, multiview),
+    };
+
+    constexpr TRequiredFeature<VkPhysicalDeviceVulkan12Features> kRequiredFeatures12[] =
+    {
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, timelineSemaphore),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, drawIndirectCount),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, bufferDeviceAddress),
+        // Slang lays out pointer-reached structs scalar-packed (a float3 at offset 4), which std430 forbids without this.
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, scalarBlockLayout),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, descriptorIndexing),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, descriptorBindingPartiallyBound),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, descriptorBindingSampledImageUpdateAfterBind),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, descriptorBindingStorageImageUpdateAfterBind),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, descriptorBindingUpdateUnusedWhilePending),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, samplerFilterMinmax),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, runtimeDescriptorArray),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan12Features, shaderInt8),
+    };
+
+    constexpr TRequiredFeature<VkPhysicalDeviceVulkan13Features> kRequiredFeatures13[] =
+    {
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan13Features, dynamicRendering),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan13Features, synchronization2),
+        LUMINA_REQUIRED_FEATURE(VkPhysicalDeviceVulkan13Features, shaderDemoteToHelperInvocation),
+    };
+
+#undef LUMINA_REQUIRED_FEATURE
+
+    template <typename TFeatures, size_t N>
+    static void EnableRequiredFeatures(TFeatures& Enabled, const TRequiredFeature<TFeatures> (&Required)[N])
+    {
+        for (const TRequiredFeature<TFeatures>& Feature : Required)
+        {
+            Enabled.*Feature.Member = VK_TRUE;
+        }
+    }
+
+    template <typename TFeatures, size_t N>
+    static void AppendMissingFeatures(const TFeatures& Supported, const TRequiredFeature<TFeatures> (&Required)[N], FString& OutMissing)
+    {
+        for (const TRequiredFeature<TFeatures>& Feature : Required)
+        {
+            if (Supported.*Feature.Member != VK_TRUE)
+            {
+                OutMissing += OutMissing.IsEmpty() ? "" : ", ";
+                OutMissing += Feature.Name;
+            }
+        }
+    }
+
     struct FDeviceSuitability
     {
         bool    bSuitable = false;
@@ -1428,6 +1514,25 @@ namespace Lumina::RHI
             if (!bHasGraphics)
             {
                 Result.Reason = "exposes no graphics queue family";
+                return Result;
+            }
+        }
+
+        {
+            VkPhysicalDeviceVulkan13Features Supported13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+            VkPhysicalDeviceVulkan12Features Supported12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &Supported13 };
+            VkPhysicalDeviceVulkan11Features Supported11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, .pNext = &Supported12 };
+            VkPhysicalDeviceFeatures2        Supported2 { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,          .pNext = &Supported11 };
+            vkGetPhysicalDeviceFeatures2(Gpu, &Supported2);
+
+            FString Missing;
+            AppendMissingFeatures(Supported2.features, kRequiredFeatures10, Missing);
+            AppendMissingFeatures(Supported11, kRequiredFeatures11, Missing);
+            AppendMissingFeatures(Supported12, kRequiredFeatures12, Missing);
+            AppendMissingFeatures(Supported13, kRequiredFeatures13, Missing);
+            if (!Missing.IsEmpty())
+            {
+                Result.Reason = FString("does not support the Vulkan features ") + Missing;
                 return Result;
             }
         }
@@ -2894,7 +2999,6 @@ namespace Lumina::RHI
         bool bUnifiedImageLayouts = false;
         bool bSwapchainMaintenance1 = false;
         bool bDeviceAddressCommands = false;
-        bool bComputeDerivatives = false;
 #if USING(WITH_EDITOR)
         bool bPipelineStats  = false;
 #endif
@@ -2953,9 +3057,6 @@ namespace Lumina::RHI
                 bPageableMemory = EnableIfPresent(VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME);
             }
 
-            // Aerial perspective and the cloud march take ddx/ddy from compute, which needs quad groups.
-            bComputeDerivatives = EnableIfPresent(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
-
             if (GDevice->bMeshShaderSupported)
             {
                 EnableIfPresent(VK_EXT_MESH_SHADER_EXTENSION_NAME);
@@ -2996,61 +3097,28 @@ namespace Lumina::RHI
         VkPhysicalDeviceVulkan13Features Supported13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &Supported14 };
         VkPhysicalDeviceVulkan12Features Supported12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &Supported13 };
         VkPhysicalDeviceVulkan11Features Supported11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, .pNext = &Supported12 };
-        VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR SupportedDerivatives
-            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR, .pNext = &Supported11 };
-        VkPhysicalDeviceFeatures2        Supported2 { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,          .pNext = &SupportedDerivatives };
+        VkPhysicalDeviceFeatures2        Supported2 { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,          .pNext = &Supported11 };
         vkGetPhysicalDeviceFeatures2(GDevice->PhysicsDevice, &Supported2);
 
         // All settled during selection, so nothing is re-queried here.
 
         VkPhysicalDeviceFeatures Features10             = {};
-        Features10.fragmentStoresAndAtomics             = VK_TRUE;
-        Features10.samplerAnisotropy                    = VK_TRUE;
-        Features10.sampleRateShading                    = VK_TRUE;
-        Features10.fillModeNonSolid                     = VK_TRUE;
-        Features10.imageCubeArray                       = VK_TRUE;
-        Features10.multiViewport                        = VK_TRUE;
-        Features10.multiDrawIndirect                    = VK_TRUE;
-        Features10.shaderStorageImageWriteWithoutFormat = VK_TRUE;
-        Features10.shaderStorageImageReadWithoutFormat  = VK_TRUE;
-        Features10.shaderStorageImageExtendedFormats    = VK_TRUE;
-        // Gathers carrying a constant offset, which is how the GTAO passes read a whole quad in one tap.
-        Features10.shaderImageGatherExtended            = VK_TRUE;
-        Features10.drawIndirectFirstInstance            = VK_TRUE;
-        Features10.vertexPipelineStoresAndAtomics       = VK_TRUE;
-        Features10.shaderInt16                          = VK_TRUE;
-        Features10.shaderInt64                          = VK_TRUE;
-        Features10.independentBlend                     = VK_TRUE;
-        Features10.pipelineStatisticsQuery              = VK_TRUE;
+        EnableRequiredFeatures(Features10, kRequiredFeatures10);
         Features10.wideLines                            = Supported2.features.wideLines;
         Features10.geometryShader                       = Supported2.features.geometryShader;
 
         VkPhysicalDeviceVulkan11Features Features11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
-        Features11.shaderDrawParameters   = VK_TRUE;
-        Features11.multiview              = VK_TRUE;
+        EnableRequiredFeatures(Features11, kRequiredFeatures11);
         Features11.storageBuffer16BitAccess = Supported11.storageBuffer16BitAccess;
 
         VkPhysicalDeviceVulkan12Features Features12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-        Features12.timelineSemaphore                            = VK_TRUE;
-        Features12.drawIndirectCount                            = VK_TRUE;
-        Features12.bufferDeviceAddress                          = VK_TRUE;
-        // Slang lays out pointer-reached structs scalar-packed (a float3 at offset 4), which std430 forbids without this.
-        Features12.scalarBlockLayout                            = VK_TRUE;
+        EnableRequiredFeatures(Features12, kRequiredFeatures12);
 
         if (Supported12.bufferDeviceAddressCaptureReplay && FRenderDoc::IsAttached())
         {
             Features12.bufferDeviceAddressCaptureReplay = VK_TRUE;
             LOG_DISPLAY("RenderDoc attached: enabling bufferDeviceAddressCaptureReplay so captures replay.");
         }
-        Features12.descriptorIndexing                           = VK_TRUE;
-        Features12.descriptorBindingPartiallyBound              = VK_TRUE;
-        Features12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
-        Features12.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
-        Features12.descriptorBindingUniformBufferUpdateAfterBind = VK_TRUE;
-        Features12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
-        Features12.descriptorBindingUpdateUnusedWhilePending    = VK_TRUE;
-        Features12.samplerFilterMinmax                          = VK_TRUE;
-        Features12.runtimeDescriptorArray                       = VK_TRUE;
         Features12.hostQueryReset                               = Supported12.hostQueryReset;
         GDevice->bHostQueryReset                                = Supported12.hostQueryReset == VK_TRUE;
         // Slang declares ShaderViewportIndex for SV_ViewportArrayIndex, which is only legal with this enabled.
@@ -3058,13 +3126,9 @@ namespace Lumina::RHI
         GDevice->bShaderOutputViewportIndex                     = Supported12.shaderOutputViewportIndex == VK_TRUE;
         // Heap indices vary per lane in batched draws, and AMD otherwise samples the first lane's descriptor for the wave.
         Features12.shaderSampledImageArrayNonUniformIndexing    = Supported12.shaderSampledImageArrayNonUniformIndexing;
-        Features12.shaderInt8                                   = VK_TRUE;
-        Features12.shaderFloat16                                = VK_TRUE;
 
         VkPhysicalDeviceVulkan13Features Features13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-        Features13.dynamicRendering = VK_TRUE;
-        Features13.synchronization2 = VK_TRUE;
-        Features13.shaderDemoteToHelperInvocation = VK_TRUE;
+        EnableRequiredFeatures(Features13, kRequiredFeatures13);
         Features13.subgroupSizeControl = GDevice->MeshRequiredSubgroupSize != 0 || GDevice->ComputeRequiredSubgroupSize != 0;
 
         VkPhysicalDeviceVulkan14Features Features14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
@@ -3102,14 +3166,6 @@ namespace Lumina::RHI
             GDevice->bSwapchainMaintenance1 = true;
         }
         
-        VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR DerivativeFeatures
-            { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR };
-        if (bComputeDerivatives && SupportedDerivatives.computeDerivativeGroupQuads)
-        {
-            DerivativeFeatures.computeDerivativeGroupQuads = VK_TRUE;
-            Chain(DerivativeFeatures);
-        }
-
         VkPhysicalDeviceFaultFeaturesEXT DeviceFaultFeatures{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT };
         if (bDeviceFault)
         {
