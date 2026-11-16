@@ -1193,3 +1193,94 @@ TEST_F(PhysicsSceneLifecycle, CharacterSurroundedByManySmallCollidersWarnsOnceAb
     const FString EntityTag = Lumina::Format("entity {} gathered", Character.Value);
     EXPECT_EQ(CountLoggedMessages(ELogLevel::Warn, "collision planes in one mover step", EntityTag.View()), 1) << "the mover's plane cap warns once, naming the character entity";
 }
+
+namespace
+{
+    const FVector3 kFloorVertices[] = { FVector3(-5.0f, 0.0f, -5.0f), FVector3(5.0f, 0.0f, -5.0f), FVector3(5.0f, 0.0f, 5.0f), FVector3(-5.0f, 0.0f, 5.0f) };
+    const uint32 kFloorIndices[] = { 0, 2, 1, 0, 3, 2 };
+
+    Physics::FPhysicsBodyDesc FloorDesc()
+    {
+        Physics::FPhysicsBodyDesc Desc;
+        Desc.TriangleVertices = kFloorVertices;
+        Desc.TriangleIndices = kFloorIndices;
+        return Desc;
+    }
+
+    SRayCastSettings DownRay()
+    {
+        SRayCastSettings Query;
+        Query.Start = FVector3(1.0f, 3.0f, 1.0f);
+        Query.End = FVector3(1.0f, -3.0f, 1.0f);
+        return Query;
+    }
+}
+
+TEST_F(PhysicsSceneLifecycle, ABodyBuiltFromRawTrianglesNeedsNoEntity)
+{
+    const SPhysicsBodyTarget Floor = Scene->CreateBody(FloorDesc());
+    ASSERT_TRUE(Floor.IsSet());
+    EXPECT_EQ(Scene->GetBodyCount(), 1u);
+
+    TOptional<SRayResult> Hit = Scene->CastRay(DownRay());
+    ASSERT_TRUE(Hit.IsSet());
+    EXPECT_EQ(Hit->Entity, ECS::NullEntity.Value);
+    EXPECT_EQ(Hit->Target.Slot, Floor.Slot);
+    EXPECT_NEAR(Hit->Location.y, 0.0f, 1e-3f);
+
+    Scene->SetBodyTransform(Floor, FVector3(0.0f, 1.0f, 0.0f), FQuat::Identity());
+    Hit = Scene->CastRay(DownRay());
+    ASSERT_TRUE(Hit.IsSet());
+    EXPECT_NEAR(Hit->Location.y, 1.0f, 1e-3f);
+
+    Scene->DestroyBody(Floor);
+    Scene->Update(Dt);
+    EXPECT_EQ(Scene->GetBodyCount(), 0u);
+    EXPECT_FALSE(Scene->CastRay(DownRay()).IsSet());
+
+    Scene->DestroyBody(Floor);
+    EXPECT_EQ(Scene->GetBodyCount(), 0u);
+}
+
+TEST_F(PhysicsSceneLifecycle, ADynamicBodyWithNoEntityFallsOntoACreatedFloor)
+{
+    ASSERT_TRUE(Scene->CreateBody(FloorDesc()).IsSet());
+
+    SMeshCollision Ball;
+    SCollisionPrimitive& Sphere = Ball.Primitives.AddDefaultedGetRef();
+    Sphere.Type = ECollisionPrimitiveType::Sphere;
+    Sphere.Radius = 0.5f;
+
+    Physics::FPhysicsBodyDesc Desc;
+    Desc.Type = EBodyType::Dynamic;
+    Desc.Position = FVector3(1.0f, 3.0f, 1.0f);
+    Desc.Collision = &Ball;
+    Desc.Mass = 4.0f;
+    const SPhysicsBodyTarget Body = Scene->CreateBody(Desc);
+    ASSERT_TRUE(Body.IsSet());
+
+    for (int32 Step = 0; Step < 180; ++Step)
+    {
+        Scene->Update(Dt);
+    }
+
+    Physics::FPhysicsBodyState State;
+    ASSERT_TRUE(Scene->TryGetTargetState(Body, State));
+    EXPECT_NEAR(State.Position.y, 0.5f, 0.05f) << "it rests on the triangles";
+    EXPECT_NEAR(State.Mass, 4.0f, 1e-3f);
+}
+
+TEST_F(PhysicsSceneLifecycle, DestroyBodyLeavesEntityBodiesAlone)
+{
+    const ECS::FEntity Entity = Spawn();
+    Scene->Update(0.0);
+    TOptional<SRayResult> Hit = Scene->CastRay(Ray());
+    ASSERT_TRUE(Hit.IsSet());
+    ASSERT_EQ(Hit->Entity, Entity.Value);
+
+    Scene->DestroyBody(Hit->Target);
+    Scene->SetBodyTransform(Hit->Target, FVector3(50.0f, 0.0f, 0.0f), FQuat::Identity());
+    Scene->Update(Dt);
+    EXPECT_EQ(Scene->GetBodyCount(), 1u);
+    EXPECT_TRUE(Scene->CastRay(Ray()).IsSet());
+}

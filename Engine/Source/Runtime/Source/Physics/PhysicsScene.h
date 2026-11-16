@@ -123,6 +123,21 @@ namespace Lumina::Physics
         int32                   SourceIndex = -1;       // Echoed back as SRayResult::InstanceIndex on a hit.
     };
 
+    // A body no entity owns, for procedural or tool geometry. Shapes come from Collision when set, else from the raw triangles, three indices each.
+    struct FPhysicsBodyDesc
+    {
+        EBodyType               Type = EBodyType::Static;
+        FVector3                Position = FVector3(0.0f);
+        FQuat                   Rotation = FQuat::Identity();
+        FVector3                Scale = FVector3(1.0f);
+        TSpan<const FVector3>   TriangleVertices;
+        TSpan<const uint32>     TriangleIndices;
+        const SMeshCollision*   Collision = nullptr;
+        const CPhysicsMaterial* Material = nullptr;
+        SCollisionProfile       Profile = { .Layer = ECollisionProfiles::Static };
+        float                   Mass = 0.0f;            // 0 keeps the mass the shapes give a dynamic body.
+    };
+
     enum class EPhysicsBodyStatus : uint8 { Missing, Pending, Ready, Failed };
 
     // Everything a character's next step reads from its last one, so a predicting client can rewind to it.
@@ -358,6 +373,11 @@ namespace Lumina::Physics
         // Static bodies for instanced geometry (foliage), merged per material and cell into compound bodies; hits report Owner. 0 = nothing built.
         virtual uint32 CreateStaticBodyGroup(ECS::FEntity Owner, TSpan<const FStaticInstanceDesc> Instances) { return 0; }
         virtual void DestroyStaticBodyGroup(uint32 GroupID) {}
+
+        // Built before returning, so the target can be driven and read at once; unset when nothing was built. Hits on it report no entity.
+        virtual SPhysicsBodyTarget CreateBody(const FPhysicsBodyDesc& Desc) { return {}; }
+        virtual void DestroyBody(const SPhysicsBodyTarget& Body) {}
+        virtual void SetBodyTransform(const SPhysicsBodyTarget& Body, const FVector3& Position, const FQuat& Rotation) {}
 
         // Build a ragdoll's bodies + constraints and add them to the scene. Returns an opaque handle the
         // caller stores; null on failure. Must be called outside the physics step (PrePhysics is fine).

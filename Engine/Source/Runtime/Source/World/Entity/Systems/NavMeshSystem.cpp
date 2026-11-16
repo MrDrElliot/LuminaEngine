@@ -284,14 +284,6 @@ namespace Lumina
             }
         }
 
-        // 8-bit local indices packed 3 per uint32; vertex indices local to Meshlet.VertexOffset.
-        FORCEINLINE void UnpackTri(uint32 Packed, uint32& A, uint32& B, uint32& C)
-        {
-            A = (Packed >> 0)  & 0xFFu;
-            B = (Packed >> 8)  & 0xFFu;
-            C = (Packed >> 16) & 0xFFu;
-        }
-
 
         bool TriIntersectsAABB(const FVector3& A, const FVector3& B, const FVector3& C, const FVector3& BMin, const FVector3& BMax)
         {
@@ -536,46 +528,77 @@ namespace Lumina
             return Fallback ? Fallback->StaticMesh.Get() : nullptr;
         }
 
-        void EmitMeshGeometry(const FMatrix4& W, const FMeshResource& Res, const FVector3& BakeMin, const FVector3& BakeMax, FGatherAccumulator& Acc, bool bCoarsestLOD = false)
+        // Mesh-space triangles, three corners each, placed by World as they are emitted.
+        void EmitLocalTriangles(const FMatrix4& World, const TVector<FVector3>& Tris, const FVector3& BakeMin, const FVector3& BakeMax, FGatherAccumulator& Acc)
         {
-            const FMeshletData&  Md  = Res.MeshletData;
-            if (Md.IsEmpty() || Res.bSkinnedMesh) return;
-
-            const TVector<uint32>& MT = Md.MeshletTriangles;
-
-            for (const FGeometrySurface& Surface : Res.GeometrySurfaces)
+            for (int32 i = 0; i + 2 < Tris.Num(); i += 3)
             {
-                uint32 Lod = 0;
-                if (bCoarsestLOD)
-                {
-                    for (uint32 Candidate = 1; Candidate < MAX_MESH_LODS; ++Candidate)
-                    {
-                        Lod = Surface.LODMeshletCount[Candidate] != 0u ? Candidate : Lod;
-                    }
-                }
-                const uint32 First = Surface.LODMeshletOffset[Lod];
-                const uint32 Count = Surface.LODMeshletCount[Lod];
-                for (uint32 m = 0; m < Count; ++m)
-                {
-                    const FMeshlet& Meshlet = Md.Meshlets[First + m];
-
-                    FVector3 LocalVerts[MESHLET_MAX_VERTICES];
-                    for (uint32 v = 0; v < Meshlet.VertexCount; ++v)
-                    {
-                        const FVector3 Local = GetMeshletVertexPosition(Md, Meshlet, v, false);
-                        LocalVerts[v] = FVector3(W * FVector4(Local, 1.0f));
-                    }
-
-                    const uint32 T0 = Meshlet.TriangleOffset;
-                    for (uint32 t = 0; t < Meshlet.TriangleCount; ++t)
-                    {
-                        uint32 A, B, C;
-                        UnpackTri(MT[T0 + t], A, B, C);
-                        EmitTri(Acc, BakeMin, BakeMax, LocalVerts[A], LocalVerts[B], LocalVerts[C]);
-                    }
-                }
+                EmitTri(Acc, BakeMin, BakeMax, FVector3(World * FVector4(Tris[i], 1.0f)),
+                    FVector3(World * FVector4(Tris[i + 1], 1.0f)), FVector3(World * FVector4(Tris[i + 2], 1.0f)));
             }
         }
+
+        // What physics collides with for a mesh that has no authored collision, as mesh-space triangles; empty while the mesh has no geometry yet.
+        TSharedPtr<TVector<FVector3>> BuildFallbackTriangles(const FMeshResource& Resource, bool bConvex, FVector3& OutMin, FVector3& OutMax)
+        {
+            TVector<FVector3> Vertices;
+            TVector<uint32> Indices;
+            if (!Physics::CollisionGen::BuildFallbackColliderTriangles(Resource, bConvex, Vertices, Indices))
+            {
+                return nullptr;
+            }
+
+            auto Soup = MakeShared<TVector<FVector3>>();
+            Soup->Reserve(Indices.Num());
+            OutMin = FVector3( FLT_MAX);
+            OutMax = FVector3(-FLT_MAX);
+            for (uint32 Index : Indices)
+            {
+                Soup->Add(Vertices[Index]);
+                OutMin = Math::Min(OutMin, Vertices[Index]);
+                OutMax = Math::Max(OutMax, Vertices[Index]);
+            }
+            return Soup;
+        }
+
+        // One mesh's fallback triangles, shared by every collider and foliage instance that places it.
+        struct FNavMeshTriangles
+        {
+            TWeakObjectPtr<CStaticMesh>   Mesh;
+            uint32                        GeometryVersion = 0;
+            TSharedPtr<TVector<FVector3>> Triangles;
+            FVector3                      LocalMin = FVector3( FLT_MAX);
+            FVector3                      LocalMax = FVector3(-FLT_MAX);
+        };
+
+        // Keyed by mesh and hull choice; the weak pointer tells a freed mesh from a new one at the same address.
+        struct FNavMeshTriangleCache
+        {
+            THashMap<uint64, FNavMeshTriangles> Entries;
+
+            const FNavMeshTriangles* Acquire(CStaticMesh* Mesh, bool bConvex)
+            {
+                if (Mesh == nullptr || Mesh->GetMeshResource().bSkinnedMesh)
+                {
+                    return nullptr;
+                }
+
+                FNavMeshTriangles& Entry = Entries[(uint64)(uintptr_t)Mesh | (bConvex ? 1u : 0u)];
+                if (Entry.Triangles == nullptr || Entry.Mesh.Get() != Mesh || Entry.GeometryVersion != Mesh->GetGeometryVersion())
+                {
+                    Entry = FNavMeshTriangles();
+                    Entry.Mesh = Mesh;
+                    Entry.GeometryVersion = Mesh->GetGeometryVersion();
+                    Entry.Triangles = BuildFallbackTriangles(Mesh->GetMeshResource(), bConvex, Entry.LocalMin, Entry.LocalMax);
+                }
+                return Entry.Triangles != nullptr ? &Entry : nullptr;
+            }
+
+            void ForgetFreedMeshes()
+            {
+                Entries.RemoveAll([](const auto& Pair) { return Pair.Value.Mesh.Get() == nullptr; });
+            }
+        };
 
         // A window of a heightfield copied on the game thread, so a bake worker tessellates it without touching the live component.
         struct FNavTerrainPatch
@@ -705,16 +728,16 @@ namespace Lumina
             ENavColliderType                Type  = ENavColliderType::Box;
             FMatrix4                        World = FMatrix4(1.0f);
             FVector3                        Shape = FVector3(0.0f);   // Box half-extent, or Radius and HalfHeight
-            CStaticMesh*                    Mesh  = nullptr;
             TSharedPtr<FDynamicMeshRenderData> DynamicMesh;          // held so a re-commit on the game thread cannot free it under the bake
+            // World space, except under Mesh and Foliage, where it is in mesh space and placed by World.
             TSharedPtr<TVector<FVector3>>   TriangleSoup;
             TSharedPtr<FNavTerrainPatch>    TerrainPatch;
             TSharedPtr<FNavAreaVolume>      AreaVolume;
             TSharedPtr<FNavOffMeshLink>     Link;
             // Foliage type, shared by every instance of a species in its local space and placed by World.
             TSharedPtr<const TVector<FNavSourcePrim>> Children;
-            // Reads the mesh's coarsest LOD, enough for a footprint at a fraction of the triangles.
-            bool                            bCoarsestLOD = false;
+            // A dynamic mesh collider wrapped in one hull, as its physics body is.
+            bool                            bConvex = false;
         };
 
         bool IsAnnotation(ENavColliderType Type)
@@ -739,8 +762,17 @@ namespace Lumina
             {
                 case ENavColliderType::Box:    EmitBoxGeometry(P.World, P.Shape, BakeMin, BakeMax, Acc); break;
                 case ENavColliderType::Sphere: EmitSphereGeometry(P.World, P.Shape.x, BakeMin, BakeMax, Acc); break;
-                case ENavColliderType::Mesh:   if (P.Mesh) EmitMeshGeometry(P.World, P.Mesh->GetMeshResource(), BakeMin, BakeMax, Acc, P.bCoarsestLOD); break;
-                case ENavColliderType::DynamicMesh: if (P.DynamicMesh) EmitMeshGeometry(P.World, P.DynamicMesh->Resource, BakeMin, BakeMax, Acc); break;
+                case ENavColliderType::Mesh:   if (P.TriangleSoup) EmitLocalTriangles(P.World, *P.TriangleSoup, BakeMin, BakeMax, Acc); break;
+                case ENavColliderType::DynamicMesh:
+                    if (P.DynamicMesh)
+                    {
+                        FVector3 LocalMin, LocalMax;
+                        if (const TSharedPtr<TVector<FVector3>> Soup = BuildFallbackTriangles(P.DynamicMesh->Resource, P.bConvex, LocalMin, LocalMax))
+                        {
+                            EmitLocalTriangles(P.World, *Soup, BakeMin, BakeMax, Acc);
+                        }
+                    }
+                    break;
                 case ENavColliderType::Capsule:
                 case ENavColliderType::CharacterCapsule: EmitCapsuleGeometry(P.World, P.Shape.y, P.Shape.x, BakeMin, BakeMax, Acc); break;
                 case ENavColliderType::Cylinder: EmitCylinderGeometry(P.World, P.Shape.y, P.Shape.x, BakeMin, BakeMax, Acc); break;
@@ -762,12 +794,7 @@ namespace Lumina
                         {
                             if (Child.TriangleSoup)
                             {
-                                const TVector<FVector3>& Tris = *Child.TriangleSoup;
-                                for (int32 i = 0; i + 2 < Tris.Num(); i += 3)
-                                {
-                                    EmitTri(Acc, BakeMin, BakeMax, FVector3(P.World * FVector4(Tris[i], 1.0f)),
-                                        FVector3(P.World * FVector4(Tris[i + 1], 1.0f)), FVector3(P.World * FVector4(Tris[i + 2], 1.0f)));
-                                }
+                                EmitLocalTriangles(P.World, *Child.TriangleSoup, BakeMin, BakeMax, Acc);
                                 continue;
                             }
                             FNavSourcePrim Placed = Child;
@@ -979,7 +1006,7 @@ namespace Lumina
         };
 
         // Mirrors CFoliageCollisionSystem, an authored shape first and the mesh otherwise, read as triangles like a mesh collider.
-        FFoliageNavTemplate BuildFoliageNavTemplate(const SFoliageType& Type)
+        FFoliageNavTemplate BuildFoliageNavTemplate(const SFoliageType& Type, FNavMeshTriangleCache& MeshTriangles)
         {
             FFoliageNavTemplate Template;
             if (!Type.bEnableCollision)
@@ -998,16 +1025,14 @@ namespace Lumina
                 });
                 Template.ContentId = MakeContentId(Shape, Shape->TriangleIndices.Num(), Shape->Primitives.Num());
             }
-            else if (CStaticMesh* Mesh = Type.Mesh.Get(); Mesh != nullptr && !Mesh->GetMeshResource().bSkinnedMesh)
+            else if (const FNavMeshTriangles* Fallback = MeshTriangles.Acquire(Type.Mesh.Get(), Type.bConvexCollision))
             {
                 FNavSourcePrim& Child = Children->EmplaceGetRef();
                 Child.Type = ENavColliderType::Mesh;
-                Child.Mesh = Mesh;
-                Child.bCoarsestLOD = true;
-                const FMeshletData& MeshletData = Mesh->GetMeshResource().MeshletData;
-                Template.ContentId = MakeContentId(Mesh, MeshletData.VertexPositions.Num(), MeshletData.MeshletTriangles.Num());
-                Template.LocalMin = Mesh->GetAABB().Min;
-                Template.LocalMax = Mesh->GetAABB().Max;
+                Child.TriangleSoup = Fallback->Triangles;
+                Template.ContentId = MakeContentId(Type.Mesh.Get(), Fallback->GeometryVersion, Type.bConvexCollision);
+                Template.LocalMin = Fallback->LocalMin;
+                Template.LocalMax = Fallback->LocalMax;
             }
 
             if (!Children->IsEmpty())
@@ -1024,6 +1049,7 @@ namespace Lumina
             for (const SFoliageType& Type : Foliage.Types)
             {
                 Hash::HashCombine(Seed, (size_t)Type.bEnableCollision);
+                Hash::HashCombine(Seed, (size_t)Type.bConvexCollision);
                 const SMeshCollision* Shape = Type.GetCollision();
                 Hash::HashCombine(Seed, (uintptr_t)Shape);
                 if (Shape != nullptr)
@@ -1035,6 +1061,7 @@ namespace Lumina
                 Hash::HashCombine(Seed, (uintptr_t)Mesh);
                 if (Mesh != nullptr)
                 {
+                    Hash::HashCombine(Seed, Mesh->GetGeometryVersion());
                     Hash::HashCombine(Seed, Mesh->GetMeshResource().MeshletData.MeshletTriangles.Num());
                 }
             }
@@ -1059,9 +1086,10 @@ namespace Lumina
         TVector<FVector3>            DetectedMax;
     };
 
-    struct FNavFoliageCache
+    struct FNavSourceCache
     {
         THashMap<uint32, FNavFoliageEntity> Entities;
+        NavMeshSystemInternal::FNavMeshTriangleCache MeshTriangles;
     };
 
     namespace NavMeshSystemInternal
@@ -1072,7 +1100,7 @@ namespace Lumina
         }
 
         // Rebuilt only when the instances or a species' collision change, so a steady scan never re-places instances.
-        FNavFoliageEntity& RefreshFoliageEntity(FNavFoliageCache& Cache, ECS::FEntity E, const SFoliageComponent& Foliage)
+        FNavFoliageEntity& RefreshFoliageEntity(FNavSourceCache& Cache, ECS::FEntity E, const SFoliageComponent& Foliage)
         {
             FNavFoliageEntity& Entry = Cache.Entities[(uint32)E];
             Entry.bSeen = true;
@@ -1089,7 +1117,7 @@ namespace Lumina
             Entry.Templates.Reserve(Foliage.Types.Num());
             for (const SFoliageType& Type : Foliage.Types)
             {
-                Entry.Templates.Add(BuildFoliageNavTemplate(Type));
+                Entry.Templates.Add(BuildFoliageNavTemplate(Type, Cache.MeshTriangles));
             }
 
             constexpr uint32 MaxKeyedInstances = 1u << 24;
@@ -1155,7 +1183,7 @@ namespace Lumina
             });
         }
 
-        void CollectNavSources(CNavMeshSystem::FSourceQueries& Queries, const FVector3& BakeMin, const FVector3& BakeMax, TVector<FNavSourceEntry>& Out, FNavFoliageCache* FoliageCache, const ECS::FEntity* Only = nullptr)
+        void CollectNavSources(CNavMeshSystem::FSourceQueries& Queries, const FVector3& BakeMin, const FVector3& BakeMax, TVector<FNavSourceEntry>& Out, FNavSourceCache* Cache, const ECS::FEntity* Only = nullptr)
         {
             // A simulated body is loose debris rather than level geometry, and baking it would rebuild tiles every time it settles. Concave colliders never simulate.
             auto IsSimulated = [&Queries](ECS::FEntity Entity)
@@ -1194,11 +1222,11 @@ namespace Lumina
             });
 
             // Painted instances are world space, and erasing one shifts or swaps indices, which the detector sees as a move.
-            if (FoliageCache != nullptr)
+            if (Cache != nullptr)
             {
                 ForEachFoliageSource(Queries, Only, [&](ECS::FEntity E, const SFoliageComponent& Foliage)
                 {
-                    const FNavFoliageEntity& Cached = RefreshFoliageEntity(*FoliageCache, E, Foliage);
+                    const FNavFoliageEntity& Cached = RefreshFoliageEntity(*Cache, E, Foliage);
                     for (int32 Index = 0; Index < Cached.Min.Num(); ++Index)
                     {
                         const FVector3& Mn = Cached.Min[Index];
@@ -1245,19 +1273,21 @@ namespace Lumina
                     return;
                 }
 
+                FNavMeshTriangleCache Uncached;
+                FNavMeshTriangleCache& MeshTriangles = Cache != nullptr ? Cache->MeshTriangles : Uncached;
+                const FNavMeshTriangles* Triangles = MeshTriangles.Acquire(Mesh, MC.bConvex);
+                if (Triangles == nullptr) return;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Mesh);
                 Entry.Prim.Type = ENavColliderType::Mesh;
                 Entry.Prim.World = ColliderToWorld(X, MC.TranslationOffset, MC.RotationOffset);
-                Entry.Prim.Mesh = Mesh;
-                const FMeshletData& MeshletData = Mesh->GetMeshResource().MeshletData;
-                Entry.ContentId = MakeContentId(Mesh, MeshletData.VertexPositions.Num(), MeshletData.MeshletTriangles.Num());
-                const SAABB& Local = Mesh->GetAABB();
+                Entry.Prim.TriangleSoup = Triangles->Triangles;
+                Entry.ContentId = MakeContentId(Mesh, Triangles->GeometryVersion, MC.bConvex);
+                const FVector3& Mn = Triangles->LocalMin;
+                const FVector3& Mx = Triangles->LocalMax;
                 const FVector3 Corners[8] = {
-                    {Local.Min.x, Local.Min.y, Local.Min.z}, {Local.Max.x, Local.Min.y, Local.Min.z},
-                    {Local.Min.x, Local.Max.y, Local.Min.z}, {Local.Max.x, Local.Max.y, Local.Min.z},
-                    {Local.Min.x, Local.Min.y, Local.Max.z}, {Local.Max.x, Local.Min.y, Local.Max.z},
-                    {Local.Min.x, Local.Max.y, Local.Max.z}, {Local.Max.x, Local.Max.y, Local.Max.z},
+                    {Mn.x, Mn.y, Mn.z}, {Mx.x, Mn.y, Mn.z}, {Mn.x, Mx.y, Mn.z}, {Mx.x, Mx.y, Mn.z},
+                    {Mn.x, Mn.y, Mx.z}, {Mx.x, Mn.y, Mx.z}, {Mn.x, Mx.y, Mx.z}, {Mx.x, Mx.y, Mx.z},
                 };
                 CornersAABB(Entry.Prim.World, Corners, 8, Entry.AABBMin, Entry.AABBMax);
                 Out.Add(Move(Entry));
@@ -1269,13 +1299,14 @@ namespace Lumina
                 if (!DMC.bAffectsNavigation || (DMC.bConvex && IsSimulated(E)) || DMFound == nullptr) return;
                 const SDynamicMeshComponent& DM = *DMFound;
                 TSharedPtr<FDynamicMeshRenderData> MeshData = DM.LoadRenderData();
-                if (!MeshData || MeshData->Resource.MeshletData.IsEmpty()) return;
+                if (!MeshData || (MeshData->Resource.MeshletData.IsEmpty() && MeshData->Resource.Indices.IsEmpty())) return;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::DynamicMesh);
                 Entry.ContentId = DM.LoadRenderDataVersion();
                 Entry.Prim.Type = ENavColliderType::DynamicMesh;
                 Entry.Prim.World = X.GetWorldMatrix();
                 Entry.Prim.DynamicMesh = MeshData;
+                Entry.Prim.bConvex = DMC.bConvex;
                 const FVector3& Mn = MeshData->LocalMin;
                 const FVector3& Mx = MeshData->LocalMax;
                 const FVector3 Corners[8] = {
@@ -1490,7 +1521,7 @@ namespace Lumina
         TVector<uint32>                         FreeRecords;
         THashMap<uint64, uint32>                RecordOfKey;
         THashMap<ECS::FEntity, TVector<uint64>> KeysOfEntity;
-        FNavFoliageCache                        Foliage;
+        FNavSourceCache                         Cache;
 
         // Raised by component signals, which a parallel script's patch can fire off the game thread.
         FMutex                                  PendingLock;
@@ -1589,12 +1620,15 @@ namespace Lumina
                 Sources.SweepOrder.Add(Entity);
             }
             Sources.SweepCursor = 0;
+
+            // Once a lap, so meshes unloaded since the last one stop holding their triangles.
+            Sources.Cache.MeshTriangles.ForgetFreedMeshes();
         }
 
         void SeedSources(CNavMeshSystem::FSourceQueries& Queries, FNavSourceTracker& Sources)
         {
             TVector<FNavSourceEntry> All;
-            CollectNavSources(Queries, FVector3(-kUnbounded), FVector3(kUnbounded), All, &Sources.Foliage);
+            CollectNavSources(Queries, FVector3(-kUnbounded), FVector3(kUnbounded), All, &Sources.Cache);
             Sources.Records.Reserve(All.Num());
             Sources.RecordElement.Reserve(All.Num());
             for (FNavSourceEntry& Entry : All)
@@ -1617,11 +1651,11 @@ namespace Lumina
             const bool bValid = Context.IsValidEntity(Entity);
             if (bValid)
             {
-                CollectNavSources(Queries, FVector3(-kUnbounded), FVector3(kUnbounded), Current, &Sources.Foliage, &Entity);
+                CollectNavSources(Queries, FVector3(-kUnbounded), FVector3(kUnbounded), Current, &Sources.Cache, &Entity);
             }
             if (!bValid || Queries.Foliage.TryGet<SFoliageComponent>(Entity) == nullptr)
             {
-                Sources.Foliage.Entities.Remove((uint32)Entity);
+                Sources.Cache.Entities.Remove((uint32)Entity);
             }
 
             auto KeysIt = Sources.KeysOfEntity.Find(Entity);
@@ -1796,7 +1830,7 @@ namespace Lumina
                 },
                 [&](ECS::FEntity E, const SFoliageComponent& Foliage, uint32)
                 {
-                    auto Cached = Sources.Foliage.Entities.Find((uint32)E);
+                    auto Cached = Sources.Cache.Entities.Find((uint32)E);
                     return Cached == nullptr || Cached->Signature != FoliageNavSignature(Foliage);
                 });
         }

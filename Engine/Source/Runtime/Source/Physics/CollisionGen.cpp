@@ -57,23 +57,55 @@ namespace Lumina::Physics::CollisionGen
         }
     }
 
-    bool GatherMeshGeometry(const CStaticMesh* Mesh, TVector<FVector3>& OutPositions, TVector<uint32>& OutIndices)
+    bool GatherResourceGeometry(const FMeshResource& Resource, TVector<FVector3>& OutPositions, TVector<uint32>& OutIndices)
     {
         OutPositions.Reset();
         OutIndices.Reset();
-
-        const FMeshResource* Resource = ResolveResource(Mesh);
-        if (Resource == nullptr)
+        if (Resource.bSkinnedMesh)
         {
             return false;
         }
 
-        for (const FGeometrySurface& Surface : Resource->GeometrySurfaces)
+        if (Resource.MeshletData.IsEmpty())
         {
-            AppendSurface(*Resource, Surface, OutPositions, OutIndices);
+            OutPositions.Append(Resource.Positions.GetData(), Resource.Positions.Num());
+            OutIndices.Append(Resource.Indices.GetData(), Resource.Indices.Num());
+        }
+        else
+        {
+            for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
+            {
+                AppendSurface(Resource, Surface, OutPositions, OutIndices);
+            }
         }
 
         return !OutPositions.IsEmpty() && OutIndices.Num() >= 3;
+    }
+
+    bool GatherMeshGeometry(const CStaticMesh* Mesh, TVector<FVector3>& OutPositions, TVector<uint32>& OutIndices)
+    {
+        if (Mesh == nullptr)
+        {
+            OutPositions.Reset();
+            OutIndices.Reset();
+            return false;
+        }
+        return GatherResourceGeometry(Mesh->GetMeshResource(), OutPositions, OutIndices);
+    }
+
+    bool BuildFallbackColliderTriangles(const FMeshResource& Resource, bool bConvex, TVector<FVector3>& OutVertices, TVector<uint32>& OutIndices)
+    {
+        if (!GatherResourceGeometry(Resource, OutVertices, OutIndices))
+        {
+            return false;
+        }
+        if (!bConvex)
+        {
+            return true;
+        }
+
+        const TVector<FVector3> Points = Move(OutVertices);
+        return BuildHullTriangles(Points, OutVertices, OutIndices);
     }
 
     namespace

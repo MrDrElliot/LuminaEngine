@@ -571,22 +571,7 @@ namespace Lumina::Physics
         Request.Owner = Owner;
         for (const FStaticInstanceDesc& Instance : Instances)
         {
-            FRigidBodyBuildResult Build;
-            Build.BodyDef = b3DefaultBodyDef();
-            Build.BodyDef.type = b3_staticBody;
-            Build.BodyDef.position = Box3DUtils::ToB3Vec3(Instance.Position);
-            Build.BodyDef.rotation = Box3DUtils::ToB3Quat(Instance.Rotation);
-            Build.ShapeDef = b3DefaultShapeDef();
-            Build.ShapeDef.updateBodyMass = false;
-            Build.ShapeDef.filter = Box3DUtils::MakeShapeFilter(Instance.Profile);
-            Build.ShapeDef.userData = Box3DUtils::PackInstanceIndex(Box3DUtils::PackProfileUserData(Instance.Profile), Instance.SourceIndex);
-            Build.ShapeDef.enableCustomFiltering = Box3DUtils::UsesPermissiveCollisionFilter();
-            Build.ShapeDef.invokeContactCreation = false;
-            if (Instance.Material)
-            {
-                Build.ShapeDef.baseMaterial.friction = Instance.Material->Friction;
-                Build.ShapeDef.baseMaterial.restitution = Instance.Material->Restitution;
-            }
+            FRigidBodyBuildResult Build = MakeEntityFreeBuild(EBodyType::Static, Instance.Position, Instance.Rotation, Instance.Profile, Instance.Material, Instance.SourceIndex);
             if (Instance.Collision)
             {
                 BuildMeshCollision(*Instance.Collision, Instance.Scale, Build);
@@ -618,6 +603,89 @@ namespace Lumina::Physics
         StaticBodyGroups.FindOrAdd(GroupID);
         PendingStaticGroups.Add(Move(Request));
         return GroupID;
+    }
+
+    FRigidBodyBuildResult FBox3DPhysicsScene::MakeEntityFreeBuild(EBodyType Type, const FVector3& Position, const FQuat& Rotation,
+        const SCollisionProfile& Profile, const CPhysicsMaterial* Material, int32 SourceIndex) const
+    {
+        FRigidBodyBuildResult Build;
+        Build.BodyDef = b3DefaultBodyDef();
+        Build.BodyDef.type = Box3DUtils::ToBox3DBodyType(Type);
+        Build.BodyDef.position = Box3DUtils::ToB3Vec3(Position);
+        Build.BodyDef.rotation = Box3DUtils::ToB3Quat(Rotation);
+        Build.ShapeDef = b3DefaultShapeDef();
+        Build.ShapeDef.updateBodyMass = false;
+        Build.ShapeDef.filter = Box3DUtils::MakeShapeFilter(Profile);
+        Build.ShapeDef.userData = Box3DUtils::PackInstanceIndex(Box3DUtils::PackProfileUserData(Profile), SourceIndex);
+        Build.ShapeDef.enableCustomFiltering = Box3DUtils::UsesPermissiveCollisionFilter();
+        Build.ShapeDef.invokeContactCreation = false;
+        if (Material)
+        {
+            Build.ShapeDef.baseMaterial.friction = Material->Friction;
+            Build.ShapeDef.baseMaterial.restitution = Material->Restitution;
+        }
+        return Build;
+    }
+
+    SPhysicsBodyTarget FBox3DPhysicsScene::CreateBody(const FPhysicsBodyDesc& Desc)
+    {
+        ValidateNotInParallelSystem("CreateBody");
+        FRigidBodyBuildResult Build = MakeEntityFreeBuild(Desc.Type, Desc.Position, Desc.Rotation, Desc.Profile, Desc.Material, -1);
+        if (Desc.Collision != nullptr)
+        {
+            BuildMeshCollision(*Desc.Collision, Desc.Scale, Build);
+        }
+        else if (!Desc.TriangleIndices.IsEmpty())
+        {
+            SMeshCollision Triangles;
+            Triangles.bUseTriangleMesh = true;
+            Triangles.TriangleVertices.Append(Desc.TriangleVertices.GetData(), (int32)Desc.TriangleVertices.Num());
+            Triangles.TriangleIndices.Append(Desc.TriangleIndices.GetData(), (int32)Desc.TriangleIndices.Num());
+            BuildMeshCollision(Triangles, Desc.Scale, Build);
+        }
+        if (Build.Shapes.IsEmpty())
+        {
+            return {};
+        }
+
+        Build.bOverrideMass = Desc.Mass > 0.0f;
+        Build.ComputedMass = Desc.Mass;
+        const uint32 Handle = CommitRigidBody(ECS::NullEntity, Build);
+        if (Handle == InvalidBodyHandle)
+        {
+            return {};
+        }
+        CreatedBodies.Add(Handle);
+        return MakeBodyTarget(Handle);
+    }
+
+    void FBox3DPhysicsScene::DestroyBody(const SPhysicsBodyTarget& Body)
+    {
+        ValidateNotInParallelSystem("DestroyBody");
+        const uint32 Handle = HandleOfBody(ResolveTarget(Body));
+        if (CreatedBodies.Remove(Handle))
+        {
+            PendingBodyDestructions.Add(Handle);
+        }
+    }
+
+    void FBox3DPhysicsScene::SetBodyTransform(const SPhysicsBodyTarget& Body, const FVector3& Position, const FQuat& Rotation)
+    {
+        ValidateNotInParallelSystem("SetBodyTransform");
+        const b3BodyId BodyId = ResolveTarget(Body);
+        if (CreatedBodies.Contains(HandleOfBody(BodyId)))
+        {
+            b3Body_SetTransform(BodyId, Box3DUtils::ToB3Vec3(Position), Box3DUtils::ToB3Quat(Rotation));
+        }
+    }
+
+    void FBox3DPhysicsScene::DestroyAllCreatedBodies()
+    {
+        for (uint32 Handle : CreatedBodies)
+        {
+            DestroyBodyHandle(Handle);
+        }
+        CreatedBodies.Reset();
     }
 
     void FBox3DPhysicsScene::CommitStaticBodyGroup(uint32 GroupID, ECS::FEntity Owner, TSpan<FRigidBodyBuildResult> Builds)

@@ -284,6 +284,10 @@ namespace Lumina::Physics
         uint32 CreateStaticBodyGroup(ECS::FEntity Owner, TSpan<const FStaticInstanceDesc> Instances) override;
         void DestroyStaticBodyGroup(uint32 GroupID) override;
 
+        SPhysicsBodyTarget CreateBody(const FPhysicsBodyDesc& Desc) override;
+        void DestroyBody(const SPhysicsBodyTarget& Body) override;
+        void SetBodyTransform(const SPhysicsBodyTarget& Body, const FVector3& Position, const FQuat& Rotation) override;
+
         TSharedPtr<FPhysicsRagdollHandle> CreateRagdoll(const FRagdollDesc& Desc) override;
         bool IsRagdollReady(const FPhysicsRagdollHandle& Handle) const override;
         void ReadRagdollPose(const FPhysicsRagdollHandle& Handle, const FMatrix4& WorldToEntity, const FSkeletonResource* Skeleton, TVector<FMatrix4>& OutBoneTransforms) override;
@@ -425,6 +429,9 @@ namespace Lumina::Physics
         void MonitorBreakableConstraints(float Dt);
         void DestroyAllConstraints();
         void DestroyAllStaticBodyGroups();
+        void DestroyAllCreatedBodies();
+        FRigidBodyBuildResult MakeEntityFreeBuild(EBodyType Type, const FVector3& Position, const FQuat& Rotation, const SCollisionProfile& Profile,
+            const CPhysicsMaterial* Material, int32 SourceIndex) const;
         void DestroyGeometryCaches();
         void ApplyWorldSettings(const Lumina::SDefaultWorldSettings& Settings);
         bool WorldSettingsChanged(const Lumina::SDefaultWorldSettings& Settings);
@@ -636,6 +643,9 @@ namespace Lumina::Physics
 
         THashMap<uint32, TVector<uint32>>       StaticBodyGroups;
         uint32                                  NextStaticBodyGroupID = 1;
+
+        // Handles of bodies from CreateBody, the only ones DestroyBody and SetBodyTransform will touch.
+        THashSet<uint32>                        CreatedBodies;
 
         struct FBox3DConstraint
         {

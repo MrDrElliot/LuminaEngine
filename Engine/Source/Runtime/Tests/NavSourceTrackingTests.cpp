@@ -7,7 +7,9 @@
 #include "Config/NavigationSettings.h"
 #include "Core/Engine/Engine.h"
 #include "Renderer/MeshData.h"
+#include "World/Scene/RenderScene/SceneMeshes.h"
 #include "NavWorldTestUtil.h"
+#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/NavModifierComponent.h"
 #include "World/Entity/Components/PathFollowComponent.h"
 #include "World/Subsystems/NavigationSubsystem.h"
@@ -601,5 +603,99 @@ TEST(NavigationSubsystem, IsPathPartialStillReportsATighterCornerCap)
     CNavigationSubsystem* Navigation = World.World->GetNavigation();
     ASSERT_NE(Navigation, nullptr);
     EXPECT_TRUE(Navigation->IsPathPartial(FVector3(-20.0f, 0.0f, -20.0f), FVector3(20.0f, 0.0f, 20.0f), 1, FName()));
+    World.Stop();
+}
+
+// Two blocks with a gap between them in one mesh, so a hull wrapped around the whole mesh covers the ground in the gap.
+static TUniquePtr<FMeshResource> MakeTwoBlockResource()
+{
+    TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
+    for (const float CenterX : { -5.0f, 5.0f })
+    {
+        TVector<FSourceVertex> Vertices;
+        TVector<uint32> Indices;
+        PrimitiveMeshes::GenerateCube(Vertices, Indices);
+        const uint32 Base = (uint32)Resource->Positions.Num();
+        for (FSourceVertex& Vertex : Vertices)
+        {
+            Vertex.Position = Vertex.Position * FVector3(2.0f, 1.4f, 2.0f) + FVector3(CenterX, 0.0f, 0.0f);
+            Resource->AppendVertex(Vertex);
+        }
+        for (uint32 Index : Indices)
+        {
+            Resource->Indices.Add(Base + Index);
+        }
+    }
+    FGeometrySurface& Surface = Resource->GeometrySurfaces.AddDefaultedGetRef();
+    Surface.IndexCount = (uint32)Resource->Indices.Num();
+    return Resource;
+}
+
+// With no authored collision, nav reads what physics collides with, which for a convex collider is one hull and not the render triangles.
+static void ExpectTwoBlockGap(bool bConvex, bool bGapWalkable)
+{
+    const bool bWasHeadless = Global::GIsHeadless;
+    Global::GIsHeadless = true;
+    CStaticMesh* Blocks = NewObject<CStaticMesh>();
+    Blocks->SetMeshResource(MakeTwoBlockResource());
+    Global::GIsHeadless = bWasHeadless;
+    ASSERT_EQ(Blocks->GetCollision(), nullptr);
+
+    NavTest::FNavWorld World;
+    World.Create(64.0f);
+    ECS::FRegistry& Registry = World.Registry();
+    const ECS::FEntity Entity = Registry.Create();
+    FTransform Transform;
+    Transform.SetLocation(FVector3(0.0f, 0.7f, 0.0f));
+    Registry.Emplace<STransformComponent>(Entity, Transform);
+    SMeshColliderComponent& Collider = Registry.Emplace<SMeshColliderComponent>(Entity);
+    Collider.Mesh = Blocks;
+    Collider.bConvex = bConvex;
+    Registry.Emplace<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
+    World.Start();
+    ASSERT_TRUE(World.WaitReady());
+
+    EXPECT_FALSE(World.IsGroundWalkable(-5.0f, 0.0f));
+    EXPECT_FALSE(World.IsGroundWalkable(5.0f, 0.0f));
+    EXPECT_EQ(World.IsGroundWalkable(0.0f, 0.0f), bGapWalkable);
+    World.Stop();
+}
+
+TEST(NavSourceTracking, AConvexMeshColliderWithoutAuthoredCollisionBakesItsHull)
+{
+    ExpectTwoBlockGap(true, false);
+}
+
+TEST(NavSourceTracking, AConcaveMeshColliderWithoutAuthoredCollisionBakesItsTriangles)
+{
+    ExpectTwoBlockGap(false, true);
+}
+
+// A dynamic mesh can drop its CPU meshlets and keep only the triangles physics cooks, which nav reads too.
+TEST(NavSourceTracking, ADynamicMeshKeepingOnlyCollisionTrianglesCarvesTheMesh)
+{
+    NavTest::FNavWorld World;
+    World.Create(64.0f);
+    ECS::FRegistry& Registry = World.Registry();
+    const ECS::FEntity Entity = Registry.Create();
+    FTransform Transform;
+    Transform.SetLocation(FVector3(0.0f, 0.7f, 12.0f));
+    Registry.Emplace<STransformComponent>(Entity, Transform);
+    Registry.Emplace<SRigidBodyComponent>(Entity).BodyType = EBodyType::Static;
+
+    TSharedPtr<FDynamicMeshRenderData> Data = MakeShared<FDynamicMeshRenderData>();
+    TUniquePtr<FMeshResource> Blocks = MakeTwoBlockResource();
+    Data->Resource.Positions = Move(Blocks->Positions);
+    Data->Resource.Indices = Move(Blocks->Indices);
+    Data->LocalMin = FVector3(-6.0f, -0.7f, -1.0f);
+    Data->LocalMax = FVector3(6.0f, 0.7f, 1.0f);
+    Data->MeshletHeaderSlot = 1;
+    Registry.Emplace<SDynamicMeshComponent>(Entity).PublishRenderData(Move(Data));
+    Registry.Emplace<SDynamicMeshColliderComponent>(Entity);
+    World.Start();
+    ASSERT_TRUE(World.WaitReady());
+
+    EXPECT_FALSE(World.IsGroundWalkable(-5.0f, 12.0f));
+    EXPECT_TRUE(World.IsGroundWalkable(0.0f, 12.0f));
     World.Stop();
 }

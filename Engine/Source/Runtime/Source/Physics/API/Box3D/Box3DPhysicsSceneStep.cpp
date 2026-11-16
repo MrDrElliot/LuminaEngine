@@ -118,6 +118,7 @@ namespace Lumina::Physics
         PendingCharacters.Reset();
         PendingConstraintCreations.Reset();
         DestroyAllStaticBodyGroups();
+        DestroyAllCreatedBodies();
     }
 
     void FBox3DPhysicsScene::ApplyDirtyTransforms(float FixedDt, uint32 RemainingSteps, bool bFirstStep)

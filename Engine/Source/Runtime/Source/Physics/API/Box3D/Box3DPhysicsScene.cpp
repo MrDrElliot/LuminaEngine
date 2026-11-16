@@ -138,6 +138,7 @@ namespace Lumina::Physics
     {
         DestroyAllConstraints();
         DestroyAllStaticBodyGroups();
+        DestroyAllCreatedBodies();
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
 

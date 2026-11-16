@@ -9,6 +9,7 @@
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Assets/AssetTypes/Mesh/MeshCollision.h"
 #include "Log/Log.h"
+#include "Physics/CollisionGen.h"
 #include "Renderer/MeshQuantization.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -100,61 +101,27 @@ namespace Lumina::Physics
     bool GatherMeshResourceGeometry(const FMeshResource& Resource, const FVector3& Scale,
                                     TVector<b3Vec3>& OutPositions, TVector<int32>* OutIndices)
     {
-            if (Resource.bSkinnedMesh || !HasCollisionGeometry(Resource))
+        TVector<FVector3> Positions;
+        TVector<uint32> Indices;
+        if (!CollisionGen::GatherResourceGeometry(Resource, Positions, Indices))
+        {
+            return false;
+        }
+
+        OutPositions.Reserve(Positions.Num());
+        for (const FVector3& P : Positions)
+        {
+            OutPositions.Add(Box3DUtils::ToB3Vec3(P * Scale));
+        }
+        if (OutIndices != nullptr)
+        {
+            OutIndices->Reserve(Indices.Num());
+            for (uint32 Index : Indices)
             {
-                return false;
+                OutIndices->Add((int32)Index);
             }
-
-            const FMeshletData& MD = Resource.MeshletData;
-            if (MD.IsEmpty())
-            {
-                OutPositions.Reserve(Resource.Positions.Num());
-                for (const FVector3& P : Resource.Positions)
-                {
-                    OutPositions.Add(Box3DUtils::ToB3Vec3(P * Scale));
-                }
-
-                if (OutIndices != nullptr)
-                {
-                    OutIndices->Reserve(Resource.Indices.Num());
-                    for (uint32 Index : Resource.Indices)
-                    {
-                        OutIndices->Add((int32)Index);
-                    }
-                }
-                return true;
-            }
-
-            for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
-            {
-                const uint32 Offset = Surface.LODMeshletOffset[0];
-                const uint32 Count = Surface.LODMeshletCount[0];
-
-                for (uint32 i = 0; i < Count; ++i)
-                {
-                    const FMeshlet& M = MD.Meshlets[Offset + i];
-                    const uint32 BaseVertex = (uint32)OutPositions.Num();
-
-                    for (uint32 v = 0; v < M.VertexCount; ++v)
-                    {
-                        const FVector3 Decoded = GetMeshletVertexPosition(MD, M, v, false);
-                        OutPositions.Add(Box3DUtils::ToB3Vec3(Decoded * Scale));
-                    }
-
-                    if (OutIndices != nullptr)
-                    {
-                        for (uint32 t = 0; t < M.TriangleCount; ++t)
-                        {
-                            const uint32 Packed = MD.MeshletTriangles[M.TriangleOffset + t];
-                            OutIndices->Add((int32)(BaseVertex + ((Packed) & 0xFFu)));
-                            OutIndices->Add((int32)(BaseVertex + ((Packed >> 8) & 0xFFu)));
-                            OutIndices->Add((int32)(BaseVertex + ((Packed >> 16) & 0xFFu)));
-                        }
-                    }
-                }
-            }
-
-        return !OutPositions.IsEmpty();
+        }
+        return true;
     }
 
     FBox3DPhysicsScene::FHullKey FBox3DPhysicsScene::MakeMeshGeometryKey(const CMesh* Mesh)

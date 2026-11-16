@@ -6,6 +6,7 @@
 namespace Lumina
 {
     class CStaticMesh;
+    struct FMeshResource;
     struct SCollisionPrimitive;
     struct SMeshCollision;
 
@@ -37,9 +38,15 @@ namespace Lumina
         RUNTIME_API bool BuildHullTriangles(const TVector<FVector3>& Points, TVector<FVector3>& OutVertices,
                                             TVector<uint32>& OutIndices);
 
+        // LOD 0's meshlets, or a dynamic mesh's kept triangles once its meshlets are gone; physics, navigation and the generators all read this.
+        RUNTIME_API bool GatherResourceGeometry(const FMeshResource& Resource, TVector<FVector3>& OutPositions, TVector<uint32>& OutIndices);
+
         // Every LOD-0 position in the mesh, and the triangles indexing them. Both generators below read
         // through this, so they agree on what the mesh's collision geometry is.
         RUNTIME_API bool GatherMeshGeometry(const CStaticMesh* Mesh, TVector<FVector3>& OutPositions, TVector<uint32>& OutIndices);
+
+        // What a mesh collider with no authored collision collides with, in mesh space, wrapped in one hull when bConvex.
+        RUNTIME_API bool BuildFallbackColliderTriangles(const FMeshResource& Resource, bool bConvex, TVector<FVector3>& OutVertices, TVector<uint32>& OutIndices);
 
         // One hull wrapping the whole mesh. Cheap and always dynamic-safe, but it fills in every concavity.
         RUNTIME_API bool GenerateSingleHull(const CStaticMesh* Mesh, SMeshCollision& OutCollision);
