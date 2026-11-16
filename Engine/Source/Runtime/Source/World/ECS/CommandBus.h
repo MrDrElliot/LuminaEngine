@@ -2,10 +2,11 @@
 
 #include "Registry.h"
 #include "Containers/Vector.h"
+#include "Core/Threading/Thread.h"
 
 namespace Lumina::ECS
 {
-    // Each thread records into its own slot without a lock, and a flush applies creates, then commands, then destroys, each by record order then record sequence.
+    // Each thread records into its own slot under that slot's lock, and a flush applies creates, then commands, then destroys, each by record order then record sequence.
     class RUNTIME_API FCommandBus
     {
     public:
@@ -81,11 +82,13 @@ namespace Lumina::ECS
             using TCallable = std::decay_t<TFunc>;
             static_assert(alignof(TCallable) <= CommandAlignment, "A deferred command cannot be over-aligned.");
 
+            // A thread outside the scheduler records at any moment, so the flush must never detach a half written command.
+            FScopeLock Guard(LocalSlotLock());
             void* Payload = AllocateCommand(&ApplyCallable<TCallable>, sizeof(TCallable));
             new (Payload) TCallable(Forward<TFunc>(Func));
         }
 
-        // Main thread only, while nothing else records. Commands recorded while applying run in the same flush.
+        // Main thread only. Commands recorded while applying run in the same flush, and other threads may keep recording.
         uint32 Flush();
 
         // Drops every pending command without running it, returning reserved handles to the registry.
@@ -175,19 +178,22 @@ namespace Lumina::ECS
 
         void* AllocateCommand(FApplyFn Apply, size_t PayloadSize);
         FSlot& LocalSlot();
-        uint32 RunCommands(FRegistry* Target);
-
-        template<typename TFunc>
-        uint32 ApplyEntities(TVector<FOrderedEntity> FSlot::* List, TFunc&& Apply);
+        FMutex& LocalSlotLock();
+        void Detach();
+        uint32 RunDetachedCommands(FRegistry* Target);
 
         static void FreeBlocks(FSlot& Slot);
 
         FRegistry&      Registry;
         TVector<FSlot>  Slots;
 
+        // One per slot, beside it rather than in it because a mutex cannot move with the vector.
+        TVector<TUniquePtr<FMutex>> SlotLocks;
+
         // Flush scratch, kept so a steady-state flush allocates nothing.
         TVector<TVector<FBlock>> RunningBlocks;
         TVector<FCommandHeader*> RunningCommands;
-        TVector<FOrderedEntity>  PendingEntities;
+        TVector<FOrderedEntity>  PendingCreates;
+        TVector<FOrderedEntity>  PendingDestroys;
     };
 }

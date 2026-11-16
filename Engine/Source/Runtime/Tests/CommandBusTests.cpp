@@ -5,6 +5,7 @@
 
 #include "Containers/HashTable.h"
 #include "Core/Threading/Thread.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/ECS/CommandBus.h"
 #include "World/ECS/Registry.h"
@@ -296,4 +297,44 @@ TEST(CommandBus, WorkerThreadsAlwaysDefer)
         const ECS::FCommandBus::FDeferScope Scope(true);
         EXPECT_TRUE(ECS::FCommandBus::ShouldDefer());
     }
+}
+
+// A thread outside the job scheduler, such as a .NET pool thread, records whenever it likes, including mid flush.
+TEST(CommandBus, ThreadOutsideTheSchedulerRecordsWhileTheMainThreadFlushes)
+{
+    ECS::FRegistry Registry;
+    ECS::FCommandBus Bus(Registry);
+
+    constexpr uint32 Count = 200000;
+    uint32 Ran = 0;
+    uint64 Checksum = 0;
+    std::atomic<bool> bDone{ false };
+
+    std::thread Recorder([&]
+    {
+        for (uint32 Index = 0; Index < Count; ++Index)
+        {
+            // Wide enough that blocks fill and roll over while the flush is detaching them.
+            uint32 Padding[48] = {};
+            Padding[47] = Index;
+            Bus.Enqueue([&Ran, &Checksum, Padding]() { ++Ran; Checksum += Padding[47]; });
+            if ((Index & 15) == 0)
+            {
+                Bus.Destroy(Bus.Create());
+            }
+        }
+        bDone.store(true, std::memory_order_release);
+        Jobs::ReleaseThreadSlot();
+    });
+
+    while (!bDone.load(std::memory_order_acquire))
+    {
+        Bus.Flush();
+    }
+    Recorder.join();
+    Bus.Flush();
+
+    EXPECT_EQ(Ran, Count);
+    EXPECT_EQ(Checksum, uint64(Count) * (Count - 1) / 2);
+    EXPECT_EQ(Registry.NumEntities(), 0);
 }
