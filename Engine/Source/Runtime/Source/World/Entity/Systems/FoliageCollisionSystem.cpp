@@ -5,12 +5,35 @@
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Physics/PhysicsScene.h"
 #include "World/Entity/Components/FoliageComponent.h"
+#include "World/World.h"
 
 namespace Lumina
 {
     void CFoliageCollisionSystem::Configure()
     {
         RequireUpdate(EUpdateStage::PrePhysics);
+    }
+
+    void CFoliageCollisionSystem::OnStartup(const SExclusiveContext& Context)
+    {
+        Context.GetRegistry().GetSignals<SFoliageComponent>().OnDestroy.Connect<&CFoliageCollisionSystem::OnFoliageDestroyed>(this);
+    }
+
+    // Covers both the component's removal and its entity's destruction, either of which would leave the bodies colliding.
+    void CFoliageCollisionSystem::OnFoliageDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        SFoliageComponent* Foliage = Registry.TryGet<SFoliageComponent>(Entity);
+        CWorld** World = Registry.Ctx().Find<CWorld*>();
+        if (Foliage == nullptr || Foliage->CollisionGroupID == 0 || World == nullptr || *World == nullptr)
+        {
+            return;
+        }
+
+        if (Physics::IPhysicsScene* Scene = (*World)->GetPhysicsScene())
+        {
+            Scene->DestroyStaticBodyGroup(Foliage->CollisionGroupID);
+        }
+        Foliage->CollisionGroupID = 0;
     }
 
     void CFoliageCollisionSystem::OnUpdate(const SSystemContext& Context)
@@ -99,6 +122,7 @@ namespace Lumina
     void CFoliageCollisionSystem::OnTeardown(const SExclusiveContext& Context)
     {
         Physics::IPhysicsScene* Scene = Context.GetPhysicsScene();
+        Context.GetRegistry().GetSignals<SFoliageComponent>().OnDestroy.Disconnect<&CFoliageCollisionSystem::OnFoliageDestroyed>(this);
 
         Context.GetRegistry().View<ECS::Write<SFoliageComponent>>().ForEach([&](ECS::TMut<SFoliageComponent> FoliageMut)
         {

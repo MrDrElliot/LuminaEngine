@@ -17,10 +17,13 @@ namespace Lumina
 
         void Configure() override;
 
+        void OnStartup(const SExclusiveContext& Context) override;
         void OnUpdate(const SSystemContext& Context) override;
         void OnTeardown(const SExclusiveContext& Context) override;
 
     private:
+
+        void OnFoliageDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
         ECS::TQuery<ECS::Read<SFoliageComponent>> FoliageSets;
     };
