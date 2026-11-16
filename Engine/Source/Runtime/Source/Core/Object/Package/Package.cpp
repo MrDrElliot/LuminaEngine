@@ -819,6 +819,13 @@ namespace Lumina
 
     CPackage* CPackage::CreatePackage(FStringView Path)
     {
+        // A folder path names no asset, and its object would save as a nameless .lasset that can never load again.
+        if (VFS::FileName(Path, true).IsEmpty())
+        {
+            LOG_ERROR("CreatePackage: {} names a folder rather than an asset", Path);
+            return nullptr;
+        }
+
         FFixedString ObjectName = SanitizeObjectName(Path);
         if (FindObject<CPackage>(ObjectName) != nullptr)
         {
@@ -905,17 +912,18 @@ namespace Lumina
             }
         }
 
+        // A file whose object does not carry its name can never load or register, so deleting it is the only way to be rid of it.
         if (!Export.IsSet())
         {
-            LOG_ERROR("No primary asset found in package");
-            return false;
+            LOG_WARN("DestroyPackage: {} holds no object named after its file, so the file is deleted as it is", Path);
         }
-        
-        OnPackageDestroyed.Broadcast(Path);
-        FAssetRegistry::Get().AssetDeleted(Export->ObjectGUID);
-        VFS::Remove(Path);
 
-        return true;
+        OnPackageDestroyed.Broadcast(Path);
+        if (Export.IsSet())
+        {
+            FAssetRegistry::Get().AssetDeleted(Export->ObjectGUID);
+        }
+        return VFS::Remove(Path);
     }
     
     bool CPackage::DestroyPackage(CPackage* PackageToDestroy)

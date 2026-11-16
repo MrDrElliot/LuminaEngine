@@ -140,13 +140,9 @@ namespace Lumina::VFS
 
     FStringView FileName(FStringView Path, bool bRemoveExtension)
     {
-        int32 LastSlash = Path.FindLastOf("/\\");
-        if (LastSlash == Constants::kIndexNone)
-        {
-            return {};
-        }
-
-        FStringView FilePart = Path.Mid(LastSlash + 1);
+        // A path with no separator is all file name, not none.
+        const int32 LastSlash = Path.FindLastOf("/\\");
+        FStringView FilePart = LastSlash == Constants::kIndexNone ? Path : Path.Mid(LastSlash + 1);
 
         if (bRemoveExtension)
         {

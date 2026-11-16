@@ -1292,6 +1292,11 @@ namespace Lumina
         {
             BaseName = BaseName.Mid(0, BaseName.Len() - FStringView(".lasset").Len());
         }
+        // A destination naming only a folder would otherwise save every asset as a nameless .lasset.
+        if (BaseName.IsEmpty())
+        {
+            BaseName = VFS::FileName(Request.SourcePath, true);
+        }
 
         FFixedString TexturesDir  = DestinationDir; TexturesDir.Append("Textures/");
         FFixedString MaterialsDir = DestinationDir; MaterialsDir.Append("Materials/");
