@@ -1034,6 +1034,13 @@ namespace Lumina::Reflection
         const std::string& DisplayName = Type.DisplayName();
         Writer.Linef("// Begin %s", DisplayName.c_str());
         Writer.Linef("IMPLEMENT_CLASS(%s, %s)", Type.Namespace().c_str(), DisplayName.c_str());
+
+        // Otherwise a class that misses an override would silently become abstract and vanish from every picker.
+        if (!Type.HasMetadata("Abstract"))
+        {
+            Writer.Linef("static_assert(!std::is_abstract_v<%s>, \"%s leaves a pure virtual unimplemented. Implement it, or mark the class REFLECT(Abstract) if it is a base.\");",
+                Type.CppQualifiedName().c_str(), DisplayName.c_str());
+        }
         Writer.Line();
 
         OpenNamespace(Type);

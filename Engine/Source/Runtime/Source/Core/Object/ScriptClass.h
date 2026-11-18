@@ -45,7 +45,7 @@ namespace Lumina
 
         RUNTIME_API CClass* GetMetaClass() const override;
 
-        bool IsAbstract() const override { return bAbstract; }
+        bool IsAbstract() const override { return bAbstract || FactoryFunction == nullptr; }
         bool IsSuperseded() const override { return bSuperseded; }
 
         // Every appended property of this class and of its C# parents, which together are an instance's script storage.

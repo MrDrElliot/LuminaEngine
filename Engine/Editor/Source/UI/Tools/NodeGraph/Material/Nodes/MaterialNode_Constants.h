@@ -5,7 +5,7 @@
 namespace Lumina
 {
     // Shared base for the ConstantFloat* nodes; not a node in its own right.
-    REFLECT(NotPlaceable)
+    REFLECT(NotPlaceable, Abstract)
     class CMaterialExpression_Constant : public CMaterialExpression
     {
         GENERATED_BODY()

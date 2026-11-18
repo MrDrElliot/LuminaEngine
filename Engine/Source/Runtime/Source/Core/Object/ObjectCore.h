@@ -30,6 +30,9 @@ namespace Lumina
     {
         template<typename T>
         concept IsACObject = std::is_base_of_v<CObject, T>;
+
+        template<typename T>
+        concept IsAConcreteCObject = IsACObject<T> && !std::is_abstract_v<T>;
     }
     
     RUNTIME_API CObject* StaticAllocateObject(const FConstructCObjectParams& Params);
@@ -101,13 +104,13 @@ namespace Lumina
     RUNTIME_API void GetObjectsWithPackage(const CPackage* Package, TVector<CObject*>& OutObjects);
 
 
-    template<Concept::IsACObject T>
+    template<Concept::IsAConcreteCObject T>
     T* NewObject(EObjectFlags Flags)
     {
         return static_cast<T*>(NewObject(T::StaticClass(), nullptr, NAME_None, FGuid::New(), Flags));
     }
     
-    template<Concept::IsACObject T>
+    template<Concept::IsAConcreteCObject T>
     T* NewObject(CPackage* Package = nullptr, const FName& Name = NAME_None, const FGuid& GUID = FGuid::New(), EObjectFlags Flags = OF_None)
     {
         return static_cast<T*>(NewObject(T::StaticClass(), Package, Name, GUID, Flags));

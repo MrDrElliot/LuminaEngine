@@ -82,7 +82,7 @@ namespace Lumina
     bool CClass::IsAbstract() const
     {
         static const FName AbstractKey("Abstract");
-        return HasMeta(AbstractKey);
+        return FactoryFunction == nullptr || HasMeta(AbstractKey);
     }
 
     CClass* CClass::GetMetaClass() const
@@ -109,6 +109,12 @@ namespace Lumina
         if (CObject* Existing = ClassDefaultObject.load(std::memory_order_acquire))
         {
             return Existing;
+        }
+
+        // A class with a pure virtual cannot be constructed, so only its subclasses have a default object.
+        if (FactoryFunction == nullptr)
+        {
+            return nullptr;
         }
 
         FRecursiveScopeLock Lock(GDefaultObjectMutex);

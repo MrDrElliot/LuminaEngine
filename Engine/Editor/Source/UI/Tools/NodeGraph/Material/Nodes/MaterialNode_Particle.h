@@ -6,7 +6,7 @@ namespace Lumina
 {
     // Per-sprite values the particle simulation writes, readable only from a Particle material.
 
-    REFLECT(NotPlaceable)
+    REFLECT(NotPlaceable, Abstract)
     class CMaterialExpression_ParticleInput : public CMaterialExpression
     {
         GENERATED_BODY()

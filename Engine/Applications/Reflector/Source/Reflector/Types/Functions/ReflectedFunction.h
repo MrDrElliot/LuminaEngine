@@ -35,6 +35,9 @@ namespace Lumina
         // generates a native shim override + a reverse-dispatch managed thunk so a C# subclass can override it.
         bool                            bIsVirtual = false;
 
+        // Declared = 0, so a C# override has no native body to fall back on.
+        bool                            bIsPureVirtual = false;
+
         bool                            bIsStatic = false;
         bool                            bIsConst = false;
 

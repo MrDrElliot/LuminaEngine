@@ -1050,6 +1050,7 @@ namespace Lumina::Reflection::Visitor
 		NewFunction->Outer = Struct->DisplayName;
 		NewFunction->Name = ClangUtils::GetCursorSpelling(Cursor);
 		NewFunction->bIsVirtual = clang_CXXMethod_isVirtual(Cursor) != 0;
+		NewFunction->bIsPureVirtual = clang_CXXMethod_isPureVirtual(Cursor) != 0;
 
 		int NumArgs = clang_Cursor_getNumArguments(Cursor);
 

@@ -288,3 +288,23 @@ TEST(CObjectLifetime, MarkingForDestroyDoesNotBlockTheActualDestroy)
     EXPECT_EQ(CDestroyCountTest::DestroyCount, 1) << "a pre-marked object must still be torn down";
     EXPECT_EQ(Object::Internal::ResolveHandle(Handle), nullptr) << "and its slot must be released";
 }
+
+// A class with a pure virtual cannot be constructed, so it is abstract with no default object while its subclasses work as usual.
+TEST(CObject, APureVirtualMakesAClassAbstract)
+{
+    CClass* Shape = CAbstractShapeTest::StaticClass();
+    EXPECT_TRUE(Shape->IsAbstract());
+    EXPECT_FALSE(Shape->CanInstantiate());
+    EXPECT_EQ(Shape->GetDefaultObject(), nullptr);
+    static_assert(!Concept::IsAConcreteCObject<CAbstractShapeTest>, "NewObject<CAbstractShapeTest>() must not compile");
+    EXPECT_EQ(NewObject(Shape, nullptr, NAME_None, FGuid::New(), OF_Transient), nullptr);
+
+    CClass* Square = CSquareShapeTest::StaticClass();
+    EXPECT_FALSE(Square->IsAbstract());
+    EXPECT_TRUE(Square->IsChildOf(Shape));
+    ASSERT_NE(Square->GetDefaultObject(), nullptr);
+
+    CAbstractShapeTest* Object = NewObject<CSquareShapeTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    ASSERT_NE(Object, nullptr);
+    EXPECT_FLOAT_EQ(Object->Area(), 18.0f) << "the subclass body runs through the base, with the base's own property default";
+}

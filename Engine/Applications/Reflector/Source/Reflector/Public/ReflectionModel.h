@@ -160,6 +160,7 @@ namespace Lumina::Reflection
         FIndexRange     Metadata;
         bool            bHasOmittedArgs = false;
         bool            bIsVirtual = false;
+        bool            bIsPureVirtual = false;
         bool            bIsStatic = false;
         bool            bIsConst = false;
         bool            bReflectNatively = false;
@@ -333,6 +334,7 @@ namespace Lumina::Reflection
         bool HasMetadata(std::string_view Key) const { return FindMetadata(Metadata(), Key) != nullptr; }
         bool HasOmittedArgs() const { return Record().bHasOmittedArgs; }
         bool IsVirtual() const { return Record().bIsVirtual; }
+        bool IsPureVirtual() const { return Record().bIsPureVirtual; }
         bool IsStatic() const { return Record().bIsStatic; }
         bool IsConst() const { return Record().bIsConst; }
         bool ReflectsNatively() const { return Record().bReflectNatively; }

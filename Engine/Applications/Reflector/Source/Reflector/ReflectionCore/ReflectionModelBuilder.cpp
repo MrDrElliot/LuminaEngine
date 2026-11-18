@@ -204,6 +204,7 @@ namespace Lumina::Reflection
         Record.ReturnIndex = Function.ReturnIndex;
         Record.bHasOmittedArgs = Function.bHasOmittedArgs;
         Record.bIsVirtual = Function.bIsVirtual;
+        Record.bIsPureVirtual = Function.bIsPureVirtual;
         Record.bIsStatic = Function.bIsStatic;
         Record.bIsConst = Function.bIsConst;
         Record.bReflectNatively = Function.bReflectNatively;

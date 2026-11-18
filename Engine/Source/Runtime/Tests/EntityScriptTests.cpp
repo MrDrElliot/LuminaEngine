@@ -93,7 +93,7 @@ namespace
     {
         FScriptableNativeInfo Info;
         Info.GetBaseClass = &CEntityScriptTest::StaticClass;
-        Info.Factory      = &CEntityScriptTest::__PlacementNew;
+        Info.Factory      = CEntityScriptTest::__Factory();
         Info.ShimSize     = CEntityScriptTest::StaticClass()->GetSize();
         Info.ShimAlign    = CEntityScriptTest::StaticClass()->GetAlignment();
         FScriptableRegistry::RegisterNative("CEntityScriptTest", Info);

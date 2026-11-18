@@ -1,5 +1,7 @@
 #pragma once
 
+#include <type_traits>
+
 #include "Core/Reflection/ReflectionMacros.h"
 #include "Memory/Construct.h"
 #include "ObjectCore.h"
@@ -40,11 +42,19 @@ public: \
     } \
     private:
 
-// Qualified throughout, since a reflected class may live in any namespace or none.
+// A member, so it reaches a protected constructor, and a template, so a class with a pure virtual gets no factory instead of failing to compile.
 #define DEFINE_CLASS_FACTORY(TClass) \
-    static Lumina::CObject* __PlacementNew(void* Memory) \
+    template <typename TConstructed = TClass> \
+    static constexpr Lumina::CObject* (*__Factory())(void*) \
     { \
-        return Lumina::Memory::ConstructAt(static_cast<TClass*>(Memory)); \
+        if constexpr (std::is_abstract_v<TConstructed>) \
+        { \
+            return nullptr; \
+        } \
+        else \
+        { \
+            return [](void* Memory) -> Lumina::CObject* { return Lumina::Memory::ConstructAt(static_cast<TConstructed*>(Memory)); }; \
+        } \
     }
 
 // Allocates the class object, which the generated descriptor later fills with properties and functions.
@@ -56,7 +66,7 @@ public: \
         { \
             Lumina::AllocateStaticClass(TNamespace::TClass::StaticPackage(), TEXT(#TClass), &Class, \
                 sizeof(TNamespace::TClass), alignof(TNamespace::TClass), \
-                &TNamespace::TClass::Super::StaticClass, &TNamespace::TClass::__PlacementNew); \
+                &TNamespace::TClass::Super::StaticClass, TNamespace::TClass::__Factory()); \
         } \
         return Class; \
     }

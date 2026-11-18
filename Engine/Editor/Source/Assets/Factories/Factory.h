@@ -35,7 +35,7 @@ namespace Lumina
         TVector<CFactory*> Factories;
     };
     
-    REFLECT()
+    REFLECT(Abstract)
     class EDITOR_API CFactory : public CObject
     {
         GENERATED_BODY()
@@ -69,14 +69,14 @@ namespace Lumina
         
         virtual FString GetAssetName() const { return ""; }
         virtual FString GetAssetDescription() const { return ""; }
-        virtual CClass* GetAssetClass() const { return nullptr; }
+        virtual CClass* GetAssetClass() const = 0;
 
         // Groups this asset type in the content browser's "New Asset" menu. Keep the set of
         // category strings small and shared across related factories.
         virtual FString GetCategory() const { return "Miscellaneous"; }
         virtual FStringView GetDefaultAssetCreationName() { return "New_Asset"; }
         
-        virtual CObject* CreateNew(const FName& Name, CPackage* Package) { return nullptr; }
+        virtual CObject* CreateNew(const FName& Name, CPackage* Package) = 0;
 
         // Importing source files is CImporter's job (Tools/Import/Importer.h); a factory only mints empty
         // assets from the content browser's New Asset menu.

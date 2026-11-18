@@ -2359,6 +2359,13 @@ namespace Lumina::Reflection
                 }
                 const std::string Call = std::string("Self->") + Qualified + "::" + E.Fn.Name() + "(" + CallArgs + ")";
                 const std::string ParamSig = Params.empty() ? std::string() : (", " + Params);
+                // A pure virtual has no native body, so a C# base call gets the type's default.
+                if (E.Fn.IsPureVirtual())
+                {
+                    Writer.Linef("extern \"C\" %s %s LuminaSharp_Base_%s_%s(%s*%s) { %s }", Api, FB.bVoid ? "void" : SeRetAbiCpp(FB).c_str(),
+                        Friendly.c_str(), E.Fn.Name().c_str(), Qualified, ParamSig.c_str(), FB.bVoid ? "" : "return {};");
+                    continue;
+                }
                 if (FB.bVoid)
                 {
                     Writer.Linef("extern \"C\" %s void LuminaSharp_Base_%s_%s(%s* Self%s) { %s; }",
@@ -2459,7 +2466,14 @@ namespace Lumina::Reflection
                     Writer.Linef("                return %s;", SeRetAbiToCpp(FB, Call).c_str());
                 }
                 Writer.Line("            }");
-                Writer.Linef("            %s%s;", FB.bVoid ? "" : "return ", BaseCall.c_str());
+                if (E.Fn.IsPureVirtual())
+                {
+                    Writer.Line(FB.bVoid ? "            return;" : "            return {};");
+                }
+                else
+                {
+                    Writer.Linef("            %s%s;", FB.bVoid ? "" : "return ", BaseCall.c_str());
+                }
                 Writer.Line("        }");
             }
             Writer.Line("    };");
@@ -2521,7 +2535,7 @@ namespace Lumina::Reflection
             Writer.Line("        {");
             Writer.Line("            Lumina::FScriptableNativeInfo __I;");
             Writer.Linef("            __I.GetBaseClass = []() -> Lumina::CClass* { return %s::StaticClass(); };", Qualified);
-            Writer.Linef("            __I.Factory = [](void* __m) -> Lumina::CObject* { return Lumina::Memory::ConstructAt(static_cast<%s*>(__m)); };", Shim.c_str());
+            Writer.Linef("            __I.Factory = %s::__Factory<%s>();", Shim.c_str(), Shim.c_str());
             Writer.Linef("            __I.ShimSize = (uint32)sizeof(%s);", Shim.c_str());
             Writer.Linef("            __I.ShimAlign = (uint32)alignof(%s);", Shim.c_str());
             for (const FScriptEvent& E : Events)

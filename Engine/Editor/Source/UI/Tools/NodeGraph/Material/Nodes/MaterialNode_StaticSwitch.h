@@ -30,6 +30,9 @@ namespace Lumina
         FName* GetParameterName() override { return &ParameterName; }
 
         bool IsRerouteNode() const override { return true; }
+
+        // The compiler routes through a static switch like a reroute, so it never asks one for a definition.
+        void GenerateDefinition(FMaterialCompiler& Compiler) override {}
         bool WantsRerouteDotRendering() const override { return false; }
 
         // The branch pins carry real types, so the schema still has to police what connects to them.

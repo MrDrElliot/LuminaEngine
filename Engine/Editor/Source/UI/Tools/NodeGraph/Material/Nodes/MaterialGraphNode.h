@@ -12,7 +12,7 @@ namespace Lumina
 {
     // NotPlaceable: this is the family base, not a node anyone drops on a canvas. The specifier does not
     // inherit, so every concrete node below it stays discoverable.
-    REFLECT(NotPlaceable)
+    REFLECT(NotPlaceable, Abstract)
     class CMaterialGraphNode : public CEdGraphNode
     {
         GENERATED_BODY()
@@ -20,7 +20,7 @@ namespace Lumina
         
         CClass* GetSupportedGraphClass() const override;
 
-        virtual void GenerateDefinition(FMaterialCompiler& Compiler) { UNREACHABLE(); }
+        virtual void GenerateDefinition(FMaterialCompiler& Compiler) = 0;
         virtual void* GetNodeDefaultValue() { return nullptr; }
         virtual void SetNodeValue(void* Value) { }
 

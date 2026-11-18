@@ -28,7 +28,7 @@ namespace Lumina
     // in GenerateBytecode(); the graph walks them in topological order during compile.
     // NotPlaceable: family base, not a node. The specifier does not inherit, so every concrete
     // anim node below stays discoverable.
-    REFLECT(NotPlaceable)
+    REFLECT(NotPlaceable, Abstract)
     class EDITOR_API CAnimGraphNode : public CEdGraphNode
     {
         GENERATED_BODY()
@@ -38,7 +38,7 @@ namespace Lumina
         // override this to say otherwise.
         CClass* GetSupportedGraphClass() const override;
 
-        virtual void GenerateBytecode(FAnimationGraphCompiler& Compiler) { UNREACHABLE(); }
+        virtual void GenerateBytecode(FAnimationGraphCompiler& Compiler) = 0;
 
         FFixedString GetNodeCategory() const override { return "Animation"; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(60, 110, 70, 255); }

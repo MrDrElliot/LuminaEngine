@@ -49,6 +49,32 @@ namespace Lumina
         void ResetNativeValue() { NativeValue = 1.5f; }
     };
 
+    // A base with a pure virtual, which C# can still derive from and supply the event for.
+    REFLECT(Scriptable, Abstract)
+    class RUNTIME_API CAbstractShapeTest : public CObject
+    {
+        GENERATED_BODY()
+    public:
+
+        PROPERTY(Hidden)
+        float Scale = 2.0f;
+
+        FUNCTION()
+        virtual float Area() = 0;
+    };
+
+    REFLECT()
+    class RUNTIME_API CSquareShapeTest : public CAbstractShapeTest
+    {
+        GENERATED_BODY()
+    public:
+
+        PROPERTY(Hidden)
+        float Side = 3.0f;
+
+        float Area() override { return Side * Side * Scale; }
+    };
+
     /// Test C++ entity script, ticked by the same driver as a C# one, counting what ran so a test can assert the order.
     REFLECT()
     class RUNTIME_API CEntityScriptTest : public CEntityScript

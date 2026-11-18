@@ -8,7 +8,7 @@ namespace Lumina
     class CMaterialParameterCollection;
 
     // Shared base for the two collection reads; not a node in its own right.
-    REFLECT(NotPlaceable)
+    REFLECT(NotPlaceable, Abstract)
     class CMaterialExpression_CollectionParameter : public CMaterialExpression
     {
         GENERATED_BODY()
