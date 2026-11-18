@@ -5,6 +5,7 @@
 #include "Core/Threading/Thread.h"
 #include "Memory/Memory.h"
 #include "TaskSystem/Fork/ForkRuntime.h"
+#include "World/Entity/Systems/SystemAccess.h"
 
 namespace Lumina::ECS
 {
@@ -97,6 +98,7 @@ namespace Lumina::ECS
     void* FCommandBus::AllocateCommand(FApplyFn Apply, size_t PayloadSize)
     {
         static_assert(sizeof(FCommandHeader) <= HeaderSize, "The command header must fit its reserved space.");
+        ValidateSystemQueuesCommands();
 
         FSlot& Slot = LocalSlot();
         const size_t Stride = HeaderSize + AlignUp(PayloadSize, CommandAlignment);

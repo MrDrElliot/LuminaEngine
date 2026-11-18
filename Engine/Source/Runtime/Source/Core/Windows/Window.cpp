@@ -291,7 +291,11 @@ namespace Lumina
 
 			LOG_TRACE("Initializing Window: {} (Width: {}p Height: {}p)", Impl->Specs.Title, Impl->Specs.Extent.x, Impl->Specs.Extent.y);
 
-			SetIcon(Paths::GetEngineResourceDirectory() + "/Textures/Lumina.png");
+			// A packaged game reads the icon from its pak, which mounts later.
+			if (!Paths::IsPackagedGame())
+			{
+				SetIcon(Paths::GetEngineResourceDirectory() + "/Textures/Lumina.png");
+			}
 
 			glfwShowWindow(Impl->Window);
 

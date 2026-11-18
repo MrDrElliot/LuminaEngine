@@ -15,6 +15,8 @@ namespace Lumina
         FrameEnd,
         Paused,
         FixedUpdate,
+        // Stepped by FSimulation at its fixed tick, from player inputs alone, and replayed after a rollback.
+        Simulation,
         Max,
     };
     
@@ -26,6 +28,7 @@ namespace Lumina
         "FrameEnd",
         "Paused",
         "FixedUpdate",
+        "Simulation",
     };
 
     static_assert(sizeof(GUpdateStageNames) / sizeof(GUpdateStageNames[0]) == (size_t)EUpdateStage::Max);

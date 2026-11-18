@@ -315,6 +315,11 @@ namespace Lumina
         Before.AddUnique(System);
     }
 
+    void CEntitySystem::QueuesNoCommands()
+    {
+        Access.bQueuesCommands = false;
+    }
+
     void CEntitySystem::JoinSet(FName Set)
     {
         Sets.AddUnique(Set);

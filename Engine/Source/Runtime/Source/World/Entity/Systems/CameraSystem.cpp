@@ -16,6 +16,8 @@ namespace Lumina
 {
     void CCameraSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::FrameEnd);
         RequireUpdate(EUpdateStage::Paused);
         // Everything that moves a camera in the same stage goes first, so the resolved view is this frame's.

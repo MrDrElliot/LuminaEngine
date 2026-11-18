@@ -156,6 +156,28 @@ namespace Lumina
         }
     }
 
+    void ValidateSystemQueuesCommands()
+    {
+        const FSystemAccess* Access = GExecutingSystemAccess;
+        if (Access == nullptr || Access->bExclusive || Access->bQueuesCommands)
+        {
+            return;
+        }
+
+        static FMutex SeenMutex;
+        static THashSet<const FSystemAccess*> Seen;
+        bool bFirst = false;
+        {
+            FScopeLock Lock(SeenMutex);
+            bFirst = Seen.TryAdd(Access);
+        }
+        if (bFirst)
+        {
+            LOG_ERROR("A system that declared QueuesNoCommands queued a deferred command; remove the declaration, since systems ordered after it no longer wait for a flush.");
+            DEBUG_ASSERT(false, "System queued a command after declaring QueuesNoCommands (see log).");
+        }
+    }
+
     void ValidateNotInParallelSystem(const char* What)
     {
         const FSystemAccess* Access = GExecutingSystemAccess;

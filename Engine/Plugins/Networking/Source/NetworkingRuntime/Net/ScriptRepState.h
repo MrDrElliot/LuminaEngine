@@ -26,6 +26,9 @@ namespace Lumina
     {
         THashMap<uint32, FRepFieldSnapshot> LastSent;
 
+        // Replicated components this entity has lost, so a resend after a dropped packet can remove them again.
+        TVector<uint32> RemovedWireIndices;
+
         // Keyed by script handle rather than index, since removing a script shifts the ones after it.
         THashMap<FObjectHandle, FRepFieldSnapshot> ScriptLastSent;
 

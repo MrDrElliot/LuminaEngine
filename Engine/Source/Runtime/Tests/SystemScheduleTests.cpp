@@ -310,6 +310,10 @@ TEST(SystemSchedule, OnlyDeclaredOrderEventsAndExclusiveSystemsNeedAFlush)
     EXPECT_FALSE(SystemSchedule::NeedsFlushBetween(Writer, Reader, false)) << "a data conflict only orders";
     EXPECT_TRUE(SystemSchedule::NeedsFlushBetween(Writer, Reader, true));
 
+    FSystemAccess Quiet = Writer;
+    Quiet.bQueuesCommands = false;
+    EXPECT_FALSE(SystemSchedule::NeedsFlushBetween(Quiet, Reader, true)) << "an order after a system that queues nothing only orders";
+
     FSystemAccess Sender = Writer;
     Sender.SentEvents.Add(1234u);
     FSystemAccess Listener;
@@ -402,6 +406,39 @@ TEST(SystemSchedule, TheEngineSystemSetReportsEverySystemItSchedules)
         }
         EXPECT_TRUE(!bScheduled || Report.Contains(Name)) << *Name;
     }
+    EntitySystems::DestroyAll(SSystemContext(), World->Systems);
+}
+
+// Animation reads the pose the kinematics pass recorded, so it runs beside the systems that move things instead of after them.
+TEST(SystemSchedule, AnimationTakesNoTransformAccess)
+{
+    RegisterPendingTypes();
+
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    EntitySystems::CreateMissing(*World, {}, World->Systems);
+
+    const auto Find = [World](const char* Name) -> const CEntitySystem*
+    {
+        for (const TStrongObjectPtr<CEntitySystem>& System : World->Systems)
+        {
+            if (System->GetClass()->GetName() == FName(Name))
+            {
+                return System.Get();
+            }
+        }
+        return nullptr;
+    };
+
+    const CEntitySystem* Animation  = Find("CAnimationSystem");
+    const CEntitySystem* Movement   = Find("CMovementComponentSystem");
+    const CEntitySystem* Projectile = Find("CProjectileSystem");
+    ASSERT_NE(Animation, nullptr);
+    ASSERT_NE(Movement, nullptr);
+    ASSERT_NE(Projectile, nullptr);
+
+    EXPECT_FALSE(Animation->GetAccess().DeclaresRead(static_cast<uint32>(ECS::GetComponentTypeID<STransformComponent>())));
+    EXPECT_FALSE(FSystemAccess::Conflicts(Animation->GetAccess(), Movement->GetAccess()));
+    EXPECT_FALSE(FSystemAccess::Conflicts(Animation->GetAccess(), Projectile->GetAccess()));
     EntitySystems::DestroyAll(SSystemContext(), World->Systems);
 }
 

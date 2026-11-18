@@ -27,6 +27,8 @@ namespace Lumina
 
     void CBlockoutSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
     }

@@ -164,7 +164,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     {
         FLight Sun = GetLightAt(0);
         float3 L   = normalize(GetSunDirection());
-        SunShadow  = ComputeDirectionalShadow(Sun, Input.WorldPos, N, WorldToView(Input.WorldPos), Input.Position.xy);
+        SunShadow  = ComputeDirectionalShadow(Sun, Input.WorldPos, N, WorldToView(Input.WorldPos));
         BodyLight += GetLightColor(Sun).rgb * Sun.Intensity * saturate(L.y) * SunShadow * INV_PI;
     }
 

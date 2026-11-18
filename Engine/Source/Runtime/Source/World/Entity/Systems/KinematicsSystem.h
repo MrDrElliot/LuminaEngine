@@ -33,6 +33,11 @@ namespace Lumina
         FVector3        PreviousLocation = FVector3(0.0f);
 
         bool            bHasPrevious = false;
+
+        // A skeletal mesh's world pose as this pass computed it, so the animation pass needs no transform access of its own.
+        FTransform      World;
+
+        bool            bHasWorld = false;
     };
 
     // Per-world velocities published as a resource ahead of every consumer.
@@ -46,6 +51,13 @@ namespace Lumina
         {
             const FEntityKinematics* Entry = bEnabled ? Entries.Find(Entity) : nullptr;
             return Entry != nullptr ? Entry->LinearVelocity : FVector3(0.0f);
+        }
+
+        // Recorded whether or not velocities are enabled, since animation needs the pose either way.
+        NODISCARD const FTransform* FindWorldTransform(ECS::FEntity Entity) const
+        {
+            const FEntityKinematics* Entry = Entries.Find(Entity);
+            return Entry != nullptr && Entry->bHasWorld ? &Entry->World : nullptr;
         }
     };
 

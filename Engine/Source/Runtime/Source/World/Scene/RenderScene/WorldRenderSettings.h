@@ -53,6 +53,9 @@ namespace Lumina
         // The editor's game view, which hides billboards without touching the saved toggle.
         bool bHideEditorOverlays = false;
 
+        // Builds a missing pipeline on the spot instead of drawing the default material until it is ready, for one-shot captures such as thumbnails.
+        bool bWaitForPipelines = false;
+
         bool ShouldDrawBillboards() const { return bDrawBillboards && !bHideEditorOverlays; }
     };
 }

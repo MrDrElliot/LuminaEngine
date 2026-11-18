@@ -40,6 +40,7 @@
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/InputComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
+#include "World/Entity/Systems/DebugDrawSystem.h"
 #include "World/Entity/Components/SocketAttachmentComponent.h"
 #include "World/Entity/Components/StaticMeshComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
@@ -1231,6 +1232,19 @@ namespace Lumina
                 if (ImGui::MenuItem("Draw NavMesh", "P", &bProxy))
                 {
                     FConsoleRegistry::Get().SetAs("Nav.DrawDebug", bProxy);
+                }
+            }
+            ImGui::EndMenu();
+        }
+
+        if (FDebugDrawState* DrawState = World->GetEntityRegistry().Ctx().Find<FDebugDrawState>(); DrawState != nullptr && ImGui::BeginMenu("Networking"))
+        {
+            for (const FDebugDrawNetworkingView& View : kDebugDrawNetworkingViews)
+            {
+                bool bOn = EnumHasAnyFlags(DrawState->Networking, View.View);
+                if (ImGui::MenuItem(View.Label, nullptr, &bOn))
+                {
+                    DrawState->Networking ^= View.View;
                 }
             }
             ImGui::EndMenu();

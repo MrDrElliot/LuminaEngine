@@ -51,6 +51,9 @@ public sealed class ReflectAttribute : Attribute
     // Runs only where something is drawn or played, never on a dedicated server, a bot or a headless process.
     public bool Cosmetic { get; set; }
 
+    // A component that is deterministic simulation state, saved every tick and restored when a late input rewinds the simulation.
+    public bool Rollback { get; set; }
+
     public EScriptUpdatePhase UpdatePhase
     {
         get => UpdatePhaseValue;
@@ -162,6 +165,10 @@ public sealed class ReflectAttribute : Attribute
         if (Cosmetic)
         {
             yield return new(nameof(Cosmetic), "");
+        }
+        if (Rollback)
+        {
+            yield return new(nameof(Rollback), "");
         }
         if (HasUpdatePhase)
         {

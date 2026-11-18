@@ -181,6 +181,8 @@ namespace Lumina
 
     void CWeatherInteractionSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::FrameEnd);
         RequireUpdate(EUpdateStage::Paused);
 

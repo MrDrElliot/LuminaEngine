@@ -97,6 +97,7 @@ namespace Lumina
 
     // Vertex layout is pos(8) color(4) uv(8).
     static_assert(sizeof(Rml::Vertex) == 20, "Rml::Vertex layout drifted; renderer vertex conversion must be updated.");
+    static constexpr size_t kRmlVertexColorOffset = sizeof(Rml::Vector2f);
 
     FRmlUiRenderer::FRmlUiRenderer() = default;
     FRmlUiRenderer::~FRmlUiRenderer() { Shutdown(); }
@@ -766,6 +767,7 @@ namespace Lumina
         {
             return;
         }
+        
         RHI::FCmdListH CL = CurrentCmdList;
         RHI::CmdBeginMarker(CL, "RmlUi");
 
@@ -825,7 +827,7 @@ namespace Lumina
             for (const FDrawCall& Draw : DrawCalls)
             {
                 const uint32 ThisDraw = DrawSlot++;
-                DrawIndexOffsets[ThisDraw] = uint32(BatchIndices.Num());
+                DrawIndexOffsets[static_cast<int32>(ThisDraw)] = static_cast<uint32>(BatchIndices.Num());
 
                 auto GeomIt = Geometries.Find(Draw.Geometry);
                 // A dropped draw is silent and the hardest failure to chase here, so every distinct skip reports once.
@@ -903,8 +905,8 @@ namespace Lumina
                     DD.ShaderParams = Sh.Params;
                     DD.ShaderScale  = Sh.Scale;
                     DD.bRepeating   = Sh.bRepeating ? 1u : 0u;
-                    DD.StopOffset   = uint32(BatchStops.Num());
-                    DD.StopCount    = uint32(Sh.Stops.Num());
+                    DD.StopOffset   = static_cast<uint32>(BatchStops.Num());
+                    DD.StopCount    = static_cast<uint32>(Sh.Stops.Num());
                     BatchStops.Append(Sh.Stops);
                 }
 
@@ -1570,14 +1572,31 @@ namespace Lumina
         Geom.IndexData.Reset();
         Geom.IndexData.Append(IBytes, IBytes + IBSize);
         Geom.IndexCount = uint32(Indices.size());
+        Geom.bFullyTransparent = Algo::AllOf(Vertices, [](const Rml::Vertex& Vertex)
+        {
+            uint32 PackedColor;
+            Memory::Memcpy(&PackedColor, reinterpret_cast<const uint8*>(&Vertex) + kRmlVertexColorOffset, sizeof(uint32));
+            return PackedColor == 0;
+        });
 
         const Rml::CompiledGeometryHandle Handle = NextGeometryHandle++;
         Geometries.TryAdd(Handle, Move(Geom));
         return Handle;
     }
 
+    bool FRmlUiRenderer::IsFullyTransparent(Rml::CompiledGeometryHandle Geometry) const
+    {
+        const FGeometry* Geom = Geometries.Find(Geometry);
+        return Geom != nullptr && Geom->bFullyTransparent;
+    }
+
     void FRmlUiRenderer::RenderGeometry(Rml::CompiledGeometryHandle Geometry, Rml::Vector2f Translation, Rml::TextureHandle Texture)
     {
+        if (IsFullyTransparent(Geometry))
+        {
+            return;
+        }
+
         FDrawCall Draw;
         Draw.Geometry        = Geometry;
         Draw.Texture         = Texture;
@@ -2142,7 +2161,7 @@ namespace Lumina
     void FRmlUiRenderer::RenderShader(Rml::CompiledShaderHandle Shader, Rml::CompiledGeometryHandle Geometry,
                                       Rml::Vector2f Translation, Rml::TextureHandle Texture)
     {
-        if (!Shaders.Contains(Shader))
+        if (!Shaders.Contains(Shader) || IsFullyTransparent(Geometry))
         {
             return;
         }

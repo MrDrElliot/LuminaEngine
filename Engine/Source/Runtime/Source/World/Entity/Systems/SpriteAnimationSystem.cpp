@@ -9,6 +9,8 @@ namespace Lumina
 {
     void CSpriteAnimationSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::PrePhysics);
     }
 

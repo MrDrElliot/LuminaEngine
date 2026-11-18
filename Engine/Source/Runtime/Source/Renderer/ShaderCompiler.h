@@ -47,8 +47,24 @@ namespace Lumina
         virtual void Initialize() = 0;
         virtual void Shutdown() = 0;
 
-        // OnCompleted runs per successful shader, and OnFinished once every request in the call has returned, failed ones included.
-        virtual bool CompilerShaderRaw(FString ShaderString, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished = {}) = 0;
+        struct FRawShaderEntry
+        {
+            FString       EntryPoint;
+            FString       DebugName;
+            CompletedFunc OnCompleted;
+            FinishedFunc  OnFinished;
+        };
+
+        // Each entry's OnCompleted runs when it succeeds and its OnFinished once the call returns, failed or not.
+        virtual bool CompileShaderRawEntries(FString ShaderString, const FShaderCompileOptions& CompileOptions, TVector<FRawShaderEntry> Entries) = 0;
+
+        // One entry point named by the options, which is how most callers compile a generated source.
+        bool CompilerShaderRaw(FString ShaderString, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished = {})
+        {
+            TVector<FRawShaderEntry> Entries;
+            Entries.Add({ CompileOptions.EntryPoint, CompileOptions.DebugName, Move(OnCompleted), Move(OnFinished) });
+            return CompileShaderRawEntries(Move(ShaderString), CompileOptions, Move(Entries));
+        }
         virtual bool CompileShaderPath(FString ShaderPath, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished = {}) = 0;
         virtual bool CompileShaderPaths(TSpan<FString> ShaderPaths, TSpan<FShaderCompileOptions> CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished = {}) = 0;
 
@@ -98,7 +114,7 @@ namespace Lumina
         void Initialize() override;
         void Shutdown() override;
 
-        bool CompilerShaderRaw(FString ShaderString, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished = {}) override;
+        bool CompileShaderRawEntries(FString ShaderString, const FShaderCompileOptions& CompileOptions, TVector<FRawShaderEntry> Entries) override;
         bool CompileShaderPath(FString ShaderPath, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished = {}) override;
         bool CompileShaderPaths(TSpan<FString> ShaderPaths, TSpan<FShaderCompileOptions> CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished = {}) override;
 

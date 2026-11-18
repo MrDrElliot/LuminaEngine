@@ -641,6 +641,21 @@ namespace Lumina
             }
         }
 
+        void SendNotifyEvents(const ECS::TEventWriter<SAnimNotifyFiredEvent>& Writer, ECS::FEntity Entity, const TVector<FAnimNotifyEvent>& Fired)
+        {
+            for (const FAnimNotifyEvent& Notify : Fired)
+            {
+                SAnimNotifyFiredEvent Event;
+                Event.Entity = Entity;
+                Event.Name   = Notify.Name;
+                Event.Track  = Notify.Track;
+                Event.Type   = Notify.Type;
+                Event.Weight = Notify.Weight;
+                Event.Alpha  = Notify.Alpha;
+                Writer.Send(Event);
+            }
+        }
+
         void SendMontageEvents(const ECS::TEventWriter<SAnimMontageStartedEvent>& Started, const ECS::TEventWriter<SAnimMontageBlendingOutEvent>& BlendingOut,
                                const ECS::TEventWriter<SAnimMontageEndedEvent>& Ended, ECS::FEntity Entity, FAnimMontagePlayer& Montages)
         {
@@ -664,7 +679,7 @@ namespace Lumina
 
         // One entity's graph update, parallel-safe; pose math happens in the execute phase.
         void UpdateGraph(const SSystemContext& SystemContext, ECS::FEntity Entity,
-                         SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh, const STransformComponent* Transform,
+                         SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh,
                          float DeltaTime, double Now, const FKinematicsState& KinematicsState)
         {
             AnimGraph.NotifyEvents.Reset();
@@ -708,10 +723,10 @@ namespace Lumina
 
             // Ground traces are read-only and PrePhysics never overlaps the step, so querying here is safe.
             FAnimGraphSceneContext SceneContext;
-            if (Transform != nullptr)
+            // Read from the kinematics pass, so animation takes no transform access and runs beside the systems that move things.
+            if (const FTransform* WorldPose = KinematicsState.FindWorldTransform(Entity))
             {
-                // Computed rather than cached, since the capsule this mesh hangs from moved earlier this frame and a stale pose slips the feet.
-                const VTransform World = Transform->GetWorldTransform();
+                const VTransform World = *WorldPose;
 
                 SceneContext.Scene          = SystemContext.GetPhysics();
                 SceneContext.BoneTransforms = &Mesh.BoneTransforms;
@@ -938,6 +953,7 @@ namespace Lumina
         }
 
         NotifyQueue.Prepare();
+        const bool bNotifyReaders = NotifyFired.HasReaders();
 
         const bool bFuseExecute = CVarFuseAnimExecute.GetValue();
 
@@ -957,6 +973,10 @@ namespace Lumina
                 if (!Anim.NotifyEvents.IsEmpty())
                 {
                     NotifyQueue.Record(Entity, EAnimNotifyPass::Simple, Anim.NotifyEvents);
+                    if (bNotifyReaders)
+                    {
+                        SendNotifyEvents(NotifyFired, Entity, Anim.NotifyEvents);
+                    }
                 }
 
                 // Recording that ANY entity produced root motion lets the serial apply skip its sweep.
@@ -969,11 +989,11 @@ namespace Lumina
 
         if (bHasGraph)
         {
-            GraphAnimators.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SAnimationGraphComponent> AnimGraphMut, ECS::TMut<SSkeletalMeshComponent> MeshMut, const STransformComponent* Transform)
+            GraphAnimators.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SAnimationGraphComponent> AnimGraphMut, ECS::TMut<SSkeletalMeshComponent> MeshMut)
             {
                 SSkeletalMeshComponent& Mesh = MeshMut.GetMut();
                 SAnimationGraphComponent& AnimGraph = AnimGraphMut.GetMut();
-                UpdateGraph(Context, Entity, AnimGraph, Mesh, Transform, DeltaTime, Now, SharedKinematics);
+                UpdateGraph(Context, Entity, AnimGraph, Mesh, DeltaTime, Now, SharedKinematics);
                 SendMontageEvents(MontageStarted, MontageBlendingOut, MontageEnded, Entity, AnimGraph.Montages);
 
                 // Run while this mesh is hot, instead of after a barrier that waits for every graph.
@@ -985,6 +1005,10 @@ namespace Lumina
                 if (!AnimGraph.NotifyEvents.IsEmpty())
                 {
                     NotifyQueue.Record(Entity, EAnimNotifyPass::Graph, AnimGraph.NotifyEvents);
+                    if (bNotifyReaders)
+                    {
+                        SendNotifyEvents(NotifyFired, Entity, AnimGraph.NotifyEvents);
+                    }
                 }
 
                 if (AnimGraph.PendingRootMotion.bHasMotion)
@@ -1129,7 +1153,7 @@ namespace Lumina
 
         if (bHasGraph)
         {
-            GraphAnimators.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAnimationGraphComponent> AnimGraphMut, ECS::TMut<SSkeletalMeshComponent>, const STransformComponent*)
+            GraphAnimators.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAnimationGraphComponent> AnimGraphMut, ECS::TMut<SSkeletalMeshComponent>)
             {
                 SAnimationGraphComponent& AnimGraph = AnimGraphMut.GetMut();
                 ApplyRootMotion(Entity, AnimGraph.PendingRootMotion);

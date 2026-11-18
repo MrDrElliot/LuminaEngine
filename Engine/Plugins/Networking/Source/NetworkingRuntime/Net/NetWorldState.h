@@ -9,11 +9,13 @@
 #include "GUID/GUID.h"
 #include "UI/UIDocumentRef.h"
 #include "Networking/INetworkTransport.h"
+#include "World/ECS/EventQueue.h"
 #include "World/Net/NetGUID.h"
 #include "Net/NetReplicationGraph.h"
 #include "Net/NetReplication.h"
 #include "Net/NetPrediction.h"
 #include "Systems/NetworkSystem.h"
+#include "Net/NetPropertyDelivery.h"
 
 namespace Lumina
 {
@@ -41,7 +43,7 @@ namespace Lumina
         OwnershipUpdate   = 4, // server to clients, ownership table
         SpawnEntity       = 5, // server to clients, spawn with components
         DespawnEntity     = 6, // server to clients, despawn
-        PropertyUpdate    = 7, // server to clients, replicated components (reliable)
+        PropertyUpdate    = 7, // server to clients, replicated components and script fields of one entity
         ClientTransform   = 8, // client to server, owned-entity transforms
         Welcome           = 9, // server to client, which level to load
         ClientReady       = 10,// client to server, map loaded, request baseline
@@ -50,6 +52,12 @@ namespace Lumina
         NameExport        = 13,// FName net-index map
         MoveCommands      = 14,// client to host, predicted character input
         MoveAck           = 15,// host to owner, the state a move produced
+        SimStart          = 16,// host to client, a deterministic simulation session and the client's player slot
+        SimInput          = 17,// either way, one player's inputs for consecutive simulation ticks
+        SimChecksum       = 18,// either way, a digest of the simulation state at a tick
+        PropertyPacket    = 19,// host to client, numbered unreliable PropertyUpdates
+        PropertyAck       = 20,// client to host, which property packets arrived
+        PropertyFence     = 21,// host to client, reliably after spawns, the first property packet that may touch them
     };
 
     // CObject-ref net-index cache. A referenced object is sent as a compact varint index; the index/GUID
@@ -106,6 +114,7 @@ namespace Lumina
         bool   bKeyframeThisTick       = false;
         uint32 RelevantAvg             = 0; // avg relevant entities per client (interest management)
         uint32 RelevantMax             = 0; // max relevant entities on any one client
+        uint32 PropertyPacketsLost     = 0; // cumulative, property packets a client missed and whose entities went again
     };
 
     // The replicated component types, built with the session so a type a script reload rebinds reaches the next session.
@@ -166,6 +175,7 @@ namespace Lumina
         TVector<uint8>                 FieldBytes;
         TVector<uint32>                FieldOffsets;
         TVector<uint8>                 Mask;
+        TVector<CStruct*>              AppliedTypes;
         TVector<FProperty*>            Fields;
         TVector<uint8>                 Held;
         TVector<uint8>                 Merged;
@@ -187,6 +197,12 @@ namespace Lumina
         // The world's own registry, which entity references need to find an entity's NetGUID.
         ECS::FRegistry*               Registry = nullptr;
 
+        // The world's event queues, null when a test drives replication without a world.
+        ECS::FEventQueues*            Events = nullptr;
+
+        // Server, connections that left last tick, whose entities are released this tick so leave readers still find them.
+        TVector<uint32>               DepartedConnections;
+
         // Client side, link to the server. Invalid until ConnectToServer succeeds.
         FConnectionHandle             ServerConnection;
 
@@ -196,6 +212,9 @@ namespace Lumina
 
         // Server side, clients that sent ClientReady, in join order. Gameplay only ever sees these.
         TVector<uint32>               ReadyClientIds;
+
+        // Host, each client's slot in the deterministic simulation, so a relayed message carries its sender's real slot.
+        THashMap<uint32, uint32>      SimPlayerOfConnection;
 
         // Outgoing script RPCs keyed by destination connection, flushed after the frame's replication.
         THashMap<uint32, TVector<uint8>> PendingRpcReliable;
@@ -220,6 +239,18 @@ namespace Lumina
 
         // This peer's unique id. ServerPeerId on the server, the assigned handle on a client.
         uint32                        LocalPeerId = ServerPeerId;
+
+        FNetPropertyAcks              PropertyAcks;
+
+        // Client, a local stand-in for a spawn this peer asked the host for, waiting on the host's copy.
+        struct FPredictedSpawn
+        {
+            ECS::FEntity StandIn = ECS::NullEntity;
+            double       Expire = 0.0;
+            bool         bKeepStandIn = true;
+        };
+        THashMap<uint32, FPredictedSpawn> PredictedSpawns;
+        uint32                        NextPredictionKey = 1;
 
         // Server, entities whose owner changed, sent only to clients that hold them and to the owner.
         TVector<ECS::FEntity>         OwnershipChanged;

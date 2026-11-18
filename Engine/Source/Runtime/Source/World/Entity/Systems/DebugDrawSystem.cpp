@@ -17,6 +17,8 @@ namespace Lumina
 
     void CDebugDrawSystem::Configure()
     {
+        QueuesNoCommands();
+
         #if !defined(LE_SHIPPING)
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);

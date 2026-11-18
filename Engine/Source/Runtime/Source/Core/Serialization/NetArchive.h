@@ -70,6 +70,9 @@ namespace Lumina
         TFunction<uint32(const FName&)>         NameToNetIndex;
         TFunction<void(uint32, FName&)>         NetIndexToName;
 
+        // Set by a reader that met an index whose export has not arrived yet, so the sender can be asked to send it again.
+        bool bUnresolvedReference = false;
+
     private:
 
         void   WriteBit(uint32 Bit);

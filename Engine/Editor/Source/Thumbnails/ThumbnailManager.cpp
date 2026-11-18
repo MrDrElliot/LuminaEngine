@@ -13,6 +13,7 @@
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
+#include "Containers/Algorithm.h"
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
@@ -50,6 +51,69 @@ namespace Lumina
             return Path.EndsWith(Extension) ? Path.Mid(0, Path.Len() - Extension.Len()) : Path;
         };
         return Stem(A) == Stem(B);
+    }
+
+    namespace
+    {
+        uint64 MixHash(uint64 Value)
+        {
+            Value ^= Value >> 30; Value *= 0xBF58476D1CE4E5B9ull;
+            Value ^= Value >> 27; Value *= 0x94D049BB133111EBull;
+            return Value ^ (Value >> 31);
+        }
+
+        // A mesh is drawn with its materials and their textures, so its thumbnail key folds in every hard dependency's content.
+        uint64 ThumbnailKey(const FAssetData& Asset)
+        {
+            uint64 Key = Asset.ContentHash;
+            TVector<FGuid> Visited = { Asset.AssetGUID };
+            TVector<FGuid> Pending;
+            auto Follow = [&](const FAssetData& Data)
+            {
+                for (const FAssetDependency& Dependency : Data.Dependencies)
+                {
+                    if (Dependency.Type == EDependencyType::Hard && !Algo::Contains(Visited, Dependency.TargetGUID))
+                    {
+                        Visited.Add(Dependency.TargetGUID);
+                        Pending.Add(Dependency.TargetGUID);
+                    }
+                }
+            };
+            Follow(Asset);
+            while (!Pending.IsEmpty())
+            {
+                const FGuid GUID = Pending.Last();
+                Pending.Pop();
+                if (const FAssetDataPtr Dependency = FAssetRegistry::Get().GetAssetByGUID(GUID))
+                {
+                    // Summed, so the order dependencies are visited in never changes the key.
+                    Key += MixHash(Dependency->ContentHash);
+                    Follow(*Dependency);
+                }
+            }
+            return Key;
+        }
+
+        // A material still compiling its shaders captures as the default material, as does a mesh drawn with one.
+        bool AreMaterialsReady(CObject* Asset)
+        {
+            if (CMaterialInterface* Material = Cast<CMaterialInterface>(Asset))
+            {
+                return Material->IsReadyForRender();
+            }
+            if (CMesh* Mesh = Cast<CMesh>(Asset))
+            {
+                for (uint32 Slot = 0; Slot < Mesh->GetNumMaterials(); ++Slot)
+                {
+                    const CMaterialInterface* Material = Mesh->GetMaterialAtSlot(static_cast<int32>(Slot));
+                    if (Material != nullptr && !Material->IsReadyForRender())
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
     }
 
     CThumbnailManager::CThumbnailManager()
@@ -281,7 +345,7 @@ namespace Lumina
         {
             // The returned pointer is only valid under the registry's momentary lock, so snapshot it now.
             FGuid        GUID;
-            uint64       ContentHash = 0;
+            uint64       Key = 0;
             FName        ClassName;
             FFixedString PackagePath;
             {
@@ -292,39 +356,28 @@ namespace Lumina
                     co_return;
                 }
                 GUID        = Data->AssetGUID;
-                ContentHash = Data->ContentHash;
+                Key         = ThumbnailKey(*Data);
                 ClassName   = Data->AssetClass;
                 PackagePath = Data->Path;
             }
 
-            // Record the identity so a later invalidation sweep can compare content hashes.
-            {
-                FWriteScopeLock Lock(Self->ThumbnailLock);
-                auto It = Self->Thumbnails.Find(PackageName);
-                if (It != nullptr && (*It))
-                {
-                    (*It)->GUID        = GUID;
-                    (*It)->ContentHash = ContentHash;
-                }
-            }
+            // Through a member, because the same map lookup written in this coroutine body never found the record.
+            Self->SetRecordIdentity(PackageName, GUID, Key);
 
             // 1. Sidecar cache (fast path; no package load once warm).
             {
                 FPackageThumbnail Cached;
-                if (ThumbnailCache::Load(GUID, ContentHash, Cached))
+                if (ThumbnailCache::Load(GUID, Key, Cached))
                 {
                     Self->UploadAndStore(PackageName, Cached);
                     co_return;
                 }
             }
 
+            // An embedded image is only refreshed when an asset editor saves, so anything that can be rendered is rendered instead.
             CClass* Klass = FindObject<CClass>(ClassName);
-            const bool bRegenerateSkeletalPreview = Klass != nullptr
-                && (Klass->IsChildOf(CSkeletalMesh::StaticClass())
-                    || Klass->IsChildOf(CSkeleton::StaticClass())
-                    || Klass->IsChildOf(CAnimation::StaticClass()));
-
-            if (!bRegenerateSkeletalPreview)
+            const bool bCanRender = Klass != nullptr && Self->CanGenerateFor(Klass);
+            if (!bCanRender)
             {
                 CPackage* Pkg = CPackage::LoadPackage(PackagePath);
                 if (Pkg != nullptr)
@@ -333,7 +386,7 @@ namespace Lumina
                     {
                         if (!Embedded->ImageData.IsEmpty())
                         {
-                            ThumbnailCache::Save(GUID, ContentHash, *Embedded);
+                            ThumbnailCache::Save(GUID, Key, *Embedded);
                             Self->UploadAndStore(PackageName, *Embedded);
                             co_return;
                         }
@@ -342,7 +395,7 @@ namespace Lumina
             }
 
             // Never load the object here, since that would race the editor's own loader on the same object.
-            if (Klass == nullptr || !Self->CanGenerateFor(Klass))
+            if (!bCanRender)
             {
                 Self->SetRecordState(PackageName, FPackageThumbnail::EState::Failed);
                 co_return;
@@ -351,7 +404,7 @@ namespace Lumina
             FRenderRequest Request;
             Request.Package     = PackageName;
             Request.GUID        = GUID;
-            Request.ContentHash = ContentHash;
+            Request.Key         = Key;
 
             {
                 FScopeLock Lock(Self->RenderQueueMutex);
@@ -431,6 +484,17 @@ namespace Lumina
         Dest.LoadState.store(FPackageThumbnail::EState::Loaded, std::memory_order_release);
     }
 
+    void CThumbnailManager::SetRecordIdentity(const FName& Package, const FGuid& GUID, uint64 Key)
+    {
+        FWriteScopeLock Lock(ThumbnailLock);
+        auto It = Thumbnails.Find(Package);
+        if (It != nullptr && (*It))
+        {
+            (*It)->GUID = GUID;
+            (*It)->Key  = Key;
+        }
+    }
+
     void CThumbnailManager::SetRecordState(const FName& Package, FPackageThumbnail::EState State)
     {
         FWriteScopeLock Lock(ThumbnailLock);
@@ -445,7 +509,7 @@ namespace Lumina
     {
         if (bCaptured)
         {
-            ThumbnailCache::Save(Request.GUID, Request.ContentHash, Captured);
+            ThumbnailCache::Save(Request.GUID, Request.Key, Captured);
             UploadAndStore(Request.Package, Captured);
         }
         else
@@ -670,14 +734,10 @@ namespace Lumina
                 continue;
             }
 
-            // A material whose shaders are not compiled yet would capture as the default material, so defer.
-            if (CMaterialInterface* Material = Cast<CMaterialInterface>(Asset))
+            if (!AreMaterialsReady(Asset))
             {
-                if (!Material->IsReadyForRender())
-                {
-                    DeferOrDrop(Request);
-                    continue;
-                }
+                DeferOrDrop(Request);
+                continue;
             }
 
             // Painted classes need no world, no GPU and no readback, so they still complete inline.
@@ -732,7 +792,7 @@ namespace Lumina
                 {
                     if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByGUID(Record->GUID))
                     {
-                        bDrop = (Data->ContentHash != Record->ContentHash);   // content changed -> regenerate
+                        bDrop = ThumbnailKey(*Data) != Record->Key;
                     }
                 }
             }

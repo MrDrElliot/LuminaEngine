@@ -2597,7 +2597,6 @@ namespace Lumina
     void FWorldEditorTool::DrawViewModeExtraItems()
     {
         ImGui::MenuItem("Draw Entity Debug Info", nullptr, &bDrawEntityDebugInfo);
-        ImGui::MenuItem("Network (AOI / Grid)", nullptr, &bDrawNetworkDebug);
 
         // The bool overload would flip the flag without saving and restoring grid and billboard state.
         if (ImGui::MenuItem("Game View", "G", bGameViewMode))
@@ -4449,6 +4448,7 @@ namespace Lumina
             { "Frame End",      "Runs last each frame, before the world is handed to the renderer." },
             { "Paused",         "Runs instead of the gameplay stages while the world is not simulating, which is how systems keep working in the editor." },
             { "Fixed Update",   "Runs zero or more times a frame at the physics rate, after Pre Physics, for gameplay that must not depend on frame rate." },
+            { "Simulation",     "Runs at the deterministic simulation's fixed tick from player inputs alone, and again for each tick a rollback replays." },
             { "No Update",      "Asks for no stage, so it only runs its startup and teardown, and whatever those set going." },
         };
         static_assert(std::size(kSystemStages) == (size_t)EUpdateStage::Max + 1, "One description per update stage, then the systems in none.");

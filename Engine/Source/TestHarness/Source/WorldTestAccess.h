@@ -19,6 +19,16 @@ namespace Lumina
         static void RebuildSystemSchedule(CWorld& World) { World.RebuildSystemSchedule(); }
         static void TickFixedUpdate(CWorld& World, double FrameDeltaSeconds) { World.TickFixedUpdate(FrameDeltaSeconds); }
 
+        // The world manager attaches a context, which is where a world's net mode lives.
+        static void SetOwningContext(CWorld& World, FWorldContext* Context) { World.OwningContext = Context; }
+
+        // InitializeWorld creates the simulation from the project setting, which a test leaves alone.
+        static FSimulation& EnableSimulation(CWorld& World)
+        {
+            World.Simulation = MakeUnique<FSimulation>(World);
+            return *World.Simulation;
+        }
+
         // A loaded world holds its entities here until InitializeWorld, which a test process cannot run.
         static ECS::FRegistry& PendingRegistry(CWorld& World) { return World.RegistryPending; }
 
@@ -48,6 +58,7 @@ namespace Lumina
             World.SystemContext.UpdateStage   = Stage;
             World.SystemContext.DeltaTime     = DeltaSeconds;
             World.SystemContext.RealDeltaTime = DeltaSeconds;
+            World.SystemContext.Time         += DeltaSeconds;
             World.TickSystems(World.SystemContext);
         }
 

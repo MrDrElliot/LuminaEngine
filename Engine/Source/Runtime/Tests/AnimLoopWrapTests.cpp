@@ -11,6 +11,7 @@
 #include "Renderer/SkeletonResource.h"
 #include "World/World.h"
 #include "World/Entity/Components/SimpleAnimationComponent.h"
+#include "World/Entity/Components/AnimationGraphComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
 #include "WorldTestAccess.h"
 
@@ -159,8 +160,17 @@ TEST(AnimLoopWrap, AnimationSystemCreditsEveryWholeLoopInOneUpdate)
     SSimpleAnimationComponent& Anim = Registry.Emplace<SSimpleAnimationComponent>(Entity);
     Anim.PlayAnimation(Clip, true, 1.0f);
 
+    // Reading once registers interest, which is what makes the system build notify events at all.
+    ECS::TEventReader<SAnimNotifyFiredEvent> Fired;
+    EXPECT_TRUE(ECS::ReadEvents(World->GetEvents(), Fired).IsEmpty());
+
     // A one second looping clip advanced 2.5 seconds wraps twice and lands at 0.5.
     FWorldTestAccess::TickStage(*World, EUpdateStage::PrePhysics, 2.5);
+
+    const ECS::TEventRange<SAnimNotifyFiredEvent> FiredRange = ECS::ReadEvents(World->GetEvents(), Fired);
+    ASSERT_EQ(FiredRange.Num(), 3u) << "every crossing reaches event readers, not only the component's own list";
+    EXPECT_EQ((*FiredRange.begin()).Entity, Entity);
+    EXPECT_EQ((*FiredRange.begin()).Name, FName("Step"));
 
     EXPECT_NEAR(Anim.CurrentTime, 0.5f, 1e-3f);
     ASSERT_EQ(Anim.NotifyEvents.Num(), 3) << "2.5 loops crosses the 0.5 notify three times, not once";

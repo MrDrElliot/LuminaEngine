@@ -2,6 +2,8 @@
 
 #include "Containers/Vector.h"
 #include "Containers/Name.h"
+#include "Core/Object/ObjectMacros.h"
+#include "AnimEvents.generated.h"
 
 namespace Lumina
 {
@@ -10,6 +12,7 @@ namespace Lumina
     struct SAnimNotify;
     struct SAnimNotifyState;
 
+    REFLECT()
     enum class EAnimNotifyEventType : uint8
     {
         // Point notify crossed by the playhead this frame.

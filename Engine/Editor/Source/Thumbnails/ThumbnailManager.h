@@ -67,12 +67,12 @@ namespace Lumina
 
     private:
 
-        // One cached thumbnail plus the identity it was built from (for hash-based invalidation).
+        // One cached thumbnail plus the identity it was built from, so a changed key regenerates it.
         struct FThumbnailRecord
         {
             FPackageThumbnail Thumbnail;
             FGuid             GUID;
-            uint64            ContentHash = 0;
+            uint64            Key = 0;
         };
 
         // Waits for something else to load the asset, since loading it here races the editor's loader into a torn mesh.
@@ -80,7 +80,7 @@ namespace Lumina
         {
             FName    Package;
             FGuid    GUID;
-            uint64   ContentHash = 0;
+            uint64   Key = 0;
             uint32   DeferChecks = 0;
             bool     bLoadAttempted = false;
 
@@ -96,6 +96,7 @@ namespace Lumina
 
         // Store an already-final record state (Failed etc.) without an image.
         void SetRecordState(const FName& Package, FPackageThumbnail::EState State);
+        void SetRecordIdentity(const FName& Package, const FGuid& GUID, uint64 Key);
 
         // Caches and uploads a successful capture, or marks the record Failed.
         void CompleteRequest(const FRenderRequest& Request, bool bCaptured, FPackageThumbnail& Captured);

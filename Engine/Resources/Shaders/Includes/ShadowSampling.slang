@@ -125,6 +125,14 @@ float ContactReachPixels(float Reach, float ViewZ, float ScreenHeight)
     return Reach * abs(GetCameraProjection()[1][1]) * 0.5 * ScreenHeight / max(abs(ViewZ), 1e-4);
 }
 
+static const uint kContactBayer[16] = { 0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u };
+
+// Every 4x4 block holds each of these start offsets once, so a 4x4 box over the result averages all sixteen.
+float OrderedContactJitter(int2 Pixel)
+{
+    return (float(kContactBayer[(Pixel.y & 3) * 4 + (Pixel.x & 3)]) + 0.5) / 16.0;
+}
+
 // Depth an occluder in contact may extend behind its front face, as a fraction of view depth so precision loss far away is covered.
 static const float kContactThicknessPerMeter = 0.02;
 
@@ -142,13 +150,14 @@ float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, fl
     const float    StepLength = Reach / float(Steps);
     const float3   Step       = ViewL * StepLength;
 
-    // Half-step jittered start plus a normal offset, or a grazing surface reports its own ray as occluding.
+    // Jitter is a start offset in steps from 0 to 1, and the normal offset keeps a grazing surface off its own ray.
     float3 RayPos = ViewPos + ViewN * StepLength + Step * (0.5 + Jitter);
 
     // A hit farther behind the ray than this is a separate surface, so a background pixel beside a silhouette stays lit.
     const float Thickness = clamp(abs(ViewPos.z) * kContactThicknessPerMeter, StepLength, Reach);
 
     float Occlusion = 0.0;
+    float PrevDelta = -StepLength;
     [loop]
     for (uint i = 0u; i < Steps; ++i)
     {
@@ -178,14 +187,22 @@ float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, fl
 
             if (Delta > 0.0 && SceneHeight > 0.5 * RayHeight)
             {
+                // Faded from where the ray met the surface between the two steps, so the fade is continuous rather than stepped.
+                const float Crossing = PrevDelta <= 0.0 ? saturate(Delta / max(Delta - PrevDelta, 1e-6)) : 0.0;
+                const float Along    = saturate((float(i) + 0.5 + Jitter - Crossing) / float(Steps));
+
                 // Hits fade toward the thickness edge and along the ray, so neither limit cuts a hard line.
-                const float Hit = saturate(2.0 * (1.0 - Delta / Thickness)) * (1.0 - float(i) / float(Steps));
-                Occlusion = max(Occlusion, Hit);
+                Occlusion = max(Occlusion, saturate(2.0 * (1.0 - Delta / Thickness)) * (1.0 - Along));
                 if (Delta * 2.0 <= Thickness)
                 {
                     break;   // a full-strength hit, and later steps only fade weaker
                 }
             }
+            PrevDelta = Delta;
+        }
+        else
+        {
+            PrevDelta = -Reach;
         }
 
         RayPos += Step;
@@ -279,8 +296,105 @@ float2 ReceiverPlaneDepthSlope(float4x4 CascadeVP, float3 Normal, float3 ToLight
     return Slope;
 }
 
-// Godot's default soft sun shadow, a few hardware-compare taps on a rotated Vogel disk.
-float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float3 Normal, float3 ToLight, float2 ScreenPos, out bool Inside)
+// Castano's optimized PCF (2013), bilinear compares placed and weighted so their sum is a tent over whole texels with no noise.
+struct FShadowPCF
+{
+    FShadowTex Tex;
+    float2     UV;
+    float2     TexelUV;
+    float      RefDepth;
+    float2     DepthSlope;
+    float2     TileMin;
+    float2     TileMax;
+
+    // Spread above one widens the kernel past its size about UV, at the cost of exactness between taps.
+    float Tap(float2 Corner, float2 OffsetTexels, float Spread)
+    {
+        const float2 P = UV + (Corner + OffsetTexels * TexelUV - UV) * Spread;
+        return Tex.SampleCmpLevelZero(clamp(P, TileMin, TileMax), RefDepth + dot(DepthSlope, P - UV));
+    }
+
+    static void TentTaps(int Size, float S, out float4 W, out float4 O)
+    {
+        if (Size == 3)
+        {
+            W = float4(3.0 - 2.0 * S, 1.0 + 2.0 * S, 0.0, 0.0);
+            O = float4((2.0 - S) / W.x - 1.0, S / W.y + 1.0, 0.0, 0.0);
+        }
+        else if (Size == 5)
+        {
+            W = float4(4.0 - 3.0 * S, 7.0, 1.0 + 3.0 * S, 0.0);
+            O = float4((3.0 - 2.0 * S) / W.x - 2.0, (3.0 + S) / W.y, S / W.z + 2.0, 0.0);
+        }
+        else
+        {
+            W = float4(5.0 * S - 6.0, 11.0 * S - 28.0, -(11.0 * S + 17.0), -(5.0 * S + 1.0));
+            O = float4((4.0 * S - 5.0) / W.x - 3.0, (4.0 * S - 16.0) / W.y - 1.0, -(7.0 * S + 5.0) / W.z + 1.0, -S / W.w + 3.0);
+        }
+    }
+
+    // Size is the kernel's width in texels, 1, 3, 5 or 7.
+    float Filter(int Size, float Spread)
+    {
+        if (Size <= 1)
+        {
+            return Tex.SampleCmpLevelZero(UV, RefDepth);
+        }
+
+        const float2 T      = UV / TexelUV;
+        const float2 Snap   = floor(T + 0.5);
+        const float2 Frac   = T + 0.5 - Snap;
+        const float2 Corner = (Snap - 0.5) * TexelUV;
+
+        float4 WU, OU, WV, OV;
+        TentTaps(Size, Frac.x, WU, OU);
+        TentTaps(Size, Frac.y, WV, OV);
+
+        const int N = (Size + 1) / 2;
+        float Sum = 0.0;
+        [unroll]
+        for (int j = 0; j < 4; ++j)
+        {
+            [unroll]
+            for (int i = 0; i < 4; ++i)
+            {
+                if (i < N && j < N)
+                {
+                    Sum += WU[i] * WV[j] * Tap(Corner, float2(OU[i], OV[j]), Spread);
+                }
+            }
+        }
+        return Sum / (dot(WU, float4(1.0, 1.0, 1.0, 1.0)) * dot(WV, float4(1.0, 1.0, 1.0, 1.0)));
+    }
+
+    // Blends the two kernel sizes around RadiusTexels, so contact hardening changes the width without a visible step.
+    float FilterRadius(float RadiusTexels, int MaxSize)
+    {
+        const float MaxRadius = float(MaxSize) * 0.5;
+        if (RadiusTexels >= MaxRadius)
+        {
+            return Filter(MaxSize, RadiusTexels / MaxRadius);
+        }
+        if (RadiusTexels <= 0.5)
+        {
+            return Filter(1, 1.0);
+        }
+
+        const float LowerRadius = floor(RadiusTexels - 0.5) + 0.5;
+        const int   LowerSize   = int(LowerRadius * 2.0 + 0.5);
+        const float Blend       = RadiusTexels - LowerRadius;
+        const float Lower       = Filter(LowerSize, 1.0);
+        return Blend > 0.0 ? lerp(Lower, Filter(LowerSize + 2, 1.0), Blend) : Lower;
+    }
+};
+
+// The widest Castano kernel a tap budget affords, 16 taps for 7 texels, 9 for 5 and 4 for 3.
+int ShadowKernelSizeForTaps(int Taps)
+{
+    return Taps >= 16 ? 7 : (Taps >= 8 ? 5 : 3);
+}
+
+float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float3 Normal, float3 ToLight, out bool Inside)
 {
     // Godot's normal bias, minus its along-light part so it slides the receiver sideways rather than toward the sun.
     float3 NormalOffset = NormalOffsetWS(Normal, ToLight, CascadeIndex);
@@ -318,8 +432,7 @@ float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float
     const float2 TexelUV  = Tile.AtlasUVScale / max(LightData().CascadeResolutions[CascadeIndex], 1.0);
     const float  TapDepth = RefDepth - dot(abs(DepthSlope), TexelUV);
 
-    float2 StartDir;
-    sincos(InterleavedGradientNoise(ScreenPos) * TWO_PI, StartDir.y, StartDir.x);
+    const float2 StartDir   = float2(1.0, 0.0);
     const float2 GoldenStep = float2(cos(kVogelGoldenAngle), sin(kVogelGoldenAngle));
 
     // Contact hardening (PCSS, Fernando 2005), the sun's disk seen past the average blocker sets the kernel within the widest one.
@@ -354,20 +467,12 @@ float SampleSunCascadePCF(FLight Light, int CascadeIndex, float3 WorldPos, float
         }
     }
 
-    float  Shadow = 0.0;
-    float2 Dir    = StartDir;
-    [loop]
-    for (int i = 0; i < Taps; ++i)
-    {
-        const float2 TapUV = Dir * sqrt((float(i) + 0.5) / float(Taps)) * KernelUV;
-        Dir = RotateVogel(Dir, GoldenStep);
-        Shadow += ShadowCascade().SampleCmpLevelZero(clamp(BaseUV + TapUV, TileMin, TileMax), TapDepth + dot(DepthSlope, TapUV));
-    }
-    return Shadow / float(Taps);
+    const FShadowPCF PCF = { ShadowCascade(), BaseUV, TexelUV, TapDepth, DepthSlope, TileMin, TileMax };
+    return PCF.FilterRadius(KernelUV.x / TexelUV.x, ShadowKernelSizeForTaps(Taps));
 }
 
 // No derivatives anywhere below, so the compute lighting pass and the forward passes share this one path.
-float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos)
+float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition)
 {
     // A sun with bCastShadows off leaves ShadowDataIndex at INDEX_NONE.
     if (Light.ShadowDataIndex == INDEX_NONE)
@@ -394,7 +499,7 @@ float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 N
     const float3 ToLight = normalize(Light.Direction);
 
     bool InsideA;
-    const float ShadowA = SampleSunCascadePCF(Light, CascadeIndex, FragmentPos, Normal, ToLight, ScreenPos, InsideA);
+    const float ShadowA = SampleSunCascadePCF(Light, CascadeIndex, FragmentPos, Normal, ToLight, InsideA);
 
     const float CascadeNear = (CascadeIndex == 0) ? 0.0 : CascadeSplits[CascadeIndex - 1];
     const float CascadeLen  = max(CascadeSplits[CascadeIndex] - CascadeNear, 1e-4);
@@ -406,7 +511,7 @@ float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 N
     if (BlendFraction > 0.0 && CascadeIndex + 1 < NumActive && LocalT > 1.0 - BlendFraction)
     {
         bool InsideB;
-        const float ShadowB = SampleSunCascadePCF(Light, CascadeIndex + 1, FragmentPos, Normal, ToLight, ScreenPos, InsideB);
+        const float ShadowB = SampleSunCascadePCF(Light, CascadeIndex + 1, FragmentPos, Normal, ToLight, InsideB);
         if (InsideB)
         {
             return lerp(ShadowA, ShadowB, saturate((LocalT - (1.0 - BlendFraction)) / BlendFraction));
@@ -426,8 +531,8 @@ float ComputeDirectionalCascadeShadow(FLight Light, float3 FragmentPos, float3 N
     return ShadowA;
 }
 
-float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos)
+float ComputeDirectionalShadow(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition)
 {
-    return ComputeDirectionalCascadeShadow(Light, FragmentPos, Normal, ViewPosition, ScreenPos)
+    return ComputeDirectionalCascadeShadow(Light, FragmentPos, Normal, ViewPosition)
          * SampleDirectionalCloudShadow(FragmentPos);
 }

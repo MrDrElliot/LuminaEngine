@@ -11,6 +11,8 @@ namespace Lumina
 {
     void CFoliageTerrainSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
     }

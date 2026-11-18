@@ -27,11 +27,12 @@ namespace Lumina
 
     private:
 
-        // Rolling per-world history for the graphs: send/recv throughput (bytes/sec) and the last transform
-        // snapshot size (bytes) so you can watch it climb toward the frame cap.
+        // Rolling per-world history of throughput and the largest transform frame, a sample every quarter second so a minute fits.
         struct FNetHistory
         {
-            static constexpr int Capacity = 240;
+            static constexpr int   Capacity       = 240;
+            static constexpr float SampleInterval = 0.25f;
+            float  SinceSample            = 0.0f;
             float  SendRate[Capacity]     = {};
             float  RecvRate[Capacity]     = {};
             float  MovementBytes[Capacity]= {};
@@ -47,5 +48,6 @@ namespace Lumina
 
         THashMap<CWorld*, FNetHistory> Histories;
         CWorld*                        SelectedWorld = nullptr;
+        ImGuiTextFilter                EntityFilter;
     };
 }

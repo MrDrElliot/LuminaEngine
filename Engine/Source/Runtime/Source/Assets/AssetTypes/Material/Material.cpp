@@ -263,9 +263,15 @@ namespace Lumina
             return true;
         }
 
-        // Compiles one builtin stage from a template. The result lands as binaries, which PostLoad commits.
-        void CompileBuiltinStage(IShaderCompiler& Compiler, CMaterial* Material, EMaterialShaderStage Stage, const char* TemplateFile,
-                                 const char* Define, std::initializer_list<FTemplateToken> Tokens, const char* EntryPoint = nullptr)
+        struct FBuiltinEntry
+        {
+            EMaterialShaderStage Stage;
+            const char*          EntryPoint;
+        };
+
+        // Compiles builtin stages from one template, parsed once. The results land as binaries, which PostLoad commits.
+        void CompileBuiltinEntries(IShaderCompiler& Compiler, CMaterial* Material, const char* TemplateFile, const char* Define,
+                                   std::initializer_list<FTemplateToken> Tokens, std::initializer_list<FBuiltinEntry> Stages)
         {
             const FString TemplatePath = FString(kMaterialShaderDirectory) + TemplateFile;
 
@@ -281,23 +287,30 @@ namespace Lumina
             {
                 Options.MacroDefinitions.Emplace(Define);
             }
-            if (EntryPoint != nullptr)
-            {
-                Options.EntryPoint = EntryPoint;
-            }
 
-            Compiler.CompilerShaderRaw(Move(Source), Move(Options), [Material, Stage](const FShaderHeader& Header) mutable
+            TVector<IShaderCompiler::FRawShaderEntry> Entries;
+            for (const FBuiltinEntry& Entry : Stages)
             {
-                Material->SetStageBinaries(Stage, TSpan<const uint32>(Header.Binaries.GetData(), Header.Binaries.Num()));
-            });
+                const EMaterialShaderStage Stage = Entry.Stage;
+                Entries.Add({ Entry.EntryPoint != nullptr ? FString(Entry.EntryPoint) : FString(), Options.DebugName, [Material, Stage](const FShaderHeader& Header)
+                {
+                    Material->SetStageBinaries(Stage, TSpan<const uint32>(Header.Binaries.GetData(), Header.Binaries.Num()));
+                }, {} });
+            }
+            Compiler.CompileShaderRawEntries(Move(Source), Options, Move(Entries));
+        }
+
+        void CompileBuiltinStage(IShaderCompiler& Compiler, CMaterial* Material, EMaterialShaderStage Stage, const char* TemplateFile,
+                                 const char* Define, std::initializer_list<FTemplateToken> Tokens)
+        {
+            CompileBuiltinEntries(Compiler, Material, TemplateFile, Define, Tokens, { { Stage, nullptr } });
         }
 
         // A geometry template carries both paths, MeshMain for Stage and VertexMain for its vertex-path twin.
         void CompileBuiltinGeometryStage(IShaderCompiler& Compiler, CMaterial* Material, EMaterialShaderStage Stage, const char* TemplateFile,
                                          const char* Define, std::initializer_list<FTemplateToken> Tokens)
         {
-            CompileBuiltinStage(Compiler, Material, Stage, TemplateFile, Define, Tokens, "MeshMain");
-            CompileBuiltinStage(Compiler, Material, VertexPathStage(Stage), TemplateFile, Define, Tokens, "VertexMain");
+            CompileBuiltinEntries(Compiler, Material, TemplateFile, Define, Tokens, { { Stage, "MeshMain" }, { VertexPathStage(Stage), "VertexMain" } });
         }
 
         // Builtins are rebuilt in place, so a compile still in flight lands before the old one is unrooted. Null when there is no compiler.
@@ -812,18 +825,20 @@ namespace Lumina
     {
         const bool bMeshlet = MaterialDomain::IsMeshlet(MaterialType);
         const bool bMasked  = BlendMode == EBlendMode::Masked;
+        // Only the translucent passes bind a meshlet material's forward stages, and only the opaque ones its deferred stage.
+        const bool bForward = IsOITResolved() || IsUnorderedBlend();
 
         switch (Stage)
         {
-        case EMaterialShaderStage::Pixel:                return true;
+        case EMaterialShaderStage::Pixel:                return !bMeshlet || bForward;
         case EMaterialShaderStage::Vertex:               return MaterialDomain::UsesVertexStage(MaterialType);
-        case EMaterialShaderStage::MeshShadow:
         case EMaterialShaderStage::MeshBase:
+        case EMaterialShaderStage::MeshBaseVertex:       return bMeshlet && bForward;
+        case EMaterialShaderStage::Deferred:             return bMeshlet && !bForward;
+        case EMaterialShaderStage::MeshShadow:
         case EMaterialShaderStage::VisBufferMesh:
         case EMaterialShaderStage::MeshShadowVertex:
-        case EMaterialShaderStage::MeshBaseVertex:
-        case EMaterialShaderStage::VisBufferVertex:
-        case EMaterialShaderStage::Deferred:             return bMeshlet;
+        case EMaterialShaderStage::VisBufferVertex:      return bMeshlet;
         case EMaterialShaderStage::VisBufferMeshMasked:
         case EMaterialShaderStage::MaskedVisBufferPixel:
         case EMaterialShaderStage::MeshShadowMasked:

@@ -2,13 +2,13 @@
 #include "Memory/MemoryTracking.h"
 #include "AudioDecode.h"
 
-#include "WaveDecoder.h"
+#include "AudioReader.h"
 
 namespace Lumina::Audio
 {
 	bool Probe(const void* Data, size_t Size, FAudioInfo& OutInfo)
 	{
-		FWaveReader Reader;
+		FAudioReader Reader;
 		if (!Reader.Open(Data, Size))
 		{
 			return false;
@@ -22,7 +22,7 @@ namespace Lumina::Audio
 	{
 		LUMINA_MEMORY_SCOPE("Audio");
 
-		FWaveReader Reader;
+		FAudioReader Reader;
 		if (!Reader.Open(Data, Size))
 		{
 			return false;
@@ -39,5 +39,17 @@ namespace Lumina::Audio
 		OutInfo = Info;
 		OutInfo.NumFrames = FramesRead;
 		return FramesRead != 0;
+	}
+
+	bool IsCompressed(const void* Data, size_t Size)
+	{
+		return Qoa::IsQoa(Data, Size);
+	}
+
+	bool Compress(const void* Data, size_t Size, TVector<uint8>& Out)
+	{
+		FAudioInfo Info;
+		TVector<float> Samples;
+		return DecodePCM(Data, Size, Info, Samples) && Qoa::Encode(Samples.GetData(), Info.NumFrames, Info.NumChannels, Info.SampleRate, Out);
 	}
 }

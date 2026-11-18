@@ -23,7 +23,7 @@ namespace Lumina
         Physics::IPhysicsQueries* Queries = Context.GetPhysics();
         const FVector3 Gravity = WorldSettings->Gravity;
 
-        Flyers.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SProjectileComponent> ProjectileMut, ECS::TMut<STransformComponent> TransformMut)
+        auto Step = [&](ECS::FEntity Entity, ECS::TMut<SProjectileComponent> ProjectileMut, ECS::TMut<STransformComponent> TransformMut, bool bDecides)
         {
             if (ProjectileMut.Get().bHasHit)
             {
@@ -79,6 +79,14 @@ namespace Lumina
             if (Hit.IsSet())
             {
                 Transform.SetLocalLocation(Hit->Location);
+                Projectile.bHasHit = true;
+                Projectile.Velocity = FVector3(0.0f);
+
+                // A mirror rests where it struck and waits for the host's despawn, since the host decides what it hit.
+                if (!bDecides)
+                {
+                    return;
+                }
 
                 SProjectileHitEvent Event;
                 Event.Projectile = Entity;
@@ -90,8 +98,6 @@ namespace Lumina
                 // Committed ahead of the deferred destroy below, so OnHit still reaches the projectile.
                 HitEvents.Send(Event);
 
-                Projectile.bHasHit = true;
-                Projectile.Velocity = FVector3(0.0f);
                 if (Projectile.bDestroyOnHit)
                 {
                     Context.Destroy(Entity);
@@ -101,6 +107,15 @@ namespace Lumina
             {
                 Transform.SetLocalLocation(End);
             }
+        };
+
+        Flyers.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SProjectileComponent> Projectile, ECS::TMut<STransformComponent> Transform)
+        {
+            Step(Entity, Projectile, Transform, true);
+        });
+        Mirrors.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SProjectileComponent> Projectile, ECS::TMut<STransformComponent> Transform)
+        {
+            Step(Entity, Projectile, Transform, false);
         });
     }
 }

@@ -249,6 +249,9 @@ namespace Lumina
         // Parallel phased load of RootGUID and its hard closure, falling back to the inline load when unregistered.
         RUNTIME_API static CObject* LoadAssetGraph(const FGuid& RootGUID);
 
+        // One phased load over every root's hard closure, so shared dependencies load once; anything already loaded is skipped with its subtree.
+        RUNTIME_API static void LoadAssetGraph(TSpan<const FGuid> Roots);
+
         RUNTIME_API static bool SavePackage(CPackage* Package, FStringView Path);
 
         // Saves to compressed bytes for the cooker, stripping EditorOnly properties and thumbnails.

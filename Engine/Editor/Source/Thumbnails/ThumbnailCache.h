@@ -10,16 +10,16 @@ namespace Lumina
 
 namespace Lumina::ThumbnailCache
 {
-    // One file per asset GUID, keyed by ContentHash, so generating a thumbnail never rewrites the .lasset.
+    // One file per asset GUID, keyed by a hash of everything the image shows, so generating a thumbnail never rewrites the .lasset.
 
     // Absolute path of the cache file for GUID (empty if the engine install dir is unknown).
     FString CachePath(const FGuid& GUID);
 
     // Leaves OutThumbnail untouched and returns false when the file is missing, stale or corrupt.
-    bool Load(const FGuid& GUID, uint64 ExpectedContentHash, FPackageThumbnail& OutThumbnail);
+    bool Load(const FGuid& GUID, uint64 ExpectedKey, FPackageThumbnail& OutThumbnail);
 
     // No-op for an invalid GUID or an empty image.
-    bool Save(const FGuid& GUID, uint64 ContentHash, FPackageThumbnail& Thumbnail);
+    bool Save(const FGuid& GUID, uint64 Key, FPackageThumbnail& Thumbnail);
 
     // Remove GUID's cache file if present (used when an asset is deleted). Safe if absent.
     void Delete(const FGuid& GUID);

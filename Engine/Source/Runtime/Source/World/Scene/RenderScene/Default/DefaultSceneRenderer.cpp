@@ -2820,6 +2820,11 @@ namespace Lumina
 
     RHI::FPipelineH FDefaultSceneRenderer::FindPipeline(const FGraphicsPipelineKey& Key)
     {
+        if (FrameSettings.bWaitForPipelines)
+        {
+            return GetOrCreatePipeline(Key);
+        }
+
         FScenePipelineCache& Cache = ScenePipelines();
         const uint64 CacheKey = HashGraphicsKey(Key);
         if (RHI::FPipelineH Found = Cache.Find(CacheKey))
@@ -2852,6 +2857,11 @@ namespace Lumina
     RHI::FPipelineH FDefaultSceneRenderer::FindComputePipeline(FShaderH CS,
         TSpan<const RHI::FSpecializationConstant> Constants)
     {
+        if (FrameSettings.bWaitForPipelines)
+        {
+            return GetOrCreateComputePipeline(CS, Constants);
+        }
+
         FScenePipelineCache& Cache = ScenePipelines();
         const uint64 CacheKey = HashComputeKey(CS, Constants);
         if (RHI::FPipelineH Found = Cache.Find(CacheKey))

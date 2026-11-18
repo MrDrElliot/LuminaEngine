@@ -114,7 +114,7 @@ namespace Lumina
             FConnectParams Params;
             Params.Address.Host = Config.Host;
             Params.Address.Port = Config.Port;
-            Params.ChannelCount = 2;
+            Params.ChannelCount = NetChannelCount;
             Bot.Server   = Bot.Transport->ConnectToServer(Params);
             Bot.JoinedAt = Now;
             ++Launched;
@@ -162,6 +162,13 @@ namespace Lumina
             }
         }
 
+        TVector<uint8> Ack;
+        if (Bot.bConnected && NetProperties::WriteAck(Bot.PropertyAcks, Ack))
+        {
+            Bot.Transport->Send(Bot.Server, Ack.GetData(), static_cast<SIZE_T>(Ack.Num()), NetPropertyChannel, ESendMode::UnreliableSequenced);
+            Bot.BytesOut += Ack.Num();
+        }
+
         if (Bot.PawnGuid != 0)
         {
             SendCommands(Bot, DeltaTime);
@@ -197,7 +204,8 @@ namespace Lumina
                 return;
             }
             const uint8 Type = Message[0];
-            Bot.BytesInByType[Type < 16 ? Type : 0] += MessageSize + 2;
+            const uint8 Bucket = Type == static_cast<uint8>(ENetMessage::PropertyPacket) ? static_cast<uint8>(ENetMessage::PropertyUpdate) : Type;
+            Bot.BytesInByType[Bucket < 16 ? Bucket : 0] += MessageSize + 2;
 
             FNetArchive Reader(Message, MessageSize);
             uint8 TypeByte = 0;
@@ -288,6 +296,17 @@ namespace Lumina
                 case ENetMessage::ScriptRpc:
                     ++Bot.RpcsIn;
                     break;
+
+                // A bot keeps no entities, so it takes every packet and acknowledges it, as a client would.
+                case ENetMessage::PropertyPacket:
+                {
+                    uint32 Seq = 0;
+                    if (NetProperties::ReadPacketHeader(Message, MessageSize, Seq) != 0)
+                    {
+                        NetProperties::NoteReceived(Bot.PropertyAcks, Seq);
+                    }
+                    break;
+                }
 
                 default:
                     break;

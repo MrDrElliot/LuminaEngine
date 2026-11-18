@@ -12,6 +12,8 @@ namespace Lumina
 {
     void CAudioSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::FrameEnd);
         RunsAfter<CCameraSystem>();
         ExcludeFromHasWork(AllSources, Transforms);

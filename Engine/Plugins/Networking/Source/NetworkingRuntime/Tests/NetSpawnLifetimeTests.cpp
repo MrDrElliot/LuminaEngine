@@ -6,6 +6,7 @@
 #include "Components/NetworkComponent.h"
 #include "Net/NetWorldState.h"
 #include "Systems/NetworkSystem.h"
+#include "Networking/NetworkEvents.h"
 
 using namespace Lumina;
 using namespace Lumina::NetworkSystemInternal;
@@ -17,12 +18,14 @@ namespace
 
     struct FClient
     {
-        ECS::FRegistry  Registry;
-        FNetWorldState& State;
+        ECS::FRegistry     Registry;
+        ECS::FEventQueues  Events{ Registry };
+        FNetWorldState&    State;
 
         FClient()
             : State(Registry.Ctx().Emplace<FNetWorldState>())
         {
+            State.Events = &Events;
             Registry.GetSignals<SNetworkComponent>().OnDestroy.Connect<&OnNetworkComponentDestroyed>();
         }
 
@@ -149,4 +152,39 @@ TEST(NetSpawnLifetime, ADestroyedChildDropsItsPendingAttach)
     ECS::Utils::DestroyEntity(Client.Registry, Child);
 
     EXPECT_FALSE(Client.State.PendingAttach.Contains(static_cast<uint32>(Child.Value)));
+}
+
+TEST(NetSpawnLifetime, SpawnAndDespawnReachAnEventReader)
+{
+    FClient Client;
+    ECS::TEventReader<SNetEntitySpawnedEvent>   Spawns;
+    ECS::TEventReader<SNetEntityDespawnedEvent> Despawns;
+    EXPECT_TRUE(ECS::ReadEvents(Client.Events, Spawns).IsEmpty());
+    EXPECT_TRUE(ECS::ReadEvents(Client.Events, Despawns).IsEmpty());
+
+    Client.ReceiveSpawn();
+    const ECS::FEntity Spawned = Client.Mapped();
+    Client.Events.Commit();
+
+    const ECS::TEventRange<SNetEntitySpawnedEvent> SpawnRange = ECS::ReadEvents(Client.Events, Spawns);
+    ASSERT_EQ(SpawnRange.Num(), 1u);
+    EXPECT_EQ((*SpawnRange.begin()).Entity, Spawned);
+    EXPECT_EQ((*SpawnRange.begin()).NetGUID, SpawnedGuid);
+
+    Client.ReceiveDespawn();
+    Client.Events.Commit();
+
+    const ECS::TEventRange<SNetEntityDespawnedEvent> DespawnRange = ECS::ReadEvents(Client.Events, Despawns);
+    ASSERT_EQ(DespawnRange.Num(), 1u);
+    EXPECT_EQ((*DespawnRange.begin()).Entity, Spawned);
+    EXPECT_EQ((*DespawnRange.begin()).NetGUID, SpawnedGuid);
+}
+
+TEST(NetSpawnLifetime, NothingIsQueuedWhenNoOneReads)
+{
+    FClient Client;
+    Client.ReceiveSpawn();
+    Client.ReceiveDespawn();
+
+    EXPECT_FALSE(Client.Events.Commit()) << "entity events are built only for a type something reads";
 }

@@ -48,6 +48,7 @@ namespace Lumina
             
             Settings.bOcclusionCull       = false;
             Settings.bShadowOcclusionCull = false;
+            Settings.bWaitForPipelines    = true;
         }
 
         CameraEntity = World->ConstructEntity("ThumbnailCamera");

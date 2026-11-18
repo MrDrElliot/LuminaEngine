@@ -85,17 +85,9 @@ float ApplyGeometricSpecularAA(float Roughness, float3 dNdx, float3 dNdy)
     return sqrt(saturate(Alpha + Kernel));
 }
 
-// Godot's positional "Soft Low" filter, 4 taps within 2 atlas texels.
+// Four taps, a 3-texel tent widened to about 2 texels of radius.
 static const int   kLocalShadowTaps          = 4;
 static const float kLocalShadowRadiusTexels  = 2.0;
-
-// One disk rotation per pixel, shared by every local light's shadow so the light loop pays for a single sincos.
-float2 LocalShadowNoiseDir(float2 ScreenPos)
-{
-    float2 Dir;
-    sincos(InterleavedGradientNoise(ScreenPos) * TWO_PI, Dir.y, Dir.x);
-    return Dir;
-}
 
 // The cube face's projection in closed form, the same numbers its view-projection matrix produces without loading it.
 float3 ProjectToCubeFace(float3 D, uint Face, float Radius)
@@ -117,7 +109,7 @@ float3 ProjectToCubeFace(float3 D, uint Face, float Radius)
     return float3(P.xy * InvDepth, Radius * InvRange - Radius * Near * InvRange * InvDepth);
 }
 
-float ComputeLocalShadow(FLight Light, float3 FragmentPos, float3 Normal, float2 NoiseDir)
+float ComputeLocalShadow(FLight Light, float3 FragmentPos, float3 Normal)
 {
     const bool   bSpot          = HasFlag(Light.Flags, ELightFlags::Spot);
     const float3 LightToFrag    = FragmentPos - Light.Position;
@@ -173,22 +165,11 @@ float ComputeLocalShadow(FLight Light, float3 FragmentPos, float3 Normal, float2
     // Taps clamp half a texel inside the face rect so the comparison footprint never reads a neighboring tile.
     const float2 TileMin  = ShadowTile.AtlasUVOffset + TexelUV * 0.5;
     const float2 TileMax  = ShadowTile.AtlasUVOffset + ShadowTile.AtlasUVScale - TexelUV * 0.5;
-    const float2 RadiusUV = TexelUV * kLocalShadowRadiusTexels;
-
-    const float2 GoldenStep = float2(cos(kVogelGoldenAngle), sin(kVogelGoldenAngle));
-    float2 Dir    = NoiseDir;
-    float  Shadow = 0.0;
-    [unroll]
-    for (int i = 0; i < kLocalShadowTaps; ++i)
-    {
-        const float2 Offset = Dir * (RadiusUV * sqrt((float(i) + 0.5) / float(kLocalShadowTaps)));
-        Shadow += ShadowAtlas().SampleCmpLevelZero(clamp(BaseUV + Offset, TileMin, TileMax), RefDepth);
-        Dir = RotateVogel(Dir, GoldenStep);
-    }
-    return Shadow * (1.0 / float(kLocalShadowTaps));
+    const FShadowPCF PCF = { ShadowAtlas(), BaseUV, TexelUV, RefDepth, float2(0.0, 0.0), TileMin, TileMax };
+    return PCF.FilterRadius(kLocalShadowRadiusTexels, ShadowKernelSizeForTaps(kLocalShadowTaps));
 }
 
-float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, float2 ScreenPos, bool ReceiveShadow)
+float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float3 ViewPosition, bool ReceiveShadow)
 {
     if (!ReceiveShadow)
     {
@@ -196,9 +177,9 @@ float ComputeShadowFactor(FLight Light, float3 FragmentPos, float3 Normal, float
     }
     if (HasFlag(Light.Flags, ELightFlags::Directional))
     {
-        return ComputeDirectionalShadow(Light, FragmentPos, Normal, ViewPosition, ScreenPos);
+        return ComputeDirectionalShadow(Light, FragmentPos, Normal, ViewPosition);
     }
-    return ComputeLocalShadow(Light, FragmentPos, Normal, LocalShadowNoiseDir(ScreenPos));
+    return ComputeLocalShadow(Light, FragmentPos, Normal);
 }
 
 // Sun occlusion traced past the cascades from the opaque depth, so translucency never reads it.
@@ -219,7 +200,7 @@ float SunFarShadowMask(float2 ScreenPos)
 static const uint kLocalContactMaxSteps = 8u;
 
 // Kept out of ComputeShadowFactor, which inlines at two sites; only local lights ever reach this one.
-float LocalContactShadow(FLight Light, float3 FragmentPos, float3 Normal, float2 ScreenPos)
+float LocalContactShadow(FLight Light, float3 FragmentPos, float3 Normal)
 {
     const float Reach = float((Light.Flags >> LIGHT_CONTACT_LENGTH_SHIFT) & LIGHT_CONTACT_LENGTH_MASK) * 0.01;
     const float3 ViewP = mul(GetCameraView(), float4(FragmentPos, 1.0)).xyz;
@@ -230,7 +211,8 @@ float LocalContactShadow(FLight Light, float3 FragmentPos, float3 Normal, float2
     const float3 ViewN = NormalWorldToView(Normal);
     const float3 ViewL = normalize(NormalWorldToView(normalize(Light.Position - FragmentPos)));
 
-    return ContactShadow(ViewP, ViewN, ViewL, InterleavedGradientNoise(ScreenPos), Reach, Steps);
+    // Unjittered, since nothing filters this per-light march afterward and noise would stay on screen.
+    return ContactShadow(ViewP, ViewN, ViewL, 0.5, Reach, Steps);
 }
 
 // Debug visualizers stay out of the compute lane; the deferred renderer resolves them in SceneDebugViewPixel.slang.
@@ -697,7 +679,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 
         if (SunNdotL > 0.0)
         {
-            const float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, ScreenPos, bReceiveShadow) * SunOcclusion;
+            const float Shadow = ComputeShadowFactor(Light, WorldPosition, N, ViewPosition, bReceiveShadow) * SunOcclusion;
 
             if (Shadow > 0.0)
             {
@@ -723,8 +705,6 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
             }
         }
     }
-
-    const float2 ShadowNoiseDir = LocalShadowNoiseDir(ScreenPos);
 
     uint    NumLights   = GetNumLights();
     const GPUSpan<FLight> Lights = LightData().Lights;
@@ -815,13 +795,13 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
                 float Shadow = 1.0;
                 if (SPEC_LOCAL_SHADOWS != 0 && Light.ShadowDataIndex != INDEX_NONE)
                 {
-                    Shadow = bReceiveShadow ? ComputeLocalShadow(Light, WorldPosition, bBackFacing ? -N : N, ShadowNoiseDir) : 1.0;
+                    Shadow = bReceiveShadow ? ComputeLocalShadow(Light, WorldPosition, bBackFacing ? -N : N) : 1.0;
                 }
 
                 // Independent of the shadow map, so a light with no atlas tile can still ground what sits under it.
                 if (SPEC_LOCAL_CONTACT != 0 && bReceiveShadow && bContactShadows && HasFlag(Light.Flags, ELightFlags::ContactShadow))
                 {
-                    Shadow = min(Shadow, LocalContactShadow(Light, WorldPosition, bBackFacing ? -N : N, ScreenPos));
+                    Shadow = min(Shadow, LocalContactShadow(Light, WorldPosition, bBackFacing ? -N : N));
                 }
 
                 if (Shadow > 0.0)

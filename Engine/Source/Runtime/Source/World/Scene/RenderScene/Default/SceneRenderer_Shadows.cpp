@@ -122,6 +122,9 @@ namespace Lumina
 
         // Past this distance the reach covers too few pixels for the march to find a gap the cascades miss.
         constexpr float kSunContactMinPixels = 2.0f;
+
+        // Matches kTile in SunContactShadow.slang, whose groups resolve their ordered jitter in shared memory.
+        constexpr uint32 kSunContactTile = 16u;
     }
 
     bool FDefaultSceneRenderer::WantsSunFarShadowMask() const
@@ -285,8 +288,8 @@ namespace Lumina
         Args.MinPixels      = kSunContactMinPixels;
 
         DispatchCompute(CL, ContactCS, Args,
-            RenderUtils::GetGroupCount(Args.ScreenSize[0], 8u),
-            RenderUtils::GetGroupCount(Args.ScreenSize[1], 8u), 1);
+            RenderUtils::GetGroupCount(Args.ScreenSize[0], kSunContactTile),
+            RenderUtils::GetGroupCount(Args.ScreenSize[1], kSunContactTile), 1);
 
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,

@@ -59,6 +59,8 @@ namespace Lumina
 
     void CSocketAttachmentSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
         // Last of the transform writers before physics, so an attachment follows its parent's final pose for the frame.

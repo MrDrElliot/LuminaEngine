@@ -2530,65 +2530,63 @@ namespace Lumina
 
 
 
-        void DetachAll(ECS::FRegistry& Registry, ECS::FEntity Entity)
+        namespace
         {
-            FScriptSnapshot Scripts;
-            SnapshotScripts(Registry, Entity, Scripts);
-            if (Scripts.IsEmpty())
+            // Takes the snapshot buffer from the caller, so a registry-wide teardown reuses one allocation.
+            void DetachAllInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FScriptSnapshot& Scripts)
             {
-                return;
-            }
-            NoteStructureChange();
-
-            for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
-            {
-                // For a C# script the call would mint a managed instance purely to tear it down again.
-                if (CEntityScript* Script = Held.Get(); Script != nullptr && Script->IsAttached())
+                SnapshotScripts(Registry, Entity, Scripts);
+                if (Scripts.IsEmpty())
                 {
-                    Script->OnDetach();
+                    return;
                 }
-                UIScripts::Close(Held.Get());
-            }
-            
-            if (SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity))
-            {
-                Component->Scripts.Reset();
+                NoteStructureChange();
+
+                for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
+                {
+                    // For a C# script the call would mint a managed instance purely to tear it down again.
+                    if (CEntityScript* Script = Held.Get(); Script != nullptr && Script->IsAttached())
+                    {
+                        Script->OnDetach();
+                    }
+                    UIScripts::Close(Held.Get());
+                }
+
+                if (SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity))
+                {
+                    Component->Scripts.Reset();
+                }
             }
         }
 
-        int32 ResolvePendingScripts(ECS::FRegistry& Registry)
+        void DetachAll(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
-            int32 Restored = 0;
-            for (ECS::FEntity Entity : Registry.View<SEntityScriptComponent>())
-            {
-                SEntityScriptComponent& Component = Registry.Get<SEntityScriptComponent>(Entity);
-                Restored += Component.Pending.RemoveAll([&Component](const SHeldValue& Held)
-                {
-                    CEntityScript* Script = RestoreHeldScript(Held);
-                    if (Script != nullptr)
-                    {
-                        Component.Scripts.Add(Script);
-                        LOG_INFO("SEntityScriptComponent: restored held script '{}' now that its class is loaded.", *Held.TypeName);
-                    }
-                    return Script != nullptr;
-                });
-            }
-            if (Restored > 0)
-            {
-                NoteStructureChange();
-            }
-            return Restored;
+            FScriptSnapshot Scripts;
+            DetachAllInto(Registry, Entity, Scripts);
         }
 
         namespace
         {
-            // A class the reload removed builds nothing new, so its live scripts become held values that copies, undo and saves carry until it returns.
-            void HoldSupersededScripts(ECS::FRegistry& Registry)
+            // A live script the reload owes OnReloaded, gathered so the calls run after the storage walk.
+            struct FReloadTarget
             {
+                ECS::FEntity                     Entity;
+                TStrongObjectPtr<CEntityScript>  Script;
+            };
+
+            // One walk of the script storage holds scripts whose class the reload removed, restores held ones whose class is back, and lists the C# scripts owed OnReloaded.
+            void ReconcileScripts(ECS::FRegistry& Registry, TVector<FReloadTarget>* OutTargets)
+            {
+                // Missing components restore structurally, so they go before the walk, which must not add storages.
+                MissingComponents::HoldOrphaned(Registry);
+                MissingComponents::Restore(Registry);
+
                 TVector<TStrongObjectPtr<CEntityScript>> Released;
-                for (ECS::FEntity Entity : Registry.View<SEntityScriptComponent>())
+                int32 Restored = 0;
+
+                Registry.View<SEntityScriptComponent>().ForEach([&](ECS::FEntity Entity, SEntityScriptComponent& Component)
                 {
-                    SEntityScriptComponent& Component = Registry.Get<SEntityScriptComponent>(Entity);
+                    // A removed class builds nothing new, so its live scripts become held values that copies, undo and saves carry until it returns.
                     Component.Scripts.RemoveAll([&](TStrongObjectPtr<CEntityScript>& Script)
                     {
                         CClass* Class = Script.Get() != nullptr ? Script->GetClass() : nullptr;
@@ -2602,6 +2600,38 @@ namespace Lumina
                         Released.Add(Move(Script));
                         return true;
                     });
+
+                    if (!Component.Pending.IsEmpty())
+                    {
+                        Restored += Component.Pending.RemoveAll([&Component](const SHeldValue& Held)
+                        {
+                            CEntityScript* Script = RestoreHeldScript(Held);
+                            if (Script != nullptr)
+                            {
+                                Component.Scripts.Add(Script);
+                                LOG_INFO("SEntityScriptComponent: restored held script '{}' now that its class is loaded.", *Held.TypeName);
+                            }
+                            return Script != nullptr;
+                        });
+                    }
+
+                    if (OutTargets == nullptr)
+                    {
+                        return;
+                    }
+                    // A C++ script's instance never went anywhere, and a restored one has not attached yet.
+                    for (const TStrongObjectPtr<CEntityScript>& Script : Component.Scripts)
+                    {
+                        if (Script.Get() != nullptr && Script->IsAttached() && ToScriptClass(Script->GetClass()) != nullptr)
+                        {
+                            OutTargets->Add({ Entity, Script });
+                        }
+                    }
+                });
+
+                if (Restored > 0 || !Released.IsEmpty())
+                {
+                    NoteStructureChange();
                 }
                 if (Released.IsEmpty())
                 {
@@ -2609,20 +2639,11 @@ namespace Lumina
                 }
 
                 // Its managed type is gone, so no OnDetach can run, and only the native side is torn down.
-                NoteStructureChange();
                 for (TStrongObjectPtr<CEntityScript>& Script : Released)
                 {
                     UIScripts::Close(Script.Get());
                 }
                 LOG_WARN("SEntityScriptComponent: {} script(s) of a removed class are held until it comes back.", Released.Num());
-            }
-
-            void RestoreHeldValues(ECS::FRegistry& Registry)
-            {
-                HoldSupersededScripts(Registry);
-                MissingComponents::HoldOrphaned(Registry);
-                MissingComponents::Restore(Registry);
-                ResolvePendingScripts(Registry);
             }
         }
 
@@ -2640,50 +2661,32 @@ namespace Lumina
             for (TObjectIterator<CPrefab> It; It; ++It)
             {
                 CPrefab* Prefab = *It;
-                RestoreHeldValues(Prefab->Registry);
-                RestoreHeldValues(Prefab->VariantDelta);
+                ReconcileScripts(Prefab->Registry, nullptr);
+                ReconcileScripts(Prefab->VariantDelta, nullptr);
             }
 
+            // Reused across worlds, so a reload allocates once however many scripted entities there are.
+            TVector<FReloadTarget> Targets;
             Global::GWorldManager->ForEachWorld([&](CWorld& World)
             {
                 ECS::FRegistry& Registry = World.GetEntityRegistry();
 
                 // Anything held back by a failed or late load comes in first, so it sees this reload too.
-                RestoreHeldValues(Registry);
-
-                TVector<ECS::FEntity> Entities;
-                auto View = Registry.View<SEntityScriptComponent>();
-                Entities.Reserve(View.Num());
-                for (ECS::FEntity Entity : View)
-                {
-                    Entities.Add(Entity);
-                }
+                Targets.Reset();
+                ReconcileScripts(Registry, &Targets);
 
                 SScriptReloadContext Context;
                 Context.Reason     = Reason;
                 Context.WorldType  = World.GetWorldType();
                 Context.Generation = Generation;
 
-                for (ECS::FEntity Entity : Entities)
+                // An earlier handler may detach or destroy what a later target belongs to.
+                for (const FReloadTarget& Target : Targets)
                 {
-                    FScriptSnapshot Scripts;
-                    SnapshotScripts(Registry, Entity, Scripts);
-
-                    Context.Entity = Entity;
-                    for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
+                    if (IsStillAttached(Registry, Target.Entity, Target.Script.Get()))
                     {
-                        CEntityScript* Script = Held.Get();
-
-                        // A C++ script's instance never went anywhere, so it has nothing to rebuild.
-                        if (Script == nullptr || !Script->IsAttached() || ToScriptClass(Script->GetClass()) == nullptr)
-                        {
-                            continue;
-                        }
-                        if (!IsStillAttached(Registry, Entity, Script))
-                        {
-                            continue;
-                        }
-                        Script->OnReloaded(Context);
+                        Context.Entity = Target.Entity;
+                        Target.Script->OnReloaded(Context);
                     }
                 }
             });
@@ -2700,11 +2703,12 @@ namespace Lumina
                 Entities.Add(Entity);
             }
 
+            FScriptSnapshot Scripts;
             for (ECS::FEntity Entity : Entities)
             {
                 if (Registry.IsValid(Entity))
                 {
-                    DetachAll(Registry, Entity);
+                    DetachAllInto(Registry, Entity, Scripts);
                 }
             }
         }

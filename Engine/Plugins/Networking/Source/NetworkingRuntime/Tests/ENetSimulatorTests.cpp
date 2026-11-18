@@ -17,9 +17,9 @@ namespace
         bool operator==(const FDelivered&) const = default;
     };
 
-    bool Submit(FNetSimQueue& Queue, uint32 Peer, uint32 Seq, uint32 NowMs, int32 LatencyMs, float LossPct = 0.0f, ESendMode Mode = ESendMode::Reliable)
+    bool Submit(FNetSimQueue& Queue, uint32 Peer, uint32 Seq, uint32 NowMs, int32 LatencyMs)
     {
-        return Queue.Submit(Peer, 0, Mode, &Seq, sizeof(Seq), NowMs, LatencyMs, LossPct);
+        return Queue.Submit(Peer, 0, ESendMode::Reliable, &Seq, sizeof(Seq), NowMs, LatencyMs);
     }
 
     TVector<FDelivered> Flush(FNetSimQueue& Queue, uint32 NowMs)
@@ -81,34 +81,24 @@ TEST(ENetSimulator, BroadcastAndPerPeerPacketsInterleaveInSendOrder)
     EXPECT_EQ(Flush(Queue, 85), Expected({ { 1, 4 } }));
 }
 
-TEST(ENetSimulator, ReliablePacketsSurviveFullLoss)
+// Loss takes datagrams as they arrive, whatever they carry, so reliable traffic pays for its retransmits.
+TEST(ENetSimulator, LossTakesTheRequestedShareOfDatagrams)
 {
-    FNetSimQueue Queue;
-    for (uint32 Seq = 0; Seq < 64; ++Seq)
+    uint8 Datagram[48] = {};
+    auto Dropped = [&](float LossPct)
     {
-        EXPECT_FALSE(Submit(Queue, 1, Seq, 0, 0, 100.0f));
-    }
-
-    for (uint32 Seq = 0; Seq < 64; ++Seq)
-    {
-        EXPECT_TRUE(Submit(Queue, 1, Seq, 0, 10, 100.0f));
-    }
-    EXPECT_EQ(Flush(Queue, 10).Num(), 64);
-}
-
-TEST(ENetSimulator, UnreliablePacketsDropAtFullLoss)
-{
-    FNetSimQueue Queue;
-    for (ESendMode Mode : { ESendMode::Unreliable, ESendMode::UnreliableSequenced })
-    {
-        for (uint32 Seq = 0; Seq < 64; ++Seq)
+        int32 Count = 0;
+        for (uint32 Salt = 0; Salt < 20000; ++Salt)
         {
-            EXPECT_TRUE(Submit(Queue, 1, Seq, 0, 0, 100.0f, Mode));
-            EXPECT_TRUE(Submit(Queue, BroadcastPeer, Seq, 0, 10, 100.0f, Mode));
+            Datagram[Salt % sizeof(Datagram)] ^= static_cast<uint8>(Salt);
+            Count += NetSim::DropsDatagram(Datagram, sizeof(Datagram), Salt, LossPct) ? 1 : 0;
         }
-    }
-    EXPECT_TRUE(Queue.IsEmpty());
-    EXPECT_TRUE(Flush(Queue, 1000).IsEmpty());
+        return Count;
+    };
+    EXPECT_EQ(Dropped(0.0f), 0);
+    EXPECT_EQ(Dropped(100.0f), 20000);
+    EXPECT_NEAR(Dropped(2.0f), 400, 80) << "about 2 in 100";
+    EXPECT_NEAR(Dropped(25.0f), 5000, 300);
 }
 
 TEST(ENetSimulator, ForceDisconnectedPeerQueuedPacketsAreDiscarded)

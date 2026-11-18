@@ -23,6 +23,7 @@ namespace Lumina
     enum class EMoveMode : uint8;
 
     class CWorld;
+    class FSimulation;
     struct FSimpleElementVertex;
 
     namespace Physics
@@ -128,6 +129,9 @@ namespace Lumina
 
         // The parent links, settled at every flush, so any system may walk them.
         NODISCARD RUNTIME_API const ECS::FHierarchy& GetHierarchy() const;
+
+        // The world's deterministic simulation, null unless the project enables it.
+        NODISCARD RUNTIME_API FSimulation* GetSimulation() const;
 
         //~ Physics.
 

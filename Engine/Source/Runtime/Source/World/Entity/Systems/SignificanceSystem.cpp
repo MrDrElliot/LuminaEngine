@@ -41,6 +41,8 @@ namespace Lumina
 
     void CSignificanceSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
     }

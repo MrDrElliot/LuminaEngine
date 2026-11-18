@@ -752,6 +752,13 @@ namespace Lumina
     };
 
     REFLECT()
+    class CMaterialExpression_Sun : public CMaterialExpression_Formula
+    {
+        GENERATED_BODY()
+        const FMaterialFormula& GetFormula() const override;
+    };
+
+    REFLECT()
     class CMaterialExpression_SlopeMask : public CMaterialExpression_Formula
     {
         GENERATED_BODY()

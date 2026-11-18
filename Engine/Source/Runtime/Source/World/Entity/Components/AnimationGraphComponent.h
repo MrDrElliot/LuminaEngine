@@ -18,6 +18,33 @@ namespace Lumina
     class CAnimationGraph;
 
     // Drives a skeletal mesh from a compiled animation graph.
+    // A notify crossed this frame by a simple or graph animator, queued for systems only while something reads it.
+    REFLECT(Event)
+    struct RUNTIME_API SAnimNotifyFiredEvent
+    {
+        GENERATED_BODY()
+
+        PROPERTY(Hidden)
+        ECS::FEntity Entity = ECS::NullEntity;
+
+        PROPERTY(Hidden)
+        FName Name;
+
+        PROPERTY(Hidden)
+        FName Track;
+
+        PROPERTY(Hidden)
+        EAnimNotifyEventType Type = EAnimNotifyEventType::Trigger;
+
+        // The weight of the blend branch that fired it, 1 for direct clip playback.
+        PROPERTY(Hidden)
+        float Weight = 1.0f;
+
+        // Position inside a notify state's window, 0 to 1.
+        PROPERTY(Hidden)
+        float Alpha = 0.0f;
+    };
+
     // A montage began playing, queued for systems and fanned out to the graph component's OnMontageStarted.
     REFLECT(Event)
     struct RUNTIME_API SAnimMontageStartedEvent

@@ -279,7 +279,7 @@ namespace Lumina::ECS
         }
 
         template<typename T>
-            requires (bIsOneOf<TBareComponent<T>, TBareComponent<TInclude>...> && CDataComponent<TBareComponent<T>>)
+        requires (bIsOneOf<TBareComponent<T>, TBareComponent<TInclude>...> && CDataComponent<TBareComponent<T>>)
         NODISCARD FORCEINLINE TAccess<T>& Get(FEntity Entity) const
         {
             CheckMembership(Entity);
@@ -288,7 +288,7 @@ namespace Lumina::ECS
 
         // Null for an entity the view does not match, and for every entity when the view has no pool for the component.
         template<typename T>
-            requires (bIsOneOf<TBareComponent<T>, TBareComponent<TInclude>...> && CDataComponent<TBareComponent<T>>)
+        requires (bIsOneOf<TBareComponent<T>, TBareComponent<TInclude>...> && CDataComponent<TBareComponent<T>>)
         NODISCARD FORCEINLINE TAccess<T>* TryGet(FEntity Entity) const
         {
             constexpr size_t Slot = SlotOf<T>();
@@ -320,9 +320,9 @@ namespace Lumina::ECS
 
         // Several includes at once, for structured bindings, with the same const rules as the single Get.
         template<typename T0, typename T1, typename... TRest>
-            requires (((bIsOneOf<TBareComponent<TRest>, TBareComponent<TInclude>...> && CDataComponent<TBareComponent<TRest>>) && ... && true)
-                && bIsOneOf<TBareComponent<T0>, TBareComponent<TInclude>...> && CDataComponent<TBareComponent<T0>>
-                && bIsOneOf<TBareComponent<T1>, TBareComponent<TInclude>...> && CDataComponent<TBareComponent<T1>>)
+        requires (((bIsOneOf<TBareComponent<TRest>, TBareComponent<TInclude>...> && CDataComponent<TBareComponent<TRest>>) && ... && true)
+            && bIsOneOf<TBareComponent<T0>, TBareComponent<TInclude>...> && CDataComponent<TBareComponent<T0>>
+            && bIsOneOf<TBareComponent<T1>, TBareComponent<TInclude>...> && CDataComponent<TBareComponent<T1>>)
         NODISCARD FORCEINLINE auto Get(FEntity Entity) const
         {
             CheckMembership(Entity);

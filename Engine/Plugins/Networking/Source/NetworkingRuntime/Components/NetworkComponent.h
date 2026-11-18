@@ -57,6 +57,17 @@ namespace Lumina
         PROPERTY(ReadOnly, NoSerialize, Category = "Networking|Debug")
         uint32 OwningConnectionId = 0;
 
+        // The client that predicted this spawn and the key it sent, so that client pairs the host's copy with its stand-in.
+        PROPERTY(ReadOnly, Replicated, Category = "Networking|Debug")
+        uint32 PredictedBy = 0;
+
+        PROPERTY(ReadOnly, Replicated, Category = "Networking|Debug")
+        uint32 PredictionKey = 0;
+
+        // Copied from the parent at runtime, so a hierarchy replicates as one unit without a component on every child.
+        PROPERTY(ReadOnly, NoSerialize, Category = "Networking|Debug")
+        bool bInherited = false;
+
         // Client-only latch. A proxy's physics body switched to Kinematic so the local sim no longer
         // fights replicated transforms. Set once the body exists.
         bool bProxyPhysicsConfigured = false;

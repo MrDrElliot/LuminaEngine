@@ -14,7 +14,7 @@ namespace Lumina
     static TConsoleVar<int32> CVarSimLatencyMs("Net.Sim.LatencyMs", 0,
         "Simulated one-way send latency in milliseconds (0 = off). Applied to outgoing packets.");
     static TConsoleVar<float> CVarSimPacketLossPct("Net.Sim.PacketLossPct", 0.0f,
-        "Simulated outgoing packet loss, 0..100%. Only unreliable packets are dropped (reliable ones retransmit).");
+        "Simulated packet loss, 0..100%, taken from every datagram a peer receives, so reliable traffic pays for its retransmits as on a real link.");
 
     // Both peers must enable it, which they do, and it is read once at host creation.
     static TConsoleVar<bool> CVarCompression("Net.Compression", false,
@@ -53,14 +53,31 @@ namespace Lumina
         }
     }
 
-    bool FNetSimQueue::Submit(uint32 Peer, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size, uint32 NowMs, int32 LatencyMs, float LossPct)
+    bool NetSim::DropsDatagram(const uint8* Data, SIZE_T Size, uint32 Salt, float LossPct)
     {
-        // ENet retransmits a dropped reliable packet, so for reliable only the added latency is observable.
-        if (LossPct > 0.0f && Mode != ESendMode::Reliable && Rng.NextFloat() * 100.0f < LossPct)
+        if (LossPct <= 0.0f)
         {
-            return true;
+            return false;
         }
+        uint32 Hash = 2166136261u ^ (Salt * 0x9E3779B9u);
+        for (SIZE_T Index = 0; Index < Size && Index < 64; ++Index)
+        {
+            Hash = (Hash ^ Data[Index]) * 16777619u;
+        }
+        Hash ^= Hash >> 15;
+        Hash *= 0x2C1B3C6Du;
+        Hash ^= Hash >> 12;
+        return static_cast<float>(Hash % 10000u) < LossPct * 100.0f;
+    }
 
+    // Takes datagrams before ENet reads them, acknowledgements and retransmits included.
+    static int ENET_CALLBACK InterceptSimulatedLoss(ENetHost* Host, ENetEvent*)
+    {
+        return NetSim::DropsDatagram(Host->receivedData, Host->receivedDataLength, Host->totalReceivedPackets, CVarSimPacketLossPct.GetValue()) ? 1 : 0;
+    }
+
+    bool FNetSimQueue::Submit(uint32 Peer, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size, uint32 NowMs, int32 LatencyMs)
+    {
         if (LatencyMs <= 0 && Delayed.IsEmpty())
         {
             return false;
@@ -151,7 +168,7 @@ namespace Lumina
 
         bool ApplySim(uint32 PeerHandle, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size)
         {
-            return Sim.Submit(PeerHandle, Channel, Mode, Data, Size, enet_time_get(), CVarSimLatencyMs.GetValue(), CVarSimPacketLossPct.GetValue());
+            return Sim.Submit(PeerHandle, Channel, Mode, Data, Size, enet_time_get(), CVarSimLatencyMs.GetValue());
         }
     };
 
@@ -204,6 +221,7 @@ namespace Lumina
         }
 
         EnablePacketCompression(Impl->Host);
+        Impl->Host->intercept = &InterceptSimulatedLoss;
 
         Impl->bIsServer = true;
         LOG_DISPLAY("Network: ENet server listening on port {} (max {} connections)", Params.Port, Params.MaxConnections);
@@ -225,6 +243,7 @@ namespace Lumina
             return FConnectionHandle::Invalid();
         }
         EnablePacketCompression(Impl->Host);
+        Impl->Host->intercept = &InterceptSimulatedLoss;
         Impl->bIsServer = false;
 
         ENetAddress Address{};

@@ -319,7 +319,6 @@ namespace Lumina
         bool                                    bCameraBookmarkSet[NumCameraBookmarks] = {};
 
         bool                                    bDrawEntityDebugInfo = false;
-        bool                                    bDrawNetworkDebug = false;
         bool                                    bGameViewMode = false;
         bool                                    bSavedWorldGridEnabled = true;
         bool                                    bSavedShowComponentVisualizers = true;

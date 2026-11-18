@@ -55,6 +55,9 @@ namespace Lumina
 
         bool            bExclusive = false;
 
+        // Cleared by a system that never defers structural changes or callables, so a declared order after it needs no flush.
+        bool            bQueuesCommands = true;
+
         template<typename... Ts>
         FSystemAccess& Write()
         {
@@ -215,6 +218,7 @@ namespace Lumina
     inline const FSystemAccess* SetExecutingSystemAccess(const FSystemAccess*) { return nullptr; }
     inline void ValidateSystemAccess(uint32, bool, const char*) {}
     inline void ValidateNotInParallelSystem(const char*) {}
+    inline void ValidateSystemQueuesCommands() {}
     inline void RegisterComponentAccessValidator(void (*)(ECS::FRegistry&)) {}
     inline void ConnectComponentAccessValidators(ECS::FRegistry&) {}
 #else
@@ -224,6 +228,9 @@ namespace Lumina
 
     // For calls that edit shared engine state at once, which a system running alongside others has to defer to the flush instead.
     RUNTIME_API void ValidateNotInParallelSystem(const char* What);
+
+    // Catches a command queued on the thread running a system that declared it queues none, which would land after a flush its successors skipped.
+    RUNTIME_API void ValidateSystemQueuesCommands();
     RUNTIME_API void RegisterComponentAccessValidator(void (*Connect)(ECS::FRegistry&));
     RUNTIME_API void ConnectComponentAccessValidators(ECS::FRegistry& Registry);
 #endif

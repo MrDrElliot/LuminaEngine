@@ -14,6 +14,8 @@ namespace Lumina
 {
     void CCameraRigSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::FrameEnd);
 
         // The rigs decide, since the target lookup matches nearly every entity.

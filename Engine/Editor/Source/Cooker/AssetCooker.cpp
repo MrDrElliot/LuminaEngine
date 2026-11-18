@@ -22,6 +22,7 @@
 #include "Cooker/Analyzers/RmlUiAssetScan.h"
 #include "Cooker/CookDDC.h"
 #include "Cooker/Graph/CookGraph.h"
+#include "Assets/AssetTypes/Audio/AudioStream.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/Material/MaterialInstance.h"
@@ -181,6 +182,11 @@ namespace Lumina
             if (bParticleSystem)
             {
                 SourceHash ^= CParticleEmitter::GetSimulationTemplateHash();
+            }
+            // An audio stream's cooked bytes are encoded at cook time, so an encoder change must miss the cache too.
+            if (Data != nullptr && Data->AssetClass == CAudioStream::StaticClass()->GetName())
+            {
+                SourceHash = Hash::GetHash64(&CAudioStream::kCookedEncodingVersion, sizeof(CAudioStream::kCookedEncodingVersion), SourceHash);
             }
             // A world's entity files are written into its cooked bytes, so editing one must miss the cache too.
             TVector<FAssetDataPtr> Inputs = FAssetRegistry::Get().GetEntityFilesOf(VirtualPath);
@@ -363,10 +369,11 @@ namespace Lumina
 
             const CClass* Class = FindObject<CClass>(Data->AssetClass);
 
-            // Materials rebuild stale shaders and strip SPIR-V, and textures drop their source, both only in a real save.
+            // Materials rebuild stale shaders and strip SPIR-V, textures drop their source, and audio encodes to QOA, all only in a real save.
             const bool bEligible = Class != nullptr
                 && !Class->IsChildOf(CMaterialInterface::StaticClass())
                 && !Class->IsChildOf(CTexture::StaticClass())
+                && !Class->IsChildOf(CAudioStream::StaticClass())
                 && !(Class->GetPackage() != nullptr && IsEditorTypePackage(Class->GetPackage()->GetName()))
                 && !HasEditorOnlyData(Class, StructMemo);
 

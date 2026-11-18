@@ -40,6 +40,9 @@ namespace Lumina::Paths
     // A packaged game's folder for everything but its exe, <exe folder>/<exe name>_Data, or the exe's own folder when there is none.
     RUNTIME_API const FString& GetGameDataDirectory();
 
+    // A packaged game's engine resources live in its pak, and its engine directory is the data folder.
+    RUNTIME_API bool IsPackagedGame();
+
     RUNTIME_API void Normalize(FString& Path);
     RUNTIME_API void Normalize(FFixedString& Path);
     RUNTIME_API FFixedString Normalize(FStringView Path);

@@ -27,6 +27,7 @@
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/Components/LifetimeComponent.h"
+#include "Networking/NetworkEvents.h"
 #include <chrono>
 #include <cstdio>
 
@@ -1928,4 +1929,31 @@ TEST(EntityScriptUnification, LifecycleOrderHoldsForAScriptAddedLater)
     EntityScripts::Tick(Registry, 0.1f);
 
     EXPECT_EQ(Joined(Log), FString("A:late A:child R:child R:late"));
+}
+
+// A session event reaches scripts through the queue's fan-out at commit, after every ready script was gathered.
+TEST(EntityScriptUnification, SessionEventsFanOutToReadyScripts)
+{
+    RegisterPendingTypes();
+    ECS::FRegistry Registry{};
+    ECS::FEventQueues Events{ Registry };
+    TVector<FString> Log;
+
+    AddUnattached(Registry, CreatePlaced(Registry), "host", Log);
+    EntityScripts::Tick(Registry, 0.1f);
+    Log.Reset();
+
+    const ENetSessionEventKind Kinds[] = { ENetSessionEventKind::ClientJoined, ENetSessionEventKind::ClientLeft,
+                                           ENetSessionEventKind::JoinedHost, ENetSessionEventKind::LeftHost };
+    for (const ENetSessionEventKind Kind : Kinds)
+    {
+        SNetSessionEvent Event;
+        Event.Kind         = Kind;
+        Event.ConnectionId = 3;
+        ECS::SendEvent(Events, Event);
+    }
+    EXPECT_TRUE(Log.IsEmpty()) << "scripts hear a session event at the sync point, not when it is sent";
+
+    Events.Commit();
+    EXPECT_EQ(Joined(Log), FString("C:host D:host J:host L:host"));
 }

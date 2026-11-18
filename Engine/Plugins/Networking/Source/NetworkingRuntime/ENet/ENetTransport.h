@@ -3,11 +3,16 @@
 #include "Networking/INetworkTransport.h"
 #include "Memory/SmartPtr.h"
 #include "Containers/FunctionRef.h"
-#include "Core/Math/Random.h"
 
 namespace Lumina
 {
-    // The network simulator's loss and latency queue; times are in ms and a peer of 0 means broadcast.
+    namespace NetSim
+    {
+        // Whether simulated loss takes a received datagram, decided from its bytes and Salt so no generator state is needed.
+        NETWORKINGRUNTIME_API bool DropsDatagram(const uint8* Data, SIZE_T Size, uint32 Salt, float LossPct);
+    }
+
+    // The network simulator's latency queue; times are in ms and a peer of 0 means broadcast.
     class NETWORKINGRUNTIME_API FNetSimQueue
     {
     public:
@@ -21,8 +26,8 @@ namespace Lumina
             TVector<uint8> Data;
         };
 
-        // Returns true when the packet was dropped or queued here, and false to send it immediately.
-        bool Submit(uint32 Peer, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size, uint32 NowMs, int32 LatencyMs, float LossPct);
+        // Returns true when the packet was queued here, and false to send it immediately.
+        bool Submit(uint32 Peer, uint8 Channel, ESendMode Mode, const void* Data, SIZE_T Size, uint32 NowMs, int32 LatencyMs);
 
         void Flush(uint32 NowMs, TFunctionRef<void(const FPacket&)> Send);
 
@@ -31,7 +36,6 @@ namespace Lumina
     private:
 
         TVector<FPacket> Delayed;
-        FRandomStream    Rng{0x9E3779B9u};
     };
 
     // ENet-backed transport. All ENet state lives behind FImpl in the .cpp so no vendored

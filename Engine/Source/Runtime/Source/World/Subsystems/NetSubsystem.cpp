@@ -80,4 +80,20 @@ namespace Lumina
         INetworkRuntime* Net = GetNetworkRuntime();
         return Net != nullptr && World != nullptr ? Net->FindOwnedPawn(World, ConnectionId) : ECS::NullEntity;
     }
+
+    uint32 CNetSubsystem::PredictSpawn(ECS::FEntity StandIn, bool bKeepStandIn)
+    {
+        CWorld* World = GetWorld();
+        INetworkRuntime* Net = GetNetworkRuntime();
+        return Net != nullptr && World != nullptr ? Net->PredictSpawn(World, StandIn, bKeepStandIn) : 0;
+    }
+
+    void CNetSubsystem::ConfirmPredictedSpawn(ECS::FEntity Entity, uint32 ConnectionId, uint32 Key)
+    {
+        CWorld* World = GetWorld();
+        if (INetworkRuntime* Net = GetNetworkRuntime(); Net != nullptr && World != nullptr)
+        {
+            Net->ConfirmPredictedSpawn(World, Entity, ConnectionId, Key);
+        }
+    }
 }

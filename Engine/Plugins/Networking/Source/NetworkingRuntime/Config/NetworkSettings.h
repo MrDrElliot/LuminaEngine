@@ -50,6 +50,18 @@ namespace Lumina
         PROPERTY(Editable, Category = "Replication", ClampMin = 0, Units = "B/s")
         int32 MaxSnapshotBytesPerClient = 0;
 
+        // Furthest back the host rewinds hitboxes to judge a shot. Longer forgives worse pings and lets players be hit later behind cover.
+        PROPERTY(Editable, Category = "Lag Compensation", ClampMin = 0.0f, ClampMax = 1.0f, Units = "s")
+        float MaxLagCompensationSeconds = 0.35f;
+
+        // Hitbox snapshots a second, which shots interpolate between, so a fast host frame rate costs no extra memory. Zero records every frame.
+        PROPERTY(Editable, Category = "Lag Compensation", ClampMin = 0.0f, ClampMax = 240.0f, Units = "Hz")
+        float LagCompensationRecordRate = 60.0f;
+
+        // How long a client keeps a predicted spawn's stand-in waiting for the host's copy before it decides the host refused.
+        PROPERTY(Editable, Category = "Prediction", ClampMin = 0.1f, ClampMax = 10.0f, Units = "s")
+        float PredictedSpawnTimeout = 1.0f;
+
         // How often each client receives snapshots, spread across server ticks. Zero sends every tick.
         PROPERTY(Editable, Category = "Replication", ClampMin = 0.0f, ClampMax = 240.0f, Units = "Hz")
         float ServerSendRate = 30.0f;
@@ -72,23 +84,12 @@ namespace Lumina
         PROPERTY(Editable, Category = "Replication", ClampMin = 1.0f, ClampMax = 3.0f)
         float InterpBufferIntervals = kDefaultInterpBufferIntervals;
 
-        // Shared with the null-fallback at NetworkSystem::ReplicateDirtyProperties, so a rename can't silently diverge.
-        static constexpr int32 kDefaultMaxReliablePropertyBytesPerTick = 32768;
-
-        /** Per-server-tick cap on reliable property-update bytes (0 = unlimited). When a burst of dirty
-         *  entities would exceed this, the over-budget ones stay dirty and replicate on a later tick
-         *  (oldest-first, so none starve) -- this bounds the reliable queue. Delivery is still guaranteed:
-         *  the reliable channel acks + retransmits. */
+        // Property bytes collected per host tick across all entities. Over budget, the oldest changes go first next tick, so none starve. Zero is unlimited.
         PROPERTY(Editable, Category = "Replication|Flow Control", ClampMin = 0)
-        int32 MaxReliablePropertyBytesPerTick = kDefaultMaxReliablePropertyBytesPerTick;
+        int32 MaxPropertyBytesPerTick = 32768;
 
-        // Shared with the null-fallback at NetworkSystem::ReplicateDirtyProperties, so a rename can't silently diverge.
-        static constexpr int32 kDefaultReliableBacklogPauseBytes = 65536;
-
-        /** If a client's un-acked reliable backlog reaches this many bytes, the server pauses sending NEW
-         *  property updates until it drains, so a slow/congested client can't make the reliable queue grow
-         *  without bound (0 = never pause). Dirty entities persist, so nothing is lost -- it just waits. */
-        PROPERTY(Editable, Category = "Replication|Flow Control", ClampMin = 0)
-        int32 ReliableBacklogPauseBytes = kDefaultReliableBacklogPauseBytes;
+        // How long the host waits for a client to acknowledge a property packet before sending its entities again, when no later packet shows it lost.
+        PROPERTY(Editable, Category = "Replication|Flow Control", ClampMin = 0.05f, ClampMax = 10.0f, Units = "s")
+        float PropertyAckTimeout = 1.0f;
     };
 }

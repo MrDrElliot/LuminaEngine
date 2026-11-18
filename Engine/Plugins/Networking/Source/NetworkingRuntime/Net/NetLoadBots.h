@@ -7,6 +7,7 @@
 #include "Memory/SmartPtr.h"
 #include "Networking/INetworkTransport.h"
 #include "Net/NetPrediction.h"
+#include "Net/NetPropertyDelivery.h"
 
 namespace Lumina
 {
@@ -52,6 +53,7 @@ namespace Lumina
 
             uint32  NextSeq     = 1;
             double  CommandDebt = 0.0;
+            FNetPropertyAcks PropertyAcks;
             TVector<FNetMoveCommand> Recent;
 
             FVector3 Position   = FVector3(0.0f);

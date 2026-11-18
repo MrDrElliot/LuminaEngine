@@ -337,8 +337,9 @@ namespace Lumina
 
     bool FEngine::MountStartupFilesystems(FStartupProject& Startup, FBootTimer& Boot)
     {
+        // A packaged game's engine directory holds only what it writes, and its resources come from the pak.
         const FString& EngineDir = Paths::GetEngineDirectory();
-        if (!EngineDir.IsEmpty() && Filesystem::Exists(EngineDir))
+        if (!Paths::IsPackagedGame() && !EngineDir.IsEmpty() && Filesystem::Exists(EngineDir))
         {
             VFS::Mount<VFS::FNativeFileSystem>("/Engine", EngineDir);
         }
@@ -1803,7 +1804,8 @@ namespace Lumina
             return;
         }
 
-        Window->SetIcon(GetProjectIconPath());
+        const FFixedString Icon = GetProjectIconPath();
+        Window->SetIcon(Icon.IsEmpty() ? FFixedString("/Engine/Resources/Textures/Lumina.png") : Icon);
         #endif
     }
 

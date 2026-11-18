@@ -12,6 +12,8 @@ namespace Lumina
 {
     void CPerceptionSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::PrePhysics);
         RunsBefore<CPathFollowSystem, CEntityScriptSystem>();
 

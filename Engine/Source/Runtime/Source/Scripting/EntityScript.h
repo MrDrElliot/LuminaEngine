@@ -374,9 +374,6 @@ namespace Lumina
         /// Delivers OnReloaded to every C# script in every world, a C++ script having nothing to reload.
         RUNTIME_API void NotifyScriptsReloaded(EScriptReloadReason Reason, int32 Generation);
 
-        // Materializes scripts held back at load because their class was missing, returning the count.
-        RUNTIME_API int32 ResolvePendingScripts(ECS::FRegistry& Registry);
-
         // Delivers one input event to every script on Entity.
         RUNTIME_API void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event);
 

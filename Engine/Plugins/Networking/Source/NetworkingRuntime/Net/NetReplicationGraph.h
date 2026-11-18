@@ -7,6 +7,7 @@
 #include "Containers/HashTable.h"
 #include "Containers/Vector.h"
 #include "Components/RepTransformComponent.h"
+#include "Net/NetPropertyDelivery.h"
 
 namespace Lumina
 {
@@ -152,8 +153,10 @@ namespace Lumina
         double NextServiceTime = -1.0;
         double LastServiceTime = -1.0;
 
-        // Property and ownership messages held until this client's next service.
+        // Ownership and relayed owner messages held until this client's next service.
         TVector<uint8> PendingReliable;
+
+        FNetPropertyDelivery Properties;
     };
 
     namespace NetGraph

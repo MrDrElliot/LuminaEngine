@@ -14,6 +14,7 @@
 namespace Lumina
 {
     class CWorld;
+    class CStruct;
     class CEntityScript;
     class INetworkTransport;
     class FNetArchive;
@@ -34,6 +35,9 @@ namespace Lumina
         virtual void Initialize() {}
         virtual void Shutdown() {}
         virtual void Update() {}
+
+        // Host only. Gives every ready client a player slot and starts the world's deterministic simulation on all of them.
+        virtual bool StartSimulationSession(CWorld* World, const CStruct* InputStruct, uint64 Seed) { return false; }
 
         // Clients currently connected to this world, for anything that reports it. Zero without netcode.
         virtual int32 GetConnectedClientCount(const CWorld* World) const { return 0; }
@@ -94,6 +98,12 @@ namespace Lumina
 
         // An entity ConnectionId owns, preferring one with a character controller, or the null entity.
         virtual ECS::FEntity FindOwnedPawn(const CWorld* World, uint32 ConnectionId) const { return ECS::NullEntity; }
+
+        // Client, marks a local stand-in for a spawn it is asking the host for and returns the key to send along, 0 on a host.
+        virtual uint32 PredictSpawn(CWorld* World, ECS::FEntity StandIn, bool bKeepStandIn) { return 0; }
+
+        // Host, ties a new spawn to the key a client sent, set the frame it spawns so the client pairs it with its stand-in.
+        virtual void ConfirmPredictedSpawn(CWorld* World, ECS::FEntity Entity, uint32 ConnectionId, uint32 Key) {}
 
         // Binds the entity ids every peer shares onto Ar, so a reflected value carrying an entity reads alike on every peer.
         virtual void BindEntityIds(const CWorld* World, FNetArchive& Ar) const {}

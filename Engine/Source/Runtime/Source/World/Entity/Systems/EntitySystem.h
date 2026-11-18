@@ -80,6 +80,10 @@ namespace Lumina
         FUNCTION()
         void JoinSet(FName Set);
 
+        // Promises this system never defers a structural change or callable, so a system ordered after it starts without waiting for a flush.
+        FUNCTION()
+        void QueuesNoCommands();
+
         template<typename... Ts>
         void RunsAfter() { (RunsAfterSystem(Ts::StaticClass()->GetName()), ...); }
 

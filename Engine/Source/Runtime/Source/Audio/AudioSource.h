@@ -4,7 +4,7 @@
 #include "Containers/Vector.h"
 #include "Memory/SmartPtr.h"
 #include "Platform/GenericPlatform.h"
-#include "WaveDecoder.h"
+#include "AudioReader.h"
 
 namespace Lumina
 {
@@ -66,7 +66,7 @@ namespace Lumina
 		TSharedPtr<FAudioData> Shared;
 		TVector<uint8>         Owned;
 
-		Audio::FWaveReader Reader;
+		Audio::FAudioReader Reader;
 
 		uint64 Cursor = 0;
 		bool bLooping = false;

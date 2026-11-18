@@ -28,7 +28,7 @@ namespace Lumina
     private:
 
         ECS::TQuery<ECS::Write<SSimpleAnimationComponent>, ECS::Write<SSkeletalMeshComponent>, ECS::Without<SDisabledTag>, ECS::Without<SFollowerPoseComponent>> SimpleAnimators;
-        ECS::TQuery<ECS::Write<SAnimationGraphComponent>, ECS::Write<SSkeletalMeshComponent>, ECS::Optional<ECS::Read<STransformComponent>>, ECS::Without<SDisabledTag>, ECS::Without<SFollowerPoseComponent>> GraphAnimators;
+        ECS::TQuery<ECS::Write<SAnimationGraphComponent>, ECS::Write<SSkeletalMeshComponent>, ECS::Without<SDisabledTag>, ECS::Without<SFollowerPoseComponent>> GraphAnimators;
         ECS::TQuery<ECS::Write<SSkeletalMeshComponent>, ECS::Without<SDisabledTag>> Meshes;
         ECS::TQuery<ECS::Write<SFollowerPoseComponent>, ECS::Write<SSkeletalMeshComponent>, ECS::Without<SDisabledTag>> Followers;
         ECS::TQuery<ECS::Read<SFollowerPoseComponent>> PoseLinks;
@@ -38,6 +38,7 @@ namespace Lumina
         ECS::TEventWriter<SAnimMontageStartedEvent> MontageStarted;
         ECS::TEventWriter<SAnimMontageBlendingOutEvent> MontageBlendingOut;
         ECS::TEventWriter<SAnimMontageEndedEvent> MontageEnded;
+        ECS::TEventWriter<SAnimNotifyFiredEvent> NotifyFired;
         THashSet<ECS::FEntity> TakenFromFollowers;
 
         // Notify handlers never run inside this system, so its declared access only has to cover the passes.

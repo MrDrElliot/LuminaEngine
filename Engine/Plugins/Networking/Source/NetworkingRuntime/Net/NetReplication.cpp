@@ -261,6 +261,7 @@ namespace Lumina::Net
                 FComponentRepOut& C = NextOut();
                 C.WireIndex = Pair.Key;
                 C.bRemoved = true;
+                DiffState->RemovedWireIndices.AddUnique(Pair.Key);
                 return true;
             });
         }
@@ -275,6 +276,7 @@ namespace Lumina::Net
             if (DiffState != nullptr)
             {
                 Base = &DiffState->LastSent[WireIndex];
+                DiffState->RemovedWireIndices.Remove(WireIndex);
             }
 
             // A layout change makes the old snapshot meaningless, so every field counts as changed.
@@ -359,7 +361,8 @@ namespace Lumina::Net
         Ar << Count;
 
         // Patched after the loop so an OnRep handler sees every other component already applied.
-        TVector<CStruct*> Applied;
+        TVector<CStruct*>& Applied = State.ReplicationScratch.AppliedTypes;
+        Applied.Reset();
 
         const FReplTypeTable& Types = State.ReplTypes;
         TVector<uint8>& Mask = State.ReplicationScratch.Mask;
@@ -1157,18 +1160,21 @@ namespace Lumina::Net
 
         Ar.NetGUIDToEntity    = [&State](uint32 Guid) { return NetGuidToEntity(State, Guid); };
 
-        Ar.NetIndexToObject   = [&InObj](uint32 I)
+        Ar.NetIndexToObject   = [&InObj, &Ar](uint32 I)
         {
+            Ar.bUnresolvedReference |= I != 0 && InObj.IndexToGuid.Find(I) == nullptr && InObj.IndexToObject.Find(I) == nullptr;
             return NetObj_Resolve(InObj, I);
         };
 
-        Ar.NetIndexToDocumentRef = [&InAst](uint32 I, SUIDocumentRef& Out)
+        Ar.NetIndexToDocumentRef = [&InAst, &Ar](uint32 I, SUIDocumentRef& Out)
         {
+            Ar.bUnresolvedReference |= I != 0 && InAst.IndexToRef.Find(I) == nullptr;
             Out = NetAsset_Resolve(InAst, I);
         };
 
-        Ar.NetIndexToName     = [&InNme](uint32 I, FName& Out)
+        Ar.NetIndexToName     = [&InNme, &Ar](uint32 I, FName& Out)
         {
+            Ar.bUnresolvedReference |= I != 0 && InNme.IndexToName.Find(I) == nullptr;
             Out = NetName_Resolve(InNme, I);
         };
     }

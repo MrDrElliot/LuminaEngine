@@ -13,6 +13,39 @@ namespace Lumina
     class CWorld;
     class FImmediateLineRenderer;
 
+    // Multiplayer views a viewport turns on for its own world, each drawn by the system that owns that data.
+    enum class EDebugDrawNetworking : uint8
+    {
+        None            = 0,
+        // The host's recorded hitboxes, now and at the far edge of the rewind window.
+        LagCompensation = 1 << 0,
+        // Each remote entity's newest received pose against where it is drawn.
+        Proxies         = 1 << 1,
+        // Connection, traffic and clock figures as screen text.
+        Stats           = 1 << 2,
+        // The deterministic simulation's ticks, rollbacks and checksums, with its entities marked.
+        Simulation      = 1 << 3,
+        // The host's relevancy grid, each client's interest radii, and what each client holds by detail tier.
+        Interest        = 1 << 4,
+    };
+    ENUM_CLASS_FLAGS(EDebugDrawNetworking);
+
+    struct FDebugDrawNetworkingView
+    {
+        const char*          Label;
+        EDebugDrawNetworking View;
+    };
+
+    // Shared by every place that toggles the views, so a new one shows up in all of them.
+    inline constexpr FDebugDrawNetworkingView kDebugDrawNetworkingViews[] =
+    {
+        { "Lag Compensation Hitboxes", EDebugDrawNetworking::LagCompensation },
+        { "Proxy Interpolation",       EDebugDrawNetworking::Proxies },
+        { "Network Stats",             EDebugDrawNetworking::Stats },
+        { "Interest Management",       EDebugDrawNetworking::Interest },
+        { "Deterministic Simulation",  EDebugDrawNetworking::Simulation },
+    };
+
     // This frame's debug-draw view; producers cull whole draw sources through ShouldDraw, never single lines.
     struct FDebugDrawState : ECS::FResource
     {
@@ -31,6 +64,11 @@ namespace Lumina
 
         // Off makes ShouldDraw pass everything, for when the cull itself is what you are debugging.
         bool        bCullSources    = true;
+
+        // Set from the viewport's menu and kept across frames, unlike the view above.
+        EDebugDrawNetworking Networking = EDebugDrawNetworking::None;
+
+        NODISCARD bool Draws(EDebugDrawNetworking View) const { return bEnabled && EnumHasAnyFlags(Networking, View); }
     };
 
     // Publishes FDebugDrawState once per frame, ahead of every other system, in editor and game worlds.

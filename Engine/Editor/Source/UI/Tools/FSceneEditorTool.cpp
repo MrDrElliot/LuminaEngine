@@ -57,6 +57,15 @@
 #include "World/Entity/EntityUtils.h"
 #include "World/World.h"
 #include "World/Entity/Components/LightComponent.h"
+#include "World/Entity/Components/AudioSourceComponent.h"
+#include "World/Entity/Components/CharacterControllerComponent.h"
+#include "World/Entity/Components/DecalComponent.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
+#include "World/Entity/Components/ParticleSystemComponent.h"
+#include "World/Entity/Components/PostProcessComponent.h"
+#include "World/Entity/Components/ReflectionProbeComponent.h"
+#include "World/Entity/Components/SkyLightComponent.h"
+#include "World/Entity/Components/TerrainComponent.h"
 #include "Containers/Algorithm.h"
 #include "Containers/StringFormat.h"
 
@@ -1655,6 +1664,35 @@ namespace Lumina
         }
     }
 
+    namespace
+    {
+        struct FOutlinerIcon
+        {
+            const char* Glyph;
+            ImVec4      Color;
+        };
+
+        // The component that says most about what an entity is, checked from the most specific down.
+        FOutlinerIcon OutlinerIconFor(const ECS::FRegistry& Registry, ECS::FEntity Entity)
+        {
+            if (Registry.HasAny<SCameraComponent>(Entity))                                         { return { LE_ICON_CAMERA,           ImVec4(0.45f, 0.75f, 1.00f, 1.0f) }; }
+            if (Registry.HasAny<SDirectionalLightComponent>(Entity))                               { return { LE_ICON_WEATHER_SUNNY,    ImVec4(1.00f, 0.80f, 0.35f, 1.0f) }; }
+            if (Registry.HasAny<SPointLightComponent, SSpotLightComponent, SAreaLightComponent>(Entity)) { return { LE_ICON_LIGHTBULB, ImVec4(1.00f, 0.88f, 0.45f, 1.0f) }; }
+            if (Registry.HasAny<SSkyLightComponent, SEnvironmentComponent>(Entity))                { return { LE_ICON_WEATHER_PARTLY_CLOUDY, ImVec4(0.60f, 0.80f, 0.95f, 1.0f) }; }
+            if (Registry.HasAny<SPostProcessComponent>(Entity))                                    { return { LE_ICON_IMAGE_FILTER_HDR, ImVec4(0.75f, 0.60f, 0.95f, 1.0f) }; }
+            if (Registry.HasAny<SParticleSystemComponent>(Entity))                                 { return { LE_ICON_FIRE,             ImVec4(1.00f, 0.55f, 0.30f, 1.0f) }; }
+            if (Registry.HasAny<SAudioSourceComponent>(Entity))                                    { return { LE_ICON_VOLUME_HIGH,      ImVec4(0.45f, 0.85f, 0.55f, 1.0f) }; }
+            if (Registry.HasAny<SCharacterControllerComponent>(Entity))                            { return { LE_ICON_ACCOUNT,          ImVec4(0.40f, 0.85f, 0.80f, 1.0f) }; }
+            if (Registry.HasAny<SSkeletalMeshComponent>(Entity))                                   { return { LE_ICON_HUMAN,            ImVec4(0.95f, 0.55f, 0.75f, 1.0f) }; }
+            if (Registry.HasAny<STerrainComponent>(Entity))                                        { return { LE_ICON_TERRAIN,          ImVec4(0.55f, 0.80f, 0.40f, 1.0f) }; }
+            if (Registry.HasAny<SDecalComponent>(Entity))                                          { return { LE_ICON_STICKER,          ImVec4(0.85f, 0.70f, 0.55f, 1.0f) }; }
+            if (Registry.HasAny<SReflectionProbeComponent>(Entity))                                { return { LE_ICON_SPHERE,           ImVec4(0.55f, 0.85f, 0.95f, 1.0f) }; }
+            if (Registry.HasAny<SStaticMeshComponent>(Entity))                                     { return { LE_ICON_CUBE,             EditorColors::EntityIcon() }; }
+            if (Registry.HasAny<SRigidBodyComponent>(Entity))                                      { return { LE_ICON_ATOM,             ImVec4(0.70f, 0.60f, 0.95f, 1.0f) }; }
+            return { LE_ICON_AXIS_ARROW, EditorColors::TextMuted() };
+        }
+    }
+
     FTreeNodeID FSceneEditorTool::AddEntityToOutliner(ECS::FEntity Entity)
     {
         ECS::FRegistry& Registry = GetSceneRegistry();
@@ -1700,32 +1738,20 @@ namespace Lumina
         const bool bIsPrefabInstanceRoot = PrefabInstance != nullptr && PrefabInstance->bIsRoot;
         const bool bIsLockedPrefabChild = PrefabInstance != nullptr && !PrefabInstance->bIsRoot;
 
+        const FOutlinerIcon Icon = bIsPrefabInstanceRoot ? FOutlinerIcon{ LE_ICON_PACKAGE_VARIANT_CLOSED, EditorColors::Accent() }
+            : bIsLockedPrefabChild ? FOutlinerIcon{ LE_ICON_LOCK, EditorColors::TextMuted() }
+            : OutlinerIconFor(Registry, Entity);
+
+        // The glyph in the label only reserves room; the tinted copy is drawn over it.
         FFixedString Name;
-        if (bIsPrefabInstanceRoot)
-        {
-            Name.Append(LE_ICON_PACKAGE_VARIANT_CLOSED).Append(" ");
-        }
-        else if (bIsLockedPrefabChild)
-        {
-            Name.Append(LE_ICON_LOCK).Append(" ");
-        }
-        else
-        {
-            Name.Append(LE_ICON_CUBE).Append(" ");
-        }
-        Name.Append(*NameComponent.Name);
+        Name.Append(Icon.Glyph).Append(" ").Append(*NameComponent.Name);
 
         FTreeNodeID ItemEntity = OutlinerListView.CreateNode(ParentNode, FStringView(Name.GetData(), Name.Len()));
         EntityToTreeNode[Entity] = ItemEntity;
 
         FTreeNodeDisplay& Display = OutlinerListView.Get<FTreeNodeDisplay>(ItemEntity);
-
-        // Tint the entity's box glyph with the editor accent so plain entities stand out in the outliner.
-        if (!bIsPrefabInstanceRoot && !bIsLockedPrefabChild)
-        {
-            Display.IconText = LE_ICON_CUBE;
-            Display.IconColor = EditorColors::EntityIcon();
-        }
+        Display.IconText  = Icon.Glyph;
+        Display.IconColor = Icon.Color;
 
         // The component scan dominates the per-row cost, so tooltips build lazily on first hover.
 

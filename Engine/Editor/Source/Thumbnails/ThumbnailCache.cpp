@@ -13,7 +13,8 @@ namespace Lumina::ThumbnailCache
     {
         // Identifies a valid sidecar file; a header mismatch means "regenerate".
         constexpr uint32 kCacheMagic   = 0x434D4854; // 'THMC'
-        constexpr uint8  kCacheVersion = 2;
+        // Raised whenever what the key covers changes, so every older file regenerates.
+        constexpr uint8  kCacheVersion = 4;
 
         FString CacheDirectory()
         {
@@ -41,7 +42,7 @@ namespace Lumina::ThumbnailCache
         return Dir + "/" + GUID.ToString(false, false) + ".thumb";
     }
 
-    bool Load(const FGuid& GUID, uint64 ExpectedContentHash, FPackageThumbnail& OutThumbnail)
+    bool Load(const FGuid& GUID, uint64 ExpectedKey, FPackageThumbnail& OutThumbnail)
     {
         const FString Path = CachePath(GUID);
         if (Path.IsEmpty())
@@ -75,7 +76,7 @@ namespace Lumina::ThumbnailCache
         Ar.Serialize(&StoredHash, sizeof(StoredHash));
 
         // Content changed since this thumbnail was baked -> ignore, caller regenerates.
-        if (Version != kCacheVersion || StoredHash != ExpectedContentHash)
+        if (Version != kCacheVersion || StoredHash != ExpectedKey)
         {
             return false;
         }
@@ -89,7 +90,7 @@ namespace Lumina::ThumbnailCache
         return true;
     }
 
-    bool Save(const FGuid& GUID, uint64 ContentHash, FPackageThumbnail& Thumbnail)
+    bool Save(const FGuid& GUID, uint64 Key, FPackageThumbnail& Thumbnail)
     {
         if (!GUID.IsValid() || Thumbnail.ImageData.IsEmpty())
         {
@@ -109,7 +110,7 @@ namespace Lumina::ThumbnailCache
         uint8  Version = kCacheVersion;
         Ar.Serialize(&Magic, sizeof(Magic));
         Ar.Serialize(&Version, sizeof(Version));
-        Ar.Serialize(&ContentHash, sizeof(ContentHash));
+        Ar.Serialize(&Key, sizeof(Key));
         Thumbnail.Serialize(Ar);
 
         return Filesystem::AtomicWriteFile(Path, Bytes);

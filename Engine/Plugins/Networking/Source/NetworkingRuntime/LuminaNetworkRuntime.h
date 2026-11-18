@@ -34,6 +34,7 @@ namespace Lumina
         bool IsEntityNetworked(const CWorld* World, ECS::FEntity Entity) const override;
         uint32 GetEntityOwner(const CWorld* World, ECS::FEntity Entity) const override;
         bool SetEntityOwner(CWorld* World, ECS::FEntity Entity, uint32 ConnectionId) override;
+        bool StartSimulationSession(CWorld* World, const CStruct* InputStruct, uint64 Seed) override;
         void MarkEntityDirty(CWorld* World, ECS::FEntity Entity) override;
         uint32 EntityToNetId(const CWorld* World, ECS::FEntity Entity) const override;
         ECS::FEntity NetIdToEntity(const CWorld* World, uint32 NetId) const override;
@@ -42,6 +43,8 @@ namespace Lumina
         bool IsJoined(const CWorld* World) const override;
         ECS::FEntity FindOwnedPawn(const CWorld* World, uint32 ConnectionId) const override;
         void BindEntityIds(const CWorld* World, FNetArchive& Ar) const override;
+        uint32 PredictSpawn(CWorld* World, ECS::FEntity StandIn, bool bKeepStandIn) override;
+        void ConfirmPredictedSpawn(CWorld* World, ECS::FEntity Entity, uint32 ConnectionId, uint32 Key) override;
 
     private:
 

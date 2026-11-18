@@ -2,11 +2,42 @@
 #include "NetScriptBridge.h"
 
 #include "Core/Object/ScriptClass.h"
+#include "Networking/NetworkEvents.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/ScriptableObject.h"
 #include "World/ECS/Registry.h"
 #include "World/World.h"
+
+namespace Lumina
+{
+    void TEventFanOut<SNetSessionEvent>::Deliver(ECS::FRegistry& Registry, const SNetSessionEvent& Event)
+    {
+        // Gathered first, since a listener may spawn the player's entity and grow the pool being walked.
+        TVector<TStrongObjectPtr<CEntityScript>> Scripts;
+        for (ECS::FEntity Entity : Registry.View<SEntityScriptComponent>())
+        {
+            for (const TStrongObjectPtr<CEntityScript>& Script : Registry.Get<SEntityScriptComponent>(Entity).Scripts)
+            {
+                if (Script.Get() != nullptr && Script->IsReady())
+                {
+                    Scripts.Add(Script);
+                }
+            }
+        }
+
+        for (const TStrongObjectPtr<CEntityScript>& Script : Scripts)
+        {
+            switch (Event.Kind)
+            {
+                case ENetSessionEventKind::ClientJoined: Script->OnConnected(Event.ConnectionId);    break;
+                case ENetSessionEventKind::ClientLeft:   Script->OnDisconnected(Event.ConnectionId); break;
+                case ENetSessionEventKind::JoinedHost:   Script->OnJoinedHost();                     break;
+                case ENetSessionEventKind::LeftHost:     Script->OnLeftHost(Event.Reason);           break;
+            }
+        }
+    }
+}
 
 namespace Lumina::NetScripts
 {
@@ -31,43 +62,6 @@ namespace Lumina::NetScripts
         if (Script != nullptr)
         {
             Script->ReceiveRpc(RpcId, CallerId, Payload, PayloadSize);
-        }
-    }
-
-    void DispatchConnection(CWorld* World, uint32 ConnectionId, bool bJoined)
-    {
-        DispatchSession(World, bJoined ? ENetSessionEvent::ClientJoined : ENetSessionEvent::ClientLeft, ConnectionId, ENetLeaveReason::None);
-    }
-
-    void DispatchSession(CWorld* World, ENetSessionEvent Event, uint32 ConnectionId, ENetLeaveReason Reason)
-    {
-        if (World == nullptr)
-        {
-            return;
-        }
-        // Gathered first, since a listener may spawn the player's entity and grow the pool being walked.
-        TVector<TStrongObjectPtr<CEntityScript>> Scripts;
-        ECS::FRegistry& Registry = World->GetEntityRegistry();
-        for (ECS::FEntity Entity : Registry.View<SEntityScriptComponent>())
-        {
-            for (const TStrongObjectPtr<CEntityScript>& Script : Registry.Get<SEntityScriptComponent>(Entity).Scripts)
-            {
-                if (Script.Get() != nullptr && Script->IsReady())
-                {
-                    Scripts.Add(Script);
-                }
-            }
-        }
-
-        for (const TStrongObjectPtr<CEntityScript>& Script : Scripts)
-        {
-            switch (Event)
-            {
-                case ENetSessionEvent::ClientJoined: Script->OnConnected(ConnectionId);    break;
-                case ENetSessionEvent::ClientLeft:   Script->OnDisconnected(ConnectionId); break;
-                case ENetSessionEvent::JoinedHost:   Script->OnJoinedHost();               break;
-                case ENetSessionEvent::LeftHost:     Script->OnLeftHost(Reason);           break;
-            }
         }
     }
 

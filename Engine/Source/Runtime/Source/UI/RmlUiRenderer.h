@@ -103,7 +103,12 @@ namespace Lumina
             TVector<uint8> VertexData;
             TVector<uint8> IndexData;
             uint32         IndexCount = 0;
+
+            // Premultiplied blending adds nothing for zero colors, which is how RmlUi draws an opacity 0 element.
+            bool           bFullyTransparent = false;
         };
+
+        bool IsFullyTransparent(Rml::CompiledGeometryHandle Geometry) const;
 
         struct FTexture
         {

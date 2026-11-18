@@ -1,4 +1,6 @@
 #include "LuminaNetworkRuntime.h"
+#include "Networking/NetworkEvents.h"
+#include "Net/NetSimulation.h"
 #include "World/ECS/Registry.h"
 
 #include "NetworkGlobals.h"
@@ -8,6 +10,10 @@
 #include "World/WorldContext.h"
 #include "Net/NetWorldState.h"
 #include "Net/NetLoadBots.h"
+#include "Config/NetworkSettings.h"
+#include "Core/Object/ObjectCore.h"
+#include "Platform/Time/PlatformTime.h"
+#include "Systems/NetworkSystem.h"
 #include "Scripting/EntityScript.h"
 #include "World/Entity/Components/CharacterControllerComponent.h"
 #include "Networking/INetworkTransport.h"
@@ -49,6 +55,17 @@ namespace Lumina
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
 
+        // A server-only parent's children inherit that, and go with it.
+        TVector<ECS::FEntity> Networked;
+        for (ECS::FEntity Entity : Registry.View<ECS::Read<SNetworkComponent>>())
+        {
+            Networked.Add(Entity);
+        }
+        for (ECS::FEntity Entity : Networked)
+        {
+            NetworkSystemInternal::InheritNetworking(Registry, Entity);
+        }
+
         // Collected first, since destroying while iterating the view it came from is the hazard.
         TVector<ECS::FEntity> ServerOnly;
         for (ECS::FEntity Entity : Registry.View<ECS::Read<SNetworkComponent>>())
@@ -79,6 +96,13 @@ namespace Lumina
         }
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
+
+        // An entity attached under a networked parent joins its replication, with its own children.
+        const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity);
+        if (Parent != ECS::NullEntity && Registry.HasAll<SNetworkComponent>(Parent))
+        {
+            NetworkSystemInternal::InheritNetworking(Registry, Parent);
+        }
         if (Registry.HasAll<SNetworkComponent>(Entity))
         {
             Registry.EmplaceOrReplace<FNetDirty>(Entity);
@@ -167,6 +191,29 @@ namespace Lumina
         return Fallback;
     }
 
+    uint32 FLuminaNetworkRuntime::PredictSpawn(CWorld* World, ECS::FEntity StandIn, bool bKeepStandIn)
+    {
+        FNetWorldState* State = StateOf(World);
+        if (State == nullptr || IsServerWorld(World) || !RegistryOf(World).IsValid(StandIn))
+        {
+            return 0;
+        }
+        const double Expire = PlatformTime::Seconds() + GetDefault<CNetworkSettings>()->PredictedSpawnTimeout;
+        return NetworkSystemInternal::BeginPredictedSpawn(*State, StandIn, bKeepStandIn, Expire);
+    }
+
+    void FLuminaNetworkRuntime::ConfirmPredictedSpawn(CWorld* World, ECS::FEntity Entity, uint32 ConnectionId, uint32 Key)
+    {
+        ECS::FRegistry& Registry = RegistryOf(World);
+        if (StateOf(World) == nullptr || !IsServerWorld(World) || Key == 0 || !Registry.IsValid(Entity))
+        {
+            return;
+        }
+        SNetworkComponent& Net = Registry.GetOrEmplace<SNetworkComponent>(Entity);
+        Net.PredictedBy   = ConnectionId;
+        Net.PredictionKey = Key;
+    }
+
     void FLuminaNetworkRuntime::BindEntityIds(const CWorld* World, FNetArchive& Ar) const
     {
         if (FNetWorldState* State = StateOf(World))
@@ -218,11 +265,33 @@ namespace Lumina
         SNetworkComponent& Net = Registry.GetOrEmplace<SNetworkComponent>(Entity);
         if (Net.OwningConnectionId != ConnectionId)
         {
+            SNetOwnershipChangedEvent Changed;
+            Changed.Entity             = Entity;
+            Changed.PreviousOwner      = Net.OwningConnectionId;
+            Changed.OwningConnectionId = ConnectionId;
+
             Net.OwningConnectionId = ConnectionId;
             Net.RemoteRole = ConnectionId != 0 ? ENetRole::AutonomousProxy : ENetRole::SimulatedProxy;
             State->OwnershipChanged.Add(Entity);
+            ECS::SendEventIfRead(State->Events, Changed);
         }
+
+        // Children that inherited their networking follow the owner of the entity they inherited it from.
+        Registry.GetHierarchy().ForEachChild(Entity, [&](ECS::FEntity Child)
+        {
+            const SNetworkComponent* ChildNet = Registry.TryGet<ECS::Read<SNetworkComponent>>(Child);
+            if (ChildNet != nullptr && ChildNet->bInherited)
+            {
+                SetEntityOwner(World, Child, ConnectionId);
+            }
+        });
         return true;
+    }
+
+    bool FLuminaNetworkRuntime::StartSimulationSession(CWorld* World, const CStruct* InputStruct, uint64 Seed)
+    {
+        FNetWorldState* State = StateOf(World);
+        return State != nullptr && IsServerWorld(World) && NetSimulation::StartSession(World, *State, InputStruct, Seed);
     }
 
     void FLuminaNetworkRuntime::MarkEntityDirty(CWorld* World, ECS::FEntity Entity)

@@ -43,6 +43,8 @@ namespace Lumina
 {
     void CNavMeshSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::FrameStart);
         RequireUpdate(EUpdateStage::Paused);
         // Rebuilt tiles read the terrain, foliage and blockout meshes those systems settle.
@@ -1816,7 +1818,7 @@ namespace Lumina
                 });
         }
 
-        void UpdateSources(const SSystemContext& Context, CNavMeshSystem::FSourceQueries& Queries, FNavSourceTracker& Sources)
+        void UpdateSources(const SSystemContext& Context, CNavMeshSystem::FSourceQueries& Queries, FNavSourceTracker& Sources, bool bHasVolumes)
         {
             LUMINA_PROFILE_SCOPE();
             Sources.Changes.Reset();
@@ -1828,6 +1830,15 @@ namespace Lumina
 
             if (!Sources.bSeeded)
             {
+                // A world that never placed a volume has nothing to bake, so it skips seeding and only empties the signal queues.
+                if (!bHasVolumes)
+                {
+                    Sources.MovedScratch.Reset();
+                    Queries.Moved.Drain(Sources.MovedScratch);
+                    FScopeLock Lock(Sources.PendingLock);
+                    Sources.Pending.Reset();
+                    return;
+                }
                 SeedSources(Queries, Sources);
                 return;
             }
@@ -2608,7 +2619,7 @@ namespace Lumina
             NavMeshSystemInternal::WatchSourceComponents(Registry, Tracker.get(), true);
         }
 
-        NavMeshSystemInternal::UpdateSources(Context, SourceQueries, *Tracker);
+        NavMeshSystemInternal::UpdateSources(Context, SourceQueries, *Tracker, !Volumes.IsEmpty());
 
         Volumes.ForEach([&](ECS::TMut<SNavMeshComponent> CompMut, const STransformComponent* Transform)
         {
@@ -2626,7 +2637,7 @@ namespace Lumina
 
         FNavSourceTracker& Sources = *Tracker;
         PlatformTime::FStopwatch SourceWatch;
-        NavMeshSystemInternal::UpdateSources(Context, SourceQueries, Sources);
+        NavMeshSystemInternal::UpdateSources(Context, SourceQueries, Sources, !Volumes.IsEmpty());
         if (CVarNavTimings.GetValue() && (Sources.Refreshed > 0 || !Sources.Changes.IsEmpty()))
         {
             LOG_INFO("NavTiming sources: {} tracked, {} entities refreshed in {:.2f} ms, {} new, {} moved, {} reshaped, {} removed.",

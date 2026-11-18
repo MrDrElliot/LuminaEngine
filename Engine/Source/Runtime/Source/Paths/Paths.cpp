@@ -31,6 +31,11 @@ namespace Lumina::Paths
         return Directory;
     }
 
+    bool IsPackagedGame()
+    {
+        return GetGameDataDirectory().EndsWith("_Data");
+    }
+
     namespace
     {
         const char* EngineResourceDirectoryName     = "EngineResourceDirectory";
@@ -49,13 +54,11 @@ namespace Lumina::Paths
         FString ExePath = Platform::GetCurrentProcessPath();
         Normalize(ExePath);
 
-        // The exe lives in <root>/Binaries/<Platform>, so every checkout runs against its own engine tree.
-        const FString LuminaDir = Parent(Parent(Parent(ExePath, true), true), true);
+        // A packaged game roots its engine in the data folder so nothing it writes lands outside the package.
+        const bool bPackaged = IsPackagedGame();
+        const FString LuminaDir = bPackaged ? GetGameDataDirectory() : Parent(Parent(Parent(ExePath, true), true), true);
 
         bInstalledBuild = !LuminaDir.IsEmpty() && Filesystem::Exists(LuminaDir + "/" + InstalledBuildMarker);
-        // A packaged game has no engine tree beside it, since its engine resources come from the pak.
-        const FString& DataDir = GetGameDataDirectory();
-        const bool bPackaged = DataDir.Len() > 5 && DataDir.EndsWith("_Data");
         if (!bPackaged && (LuminaDir.IsEmpty() || !Filesystem::Exists(LuminaDir + "/Engine/Resources")))
         {
             LOG_ERROR("Could not resolve the engine root from '{}'. Resources (fonts, shaders) will fail to load.", *ExePath);

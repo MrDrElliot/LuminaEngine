@@ -36,6 +36,10 @@ namespace Lumina
         return SLANG_DEBUG_INFO_LEVEL_MINIMAL;
         #endif
     }
+
+    // Raw compiles are materials and particles, where full debug info more than doubles codegen time and quadruples the SPIR-V.
+    static constexpr int kRawShaderDebugInfoLevel = SLANG_DEBUG_INFO_LEVEL_MINIMAL;
+
     static int GetShaderOptimizationLevel()
     {
         return SLANG_OPTIMIZATION_LEVEL_MAXIMAL;
@@ -315,32 +319,32 @@ namespace Lumina
             return Session;
         }
 
+        // Creation is serialized and slow, so a material's stages stall on it unless sessions stay warm between compiles.
         void Release(Slang::ComPtr<slang::IGlobalSession>&& Session)
         {
             if (!Session)
             {
                 return;
             }
-            FScopeLock Lock(Mutex);
-            Free.Add(Move(Session));
+            {
+                FScopeLock Lock(Mutex);
+                if (Free.Num() < kMaxIdleSessions)
+                {
+                    Free.Add(Move(Session));
+                    return;
+                }
+            }
+
+            FScopeLock Lock(CreateMutex);
+            Session = nullptr;
         }
 
-        void TrimIdle(uint32 KeepCount)
+        void ReleaseAll()
         {
             TVector<Slang::ComPtr<slang::IGlobalSession>> Dead;
             {
                 FScopeLock Lock(Mutex);
-                if (static_cast<uint32>(Free.Num()) <= KeepCount)
-                {
-                    return;
-                }
-
-                Dead.Reserve(Free.Num() - KeepCount);
-                while (static_cast<uint32>(Free.Num()) > KeepCount)
-                {
-                    Dead.Add(Move(Free.Last()));
-                    Free.Pop();
-                }
+                Dead = Move(Free);
             }
 
             FScopeLock Lock(CreateMutex);
@@ -348,6 +352,9 @@ namespace Lumina
         }
 
     private:
+        // Each holds its own copy of the core module, about 100 MB measured.
+        static constexpr int32 kMaxIdleSessions = 4;
+
         FMutex Mutex;
         FMutex CreateMutex;
         TVector<Slang::ComPtr<slang::IGlobalSession>> Free;
@@ -394,7 +401,7 @@ namespace Lumina
 
     // Macros are baked into the description, so a session is reusable only across a shared macro set.
     static Slang::ComPtr<slang::ISession> CreateCompileSession(slang::IGlobalSession* GlobalSession,
-        const TVector<FString>& SearchRoots, const TVector<FString>& MacroDefinitions, FSessionScratch& Scratch)
+        const TVector<FString>& SearchRoots, const TVector<FString>& MacroDefinitions, int DebugInfoLevel, FSessionScratch& Scratch)
     {
         slang::SessionDesc SessionDesc = {};
         SessionDesc.defaultMatrixLayoutMode = SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
@@ -416,7 +423,7 @@ namespace Lumina
         slang::CompilerOptionEntry TargetOptions[2 + std::size(DeclaredCapabilities)] = {};
         TargetOptions[0].name = slang::CompilerOptionName::DebugInformation;
         TargetOptions[0].value.kind = slang::CompilerOptionValueKind::Int;
-        TargetOptions[0].value.intValue0 = GetShaderDebugInfoLevel();
+        TargetOptions[0].value.intValue0 = DebugInfoLevel;
         TargetOptions[1].name = slang::CompilerOptionName::Optimization;
         TargetOptions[1].value.kind = slang::CompilerOptionValueKind::Int;
         TargetOptions[1].value.intValue0 = GetShaderOptimizationLevel();
@@ -718,17 +725,11 @@ namespace Lumina
             Batch.Finished();
         }
 
-        bool bLastChunk;
         {
             FScopeLock Lock(PendingMutex);
-            bLastChunk = PendingTasks.fetch_sub(Num, std::memory_order_acq_rel) == Num;
+            PendingTasks.fetch_sub(Num, std::memory_order_acq_rel);
         }
         PendingSignal.NotifyAll();
-
-        if (bLastChunk)
-        {
-            GSlangSessionPool.TrimIdle(1);
-        }
     };
 
     Slang::ComPtr<slang::IGlobalSession> GlobalSession = GSlangSessionPool.Acquire();
@@ -749,7 +750,7 @@ namespace Lumina
         BuildModuleSearchPaths(Path, SearchRoots, ModuleSearchPaths);
 
         Slang::ComPtr<slang::ISession> Session =
-            CreateCompileSession(GlobalSession, ModuleSearchPaths, Batch.Options[i].MacroDefinitions, Scratch);
+            CreateCompileSession(GlobalSession, ModuleSearchPaths, Batch.Options[i].MacroDefinitions, GetShaderDebugInfoLevel(), Scratch);
         if (!Session)
         {
             continue;
@@ -924,10 +925,10 @@ namespace Lumina
     {
         Flush();
 
-        GSlangSessionPool.TrimIdle(0);
+        GSlangSessionPool.ReleaseAll();
     }
 
-    bool FSpirVShaderCompiler::CompilerShaderRaw(FString ShaderString, const FShaderCompileOptions& CompileOptions, CompletedFunc OnCompleted, FinishedFunc OnFinished)
+    bool FSpirVShaderCompiler::CompileShaderRawEntries(FString ShaderString, const FShaderCompileOptions& CompileOptions, TVector<FRawShaderEntry> Entries)
     {
         for (int32 Pos = ShaderString.Find("#pragma once"); Pos != Constants::kIndexNone; Pos = ShaderString.Find("#pragma once", Pos))
         {
@@ -948,41 +949,58 @@ namespace Lumina
             PendingTasks.fetch_add(1, std::memory_order_relaxed);
         }
         
-        Jobs::Spawn(CompileOptions.Priority, [](FSpirVShaderCompiler* Self, FString Source, FShaderCompileOptions Options, CompletedFunc Callback, FinishedFunc Finished) -> Jobs::TTask<void>
+        Jobs::Spawn(CompileOptions.Priority, [](FSpirVShaderCompiler* Self, FString Source, FShaderCompileOptions Options, TVector<FRawShaderEntry> Entries) -> Jobs::TTask<void>
         {
             // Declared before the cache probe, so a hit still releases the slot after its callback ran.
             DEFER
             {
-                if (Finished)
+                for (FRawShaderEntry& Entry : Entries)
                 {
-                    Finished();
+                    if (Entry.OnFinished)
+                    {
+                        Entry.OnFinished();
+                    }
                 }
 
-                bool bLast;
                 {
                     FScopeLock Lock(Self->PendingMutex);
-                    bLast = Self->PendingTasks.fetch_sub(1, std::memory_order_acq_rel) == 1;
+                    Self->PendingTasks.fetch_sub(1, std::memory_order_acq_rel);
                 }
                 Self->PendingSignal.NotifyAll();
-
-                if (bLast)
-                {
-                    GSlangSessionPool.TrimIdle(1);
-                }
             };
 
             // This used to hardcode the engine tree, so a graph could not include a plugin's shader header.
             const TVector<FString> SearchRoots = BuildShaderSearchRoots();
 
-            const uint64 CacheKey = FShaderCache::ComputeRawSourceHash(
-                Source, Options.MacroDefinitions, SearchRoots, Options.TemplateVirtualPath,
-                Options.EntryPoint);
-
-            if (FShaderHeader Cached; FShaderCache::TryLoadRaw(CacheKey, Cached))
+            struct FMiss
             {
-                // A cached binary still has to reach the crash tracker, or it resolves as unknown.
-                RHI::GetCrashTracker().RegisterShader(Cached.Binaries, Cached.DebugName);
-                Callback(Move(Cached));
+                FRawShaderEntry*      Entry;
+                FShaderCompileOptions Options;
+                uint64                CacheKey;
+            };
+            TVector<FMiss> Misses;
+
+            for (FRawShaderEntry& Entry : Entries)
+            {
+                FShaderCompileOptions EntryOptions = Options;
+                EntryOptions.EntryPoint = Entry.EntryPoint;
+                EntryOptions.DebugName  = Entry.DebugName.IsEmpty() ? FString("RawShader") : Entry.DebugName;
+
+                const uint64 CacheKey = FShaderCache::ComputeRawSourceHash(
+                    Source, EntryOptions.MacroDefinitions, SearchRoots, EntryOptions.TemplateVirtualPath, EntryOptions.EntryPoint);
+
+                if (FShaderHeader Cached; FShaderCache::TryLoadRaw(CacheKey, Cached))
+                {
+                    // A cached binary still has to reach the crash tracker, or it resolves as unknown.
+                    RHI::GetCrashTracker().RegisterShader(Cached.Binaries, Cached.DebugName);
+                    Entry.OnCompleted(Move(Cached));
+                    continue;
+                }
+                Misses.Add({ &Entry, Move(EntryOptions), CacheKey });
+            }
+
+            if (Misses.IsEmpty())
+            {
                 co_return;
             }
 
@@ -994,13 +1012,14 @@ namespace Lumina
             FSessionScratch Scratch;
 
             Slang::ComPtr<slang::ISession> Session =
-                CreateCompileSession(GlobalSession, SearchRoots, Options.MacroDefinitions, Scratch);
+                CreateCompileSession(GlobalSession, SearchRoots, Options.MacroDefinitions, kRawShaderDebugInfoLevel, Scratch);
             if (!Session)
             {
                 co_return;
             }
 
-            const FString& RawName    = Options.DebugName.IsEmpty() ? FString("RawShader") : Options.DebugName;
+            // Parsed once and shared, since every entry point reads the same source and macros.
+            const FString& RawName    = Misses[0].Options.DebugName;
             const FString  SourcePath = RawName + ".slang";
 
             Slang::ComPtr<slang::IBlob>   Diagnostics;
@@ -1019,23 +1038,23 @@ namespace Lumina
                 co_return;
             }
 
-            FShaderHeader Shader;
-            if (!BuildShaderFromModule(SlangModule, RawName, Options, Shader))
+            for (FMiss& Miss : Misses)
             {
-                co_return;
+                FShaderHeader Shader;
+                if (!BuildShaderFromModule(SlangModule, Miss.Options.DebugName, Miss.Options, Shader))
+                {
+                    continue;
+                }
+
+                FShaderCache::SaveRaw(Miss.CacheKey, Shader);
+                RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
+                Miss.Entry->OnCompleted(Move(Shader));
             }
 
             const double DurationMs = PlatformTime::ToMilliseconds(PlatformTime::Cycles() - CompileStart);
-
-            LOG_TRACE("Compiled raw shader '{0}' in {1:.2f} ms (Thread {2})", RawName, DurationMs, Jobs::GetThreadSlot());
-
-            FShaderCache::SaveRaw(CacheKey, Shader);
-
-            RHI::GetCrashTracker().RegisterShader(Shader.Binaries, Shader.DebugName);
-
-            Callback(Move(Shader));
+            LOG_TRACE("Compiled raw shader '{0}' with {1} entry point(s) in {2:.2f} ms (Thread {3})", RawName, Misses.Num(), DurationMs, Jobs::GetThreadSlot());
             co_return;
-        }, this, Move(ShaderString), CompileOptions, Move(OnCompleted), Move(OnFinished));
+        }, this, Move(ShaderString), CompileOptions, Move(Entries));
 
         return true;
     }

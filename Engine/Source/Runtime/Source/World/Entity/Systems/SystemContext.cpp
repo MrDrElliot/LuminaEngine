@@ -75,6 +75,11 @@ namespace Lumina
         return Registry->GetHierarchy();
     }
 
+    FSimulation* SSystemContext::GetSimulation() const
+    {
+        return World != nullptr ? World->GetSimulation() : nullptr;
+    }
+
     void SSystemContext::SetEntityLifetime(ECS::FEntity Entity, float Lifetime) const
     {
         if (ECS::FCommandBus::ShouldDefer())

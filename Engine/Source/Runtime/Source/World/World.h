@@ -28,6 +28,7 @@
 #include "Physics/PhysicsScene.h"
 #include "Scripting/EntityScript.h"
 #include "UI/WorldUIContext.h"
+#include "Simulation/Simulation.h"
 
 #include "Containers/Name.h"
 #include "Containers/String.h"
@@ -212,6 +213,12 @@ namespace Lumina
 
         FUNCTION()
         NODISCARD bool IsGameWorld() const { return WorldType == EWorldType::Game; }
+
+        // Present in a game world while the project enables deterministic simulation, null otherwise.
+        NODISCARD FSimulation* GetSimulation() const { return Simulation.get(); }
+
+        // Runs the Simulation stage once at the given tick, for FSimulation, which decides when and how often.
+        void RunSimulationStage(float TickSeconds, uint32 Tick);
 
         FUNCTION()
         NODISCARD bool IsSimulating() const { return WorldType == EWorldType::Simulation; }
@@ -825,6 +832,7 @@ namespace Lumina
         FRenderCallbackList                 RenderCallbacks;
         TUniquePtr<Physics::IPhysicsScene>  PhysicsScene;
         TUniquePtr<FWorldUIContext>         UIContext;
+        TUniquePtr<FSimulation>             Simulation;
 
         //~ System schedule.
 

@@ -20,4 +20,18 @@ namespace Lumina
         GENERATED_BODY()
     };
 
+    // Another peer is authoritative over this entity and this one only mirrors it, so local systems make no gameplay decisions for it.
+    REFLECT(Component, HideInComponentList)
+    struct RUNTIME_API SNetProxyTag
+    {
+        GENERATED_BODY()
+    };
+
+    // A proxy whose transform that peer also streams, so local movement leaves it alone.
+    REFLECT(Component, HideInComponentList)
+    struct RUNTIME_API SNetDrivenTransformTag
+    {
+        GENERATED_BODY()
+    };
+
 }

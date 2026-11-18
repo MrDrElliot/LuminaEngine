@@ -24,6 +24,8 @@ namespace Lumina
 
     void CKinematicsSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::PrePhysics);
         RequireUpdate(EUpdateStage::Paused);
     }
@@ -34,10 +36,6 @@ namespace Lumina
 
         FKinematicsState& KinematicsState = *State;
         KinematicsState.bEnabled = CVarKinematicsEnabled.GetValue();
-        if (!KinematicsState.bEnabled)
-        {
-            return;
-        }
 
         // Only the components whose systems read a velocity, since differencing every transform paid for static scenery and crowds.
         TStampedEntityCache<FEntityKinematics>& Cache = KinematicsState.Entries;
@@ -53,7 +51,7 @@ namespace Lumina
         FEntityKinematics* Entries = Cache.ByEntityIndex.GetData();
 
         // An entity in two consumer pools is differenced once, since the second visit sees this pass's stamp.
-        const auto Difference = [&](ECS::FEntity Entity, const auto&)
+        const auto Track = [&](ECS::FEntity Entity, bool bCaptureWorld)
         {
             const STransformComponent* Xform = Transforms.TryGet<STransformComponent>(Entity);
             if (Xform == nullptr)
@@ -71,7 +69,13 @@ namespace Lumina
                 Entry.bHasPrevious = false;
             }
 
-            const FVector3 Location = Xform->GetWorldLocationCached();
+            // Computed rather than cached for a skeletal mesh, since the capsule it hangs from moved earlier this frame and a stale pose slips the feet.
+            Entry.bHasWorld = bCaptureWorld;
+            if (bCaptureWorld)
+            {
+                Entry.World = Xform->GetWorldTransform();
+            }
+            const FVector3 Location = bCaptureWorld ? Entry.World.GetLocation() : Xform->GetWorldLocationCached();
             const FVector3 Velocity = (Entry.bHasPrevious && InvDelta > 0.0f)
                 ? (Location - Entry.PreviousLocation) * InvDelta
                 : FVector3(0.0f);
@@ -84,8 +88,15 @@ namespace Lumina
             Entry.bHasPrevious     = true;
         };
 
-        // Pools run one after another, so an entity shared by two is never differenced by two workers at once.
-        SkeletalConsumers.ParallelForEach(Difference, kKinematicsParallelGrain);
+        const auto TrackPosed = [&](ECS::FEntity Entity, const auto&) { Track(Entity, true); };
+        const auto Difference = [&](ECS::FEntity Entity, const auto&) { Track(Entity, false); };
+
+        // Pools run one after another, so an entity shared by two is never differenced by two workers at once. Skeletal first, so a mesh always gets its pose.
+        SkeletalConsumers.ParallelForEach(TrackPosed, kKinematicsParallelGrain);
+        if (!KinematicsState.bEnabled)
+        {
+            return;
+        }
         AudioSourceConsumers.ParallelForEach(Difference, kKinematicsParallelGrain);
         ListenerConsumers.ParallelForEach(Difference, kKinematicsParallelGrain);
         CameraConsumers.ParallelForEach(Difference, kKinematicsParallelGrain);

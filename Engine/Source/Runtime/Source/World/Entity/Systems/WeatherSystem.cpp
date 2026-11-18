@@ -22,6 +22,8 @@ namespace Lumina
 
     void CWeatherSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::FrameEnd);
         RequireUpdate(EUpdateStage::Paused);
     }

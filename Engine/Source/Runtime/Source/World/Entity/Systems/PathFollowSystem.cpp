@@ -22,6 +22,8 @@ namespace Lumina
 {
     void CPathFollowSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::PrePhysics);
         RunsAfter<CMovementComponentSystem, CProjectileSystem>();
         ExcludeFromHasWork(NavMeshes, Transforms);

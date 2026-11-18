@@ -397,10 +397,12 @@ namespace Lumina
         const uint64 TargetKey    = Target.Key;
         const uint32 TargetGen    = Target.Generation;
         Result.StageLog = MakeShared<FMaterialStageCommitLog>();
-        auto DispatchStage = [ShaderCompiler, Material, bPermutation, TargetKey, TargetGen, Priority, Log = Result.StageLog]
-            (const FString& Source, FShaderCompileOptions&& StageOptions, EMaterialShaderStage Stage)
+        // Every template sits here and includes from the shader roots, which is all the cache key needs to track header edits.
+        constexpr const char* kMaterialTemplateDirectory = "/Engine/Resources/Shaders/MaterialShader/";
+
+        auto MakeStageEntry = [Material, bPermutation, TargetKey, TargetGen, Log = Result.StageLog]
+            (EMaterialShaderStage Stage, const FString& EntryPoint, const FString& DebugName)
         {
-            StageOptions.Priority = Priority;
             Log->Dispatched.fetch_or(1u << (uint32)Stage, std::memory_order_relaxed);
 
             auto Commit = [Material, Stage, bPermutation, TargetKey, TargetGen, Log](const FShaderHeader& Header)
@@ -416,7 +418,17 @@ namespace Lumina
                 }
                 Log->Committed.fetch_or(1u << (uint32)Stage, std::memory_order_release);
             };
-            ShaderCompiler->CompilerShaderRaw(Source, Move(StageOptions), Move(Commit), Log->Stages.Track());
+            return IShaderCompiler::FRawShaderEntry{ EntryPoint, DebugName, Move(Commit), Log->Stages.Track() };
+        };
+
+        auto DispatchStage = [ShaderCompiler, Priority, &MakeStageEntry]
+            (const FString& Source, FShaderCompileOptions&& StageOptions, EMaterialShaderStage Stage)
+        {
+            StageOptions.Priority            = Priority;
+            StageOptions.TemplateVirtualPath = kMaterialTemplateDirectory;
+            TVector<IShaderCompiler::FRawShaderEntry> Entries;
+            Entries.Add(MakeStageEntry(Stage, StageOptions.EntryPoint, StageOptions.DebugName));
+            ShaderCompiler->CompileShaderRawEntries(Source, StageOptions, Move(Entries));
         };
 
         // A permutation was dropped whole above, so per-stage clears would only touch the master's.
@@ -437,28 +449,40 @@ namespace Lumina
             }
         }
 
+        // The pixel and deferred stages take longest, so they go first and never queue behind a short one.
+        if (IsStageRequired(Material, EMaterialShaderStage::Pixel))
+        {
+            DispatchStage(Result.PixelSource, Move(Options), EMaterialShaderStage::Pixel);
+        }
+
         if (IsStageRequired(Material, EMaterialShaderStage::Vertex))
         {
             DispatchStage(Result.VertexSource, Move(VSOptions), EMaterialShaderStage::Vertex);
         }
 
         // A geometry template carries both paths, MeshMain for Stage and VertexMain for its vertex-path twin.
-        auto DispatchGeometryStage = [&DispatchStage](const FString& Source, const FShaderCompileOptions& StageOptions, EMaterialShaderStage Stage)
+        auto DispatchGeometryStage = [ShaderCompiler, Priority, &MakeStageEntry](const FString& Source, FShaderCompileOptions StageOptions, EMaterialShaderStage Stage)
         {
-            FShaderCompileOptions VertexOptions = StageOptions;
-            VertexOptions.EntryPoint = "VertexMain";
-            VertexOptions.DebugName += " [vertex path]";
-            DispatchStage(Source, Move(VertexOptions), VertexPathStage(Stage));
-
-            FShaderCompileOptions MeshOptions = StageOptions;
-            MeshOptions.EntryPoint = "MeshMain";
-            DispatchStage(Source, Move(MeshOptions), Stage);
+            StageOptions.Priority            = Priority;
+            StageOptions.TemplateVirtualPath = kMaterialTemplateDirectory;
+            TVector<IShaderCompiler::FRawShaderEntry> Entries;
+            Entries.Add(MakeStageEntry(Stage, "MeshMain", StageOptions.DebugName));
+            Entries.Add(MakeStageEntry(VertexPathStage(Stage), "VertexMain", StageOptions.DebugName + " [vertex path]"));
+            ShaderCompiler->CompileShaderRawEntries(Source, StageOptions, Move(Entries));
         };
 
         // Separate compiles rather than spec-constant variants, since they declare different OUTPUT types.
         if (MaterialDomain::IsMeshlet(Material->GetMaterialType()))
         {
             const FString MeshShaderDir = Paths::GetEngineResourceDirectory() + "/Shaders/MaterialShader/";
+
+            // The runtime model check lives in ShadeGBuffer, so forward and deferred cannot drift apart.
+            if (IsStageRequired(Material, EMaterialShaderStage::Deferred))
+            {
+                const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(MeshShaderDir + "DeferredMaterial.slang", EMaterialType::PBR);
+                FShaderCompileOptions DeferredOptions; DeferredOptions.DebugName = MatName + " [DM]";
+                DispatchStage(DeferredSource, Move(DeferredOptions), EMaterialShaderStage::Deferred);
+            }
 
             const FString MeshSource = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletMesh.slang", EMaterialType::PBR);
             const FString VisSource  = Compiler.BuildVertexShaderFromTemplate(MeshShaderDir + "MeshletVisBuffer.slang", EMaterialType::PBR);
@@ -473,6 +497,10 @@ namespace Lumina
 
             for (const FGeometryStage& Geo : GeometryStages)
             {
+                if (!IsStageRequired(Material, Geo.Stage))
+                {
+                    continue;
+                }
                 FShaderCompileOptions CompileOptions;
                 CompileOptions.DebugName = MatName + " [" + Geo.Tag + "]";
                 if (Geo.Define != nullptr)
@@ -514,15 +542,7 @@ namespace Lumina
                 AddMaskedInterpolantDefines(MaskedIO, true, ShadowPSOptions.MacroDefinitions);
                 DispatchStage(ShadowPSSource, Move(ShadowPSOptions), EMaterialShaderStage::ShadowMaskedPixel);
             }
-
-            const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(MeshShaderDir + "DeferredMaterial.slang", EMaterialType::PBR);
-            FShaderCompileOptions DeferredOptions; DeferredOptions.DebugName = MatName + " [DM]";
-
-            // The runtime model check lives in ShadeGBuffer, so forward and deferred cannot drift apart.
-            DispatchStage(DeferredSource, Move(DeferredOptions), EMaterialShaderStage::Deferred);
         }
-
-        DispatchStage(Result.PixelSource, Move(Options), EMaterialShaderStage::Pixel);
 
 
         return true;

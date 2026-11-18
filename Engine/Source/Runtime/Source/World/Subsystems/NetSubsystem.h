@@ -52,5 +52,13 @@ namespace Lumina
         // The entity a connection owns, preferring one with a character controller.
         FUNCTION()
         ECS::FEntity GetOwnedPawn(uint32 ConnectionId);
+
+        // Client, StandIn shows a spawn before the host makes it. Send the key with the request, 0 means a host or standalone world, which spawns for real.
+        FUNCTION()
+        uint32 PredictSpawn(ECS::FEntity StandIn, bool bKeepStandIn = true);
+
+        // Host, call the frame Entity spawns, with the connection and key the request carried.
+        FUNCTION()
+        void ConfirmPredictedSpawn(ECS::FEntity Entity, uint32 ConnectionId, uint32 Key);
     };
 }

@@ -1,4 +1,4 @@
-#include "Platform/Time/PlatformTime.h"
+﻿#include "Platform/Time/PlatformTime.h"
 #include "RuntimePCH.h"
 #include "Package.h"
 #include "Core/Profiler/AssetLoadTracker.h"
@@ -2088,16 +2088,23 @@ namespace Lumina
 
     CObject* CPackage::LoadAssetGraph(const FGuid& RootGUID)
     {
+        LoadAssetGraph(TSpan<const FGuid>(&RootGUID, 1));
+        return FindObjectImpl(RootGUID);
+    }
+
+    void CPackage::LoadAssetGraph(TSpan<const FGuid> Roots)
+    {
         LUMINA_PROFILE_SCOPE();
-        
+
         FAssetRegistry& Registry = FAssetRegistry::Get();
 
-        if (Registry.GetAssetByGUID(RootGUID) == nullptr)
+        // Loaded and post-loaded, so its hard closure is resident too and the walk can stop there.
+        const auto IsLoaded = [](const FGuid& Guid)
         {
-            // Not a registered asset (transient), take the inline path.
-            return StaticLoadObject(RootGUID);
-        }
-        
+            const CObject* Object = FindObjectImpl(Guid);
+            return Object != nullptr && !Object->HasAnyFlag(OF_NeedsLoad | OF_Loading | OF_NeedsPostLoad);
+        };
+
         THashMap<FGuid, int32>      GuidToNode;
         TVector<FFixedString>       NodePaths;
         TVector<THashSet<int32>>    NodeDeps;
@@ -2118,14 +2125,23 @@ namespace Lumina
 
         THashSet<FGuid> Visited;
         TVector<FGuid>  Queue;
-        Queue.Add(RootGUID);
+        for (const FGuid& Root : Roots)
+        {
+            if (Registry.GetAssetByGUID(Root) == nullptr)
+            {
+                // Not a registered asset (transient), take the inline path.
+                StaticLoadObject(Root);
+                continue;
+            }
+            Queue.Add(Root);
+        }
 
         while (!Queue.IsEmpty())
         {
             const FGuid Guid = Queue.Last();
             Queue.Pop();
 
-            if (!Visited.TryAdd(Guid))
+            if (!Visited.TryAdd(Guid) || IsLoaded(Guid))
             {
                 continue;
             }
@@ -2145,6 +2161,10 @@ namespace Lumina
                 {
                     continue;
                 }
+                if (IsLoaded(Dep.TargetGUID))
+                {
+                    continue;
+                }
 
                 if (const FAssetDataPtr DepData = Registry.GetAssetByGUID(Dep.TargetGUID))
                 {
@@ -2159,6 +2179,10 @@ namespace Lumina
         }
 
         const int32 NumNodes = NodePaths.Num();
+        if (NumNodes == 0)
+        {
+            return;
+        }
 
         TVector<CPackage*> Packages;
         Packages.SetNum(NumNodes, nullptr);
@@ -2194,35 +2218,33 @@ namespace Lumina
                 Packages[i]->SerializeExports(Request);
             }
         }, 1);
-        
+
+        // Leaf-first levels in one pass over the edges, where rescanning every node per wave was quadratic in the depth.
+        TVector<int32>          Pending(NumNodes, 0);
+        TVector<TVector<int32>> Dependents(NumNodes);
+        for (int32 i = 0; i < NumNodes; ++i)
+        {
+            Pending[i] = NodeDeps[i].Num();
+            for (int32 Dep : NodeDeps[i])
+            {
+                Dependents[Dep].Add(i);
+            }
+        }
+
         TVector<uint8> Processed(NumNodes, 0);
         TVector<int32> Wave;
-        int32          Remaining = NumNodes;
+        TVector<int32> Next;
+        for (int32 i = 0; i < NumNodes; ++i)
+        {
+            if (Pending[i] == 0)
+            {
+                Wave.Add(i);
+            }
+        }
 
+        int32 Remaining = NumNodes;
         while (Remaining > 0)
         {
-            Wave.Reset();
-            for (int32 i = 0; i < NumNodes; ++i)
-            {
-                if (Processed[i])
-                {
-                    continue;
-                }
-                bool bReady = true;
-                for (int32 Dep : NodeDeps[i])
-                {
-                    if (!Processed[Dep])
-                    {
-                        bReady = false;
-                        break;
-                    }
-                }
-                if (bReady)
-                {
-                    Wave.Add(i);
-                }
-            }
-
             if (Wave.IsEmpty())
             {
                 // A dependency cycle breaks by taking them all at once, and the per-asset guards order the rest.
@@ -2244,14 +2266,21 @@ namespace Lumina
                 }
             }, 1);
 
+            Next.Reset();
             for (int32 Idx : Wave)
             {
                 Processed[Idx] = 1;
                 --Remaining;
+                for (int32 Dependent : Dependents[Idx])
+                {
+                    if (--Pending[Dependent] == 0 && !Processed[Dependent])
+                    {
+                        Next.Add(Dependent);
+                    }
+                }
             }
+            Wave = Move(Next);
         }
-
-        return FindObjectImpl(RootGUID);
     }
 
     bool CPackage::FullyLoad()

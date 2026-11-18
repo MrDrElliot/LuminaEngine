@@ -24,6 +24,7 @@ namespace Lumina::Reflection
     X(HostOnly,             Flag,   Runtime,   "A script, system or world subsystem that runs only on the host, a dedicated server or a standalone game. Inherited, and spelled [Reflect(HostOnly = true)] in C#.") \
     X(ClientOnly,           Flag,   Runtime,   "A script, system or world subsystem that runs only on a client joined to a host. Inherited, and spelled [Reflect(ClientOnly = true)] in C#.") \
     X(Cosmetic,             Flag,   Runtime,   "A script, system or world subsystem that runs only where something is drawn or played, never on a dedicated server, a bot or a headless process. Inherited, and spelled [Reflect(Cosmetic = true)] in C#.") \
+    X(Rollback,             Flag,   Runtime,   "Marks a component as deterministic simulation state, saved every tick and restored when a late input rewinds the simulation. Spelled [Reflect(Rollback = true)] in C#.") \
     X(ConfigFile,           Value,  Runtime,   "Backs the class with the named config file. The config system loads and saves its properties there.") \
     X(DataModel,            Value,  Runtime,   "The name a UI document's data-model attribute uses for this class. The class name without its C prefix when absent.") \
     X(UIDocument,           Value,  Runtime,   "The .rml a UI script shows when its Document property is empty.")     X(Group,                Value,  Runtime,   "Puts every asset of the class and its subclasses in the named asset group, found and loaded by name through FAssetManager.") \

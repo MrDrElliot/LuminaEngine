@@ -1104,6 +1104,20 @@ namespace Lumina
         return Formula;
     }
 
+    const FMaterialFormula& CMaterialExpression_Sun::GetFormula() const
+    {
+        static constexpr FMaterialFormulaPin Outputs[] = { { "Direction", 3 }, { "SkyDirection", 3 }, { "Color", 3 }, { "HasSun", 1 } };
+        static constexpr FMaterialFormula Formula = { "Sun", "Scene",
+            "The direction toward the sun that lights surfaces, the true sun the sky draws (apart from it under moonlight), its color times intensity, and 1 when the scene has a sun.",
+            TSpan<const FMaterialFormulaPin>(), 3,
+            "float $_HasSun = LightData().bHasSun != 0u ? 1.0 : 0.0;\n"
+            "float3 $_Direction = GetSunDirection();\n"
+            "float3 $_SkyDirection = GetSkySunDirection();\n"
+            "float3 $_Color = $_HasSun > 0.0 ? UnpackColor(GetLightAt(0).Color).rgb * GetLightAt(0).Intensity : float3(0.0);",
+            Outputs, EMaterialFormulaLimit::NoUI };
+        return Formula;
+    }
+
     const FMaterialFormula& CMaterialExpression_SlopeMask::GetFormula() const
     {
         static constexpr FMaterialFormulaPin Inputs[] = { kNormal, { "Direction", 3, 0.0f, "float3(0.0, 1.0, 0.0)" }, { "Threshold", 1, 0.7f }, { "Sharpness", 1, 10.0f } };

@@ -182,6 +182,9 @@ namespace Lumina::ECS
         void Send(const T& Event) const;
         void Send(TSpan<const T> Events) const;
 
+        // Whether anything reads T, so a producer can skip building events no one will see.
+        NODISCARD bool HasReaders() const;
+
     private:
 
         FEventQueues* Queues = nullptr;
@@ -248,6 +251,16 @@ namespace Lumina::ECS
         }
     }
 
+    // For producers whose events can number thousands a frame, so nothing is built for a type no one reads.
+    template<typename T>
+    void SendEventIfRead(FEventQueues* Queues, const T& Event)
+    {
+        if (Queues != nullptr && Queues->HasInterest(GetComponentTypeID<T>()))
+        {
+            SendEvent(*Queues, Event);
+        }
+    }
+
     // Reading marks interest, so a reader no system declared still gets a producer to fill its queue from the next frame on.
     template<typename T>
     NODISCARD TEventRange<T> ReadEvents(FEventQueues& Queues, TEventReader<T>& Reader)
@@ -282,6 +295,12 @@ namespace Lumina::ECS
     {
         DEBUG_ASSERT(Queues != nullptr, "An event writer sends only as a member of an entity system");
         SendEvent(*Queues, Event);
+    }
+
+    template<typename T>
+    bool TEventWriter<T>::HasReaders() const
+    {
+        return Queues != nullptr && Queues->HasInterest(GetComponentTypeID<T>());
     }
 
     template<typename T>

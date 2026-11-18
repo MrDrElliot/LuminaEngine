@@ -452,6 +452,11 @@ namespace Lumina
 
         EntityRegistry.Ctx().Emplace<ECS::FEventQueues*>(&EventQueues);
 
+        if (WorldType == EWorldType::Game && GetDefault<CSimulationSettings>()->bEnabled)
+        {
+            Simulation = MakeUnique<FSimulation>(*this);
+        }
+
         ConnectComponentAccessValidators(EntityRegistry);
 
         auto WorldSettingsView = EntityRegistry.View<SDefaultWorldSettings>();
@@ -620,6 +625,7 @@ namespace Lumina
     void CWorld::TeardownWorld()
     {
         bTearingDown = true;
+        Simulation.reset();
 
         // First, so every subscription the managed side drops still disconnects against a live world.
         DotNet::NotifyWorldTeardown(this);
@@ -739,6 +745,10 @@ namespace Lumina
         if (Stage == EUpdateStage::PrePhysics)
         {
             TickFixedUpdate(DeltaTime);
+            if (Simulation)
+            {
+                Simulation->Advance(DeltaTime);
+            }
         }
 
         // The frame's one propagation, owned here so a world with no renderer still settles, since physics syncs bodies from local transforms.
@@ -1915,7 +1925,7 @@ namespace Lumina
 
     bool SystemSchedule::NeedsFlushBetween(const FSystemAccess& Earlier, const FSystemAccess& Later, bool bDeclaredOrder)
     {
-        if (bDeclaredOrder || Earlier.bExclusive || Later.bExclusive)
+        if (Earlier.bExclusive || Later.bExclusive || (bDeclaredOrder && Earlier.bQueuesCommands))
         {
             return true;
         }
@@ -2634,6 +2644,28 @@ namespace Lumina
             SystemContext.Time = FixedUpdateTime;
             TickSystems(SystemContext);
         }
+
+        SystemContext.UpdateStage   = OuterStage;
+        SystemContext.DeltaTime     = OuterDeltaTime;
+        SystemContext.RealDeltaTime = OuterRealDelta;
+        SystemContext.Time          = OuterTime;
+    }
+
+    void CWorld::RunSimulationStage(float TickSeconds, uint32 Tick)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const EUpdateStage OuterStage = SystemContext.UpdateStage;
+        const double OuterDeltaTime   = SystemContext.DeltaTime;
+        const double OuterRealDelta   = SystemContext.RealDeltaTime;
+        const double OuterTime        = SystemContext.Time;
+
+        SystemContext.UpdateStage   = EUpdateStage::Simulation;
+        SystemContext.DeltaTime     = TickSeconds;
+        SystemContext.RealDeltaTime = TickSeconds;
+        SystemContext.Time          = (double)Tick * TickSeconds;
+        TickSystems(SystemContext);
+        FlushCommands();
 
         SystemContext.UpdateStage   = OuterStage;
         SystemContext.DeltaTime     = OuterDeltaTime;

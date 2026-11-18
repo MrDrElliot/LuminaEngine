@@ -28,6 +28,8 @@ namespace Lumina
 
     void CRVOAvoidanceSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::PrePhysics);
         // Avoids around the preferred velocity CPathFollowSystem writes and the frame's final transforms.
         RunsAfter<CPathFollowSystem, CSocketAttachmentSystem>();

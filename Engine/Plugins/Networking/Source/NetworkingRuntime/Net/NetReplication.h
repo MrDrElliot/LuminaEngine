@@ -25,8 +25,7 @@ namespace Lumina
     enum class ESendMode : uint8;
     enum class ENetMessage : uint8;
 
-    // Tag, this networked entity has replicated property changes pending (set by World.Net:MarkDirty).
-    // The server sends a reliable PropertyUpdate for it next tick, then clears the tag.
+    // Tag, this networked entity has replicated property changes pending, which the host sends on its next tick.
     struct FNetDirty {};
 
     namespace Net
@@ -119,7 +118,7 @@ namespace Lumina
         //~ one ENet header and ack instead of N. Every packet on the wire is a batch.
 
         // Append one framed message to a batch buffer.
-        void AppendFramedMessage(TVector<uint8>& Batch, const uint8* Msg, SIZE_T MsgSize);
+        NETWORKINGRUNTIME_API void AppendFramedMessage(TVector<uint8>& Batch, const uint8* Msg, SIZE_T MsgSize);
 
         // Append NumEntries as framed "Type, uint16 Count, entries" messages, split so each fits the frame. WriteEntry returns false to skip one.
         void AppendCountedMessages(TVector<uint8>& Batch, ENetMessage Type, int32 NumEntries, TFunctionRef<bool(FNetArchive&, int32)> WriteEntry);

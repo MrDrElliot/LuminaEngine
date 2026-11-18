@@ -29,6 +29,8 @@ namespace Lumina
 
     void CBuoyancySystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::PrePhysics);
         RunsAfter<CMovementComponentSystem, CProjectileSystem>();
     }

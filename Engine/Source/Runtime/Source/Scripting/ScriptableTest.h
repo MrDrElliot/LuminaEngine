@@ -62,6 +62,10 @@ namespace Lumina
         void OnFixedUpdate(float Dt) override { ++FixedUpdateCount; }
         void OnInput(SInputEvent Event) override { Record('I'); }
         void OnDetach() override      { ++DetachCount; if (DetachHook != nullptr) { DetachHook(*this, HookContext); } }
+        void OnConnected(uint32 ConnectionId) override    { Record('C'); }
+        void OnDisconnected(uint32 ConnectionId) override { Record('D'); }
+        void OnJoinedHost() override                      { Record('J'); }
+        void OnLeftHost(ENetLeaveReason Reason) override  { Record('L'); }
 
         // Appends Phase and Label to a test's log, so a test can read back the order callbacks ran in. Unreflected.
         TVector<FString>* EventLog = nullptr;
@@ -427,5 +431,56 @@ namespace Lumina
         static bool bAskForOwnDefault;
 
         CObject* OwnDefault;
+    };
+
+    // Simulation test state, an integer position plus a float that drifts apart if any peer computes it differently.
+    REFLECT(Component, Rollback, HideInComponentList)
+    struct RUNTIME_API SSimTestBody
+    {
+        GENERATED_BODY()
+
+        // The player who drives it, or -1 for a projectile.
+        PROPERTY()
+        int32 Owner = -1;
+
+        PROPERTY()
+        int32 X = 0;
+
+        PROPERTY()
+        float Energy = 0.0f;
+
+        PROPERTY()
+        int32 Hits = 0;
+    };
+
+    REFLECT()
+    struct RUNTIME_API SSimTestInput
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        int32 MoveX = 0;
+
+        PROPERTY()
+        bool bFire = false;
+    };
+
+    // Moves each player's body by its input, fires projectiles that fly, draw random hits and despawn, all in SimId order.
+    REFLECT()
+    class RUNTIME_API CSimTestSystem : public CExclusiveSystem
+    {
+        GENERATED_BODY()
+    public:
+
+        bool ShouldCreate() override { return CEntitySystemTest::bAllowCreation; }
+
+        void Configure() override { RequireUpdate(EUpdateStage::Simulation); }
+
+        void OnExclusiveUpdate(const SExclusiveContext& Context) override;
+
+        // Nudges this peer's state at one tick, so a test can prove the checksums catch a desync.
+        int32 CorruptAtTick = -1;
+
+        int32 ProjectilesSpawned = 0;
     };
 }

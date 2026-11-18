@@ -424,7 +424,10 @@ String DataViewText::BuildText() const
 	return result;
 }
 
-DataViewFor::DataViewFor(Element* element) : DataView(element, 0) {}
+// Lumina patch, ahead of its clones' views at the same depth so a shrunk array drops rows before their bindings read past its end.
+static constexpr int SortOffset_DataFor = -10;
+
+DataViewFor::DataViewFor(Element* element) : DataView(element, SortOffset_DataFor) {}
 
 bool DataViewFor::Initialize(DataModel& model, Element* element, const String& in_expression, const String& /*modifier*/)
 {

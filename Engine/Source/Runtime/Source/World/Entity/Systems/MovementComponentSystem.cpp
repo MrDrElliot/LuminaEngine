@@ -28,6 +28,8 @@ namespace Lumina
 
     void CMovementComponentSystem::Configure()
     {
+        QueuesNoCommands();
+
         RequireUpdate(EUpdateStage::PrePhysics);
     }
 

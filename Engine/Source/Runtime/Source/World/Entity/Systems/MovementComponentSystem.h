@@ -22,7 +22,7 @@ namespace Lumina
 
     private:
 
-        ECS::TQuery<ECS::Write<SInterpolatingMovementComponent>, ECS::Write<STransformComponent>, ECS::Without<SDisabledTag>> Interpolators;
-        ECS::TQuery<ECS::Write<SSineWaveMovementComponent>, ECS::Write<STransformComponent>, ECS::Without<SDisabledTag>> Oscillators;
+        ECS::TQuery<ECS::Write<SInterpolatingMovementComponent>, ECS::Write<STransformComponent>, ECS::Without<SDisabledTag>, ECS::Without<SNetDrivenTransformTag>> Interpolators;
+        ECS::TQuery<ECS::Write<SSineWaveMovementComponent>, ECS::Write<STransformComponent>, ECS::Without<SDisabledTag>, ECS::Without<SNetDrivenTransformTag>> Oscillators;
     };
 }

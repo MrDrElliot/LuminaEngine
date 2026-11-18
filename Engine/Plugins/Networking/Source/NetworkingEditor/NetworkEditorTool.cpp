@@ -1,5 +1,6 @@
 // Engine headers reach for the ECS; the Runtime PCH supplies it there, not here.
 #include "NetworkEditorTool.h"
+#include <bit>
 #include "World/ECS/Registry.h"
 
 
@@ -17,6 +18,10 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/InfoTable.h"
 #include "Containers/StringFormat.h"
+#include "Net/LagCompensation.h"
+#include "Simulation/Simulation.h"
+#include "World/Entity/Components/EntityTags.h"
+#include "World/Entity/Systems/DebugDrawSystem.h"
 
 namespace Lumina
 {
@@ -99,23 +104,30 @@ namespace Lumina
         FNetWorldState* State = GetNetState(InWorld);
         if (State == nullptr) { return; }
 
-        const FNetworkStats Stats = State->Transport->GetStats();
-        if (History.bPrimed && DeltaSeconds > 0.0f)
-        {
-            const float SendRate = static_cast<float>(Stats.TotalSentBytes     - History.LastSent) / DeltaSeconds;
-            const float RecvRate = static_cast<float>(Stats.TotalReceivedBytes - History.LastRecv) / DeltaSeconds;
-            History.SendRate[History.Head]      = SendRate;
-            History.RecvRate[History.Head]      = RecvRate;
-            History.MovementBytes[History.Head] = static_cast<float>(State->Stats.MovementFrameBytes);
-            History.Head = (History.Head + 1) % FNetHistory::Capacity;
-        }
-        History.LastSent = Stats.TotalSentBytes;
-        History.LastRecv = Stats.TotalReceivedBytes;
-        History.bPrimed  = true;
-
         // The raw per-tick value jitters as each tick sends a different subset of due entities.
         const float SnapNow = static_cast<float>(State->Stats.MovementFrameBytes);
         History.SnapshotEMA += (SnapNow - History.SnapshotEMA) * 0.1f;
+
+        // A rate over one editor frame is mostly zero at high frame rates, since most frames carry no packet.
+        History.SinceSample += DeltaSeconds;
+        if (History.bPrimed && History.SinceSample < FNetHistory::SampleInterval)
+        {
+            return;
+        }
+
+        const FNetworkStats Stats = State->Transport->GetStats();
+        if (History.bPrimed)
+        {
+            History.SendRate[History.Head]      = static_cast<float>(Stats.TotalSentBytes     - History.LastSent) / History.SinceSample;
+            History.RecvRate[History.Head]      = static_cast<float>(Stats.TotalReceivedBytes - History.LastRecv) / History.SinceSample;
+            History.MovementBytes[History.Head] = static_cast<float>(State->Stats.MovementFrameBytes);
+            History.Head = (History.Head + 1) % FNetHistory::Capacity;
+        }
+        History.LastSent    = Stats.TotalSentBytes;
+        History.LastRecv    = Stats.TotalReceivedBytes;
+        History.bPrimed     = true;
+        History.SinceSample = 0.0f;
+
     }
 
     void FNetworkEditorTool::DrawNetworkWindow(bool bIsFocused)
@@ -274,9 +286,28 @@ namespace Lumina
                 }
             }
 
+            if (const FSimulation* Sim = SelectedWorld->GetSimulation(); Sim != nullptr && Sim->HasDesynced())
+            {
+                snprintf(Buf, sizeof(Buf), "Deterministic simulation desynced at tick %lld. The log names the component that diverged.", (long long)Sim->GetDesyncTick());
+                Bullet(ColBad, Buf);
+            }
+
             if (!bAny)
             {
                 ImGui::TextColored(ColGood, "  - No issues detected.");
+            }
+        }
+
+        // Per world, so a client preview window with no viewport menu of its own can still be inspected.
+        if (FDebugDrawState* DrawState = Registry.Ctx().Find<FDebugDrawState>(); DrawState != nullptr && ImGui::CollapsingHeader("Debug Draw"))
+        {
+            for (const FDebugDrawNetworkingView& View : kDebugDrawNetworkingViews)
+            {
+                bool bOn = EnumHasAnyFlags(DrawState->Networking, View.View);
+                if (ImGui::Checkbox(View.Label, &bOn))
+                {
+                    DrawState->Networking ^= View.View;
+                }
             }
         }
 
@@ -295,6 +326,9 @@ namespace Lumina
             else
             {
                 ImGui::BulletText("Connected to server: %s", State->bClientConnected ? "yes" : "no");
+                const FNetPropertyAcks& Acks = State->PropertyAcks;
+                ImGui::BulletText("Property packets: newest %u, %d of the 32 before it arrived, fence %u",
+                    Acks.Latest, std::popcount(Acks.Bits), Acks.Floor);
             }
             ImGui::BulletText("Networked Entities: %d", NetworkedEntities);
             ImGui::BulletText("NetGUID Table: %d entries", State->GuidTable.GuidToEntity.Num());
@@ -422,7 +456,7 @@ namespace Lumina
             {
                 ImGui::TextDisabled("No peers.");
             }
-            else if (ImGui::BeginTable("##Conns", 8,
+            else if (ImGui::BeginTable("##Conns", bIsServer ? 11 : 8,
                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
             {
                 ImGui::TableSetupColumn("Id");
@@ -433,6 +467,12 @@ namespace Lumina
                 ImGui::TableSetupColumn("Recv");
                 ImGui::TableSetupColumn("Pkts");
                 ImGui::TableSetupColumn("Lost");
+                if (bIsServer)
+                {
+                    ImGui::TableSetupColumn("Relevant");
+                    ImGui::TableSetupColumn("Props In Flight");
+                    ImGui::TableSetupColumn("Resends Queued");
+                }
                 ImGui::TableHeadersRow();
 
                 for (const FConnectionStats& C : Conns)
@@ -446,20 +486,52 @@ namespace Lumina
                     ImGui::TableNextColumn(); ImGui::TextUnformatted(*FormatBytesNice((double)C.ReceivedBytes));
                     ImGui::TableNextColumn(); ImGui::Text("%u", C.PacketsSent);
                     ImGui::TableNextColumn(); ImGui::Text("%u", C.PacketsLost);
+                    if (bIsServer)
+                    {
+                        const FNetClientView* View = State->ClientViews.Find(C.ConnectionId);
+                        ImGui::TableNextColumn(); ImGui::Text("%d", View != nullptr ? View->Relevant.Num() : 0);
+                        ImGui::TableNextColumn(); ImGui::Text("%d", View != nullptr ? View->Properties.InFlight.Num() : 0);
+                        ImGui::TableNextColumn(); ImGui::Text("%d", View != nullptr ? View->Properties.Resends.Num() : 0);
+                    }
                 }
                 ImGui::EndTable();
             }
+            if (bIsServer)
+            {
+                ImGui::TextDisabled("Property packets lost and sent again: %u", RepStats.PropertyPacketsLost);
+            }
+        }
+
+        if (const FLagCompensationHistory* History = Registry.Ctx().Find<FLagCompensationHistory>();
+            History != nullptr && History->Count > 0 && ImGui::CollapsingHeader("Lag Compensation"))
+        {
+            const FLagCompensationFrame& Newest = History->FrameAt(0);
+            const CNetworkSettings* NS = GetDefault<CNetworkSettings>();
+            ImGui::BulletText("Hitboxes: %d", Newest.Samples.Num());
+            ImGui::BulletText("History: %d frames covering %.0f of %.0f ms, recorded at up to %.0f Hz",
+                History->Count, (History->GetNewestTime() - History->GetOldestTime()) * 1000.0, History->MaxRewindSeconds * 1000.0,
+                NS->LagCompensationRecordRate);
+            ImGui::BulletText("Fastest hitbox between the last two frames: %.2f m", Newest.MaxMoveFromPrevious);
+        }
+
+        if (const FSimulation* Sim = SelectedWorld->GetSimulation(); Sim != nullptr && Sim->IsRunning() && ImGui::CollapsingHeader("Simulation"))
+        {
+            ImGui::BulletText("Mode: %s, player %u of %u", Sim->GetMode() == ESimulationMode::Rollback ? "Rollback" : "Lockstep",
+                Sim->GetLocalPlayer(), Sim->GetNumPlayers());
+            ImGui::BulletText("Tick %u, confirmed %lld", Sim->GetCurrentTick(), (long long)Sim->GetConfirmedTick());
+            ImGui::BulletText("Rollbacks %u, replayed ticks %u", Sim->GetRollbackCount(), Sim->GetResimulatedTicks());
+            ImGui::BulletText("Checksums verified %u", Sim->GetVerifiedChecksums());
         }
 
         // --- Per-entity replication (collapsed; capped + filterable so big sessions stay responsive) ---
         if (ImGui::CollapsingHeader("Entities"))
         {
-            static ImGuiTextFilter Filter;
+            ImGuiTextFilter& Filter = EntityFilter;
             Filter.Draw("Filter (name)", 180.0f);
 
             constexpr int MaxRows = 256;
             int Shown = 0, Total = 0;
-            if (ImGui::BeginTable("##Ents", 6,
+            if (ImGui::BeginTable("##Ents", 7,
                 ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp
                 | ImGuiTableFlags_ScrollY, ImVec2(0, 220)))
             {
@@ -469,6 +541,7 @@ namespace Lumina
                 ImGui::TableSetupColumn("Owner");
                 ImGui::TableSetupColumn("Move");
                 ImGui::TableSetupColumn("Ring");
+                ImGui::TableSetupColumn("Networking");
                 ImGui::TableHeadersRow();
 
                 for (ECS::FEntity E : Registry.View<SNetworkComponent>())
@@ -492,6 +565,13 @@ namespace Lumina
                     ImGui::TableNextColumn(); ImGui::Text("%u", N.OwningConnectionId);
                     ImGui::TableNextColumn(); ImGui::TextUnformatted(N.bReplicatesMovement ? "yes" : "no");
                     ImGui::TableNextColumn(); ImGui::Text("%d", Ring);
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(N.bInherited ? "inherited" : "own");
+                    if (Registry.HasAny<SNetProxyTag>(E))
+                    {
+                        ImGui::SameLine();
+                        ImGui::TextDisabled(Registry.HasAny<SNetDrivenTransformTag>(E) ? "mirror, streamed" : "mirror, flown here");
+                    }
                 }
                 ImGui::EndTable();
             }
@@ -508,7 +588,7 @@ namespace Lumina
             "Each networked world (the listen server and every client preview) is a separate session. "
             "Pick one to inspect its transport and connections.");
         DrawHelpTextRow("Transport",
-            "Cumulative bytes/packets the ENet host has sent/received, plus a rolling bytes/sec graph.");
+            "Cumulative bytes/packets the ENet host has sent/received, plus bytes/sec graphs sampled every quarter second over the last minute.");
         DrawHelpTextRow("Validation",
             "Surfaces problems detected this tick: a transform snapshot approaching or exceeding the 64 KB "
             "frame cap (oversized snapshots are dropped wholesale), high packet loss / RTT, and starving "
@@ -521,10 +601,18 @@ namespace Lumina
             "Client-side smoothing health: render interp delay, server/client clock offset, and the proxy "
             "sample-ring fill (a low average means stutter under loss).");
         DrawHelpTextRow("Connections",
-            "Per-peer round-trip time, measured packet loss, and throughput. RTT/loss populate after a few "
-            "reliable round-trips. Use the Play settings' Network Simulation to inject latency/loss.");
+            "Per-peer round-trip time, measured packet loss, and throughput. On a host, also what each client holds, its property "
+            "packets awaiting acknowledgement, and entities queued to go again after a lost packet. Use the Play settings' Network "
+            "Simulation to inject latency/loss.");
+        DrawHelpTextRow("Debug Draw",
+            "Turns the networking views on in the selected world's viewport, including a client preview window that has no View menu of its own.");
+        DrawHelpTextRow("Lag Compensation",
+            "The host's hitbox history: how many hitboxes, how much of the rewind window is recorded, and the fastest hitbox between frames.");
+        DrawHelpTextRow("Simulation",
+            "The deterministic simulation's tick, confirmed tick, rollbacks, replayed ticks and verified checksums, when a session runs.");
         DrawHelpTextRow("Entities",
-            "Per-entity replication state (NetGUID, name, role, owner, movement flag, interpolation sample "
-            "count). Capped to 256 rows and name-filterable so large sessions stay responsive.");
+            "Per-entity replication state (NetGUID, name, role, owner, movement flag, interpolation sample count), and whether its "
+            "networking is its own or inherited from a parent. A mirror is a host entity on a client, streamed or flown locally. "
+            "Capped to 256 rows and name-filterable so large sessions stay responsive.");
     }
 }
