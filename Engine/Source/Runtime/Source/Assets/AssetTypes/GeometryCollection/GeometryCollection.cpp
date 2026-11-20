@@ -341,7 +341,7 @@ namespace Lumina
             Mesh->ForEachSurface([&](const FGeometrySurface& Surface, uint32)
             {
                 const uint32 Offset = Surface.LODMeshletOffset[0];
-                const uint32 Count  = Surface.LODMeshletCount[0];
+                const uint32 Count  = Surface.FinestMeshletCount(MD);
                 for (uint32 i = 0; i < Count; ++i)
                 {
                     const FMeshlet& M       = MD.Meshlets[Offset + i];

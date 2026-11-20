@@ -122,6 +122,9 @@ enum class ELuminaEngineVersion : uint32
 	// Surfaces hold twelve LOD slots with parent errors and flags, and FMeshletData carries cluster hierarchy bounds per meshlet.
 	MESH_CLUSTER_LOD,
 
+	// A mesh resource carries an optional baked impostor after its distance field.
+	MESH_IMPOSTOR,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

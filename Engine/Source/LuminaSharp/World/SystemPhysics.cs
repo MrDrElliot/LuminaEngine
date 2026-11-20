@@ -30,10 +30,10 @@ public readonly struct SystemPhysics
     public SRayResult SphereCast(float Radius, FVector3 Start, FVector3 End, FEntity? IgnoreEntity = null, ECollisionProfiles LayerMask = ECollisionProfiles.All)
         => ShapeCast(Sphere(Radius), Start, End, IgnoreEntity, LayerMask);
 
-    public FEntity[] Overlap(SQueryShape Shape, FVector3 Center, FEntity? IgnoreEntity = null, ECollisionProfiles LayerMask = ECollisionProfiles.All)
+    public SOverlapResult[] Overlap(SQueryShape Shape, FVector3 Center, FEntity? IgnoreEntity = null, ECollisionProfiles LayerMask = ECollisionProfiles.All)
         => CSystemPhysicsLibrary.Overlap(Context, Shape, Center, IgnoreEntity ?? FEntity.Null, LayerMask);
 
-    public FEntity[] OverlapSphere(FVector3 Center, float Radius, FEntity? IgnoreEntity = null, ECollisionProfiles LayerMask = ECollisionProfiles.All)
+    public SOverlapResult[] OverlapSphere(FVector3 Center, float Radius, FEntity? IgnoreEntity = null, ECollisionProfiles LayerMask = ECollisionProfiles.All)
         => Overlap(Sphere(Radius), Center, IgnoreEntity, LayerMask);
 
     public bool IsAwake(FEntity Entity) => CSystemPhysicsLibrary.IsAwake(Context, Entity);

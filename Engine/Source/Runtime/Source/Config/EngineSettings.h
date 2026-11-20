@@ -398,22 +398,6 @@ namespace Lumina
         PROPERTY(Editable, Category = "Shadows", ClampMin = 128, ClampMax = 1024)
         int32 PointShadowResolution = 512;
 
-        // New meshes import with a cluster hierarchy the GPU cuts per meshlet, in place of a discrete LOD chain. Existing meshes rebuild from the mesh editor.
-        PROPERTY(Editable, Category = "Virtual Geometry")
-        bool bClusterLODByDefault = true;
-
-        // New meshes import with voxel splat levels past their coarsest geometry.
-        PROPERTY(Editable, Category = "Virtual Geometry")
-        bool bVoxelFarByDefault = true;
-
-        // Voxels along the longest side at the finest voxel level a new mesh bakes.
-        PROPERTY(Editable, Category = "Virtual Geometry", ClampMin = 4, ClampMax = 128)
-        int32 DefaultVoxelResolution = 128;
-
-        // Draws the baked voxel levels once a mesh is far enough; off keeps every mesh on its coarsest triangles.
-        PROPERTY(Editable, Category = "Virtual Geometry")
-        bool bVoxelFarRepresentation = true;
-
         // Replaces an instance smaller than ProxyTransitionPixels on screen with one splat carrying no transform or meshlet data of its own.
         PROPERTY(Editable, Category = "Virtual Geometry")
         bool bFarProxies = true;
@@ -422,9 +406,21 @@ namespace Lumina
         PROPERTY(Editable, Category = "Virtual Geometry", ClampMin = 0.0f, ClampMax = 16.0f, Delta = 0.25f)
         float ProxyTransitionPixels = 2.0f;
 
+        // Projected diameter in pixels under which an instance whose mesh has a baked impostor draws it instead of its meshlets.
+        PROPERTY(Editable, Category = "Virtual Geometry", ClampMin = 0.0f, ClampMax = 1024.0f, Delta = 1.0f)
+        float ImpostorTransitionPixels = 96.0f;
+
         // Sun shadow filtering and contact march steps, with the march off at Low; a low sun stretches each shadow texel along the ground, which only more taps hide.
         PROPERTY(Editable, Category = "Shadows")
         EShadowQuality ShadowQuality = EShadowQuality::High;
+
+        // Small opaque sun shadow casters rasterize in compute, where tiny triangles cost far less than in the hardware rasterizer.
+        PROPERTY(Editable, Category = "Shadows")
+        bool bVirtualShadowComputeRaster = true;
+
+        // The camera's small opaque meshlets rasterize in compute too, where triangles of a pixel or two cost far less than in the hardware rasterizer.
+        PROPERTY(Editable, Category = "Virtual Geometry")
+        bool bVisBufferComputeRaster = true;
 
         // At 1 a mesh switches LOD once its simplification error shrinks to one display pixel, and 2 waits for half a pixel.
         PROPERTY(Editable, Category = "Level of Detail", ClampMin = 0.25f, ClampMax = 16.0f, Delta = 0.25f)

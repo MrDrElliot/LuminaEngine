@@ -1127,20 +1127,11 @@ namespace Lumina
         Options.Scale             = Scale;
         Options.bSkipFinalization = bSkipFinalization;
         Options.DistanceField     = DistanceField;
-        Options.VirtualGeometry   = VirtualGeometry;
         return Options;
     }
 
     bool CMeshImporter::ParseSource(const FImportRequest& Request, FString& OutError, FScopedSlowTask* Progress)
     {
-        // The project decides what a new mesh ships with, and the dialog lets this import differ.
-        if (const CRendererSettings* Renderer = GetDefault<CRendererSettings>())
-        {
-            VirtualGeometry.bClusterLOD             = Renderer->bClusterLODByDefault;
-            VirtualGeometry.bVoxelFarRepresentation = Renderer->bVoxelFarByDefault;
-            VirtualGeometry.VoxelResolution         = (uint32)Math::Clamp(Renderer->DefaultVoxelResolution, 4, 128);
-        }
-
         // User transforms and heavy passes are deferred to BuildAssets; only the skeleton's bone set re-parses.
         FMeshImportOptions PreviewOptions;
         PreviewOptions.bOptimize         = false;
@@ -1429,7 +1420,7 @@ namespace Lumina
                 if (NewSkeletalMesh != nullptr && MeshSkeleton != nullptr)
                 {
                     NewSkeletalMesh->Skeleton = MeshSkeleton;
-                    NewSkeletalMesh->SkeletonJointIndicesAddress = MeshSkeleton;
+                    NewSkeletalMesh->JointIndicesSkeleton = MeshSkeleton;
 
                     // Only ever on a skeleton this import owns; the target belongs to another asset.
                     if (MeshSkeleton == PrimarySkeleton.Get() && !PrimarySkeleton->PreviewMesh)
@@ -1450,7 +1441,6 @@ namespace Lumina
             NewMesh->Materials.SetNum(IntCastChecked<int32>(CountMaterialSlots(*MeshResource)));
             NewMesh->SourcePath            = FString(*Request.SourcePath);
             NewMesh->DistanceFieldSettings = DistanceField;
-            NewMesh->VirtualGeometrySettings = VirtualGeometry;
             NewMesh->MeshResources         = Move(MeshResource);
 
             // Bake the exact box now, while the raw float positions are still around to measure.
@@ -1896,7 +1886,6 @@ namespace Lumina
 
         // Taken from the ASSET, since otherwise a mesh with a distance field loses it on every reimport.
         Options.DistanceField   = Mesh->DistanceFieldSettings;
-        Options.VirtualGeometry = Mesh->VirtualGeometrySettings;
 
         RebindReimportSkinning(Mesh);
 

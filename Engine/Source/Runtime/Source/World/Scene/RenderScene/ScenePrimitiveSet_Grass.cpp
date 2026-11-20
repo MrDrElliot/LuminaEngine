@@ -107,7 +107,7 @@ namespace Lumina
         FMeshletDemand Demand;
         for (const auto& [Key, Binding] : GrassSpecies)
         {
-            const uint32 Meshlets = LargestLODMeshletsOfSurface(Binding.SurfaceDescIndex);
+            const uint32 Meshlets = VisibilityMeshletsOfSurface(Binding.SurfaceDescIndex);
             Demand.Words    += (uint64)Binding.Capacity * RenderUtils::GetGroupCount(Meshlets, MESHLET_CULL_GROUP_SIZE);
             Demand.Meshlets += (uint64)Binding.Capacity * Meshlets;
         }

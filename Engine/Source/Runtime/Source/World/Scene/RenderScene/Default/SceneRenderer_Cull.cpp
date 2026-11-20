@@ -1427,6 +1427,7 @@ namespace Lumina
             LastBlocksRequested      = Mapped[4];
             LastPreSkinRequested     = Mapped[6];
             LastVisIDRequired        = Mapped[9];
+            LastCameraRasterDemand   = Mapped[kCameraRasterDemandSlot];
         }
 
         // Shadow views write no visibility IDs, so only the views that do push the cut coarser as they near the ID range.
@@ -1496,6 +1497,7 @@ namespace Lumina
 
         // Every pass after this indexes the buckets by view and batch, so a list that failed to grow skips the frame's draws.
         bCullBucketsValid = (SIZE_T)RenderBucketRing[Slot].CapacityOf<FRenderBucketGPU>() >= ViewDrawEntries;
+        PrepareComputeRaster(CL);
         if (bCullBucketsValid)
         {
             // Every field starts at zero, since CullInstances accumulates skinned batches too.
@@ -1752,7 +1754,7 @@ namespace Lumina
         {
             uint32 NumViews;
             uint32 NumBatches;
-            uint32 bUseLODs;
+            uint32 _Pad0;
             uint32 SkinFrameTag;
             RHI::TGPUSpan<FInstanceCullEntry> RetainedCullEntries;
             RHI::TGPUSpan<FTransform3x4>      RetainedTransforms;
@@ -1775,7 +1777,6 @@ namespace Lumina
         FCullInstancesPC PC = {};
         PC.NumViews               = NumCullViews;
         PC.NumBatches             = NumBatches;
-        PC.bUseLODs               = FrameSettings.bUseLODs ? 1u : 0u;
         PC.SkinFrameTag           = CurrentSkinnedFrameTag;
         PC.RetainedCullEntries    = { RetainedCullEntryBuffer, RetainedSlots };
         PC.RetainedTransforms     = { RetainedTransformBuffer, RetainedSlots };
@@ -2018,8 +2019,14 @@ namespace Lumina
             RHI::TGPUSpan<uint32>           MeshletVisibility;
             RHI::TGPUSpan<FMeshletCullDispatch> CullDispatch;
             RHI::TGPUSpan<FSurfaceDescGPU>      SurfaceDescs;
+            RHI::TGPUSpan<uint32>               ComputeRasterBatches;
+            RHI::TGPUSpan<FUIntVector2>         ComputeRasterList;
+            RHI::TGPUSpan<uint32>               ComputeRasterCursors;
+            RHI::TGPUSpan<uint32>               ComputeRasterDebug;
+            RHI::TGPUSpan<uint32>               CameraRasterList;
+            RHI::TGPUSpan<uint32>               CameraRasterCursors;
         } CPC = {};
-        static_assert(sizeof(FMeshletCullPC) == 144, "FMeshletCullPC must match MeshletCull.slang.");
+        static_assert(sizeof(FMeshletCullPC) == 240, "FMeshletCullPC must match MeshletCull.slang.");
 
         CPC.NumViews       = NumViews;
         CPC.NumDraws       = NumDraws;
@@ -2034,6 +2041,17 @@ namespace Lumina
         CPC.bDeferShadows  = APC.bDeferShadows;
         CPC.CullDispatch   = APC.OutCullDispatchArgs;
         CPC.SurfaceDescs   = { SurfaceDescBuffer, UploadedSurfaceDescs };
+        CPC.ComputeRasterBatches = ComputeRasterBatchSpan;
+        if (bShadowPhase)
+        {
+            GetVirtualShadowComputeRaster(CL, CPC.ComputeRasterList, CPC.ComputeRasterCursors, CPC.ComputeRasterDebug);
+        }
+        else if (bCameraComputeRasterCounting)
+        {
+            // An empty list still counts what the cull would have handed over, which is what turns the compute raster on.
+            CPC.CameraRasterList    = { CameraRasterList, bCameraComputeRaster ? VISBUFFER_COMPUTE_RASTER_CAPACITY : 0u };
+            CPC.CameraRasterCursors = { CameraRasterCursors, 2u };
+        }
 
         DispatchComputeIndirect(CL, CullShader, CPC, GetMeshletCullDispatchArgs());
         RHI::CmdBarrier(CL,
@@ -2131,6 +2149,15 @@ namespace Lumina
         }
         RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead);
         RHI::CmdMemcpy(CL, { MeshletBoundReadback[Slot].Gpu, sizeof(uint32) * kTotalsSlots }, { GetTotals().Gpu, sizeof(uint32) * kTotalsSlots });
+        const RHI::FGPURange Demand = { MeshletBoundReadback[Slot].Gpu + sizeof(uint32) * kCameraRasterDemandSlot, sizeof(uint32) };
+        if (bCameraComputeRasterCounting)
+        {
+            RHI::CmdMemcpy(CL, Demand, { CameraRasterCursors.Gpu, sizeof(uint32) });
+        }
+        else
+        {
+            RHI::CmdMemset(CL, Demand, 0u);
+        }
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite, RHI::EStageFlags::Host, RHI::EAccessFlags::HostRead);
     }
 }

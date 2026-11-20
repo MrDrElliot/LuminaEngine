@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 #include "Containers/Algorithm.h"
-#include "Tools/Import/VoxelFarBuilder.h"
 #include "World/Entity/Components/ForestComponent.h"
 #include "World/Forest/ForestScatter.h"
 
@@ -76,24 +75,6 @@ namespace
         return Plants.Num();
     }
 
-    // Parallel quads with an empty voxel between each pair, so no voxel is boxed in by neighbors and only burial can hide one.
-    void AppendQuadStack(int32 Layers, float Size, TVector<FVector3>& Positions, TVector<float>& Attributes, TVector<uint32>& Indices)
-    {
-        for (int32 Layer = 0; Layer < Layers; ++Layer)
-        {
-            const float X = (float)Layer * 2.0f + 0.5f;
-            const uint32 Base = (uint32)Positions.Num();
-            // Inset from the voxel faces, since a triangle touching a face counts as inside the voxel past it.
-            const float Lo = 0.25f;
-            const float Hi = Size - 0.25f;
-            Positions.Append({ FVector3(X, Lo, Lo), FVector3(X, Hi, Lo), FVector3(X, Hi, Hi), FVector3(X, Lo, Hi) });
-            for (int32 Corner = 0; Corner < 4; ++Corner)
-            {
-                Attributes.Append({ 1.0f, 0.0f, 0.0f, 0.0f, 0.0f });
-            }
-            Indices.Append({ Base, Base + 1u, Base + 2u, Base, Base + 2u, Base + 3u });
-        }
-    }
 }
 
 TEST(ForestScatter, SplittingARegionScattersTheSamePlants)
@@ -240,7 +221,7 @@ TEST(ForestPaint, PlacedPlantsShowInTheTileThatHoldsThem)
     EXPECT_EQ(CountPlants(Rules, FVector2(32.0f, 0.0f), FVector2(64.0f, 32.0f)), 0);
 }
 
-TEST(ForestPaint, OnlyTilesUnderChangedPaintChangeTheirHash)
+TEST(ForestPaint, OnlyTheChunkWhosePaintChangedIsDiffed)
 {
     Forest::FRules Before = MakeRules(0.5f);
     Before.Paint = MakePaint({ { 0, 0, 0 } });
@@ -248,40 +229,9 @@ TEST(ForestPaint, OnlyTilesUnderChangedPaintChangeTheirHash)
     After.Paint = MakePaint({ { 0, 0, 0 }, { 1, 0, 255 } });
 
     const float Size = SForestPaintChunk::kSize;
-    EXPECT_EQ(Forest::GetRegionHash(Before, FVector2(0.0f), FVector2(Size)), Forest::GetRegionHash(After, FVector2(0.0f), FVector2(Size)));
-    EXPECT_NE(Forest::GetRegionHash(Before, FVector2(Size, 0.0f), FVector2(Size * 2.0f, Size)), Forest::GetRegionHash(After, FVector2(Size, 0.0f), FVector2(Size * 2.0f, Size)));
-    EXPECT_EQ(Forest::GetRegionHash(After, FVector2(-Size * 2.0f), FVector2(-Size)), 0ull);
-
     TVector<Forest::FArea> Changed;
     Forest::DiffPaint(After, Before.Paint.get(), After.Paint.get(), Changed);
     ASSERT_EQ(Changed.Num(), 1);
     EXPECT_EQ(Changed[0].Min, FVector2(Size, 0.0f));
     EXPECT_EQ(Changed[0].Max, FVector2(Size * 2.0f, Size));
-}
-
-TEST(VoxelFar, OcclusionCullDropsBuriedLayersAndKeepsTheShell)
-{
-    TVector<FVector3> Positions;
-    TVector<float>    Attributes;
-    TVector<uint32>   Indices;
-    AppendQuadStack(6, 8.0f, Positions, Attributes, Indices);
-
-    Import::VoxelFar::FBuildInput In;
-    In.Positions  = TSpan<const FVector3>(Positions.GetData(), Positions.Num());
-    In.Attributes = TSpan<const float>(Attributes.GetData(), Attributes.Num());
-    In.Indices    = TSpan<const uint32>(Indices.GetData(), Indices.Num());
-    In.GridMin    = FVector3(0.0f);
-    In.VoxelSize  = 1.0f;
-    In.Resolution = 16;
-
-    TVector<Import::VoxelFar::FLevel> Kept;
-    Import::VoxelFar::Build(In, Kept);
-    In.bCullOccluded = true;
-    TVector<Import::VoxelFar::FLevel> Culled;
-    Import::VoxelFar::Build(In, Culled);
-
-    ASSERT_FALSE(Kept.IsEmpty());
-    ASSERT_FALSE(Culled.IsEmpty());
-    // The middle two layers' cores lie under two layers from either side and two rim voxels from every edge.
-    EXPECT_EQ(Kept[0].VoxelCount - Culled[0].VoxelCount, 2u * 4u * 4u);
 }

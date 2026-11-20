@@ -104,6 +104,15 @@ float3 ProxyWidenedCenter(float4x4 Model, FInstanceProxy Proxy, out float3 Groun
     return Pivot + (Center - Pivot) * GroundWiden;
 }
 
+// The model matrix the cull drew a thinned instance with, its axes scaled by the same widening.
+float4x4 ProxyWidenedModel(float4x4 Model, float3 GroundWiden)
+{
+    Model[0].xyz *= GroundWiden.x;
+    Model[1].xyz *= GroundWiden.y;
+    Model[2].xyz *= GroundWiden.z;
+    return Model;
+}
+
 // Returns ~0u for background, for a far proxy, and for any entry this frame did not write.
 uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
 {

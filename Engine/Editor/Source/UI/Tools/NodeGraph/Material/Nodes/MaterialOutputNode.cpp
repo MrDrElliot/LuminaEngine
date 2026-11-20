@@ -272,5 +272,6 @@ namespace Lumina
         VertexOut += "\n";
         VertexOut += EmitMaterialAssignment("WorldPositionOffset", WorldPositionOffsetPin, "float3(0.0, 0.0, 0.0)", 3);
         Compiler.AddVertexOutput(VertexOut);
+        Compiler.SetWorldPositionOffsetDriven(IsDriven(WorldPositionOffsetPin));
     }
 }

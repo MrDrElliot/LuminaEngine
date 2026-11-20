@@ -81,6 +81,6 @@ namespace Lumina
         CStaticMesh* CreateStaticMesh(const float* Positions, int32 PositionFloats,
             const float* Normals, int32 NormalFloats, const float* UVs, int32 UVFloats,
             const float* Colors, int32 ColorFloats, const uint32* Indices, int32 IndexCount,
-            CMaterialInterface* Material, int32 MaxLODs = 1);
+            CMaterialInterface* Material, bool bLODHierarchy = true);
     };
 }

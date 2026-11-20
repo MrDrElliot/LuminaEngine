@@ -141,9 +141,6 @@ namespace Lumina
         // Selected surface in the Geometry Surfaces UI (-1 = none); drawn as a colored AABB overlay.
         int32 SelectedSurfaceIndex = -1;
 
-        // -1 = automatic (distance-driven), 0..MAX_MESH_LODS-1 = forced.
-        int32 PreviewLODIndex = -1;
-
         FCompatibleAssetList         PreviewClips;
         TStrongObjectPtr<CAnimation> PreviewClip;
         bool                         bPreviewPlaying = true;

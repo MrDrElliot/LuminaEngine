@@ -17,8 +17,6 @@ namespace Lumina::GrassPatch
         constexpr float kMaxPatchSize = 8.0f;
         // Each blade stays this far inside its stratum, so neighbors never stack yet the grid never shows.
         constexpr float kJitter       = 0.8f;
-        // A patch is about two meters, so this keeps its finest splats near a centimeter.
-        constexpr uint32 kVoxelResolution = 128;
 
         float Random01(uint32& State)
         {
@@ -106,13 +104,7 @@ namespace Lumina::GrassPatch
             Surface.IndexCount = (uint32)Out.Indices.Num() - Surface.StartIndex;
         }
 
-        // A patch is only ever seen past the blades, so it always gets the cluster cut and voxel levels whatever the blade was built with.
-        SVirtualGeometryBuildSettings Settings;
-        Settings.bClusterLOD             = true;
-        Settings.bVoxelFarRepresentation = true;
-        Settings.VoxelResolution         = kVoxelResolution;
         Out.bGenerateTangents = false;
-        Import::Mesh::ApplyVirtualGeometrySettings(Out, Settings);
         Import::Mesh::GenerateMeshlets(Out);
         return !Out.MeshletData.IsEmpty();
     }

@@ -6,6 +6,7 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/Wind.slang"   // this template substitutes the material vertex token too (WPO reconstruction)
 #include "Includes/DeferredMaterialCommon.slang"
+#include "Includes/Impostor.slang"
 
 // Object space at the previous frame's pose, so the caller only has to apply the previous model matrix.
 float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Current)
@@ -87,9 +88,32 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 
             // A pixel-sized splat faces the camera more than its averaged normal does, so the normal leans toward the eye.
             float3 GroundWiden;
-            const float3 WorldPosition = ProxyWidenedCenter(P.Model, P.Proxy, GroundWiden);
+            float3 WorldPosition = ProxyWidenedCenter(P.Model, P.Proxy, GroundWiden);
             const float3 ToEye = IsCameraOrthographic() ? -GetCameraForward() : normalize(GetCameraPosition() - WorldPosition);
             NormalWS = normalize(lerp(NormalWS, ToEye, 0.5));
+
+            // An impostor's own views carry the surface this texel sees, which replace the splat's averages once the material has run.
+            FMeshletHeader* Header    = MeshletHeaderAt(P.Static.MeshletHeaderSlot);
+            const bool      bImpostor = Header.bHasImpostor;
+            FImpostorSample Impostor  = (FImpostorSample)0;
+            if (bImpostor)
+            {
+                const float4x4 Model     = ProxyWidenedModel(P.Model, GroundWiden);
+                const float2   PixelUV   = (float2(Texel) + 0.5) / ScreenSize - GetTemporalJitterUV();
+                const float3   NearPoint = ReconstructWorldPos(PixelUV, 1.0);
+                const FImpostorRay   Ray   = MakeImpostorRay(Header, Model, NearPoint);
+                const FImpostorViews Views = SelectImpostorViews(Ray.ToEye, Header.ImpostorFrames);
+                const float3 Center = mul(Model, float4(Header.ImpostorCenter, 1.0)).xyz;
+                const float3 Scale  = GetInstanceScale(P.Model);
+                const float  Mip    = ImpostorMipLevel(Header, Center, Header.ImpostorRadius * max(Scale.x, max(Scale.y, Scale.z)));
+                Impostor = SampleImpostor(Header, Views, Ray.Origin, Ray.Dir, Mip);
+
+                const float3 ImpostorNormal = mul(CalculateNormalMatrix(Model), Impostor.Normal);
+                NormalWS = dot(ImpostorNormal, ImpostorNormal) > 1e-12 ? normalize(ImpostorNormal) : NormalWS;
+
+                // The baked surface on this texel's ray, the point the raster wrote the depth of.
+                WorldPosition = mul(Model, float4(Ray.Origin + Ray.Dir * Impostor.RayT, 1.0)).xyz;
+            }
 
             const float3 Helper    = abs(NormalWS.y) < 0.9 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
             const float3 TangentWS = normalize(cross(Helper, NormalWS));
@@ -145,6 +169,12 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 
             // Velocity stays as the camera motion the Velocity pass derived from this proxy's depth.
             G = BuildGBufferData(Input, Material);
+            if (bImpostor)
+            {
+                G.BaseColor        = Impostor.BaseColor;
+                G.WorldNormal      = NormalWS;
+                G.AmbientOcclusion = Impostor.AmbientOcclusion;
+            }
         }
     }
     else if (T.bValid)

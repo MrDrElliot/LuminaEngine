@@ -7,6 +7,7 @@
 #include "Core/Serialization/Archiver.h"
 #include "Core/Utils/NonCopyable.h"
 #include "Renderer/MeshDistanceField.h"
+#include "Renderer/MeshImpostor.h"
 #include "Renderer/Vertex.h"
 #include "Shared/SharedConstants.h"
 
@@ -18,9 +19,7 @@ namespace Lumina
         RUNTIME_API void Log(const char* Context);
     }
 
-    constexpr uint32 MAX_MESH_LODS         = MESHLET_MAX_LODS;
-    // Discrete levels a mesh builds unless told otherwise; the slots past them hold voxel levels or a cluster hierarchy.
-    constexpr uint32 DEFAULT_MESH_LODS     = MESHLET_LEGACY_MAX_LODS;
+    constexpr uint32 MAX_MESH_LODS = MESHLET_MAX_LODS;
 
     struct FMeshlet
     {
@@ -35,10 +34,6 @@ namespace Lumina
         uint32 TriangleCount    : MESHLET_COUNT_BITS;
         uint32 LODIndex         : MESHLET_LOD_BITS;
         uint32 bShortVertexRefs : 1;
-        // A voxel splat level, whose quads stand for a surface and skip the material's opacity clip.
-        uint32 bVoxel           : 1;
-        uint32 bCompactSplat    : 1;
-        uint32 SplatReach       : MESHLET_SPLAT_REACH_BITS;
 
         FORCEINLINE bool HasShortVertexRefs() const { return bShortVertexRefs != 0u; }
 
@@ -86,7 +81,7 @@ namespace Lumina
         // Mesh-local, 0 for source geometry, and ParentError is MESHLET_LOD_ERROR_INFINITE on a root.
         float    SelfError;
         float    ParentError;
-        // MESHLET_LOD_FLAG_* bits.
+        // Always 0, and a mesh saved with it set carries the old voxel levels and rebuilds on load.
         uint32   Flags;
         // Hierarchy depth, 0 for source geometry.
         uint32   Level;
@@ -108,7 +103,6 @@ namespace Lumina
 
     constexpr float kMeshletLODErrorInfinite = (float)MESHLET_LOD_ERROR_INFINITE;
 
-
     // The cull's one unconditional per-meshlet read, kept apart from the cone that far fewer meshlets test.
     struct FMeshletSphere
     {
@@ -125,7 +119,6 @@ namespace Lumina
     static_assert(sizeof(FMeshletSphere) == 16, "FMeshletSphere must match the GPU mirror");
     // Shaders reach this with loadAligned<16>, which needs every element 16-aligned.
     static_assert(sizeof(FMeshletSphere) % 16 == 0, "FMeshletSphere stride must stay 16-byte aligned for loadAligned<16>");
-
 
     // Backface cluster culling, carrying no apex, so readers owe it meshoptimizer's approximate test.
     struct FMeshletCone
@@ -182,55 +175,6 @@ namespace Lumina
         }
     };
 
-    // The pre-MESHLET_SHARED_VERTICES meshlet, whose last three words held its quantization anchor.
-    struct FLegacyMeshlet
-    {
-        uint32 VertexOffset;
-        uint32 TriangleOffset;
-        uint32 VertexCount;
-        uint32 TriangleCount;
-        uint32 LODIndex;
-        uint32 PackedAnchorX;
-        uint32 PackedAnchorY;
-        uint32 PackedAnchorZ;
-    };
-    static_assert(sizeof(FLegacyMeshlet) == 32);
-    static_assert(TCanBulkSerialize<FLegacyMeshlet>::value);
-
-    // The pre-MESHLET_SHARED_VERTICES static vertex, copied into every meshlet that used it.
-    struct FLegacyMeshletVertex
-    {
-        uint16 PositionX;
-        uint16 PositionY;
-        uint16 PositionZ;
-        int16  NormalX;
-        int16  NormalY;
-        int16  NormalZ;
-        uint32 Tangent;
-        uint32 UV;
-        uint32 UV1;
-        uint32 Color;
-    };
-    static_assert(sizeof(FLegacyMeshletVertex) == 28);
-    static_assert(TCanBulkSerialize<FLegacyMeshletVertex>::value);
-
-    // The pre-MESHLET_SHARED_VERTICES skinned vertex, positioned against its meshlet's anchor.
-    struct FLegacyMeshletSkinnedVertex
-    {
-        FLegacyMeshletVertex Base;
-        uint32               JointIndices;
-        uint32               JointWeights;
-    };
-    static_assert(sizeof(FLegacyMeshletSkinnedVertex) == 36);
-    static_assert(TCanBulkSerialize<FLegacyMeshletSkinnedVertex>::value);
-
-    struct FMeshletData;
-
-    // Rebuilds old meshlets and their per-meshlet vertex copies in the current format, so an old package needs no reimport.
-    RUNTIME_API void ConvertLegacyMeshletData(FMeshletData& Data, const TVector<FLegacyMeshlet>& Meshlets,
-                                              const TVector<FLegacyMeshletVertex>& StaticVertices,
-                                              const TVector<FLegacyMeshletSkinnedVertex>& SkinnedVertices);
-
     struct FMeshletData
     {
         TVector<FMeshlet>              Meshlets;
@@ -252,7 +196,7 @@ namespace Lumina
         TVector<FMeshletSphere>        MeshletSpheres;
         TVector<FMeshletCone>          MeshletCones;
 
-        // One per meshlet on a cluster LOD mesh, empty on a discrete LOD mesh.
+        // One per meshlet, empty only on a mesh saved before every mesh carried a hierarchy, which loading rebuilds.
         TVector<FMeshletLODBounds>     MeshletLODBounds;
 
         // Skinned meshes only, one palette per meshlet indexing a flat list of skeleton-global bone indices.
@@ -260,43 +204,35 @@ namespace Lumina
         TVector<uint32>                MeshletBoneIndices;
 
         FORCEINLINE bool IsEmpty() const { return Meshlets.IsEmpty(); }
-        FORCEINLINE bool HasClusterLOD() const { return !MeshletLODBounds.IsEmpty(); }
 
-        FORCEINLINE void Clear()
+        void Clear()
         {
-            Meshlets.Reset();
-            VertexPositions.Reset();
-            VertexAttributes.Reset();
-            VertexUV1s.Reset();
-            VertexColors.Reset();
-            MeshletVertexRefs.Reset();
+            ForEachStream([](auto& Stream) { Stream.Reset(); });
             PositionGrid = {};
-            MeshletSkinnedVertices.Reset();
-            MeshletTriangles.Reset();
-            MeshletSpheres.Reset();
-            MeshletCones.Reset();
-            MeshletLODBounds.Reset();
-            MeshletBonePalettes.Reset();
-            MeshletBoneIndices.Reset();
         }
 
-        FORCEINLINE void ClearAndShrink()
+        void ClearAndShrink()
         {
-            auto Drop = [](auto& V) { V.Reset(); V.Shrink(); };
-            Drop(Meshlets);
-            Drop(VertexPositions);
-            Drop(VertexAttributes);
-            Drop(VertexUV1s);
-            Drop(VertexColors);
-            Drop(MeshletVertexRefs);
+            ForEachStream([](auto& Stream) { Stream.Reset(); Stream.Shrink(); });
             PositionGrid = {};
-            Drop(MeshletSkinnedVertices);
-            Drop(MeshletTriangles);
-            Drop(MeshletSpheres);
-            Drop(MeshletCones);
-            Drop(MeshletLODBounds);
-            Drop(MeshletBonePalettes);
-            Drop(MeshletBoneIndices);
+        }
+
+        template<typename TFunc>
+        void ForEachStream(TFunc&& Func)
+        {
+            Func(Meshlets);
+            Func(VertexPositions);
+            Func(VertexAttributes);
+            Func(VertexUV1s);
+            Func(VertexColors);
+            Func(MeshletVertexRefs);
+            Func(MeshletSkinnedVertices);
+            Func(MeshletTriangles);
+            Func(MeshletSpheres);
+            Func(MeshletCones);
+            Func(MeshletLODBounds);
+            Func(MeshletBonePalettes);
+            Func(MeshletBoneIndices);
         }
 
         friend RUNTIME_API FArchive& operator<<(FArchive& Ar, FMeshletData& Data);
@@ -395,9 +331,17 @@ namespace Lumina
         uint64 LODBoundsAddress;
         // MESH_HEADER_FLAG_* bits.
         uint32 Flags;
+
+        // Bindless slots of the impostor atlas, whose views number ImpostorFrames along a side, 0 with no impostor.
+        uint32 ImpostorBaseColorIndex;
+        uint32 ImpostorNormalDepthIndex;
+        uint32 ImpostorFrames;
+        float  ImpostorCenterX, ImpostorCenterY, ImpostorCenterZ;
+        float  ImpostorRadius;
+        uint32 ImpostorFrameSize;
         uint32 _Pad0;
     };
-    static_assert(sizeof(FMeshletHeaderGPU) == 192, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
+    static_assert(sizeof(FMeshletHeaderGPU) == 224, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
 
     struct FGeometrySurface final
     {
@@ -406,22 +350,38 @@ namespace Lumina
         uint32 StartIndex    = 0;
         int16  MaterialIndex = -1;
 
-        // Per-LOD meshlet ranges into FMeshletData::Meshlets; NumLODs >= 1. A cluster LOD surface's slots are hierarchy levels, finest first and contiguous.
+        // Mesh-local size of one UV tile, sqrt(WorldArea / UVArea); 0 means unknown and consumers must fall back, not treat it as infinitely dense.
+        float  TexelFactor = 0.0f;
+
+        // Hierarchy slots as meshlet ranges into FMeshletData::Meshlets, each a run of whole levels, finest first and contiguous.
         uint32 NumLODs                           = 1;
         uint32 LODMeshletOffset[MAX_MESH_LODS]   = {};
         uint32 LODMeshletCount[MAX_MESH_LODS]    = {};
-        // Mesh-local distance LOD i strays from the source surface, non-decreasing, and 0 for LOD 0. The smallest self error of a cluster slot.
+        // A slot's smallest self error, mesh-local, non-decreasing with the slot and 0 for the source level.
         float  LODError[MAX_MESH_LODS]           = {};
-        // A cluster slot's largest parent error, so a view can skip a whole level its parents already cover. Unused on discrete LODs.
+        // A cluster slot's largest parent error, so a view can skip a whole level its parents already cover.
         float  LODParentError[MAX_MESH_LODS]     = {};
-        // SURFACE_DESC_* bits, the cluster hierarchy flag and which slots hold or parent into voxel geometry.
+        // SURFACE_DESC_* bits.
         uint32 LODFlags                          = 0;
 
         FORCEINLINE bool HasClusterLOD() const { return (LODFlags & SURFACE_DESC_CLUSTER_LOD) != 0u; }
-        FORCEINLINE bool IsVoxelLOD(uint32 Slot) const { return (LODFlags & (1u << (SURFACE_DESC_VOXEL_SHIFT + Slot))) != 0u; }
 
-        // Mesh-local size of one UV tile, sqrt(WorldArea / UVArea); 0 means unknown and consumers must fall back, not treat it as infinitely dense.
-        float  TexelFactor = 0.0f;
+        // The source geometry's meshlets, which open slot 0 ahead of any coarser hierarchy levels sharing it.
+        FORCEINLINE uint32 FinestMeshletCount(const FMeshletData& Data) const
+        {
+            const uint32 Begin = LODMeshletOffset[0];
+            const uint32 Count = LODMeshletCount[0];
+            if (Data.MeshletLODBounds.IsEmpty())
+            {
+                return Count;
+            }
+            uint32 Finest = 0;
+            while (Finest < Count && Begin + Finest < (uint32)Data.MeshletLODBounds.Num() && Data.MeshletLODBounds[Begin + Finest].Level == 0u)
+            {
+                ++Finest;
+            }
+            return Finest;
+        }
 
         friend FArchive& operator << (FArchive& Ar, FGeometrySurface& Data)
         {
@@ -466,6 +426,8 @@ namespace Lumina
             uint64      UploadBatch           = 0;
 
             RHI::FManagedTexture DistanceFieldTexture;
+            RHI::FManagedTexture ImpostorBaseColorTexture;
+            RHI::FManagedTexture ImpostorNormalDepthTexture;
 
             FMeshBuffers()                               = default;
             FMeshBuffers(const FMeshBuffers&)            = delete;
@@ -480,6 +442,8 @@ namespace Lumina
 
             // Full teardown, slot included, so only destruction calls it; a rebuild keeps the slot every cached instance points at.
             RUNTIME_API void ReleaseAll();
+
+            void ReleaseTextures();
 
         private:
 
@@ -504,6 +468,7 @@ namespace Lumina
         bool                      bSkinnedMesh = false;
 
         FDistanceFieldVolume      DistanceField;
+        FMeshImpostor             Impostor;
 
         // Published on the meshlet header, derived rather than serialized; CreateForResource fills it.
         SAABB                     LocalBounds;
@@ -515,8 +480,6 @@ namespace Lumina
         // Source scene-graph world transform; baked into vertices at merge time.
         FMatrix4                  ImportTransform = FMatrix4(1.0f);
 
-        uint32                    MaxLODs = DEFAULT_MESH_LODS;
-
         bool                      bGenerateTangents = true;
 
         bool                      bMeshletConeCulling = true;
@@ -527,25 +490,12 @@ namespace Lumina
         // Linear-scan meshlet build. Only valid with the index pre-pass GenerateMeshlets runs alongside it.
         bool                      bFastMeshletBuild = false;
 
-        // Simplified levels move vertices and rewrite normals and UVs to fit; skinned meshes never do.
-        bool                      bDestructiveLODs = true;
-
-        // Builds a cluster hierarchy per surface in place of discrete LODs; static meshes only.
-        bool                      bClusterLODs = false;
-
-        // Appends voxel splat levels past the finest geometry the hierarchy or LOD chain ends with. 0 builds none.
-        uint32                    VoxelFarResolution = 0;
-
-        // Multiplies the voxel levels' errors, so above 1 the splats take over further away.
-        float                     VoxelErrorScale = 1.0f;
-
-        // Builds the voxel levels alone, which stand for geometry drawn some other way up close, such as a forest tile's trees.
-        bool                      bVoxelLevelsOnly = false;
+        // Builds the cluster hierarchy past the source level; off keeps a mesh rebuilt too often to simplify at its source level.
+        bool                      bLODHierarchy = true;
 
         FORCEINLINE int32 GetNumSurfaces() const { return GeometrySurfaces.Num(); }
         FORCEINLINE int32 GetNumVertices() const { return Positions.Num(); }
         FORCEINLINE int32 GetNumIndices()  const { return Indices.Num(); }
-        NODISCARD FORCEINLINE bool IsSkinnedMesh() const { return bSkinnedMesh; }
 
         // Synthetic interleaved vertex size; only meshopt fetch/overdraw analysis needs it.
         FORCEINLINE size_t GetVertexTypeSize() const

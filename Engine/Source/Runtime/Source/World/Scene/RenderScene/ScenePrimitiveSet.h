@@ -153,7 +153,6 @@ namespace Lumina
         uint32                              ResolveHandle = INVALID_MESH_RESOLVE_HANDLE;
         uint32                              ResolveGeneration = 0;
 
-        int32                               ForcedLODIndex = -1;
         // PackCustomDepthStencil, zero when it draws no custom depth.
         uint32                              CustomDepthStencil = 0;
         EInstanceFlags                      BaseFlags = EInstanceFlags::None;
@@ -566,9 +565,9 @@ namespace Lumina
         uint32                              MaxSurfaceDescMeshlets = 0;
 
         void    UpdateMeshletVisibility(uint32 Slot);
-        // Meshlets in the slot's largest LOD, zero for an inactive slot.
-        uint32  LargestLODMeshletsOf(uint32 Slot) const;
-        uint32  LargestLODMeshletsOfSurface(uint32 SurfaceDescIndex) const;
+        // Meshlets the slot's visibility words cover, its whole hierarchy and run offset, zero for an inactive slot.
+        uint32  VisibilityMeshletsOf(uint32 Slot) const;
+        uint32  VisibilityMeshletsOfSurface(uint32 SurfaceDescIndex) const;
         void    ReleaseMeshletVisibility(uint32 Slot);
         void    FreeMeshletVisibilityRange(uint32 Base, uint32 Words);
 

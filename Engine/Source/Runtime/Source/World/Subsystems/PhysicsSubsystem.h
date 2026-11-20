@@ -85,28 +85,28 @@ namespace Lumina
         void ShapeCastAll(SQueryShape Shape, FVector3 Start, FVector3 End,
             ECS::FEntity IgnoreEntity, TVector<SRayResult>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
 
-        //~ Overlaps list distinct entities whose bodies intersect the shape. IgnoreEntity excludes the querier.
+        //~ Overlaps list each entity body and each foliage or forest instance the shape intersects. IgnoreEntity excludes the querier.
 
         FUNCTION()
         void OverlapSphere(FVector3 Center, float Radius, ECS::FEntity IgnoreEntity,
-            TVector<ECS::FEntity>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
+            TVector<SOverlapResult>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
 
         FUNCTION()
         void OverlapBox(FVector3 Center, FVector3 HalfExtents, FQuat Rotation,
-            ECS::FEntity IgnoreEntity, TVector<ECS::FEntity>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
+            ECS::FEntity IgnoreEntity, TVector<SOverlapResult>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
 
         FUNCTION()
         void OverlapCapsule(FVector3 Center, float Radius, float HalfHeight, FQuat Rotation,
-            ECS::FEntity IgnoreEntity, TVector<ECS::FEntity>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
+            ECS::FEntity IgnoreEntity, TVector<SOverlapResult>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
 
         FUNCTION()
         void OverlapShape(SQueryShape Shape, FVector3 Center, ECS::FEntity IgnoreEntity,
-            TVector<ECS::FEntity>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
+            TVector<SOverlapResult>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
 
-        /** Entities whose bodies contain the point, which is volume containment rather than a shape sweep. */
+        /** Bodies containing the point, which is volume containment rather than a shape sweep. */
         FUNCTION()
         void OverlapPoint(FVector3 Point, ECS::FEntity IgnoreEntity,
-            TVector<ECS::FEntity>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
+            TVector<SOverlapResult>& Out, ECollisionProfiles LayerMask = ECollisionProfiles::All);
 
         // True when no body overlaps the sphere, the check for whether something can be placed there.
         FUNCTION()

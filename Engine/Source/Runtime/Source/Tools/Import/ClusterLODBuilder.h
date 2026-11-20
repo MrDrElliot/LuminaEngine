@@ -55,7 +55,4 @@ namespace Lumina::Import::ClusterLOD
 
     // Builds the hierarchy. False leaves Out empty, which happens only for an input without a whole triangle.
     RUNTIME_API bool Build(const FBuildInput& In, FBuildOutput& Out);
-
-    // Points every root at the given parent, which is how the voxel levels take over from the coarsest triangles.
-    RUNTIME_API void SetRootParents(FBuildOutput& Out, const FVector3& Center, float Radius, float Error, bool bVoxelParent);
 }

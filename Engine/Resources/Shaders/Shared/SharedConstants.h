@@ -5,7 +5,7 @@
 #define MESHLET_MAX_VERTICES            64
 #define MESHLET_MAX_TRIANGLES           64
 
-// Discrete LODs or cluster hierarchy level slots per surface; a forced LOD plus one must still fit INSTANCE_FORCED_LOD_MASK.
+// Cluster hierarchy level slots per surface, each a run of whole levels.
 #define MESHLET_MAX_LODS                12
 // What files written before the slot count grew hold, and read back as.
 #define MESHLET_LEGACY_MAX_LODS         6
@@ -37,23 +37,10 @@
 #define MESHLET_LOD_MASK                0xFu
 #define MESHLET_LOD_SHIFT               14u
 #define MESHLET_SHORT_REFS_SHIFT        18u
-// Set on a voxel splat meshlet, whose quads stand for a surface and so skip the material's opacity clip.
-#define MESHLET_VOXEL_SHIFT             19u
-// Set on a compact splat meshlet, one vertex per splat at BaseVertex onward, whose triangle corners the decode rebuilds.
-#define MESHLET_COMPACT_SPLAT_SHIFT     20u
-// The splats' corner reach as the top 11 bits of a half float without its sign, since every splat of a meshlet shares a voxel size.
-#define MESHLET_SPLAT_REACH_SHIFT       21u
-#define MESHLET_SPLAT_REACH_BITS        11
 
 // FSurfaceDesc::Flags. The cluster bit turns a view's pick from one slot into a slot range the per-meshlet cut then refines.
 #define SURFACE_DESC_CLUSTER_LOD        1u
-// Slot L holds voxel geometry when bit (SURFACE_DESC_VOXEL_SHIFT + L) is set, and its meshlets' parents are voxels when bit (SURFACE_DESC_VOXEL_PARENT_SHIFT + L) is.
-#define SURFACE_DESC_VOXEL_SHIFT        4u
-#define SURFACE_DESC_VOXEL_PARENT_SHIFT 16u
 
-// FMeshletLODBounds::Flags, the per-meshlet form of the same two facts.
-#define MESHLET_LOD_FLAG_VOXEL          1u
-#define MESHLET_LOD_FLAG_VOXEL_PARENT   2u
 // A parent error no tolerance accepts, so a root meshlet is always drawn once its own error is.
 #define MESHLET_LOD_ERROR_INFINITE      3.0e38
 
@@ -61,8 +48,7 @@
 #define MESH_HEADER_FLAG_CLUSTER_LOD    1u
 
 // FCullData::VirtualGeometryFlags, the project's runtime toggles.
-#define VG_FLAG_VOXEL_FAR               1u
-#define VG_FLAG_PROXIES                 2u
+#define VG_FLAG_PROXIES                 1u
 
 // FMeshletBlock bit above its count, set when the cull must draw every meshlet of the block without the cluster cut.
 #define MESHLET_BLOCK_FORCE_ALL_BIT     (1u << 26u)
@@ -183,6 +169,17 @@
 #define VSM_STATE_FRESH_SHIFT           1u
 #define VSM_STATE_FRESH_MASK            6u
 #define VSM_FRESH_FRAMES                2u
+// Meshlets the compute raster list holds per frame for each layer, past which casters fall back to the hardware rasterizer.
+#define VSM_COMPUTE_RASTER_CAPACITY     (1u << 20)
+// Workgroups of the compute raster, each walking its layer's list with this stride.
+#define VSM_COMPUTE_RASTER_GROUPS       4096u
+// The list entry packs the level into the low bits of the meshlet word.
+#define VSM_COMPUTE_RASTER_LEVEL_BITS   4u
+
+// Camera meshlets the compute rasterizer takes per frame across both VisBuffer phases, past which they stay on the hardware raster.
+#define VISBUFFER_COMPUTE_RASTER_CAPACITY (1u << 21)
+// Workgroups of the camera's compute raster, each walking its phase's list with this stride.
+#define VISBUFFER_COMPUTE_RASTER_GROUPS 8192u
 // A page nothing has asked for in this many frames goes back to the pool.
 #define VSM_EVICT_FRAMES                60u
 #define VSM_MARK_GROUP_SIZE             8u
@@ -223,15 +220,13 @@
 #define RENDER_LAYER_DEFAULT_MASK       1u
 #define RENDER_LAYER_FOREGROUND_MASK    0x80000000u
 
-// The low bits of an instance's LODAndThinning, its forced LOD plus one.
-#define INSTANCE_FORCED_LOD_MASK        0xFu
-// Set in an instance's LODAndThinning when its layers are anything but Default, so only those instances load their mask.
+// Set in an instance's FlagsAndThinning when its layers are anything but Default, so only those instances load their mask.
 #define INSTANCE_CUSTOM_LAYERS_BIT      0x10u
-// Set in an instance's LODAndThinning when its shadow falls from the undisplaced mesh, so shadow passes skip the vertex graph.
+// Set in an instance's FlagsAndThinning when its shadow falls from the undisplaced mesh, so shadow passes skip the vertex graph.
 #define INSTANCE_NO_SHADOW_WPO_BIT      0x20u
-// Set in an instance's LODAndThinning when nothing about its shadow changes on its own, so the sun's shadow cache may hold it.
+// Set in an instance's FlagsAndThinning when nothing about its shadow changes on its own, so the sun's shadow cache may hold it.
 #define INSTANCE_SHADOW_CACHEABLE_BIT   0x40u
-// Where an instance's custom depth word sits in its LODAndThinning, nine bits below the thinning half.
+// Where an instance's custom depth word sits in its FlagsAndThinning, nine bits below the thinning half.
 #define INSTANCE_CUSTOM_DEPTH_SHIFT     7u
 #define CUSTOM_DEPTH_WORD_MASK          0x1FFu
 // Set in a custom depth word when the instance draws into custom depth, above its stencil byte.

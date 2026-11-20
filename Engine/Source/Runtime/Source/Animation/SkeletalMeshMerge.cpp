@@ -230,17 +230,17 @@ namespace Lumina::SkeletalMeshMerge
             }
         }
 
-        //~ LOD-MAJOR as the importer bakes it, so a pre-skin slice spans one LOD's meshlet range.
+        //~ Surface-major as the importer bakes it, so a pre-skin slice spanning several slots is one meshlet range.
 
         TVector<FCell> Cells;
-        for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
+        for (int32 m = 0; m < Sources.Num(); ++m)
         {
-            for (int32 m = 0; m < Sources.Num(); ++m)
-            {
-                const FMeshResource& Resource = Sources[m]->GetMeshResource();
-                const FMeshletData&  Data     = Resource.MeshletData;
+            const FMeshResource& Resource = Sources[m]->GetMeshResource();
+            const FMeshletData&  Data     = Resource.MeshletData;
 
-                for (int32 s = 0; s < Resource.GeometrySurfaces.Num(); ++s)
+            for (int32 s = 0; s < Resource.GeometrySurfaces.Num(); ++s)
+            {
+                for (uint32 LOD = 0; LOD < MAX_MESH_LODS; ++LOD)
                 {
                     const FGeometrySurface& Surface = Resource.GeometrySurfaces[s];
                     if (LOD >= Surface.NumLODs || Surface.LODMeshletCount[LOD] == 0)
@@ -308,6 +308,8 @@ namespace Lumina::SkeletalMeshMerge
         Dst.MeshletSkinnedVertices.SetNum(TotalVertices);
         Dst.MeshletTriangles.SetNum(TotalTriangles);
         Dst.MeshletBoneIndices.SetNum(TotalPalette);
+        // Every source shares the skeleton's space, so each meshlet's hierarchy bounds carry over as they are.
+        Dst.MeshletLODBounds.SetNum(TotalMeshlets);
 
         // Spans every source grid, so each source's vertices re-encode onto it without clamping.
         {
@@ -349,6 +351,14 @@ namespace Lumina::SkeletalMeshMerge
 
                 Dst.MeshletSpheres[DstIndex] = Src.MeshletSpheres[SrcIndex];
                 Dst.MeshletCones[DstIndex]   = Src.MeshletCones[SrcIndex];
+
+                FMeshletLODBounds Bounds{};
+                Bounds.ParentError = kMeshletLODErrorInfinite;
+                if (SrcIndex < (uint32)Src.MeshletLODBounds.Num())
+                {
+                    Bounds = Src.MeshletLODBounds[SrcIndex];
+                }
+                Dst.MeshletLODBounds[DstIndex] = Bounds;
 
                 // JointIndices address the meshlet's own palette, so only the position changes, onto the merged grid.
                 const uint32 VertexEnd = Math::Min(SrcM.VertexOffset + SrcM.VertexCount,
@@ -417,6 +427,7 @@ namespace Lumina::SkeletalMeshMerge
                 Out.StartIndex    = Source.StartIndex;
                 Out.TexelFactor   = Source.TexelFactor;
                 Out.NumLODs       = 0;
+                Out.LODFlags      = Source.LODFlags;
                 Out.MaterialIndex = (Source.MaterialIndex >= 0 && Source.MaterialIndex < MaterialRemap[m].Num())
                     ? MaterialRemap[m][Source.MaterialIndex] : (int16)-1;
 
@@ -425,6 +436,7 @@ namespace Lumina::SkeletalMeshMerge
                     Out.LODMeshletOffset[LOD] = 0;
                     Out.LODMeshletCount[LOD]  = 0;
                     Out.LODError[LOD]         = Source.LODError[LOD];
+                    Out.LODParentError[LOD]   = Source.LODParentError[LOD];
                 }
 
                 SurfaceKeys.Emplace(m, s);

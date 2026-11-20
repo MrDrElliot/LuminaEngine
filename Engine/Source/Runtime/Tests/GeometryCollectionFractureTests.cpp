@@ -143,7 +143,7 @@ TEST(GeometryCollectionFracture, PieceAndTriangleCountsMatchTheBaseline)
 
     const FFractureResult DenseSphere = FractureMesh(MakePrimitiveMesh([](auto& V, auto& I) { PrimitiveMeshes::GenerateSphere(V, I, 48, 96); }));
     EXPECT_EQ(DenseSphere.Pieces, 12);
-    EXPECT_EQ(DenseSphere.Triangles, 7646);
+    EXPECT_EQ(DenseSphere.Triangles, 7676);
 
     const FFractureResult DentedBox = FractureMesh(MakePrimitiveMesh(GenerateDentedBox));
     EXPECT_EQ(DentedBox.Pieces, 12);

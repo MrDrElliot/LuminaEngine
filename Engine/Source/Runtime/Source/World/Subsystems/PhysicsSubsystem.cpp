@@ -12,9 +12,6 @@ namespace Lumina
 {
     namespace
     {
-        // The caller sizes the result set; past this a query reports its true total and is called again.
-        constexpr size_t DefaultQueryCapacity = 256;
-
         Physics::IPhysicsScene* SceneOf(CWorld* World)
         {
             return World != nullptr ? World->GetPhysicsScene() : nullptr;
@@ -45,28 +42,21 @@ namespace Lumina
             return Miss;
         }
 
-        // The scene writes into a span, so the result vector is sized first and trimmed to what it wrote.
         void Overlap(CWorld* World, const SQueryShape& Shape, const FVector3& Center, ECS::FEntity IgnoreEntity,
-            ECollisionProfiles LayerMask, TVector<ECS::FEntity>& Out)
+            ECollisionProfiles LayerMask, TVector<SOverlapResult>& Out)
         {
-            Physics::IPhysicsScene* Scene = SceneOf(World);
-            if (Scene == nullptr)
+            Out.Reset();
+            if (Physics::IPhysicsScene* Scene = SceneOf(World))
             {
-                return;
+                Scene->OverlapAll(Shape, Center, LayerMask, QueryIgnoreOf(IgnoreEntity), Out);
             }
-
-            const int32 Start = Out.Num();
-            Out.SetNum(Start + DefaultQueryCapacity);
-            const int32 Written = Scene->OverlapShape(Shape, Center, LayerMask, QueryIgnoreOf(IgnoreEntity),
-                TSpan<ECS::FEntity>(Out.GetData() + Start, DefaultQueryCapacity));
-            Out.SetNum(Start + (size_t)(Written > 0 ? Written : 0));
         }
 
         bool IsFree(CWorld* World, const SQueryShape& Shape, const FVector3& Center, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask)
         {
             Physics::IPhysicsScene* Scene = SceneOf(World);
-            ECS::FEntity First;
-            return Scene == nullptr || Scene->OverlapShape(Shape, Center, LayerMask, QueryIgnoreOf(IgnoreEntity), TSpan<ECS::FEntity>(&First, 1)) == 0;
+            SOverlapResult First;
+            return Scene == nullptr || Scene->OverlapShape(Shape, Center, LayerMask, QueryIgnoreOf(IgnoreEntity), TSpan<SOverlapResult>(&First, 1)) == 0;
         }
     }
 
@@ -199,31 +189,31 @@ namespace Lumina
     }
 
     void CPhysicsSubsystem::OverlapSphere(FVector3 Center, float Radius,
-        ECS::FEntity IgnoreEntity, TVector<ECS::FEntity>& Out, ECollisionProfiles LayerMask)
+        ECS::FEntity IgnoreEntity, TVector<SOverlapResult>& Out, ECollisionProfiles LayerMask)
     {
         Overlap(GetWorld(), SQueryShape::Sphere(Radius), Center, IgnoreEntity, LayerMask, Out);
     }
 
     void CPhysicsSubsystem::OverlapBox(FVector3 Center, FVector3 HalfExtents, FQuat Rotation,
-        ECS::FEntity IgnoreEntity, TVector<ECS::FEntity>& Out, ECollisionProfiles LayerMask)
+        ECS::FEntity IgnoreEntity, TVector<SOverlapResult>& Out, ECollisionProfiles LayerMask)
     {
         Overlap(GetWorld(), SQueryShape::Box(HalfExtents, Rotation), Center, IgnoreEntity, LayerMask, Out);
     }
 
     void CPhysicsSubsystem::OverlapCapsule(FVector3 Center, float Radius, float HalfHeight, FQuat Rotation,
-        ECS::FEntity IgnoreEntity, TVector<ECS::FEntity>& Out, ECollisionProfiles LayerMask)
+        ECS::FEntity IgnoreEntity, TVector<SOverlapResult>& Out, ECollisionProfiles LayerMask)
     {
         Overlap(GetWorld(), SQueryShape::Capsule(Radius, HalfHeight, Rotation), Center, IgnoreEntity, LayerMask, Out);
     }
 
     void CPhysicsSubsystem::OverlapShape(SQueryShape Shape, FVector3 Center, ECS::FEntity IgnoreEntity,
-        TVector<ECS::FEntity>& Out, ECollisionProfiles LayerMask)
+        TVector<SOverlapResult>& Out, ECollisionProfiles LayerMask)
     {
         Overlap(GetWorld(), Shape, Center, IgnoreEntity, LayerMask, Out);
     }
 
     void CPhysicsSubsystem::OverlapPoint(FVector3 Point, ECS::FEntity IgnoreEntity,
-        TVector<ECS::FEntity>& Out, ECollisionProfiles LayerMask)
+        TVector<SOverlapResult>& Out, ECollisionProfiles LayerMask)
     {
         Overlap(GetWorld(), SQueryShape::Sphere(0.0f), Point, IgnoreEntity, LayerMask, Out);
     }
@@ -249,18 +239,18 @@ namespace Lumina
         ECollisionProfiles LayerMask)
     {
         CWorld* World = GetWorld();
-        TVector<ECS::FEntity> Candidates;
+        TVector<SOverlapResult> Candidates;
         OverlapSphere(Center, Radius, IgnoreEntity, Candidates, LayerMask);
 
         ECS::FEntity Nearest = ECS::NullEntity;
         float NearestDistance = FLT_MAX;
-        for (ECS::FEntity Candidate : Candidates)
+        for (const SOverlapResult& Candidate : Candidates)
         {
-            const float Distance = GetDistanceToEntity(Candidate, Center);
+            const float Distance = Candidate.IsInstance() ? -1.0f : GetDistanceToEntity(Candidate.Entity, Center);
             if (Distance >= 0.0f && Distance < NearestDistance)
             {
                 NearestDistance = Distance;
-                Nearest = Candidate;
+                Nearest = Candidate.Entity;
             }
         }
         return Nearest;

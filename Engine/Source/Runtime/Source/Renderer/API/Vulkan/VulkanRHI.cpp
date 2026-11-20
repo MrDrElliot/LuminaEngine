@@ -709,6 +709,7 @@ namespace Lumina::RHI
         bool                            bHostQueryReset = false;
         // A mesh shader may write its viewport index, which lets one draw cover several shadow tiles.
         bool                            bShaderOutputViewportIndex = false;
+        bool                            bBufferInt64Atomics = false;
 #if USING(WITH_EDITOR)
         bool                            bPipelineStats = false;
         // Capture the driver's internal representations too, which costs pipeline creation time.
@@ -3124,6 +3125,9 @@ namespace Lumina::RHI
         // Slang declares ShaderViewportIndex for SV_ViewportArrayIndex, which is only legal with this enabled.
         Features12.shaderOutputViewportIndex                    = Supported12.shaderOutputViewportIndex;
         GDevice->bShaderOutputViewportIndex                     = Supported12.shaderOutputViewportIndex == VK_TRUE;
+        // The compute rasterizer's depth and ID pairs, so a device without it keeps every meshlet on the hardware raster.
+        Features12.shaderBufferInt64Atomics                     = Supported12.shaderBufferInt64Atomics;
+        GDevice->bBufferInt64Atomics                            = Supported12.shaderBufferInt64Atomics == VK_TRUE;
         // Heap indices vary per lane in batched draws, and AMD otherwise samples the first lane's descriptor for the wave.
         Features12.shaderSampledImageArrayNonUniformIndexing    = Supported12.shaderSampledImageArrayNonUniformIndexing;
 
@@ -5136,6 +5140,11 @@ namespace Lumina::RHI
     bool SupportsMeshShaders()
     {
         return GDevice != nullptr && GDevice->bMeshShaderSupported;
+    }
+
+    bool SupportsBufferInt64Atomics()
+    {
+        return GDevice != nullptr && GDevice->bBufferInt64Atomics;
     }
 
     uint32 GetMaxMeshWorkGroupCount()

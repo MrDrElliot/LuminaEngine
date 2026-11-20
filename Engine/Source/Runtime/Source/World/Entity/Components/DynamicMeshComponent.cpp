@@ -369,7 +369,7 @@ namespace Lumina
 
         TUniquePtr<FMeshResource> Resource = MakeUnique<FMeshResource>();
         Resource->bSkinnedMesh          = false;
-        Resource->MaxLODs               = Math::Clamp(Options.MaxLODs, 1u, (uint32)MAX_MESH_LODS);
+        Resource->bLODHierarchy         = Options.bLODHierarchy;
         Resource->bGenerateTangents     = Options.bGenerateTangents;
         Resource->bMeshletConeCulling   = Options.bMeshletConeCulling;
         Resource->bOptimizeMeshlets     = Options.bOptimizeMeshlets;
@@ -504,7 +504,7 @@ namespace Lumina
         LUMINA_MEMORY_SCOPE("Meshes");
 
         FMeshBuildOptions Options;
-        Options.MaxLODs             = (uint32)Math::Max(MaxLODs, 1);
+        Options.bLODHierarchy       = bLODHierarchy;
         Options.bGenerateTangents   = bGenerateTangents;
         Options.bMeshletConeCulling = bMeshletConeCulling;
         Options.bOptimizeMeshlets   = bOptimizeMeshlets;
@@ -529,30 +529,6 @@ namespace Lumina
         PublishBuilt(Move(NewData));
 
         // Staging is consumed; the next edit re-stages from scratch.
-        BuildData.reset();
-        return true;
-    }
-
-    bool SDynamicMeshComponent::CommitBuiltResource(FMeshResource&& Built, const FVector3& LocalMin, const FVector3& LocalMax)
-    {
-        if (Built.MeshletData.IsEmpty())
-        {
-            return false;
-        }
-
-        LUMINA_PROFILE_SCOPE();
-        LUMINA_MEMORY_SCOPE("Meshes");
-
-        CommittedVertexCount   = Built.MeshletData.VertexPositions.Num();
-        CommittedTriangleCount = Built.MeshletData.MeshletTriangles.Num();
-
-        TSharedPtr<FDynamicMeshRenderData> NewData = MakeShared<FDynamicMeshRenderData>();
-        NewData->LocalMin    = LocalMin;
-        NewData->LocalMax    = LocalMax;
-        NewData->LocalCenter = (LocalMin + LocalMax) * 0.5f;
-        NewData->LocalRadius = Math::Length(LocalMax - NewData->LocalCenter);
-        NewData->Resource    = Move(Built);
-        PublishBuilt(Move(NewData));
         BuildData.reset();
         return true;
     }

@@ -75,10 +75,6 @@ namespace Lumina
         uint32          CachedMeshletHeaderSlot = 0;
         EInstanceFlags  CachedBaseFlags = EInstanceFlags::None;
 
-        // -1 picks the LOD by distance; anything else pins it, clamped to the surface's coarsest LOD.
-        PROPERTY(Editable, Category = "Rendering")
-        int32 ForcedLODIndex = -1;
-        
         /** Per-slot material overrides applied on top of the mesh's default materials. */
         PROPERTY(Editable, Category = "Rendering")
         TVector<TStrongObjectPtr<CMaterialInterface>> MaterialOverrides;

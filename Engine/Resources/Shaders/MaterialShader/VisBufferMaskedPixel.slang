@@ -47,8 +47,7 @@ bool MaskedVisKeep(FMaskedVertexOutput Input)
 [shader("fragment")]
 uint FragmentMain(FMaskedVertexOutput Input, VIS_ID_INPUT) : SV_Target0
 {
-    // The splat builder kept each voxel by its coverage, so testing the mipped opacity again thins leaves twice and leaves only bark.
-    if (!MaskedIsVoxelSplat(Input) && !MaskedVisKeep(Input))
+    if (!MaskedVisKeep(Input))
     {
         discard;
     }

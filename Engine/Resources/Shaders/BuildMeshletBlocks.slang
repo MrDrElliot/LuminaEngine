@@ -70,7 +70,7 @@ bool TryReserveRun(uint BucketIndex, FRenderBucket* Bucket, uint Blocks, uint Dr
 bool UsesMeshletRuns(FGPUInstance* Inst)
 {
     const uint DescIndex = Inst.SurfaceDescIndex;
-    return DescIndex != kNoSurfaceDesc && Pass().SurfaceDescs.Contains(DescIndex) && Pass().SurfaceDescs.Get(DescIndex).bClusterLOD;
+    return !FGPUInstance::HasFlag(Inst, EInstanceFlags::Skinned) && DescIndex != kNoSurfaceDesc && Pass().SurfaceDescs.Contains(DescIndex);
 }
 
 void WriteBlocks(uint InstanceID, uint2 Range, bool bRuns, uint ForceBits, uint Slot)
@@ -89,62 +89,46 @@ void WriteBlocks(uint InstanceID, uint2 Range, bool bRuns, uint ForceBits, uint 
 // What CullInstances charged the bucket for this range, the meshlets its cut can draw rather than every slot it spans, so a short bucket charges the same.
 uint ViewDrawCharge(FGPUInstance* Inst, uint ViewIndex, uint Count)
 {
+    // A skinned range is the camera's pick, charged and kept whole.
     const uint DescIndex = Inst.SurfaceDescIndex;
-    if (DescIndex == kNoSurfaceDesc || !Pass().SurfaceDescs.Contains(DescIndex))
+    if (FGPUInstance::HasFlag(Inst, EInstanceFlags::Skinned) || DescIndex == kNoSurfaceDesc || !Pass().SurfaceDescs.Contains(DescIndex))
     {
         return Count;
     }
     const FSurfaceDesc Desc = Pass().SurfaceDescs.Get(DescIndex);
-    if (!Desc.bClusterLOD)
-    {
-        return Count;
-    }
     uint Bound = Count;
     SelectViewMeshletRange(Desc, CullViews().GetAligned(ViewIndex), loadAligned<16>(&Inst.SphereBounds), TransformMaxScale(Inst.Transform), Bound);
     return min(Bound, Count);
 }
 
 // The LOD after the one Current starts at, empty when there is none or the instance cannot re-select.
-uint2 NextCoarserRange(FGPUInstance* Inst, uint2 Current, bool bVoxels, inout bool bForceAll)
+uint2 NextCoarserRange(FGPUInstance* Inst, uint2 Current, inout bool bForceAll)
 {
+    // A skinned range is the camera's pick, charged and kept whole.
     const uint DescIndex = Inst.SurfaceDescIndex;
-    if (DescIndex == kNoSurfaceDesc || !Pass().SurfaceDescs.Contains(DescIndex))
+    if (FGPUInstance::HasFlag(Inst, EInstanceFlags::Skinned) || DescIndex == kNoSurfaceDesc || !Pass().SurfaceDescs.Contains(DescIndex))
     {
         return uint2(0u, 0u);
     }
     const FSurfaceDesc Desc = Pass().SurfaceDescs.Get(DescIndex);
-    const uint NumLODs = SelectableLODCount(Desc, bVoxels);
+    const uint NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
     if (NumLODs == 0u)
     {
         return uint2(0u, 0u);
     }
 
+    // A range drops to the coarsest slot it already spans, then one slot up, each drawn whole since the cut no longer holds.
     uint Pick = NumLODs;
-    if (Desc.bClusterLOD)
+    const uint End = Current.x + Current.y;
+    for (uint Slot = 0u; Slot < NumLODs; ++Slot)
     {
-        // A cluster range drops to the coarsest slot it already spans, then one slot up, each drawn whole since the cut no longer holds.
-        const uint End = Current.x + Current.y;
-        for (uint Slot = 0u; Slot < NumLODs; ++Slot)
+        if (Desc.LODMeshletOffset[Slot] + Desc.LODMeshletCount[Slot] == End)
         {
-            if (Desc.LODMeshletOffset[Slot] + Desc.LODMeshletCount[Slot] == End)
-            {
-                Pick = (bForceAll || Desc.LODMeshletOffset[Slot] == Current.x) ? Slot + 1u : Slot;
-                break;
-            }
-        }
-        bForceAll = true;
-    }
-    else
-    {
-        for (uint Lod = 0u; Lod + 1u < NumLODs; ++Lod)
-        {
-            if (Desc.LODMeshletOffset[Lod] == Current.x)
-            {
-                Pick = Lod + 1u;
-                break;
-            }
+            Pick = (bForceAll || Desc.LODMeshletOffset[Slot] == Current.x) ? Slot + 1u : Slot;
+            break;
         }
     }
+    bForceAll = true;
     if (Pick >= NumLODs)
     {
         return uint2(0u, 0u);
@@ -268,7 +252,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         bool bFitted = false;
         for (uint Step = 0u; Step < (uint)MESHLET_MAX_LODS && !bFitted; ++Step)
         {
-            const uint2 Coarser = NextCoarserRange(Inst, Range, VoxelFarEnabled(), bForceAll);
+            const uint2 Coarser = NextCoarserRange(Inst, Range, bForceAll);
             if (Coarser.y == 0u || Coarser.y >= Range.y)
             {
                 break;

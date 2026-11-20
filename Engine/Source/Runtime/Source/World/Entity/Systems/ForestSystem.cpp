@@ -6,7 +6,6 @@
 #include "Containers/HashPrimitives.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/World.h"
-#include "World/Entity/Components/DynamicMeshComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/ForestComponent.h"
@@ -18,82 +17,51 @@ namespace Lumina
 {
     namespace ForestSystemInternal
     {
-        // Screen height the voxel budget is measured against, so a forest looks the same in every viewport size.
-        constexpr float  kReferenceScreenHeight = 1440.0f;
-        // New entities per frame, since each one uploads geometry or binds a tile of foliage.
+        // New entities per frame, since each one binds a tile of foliage.
         constexpr uint32 kMaxAppliesPerFrame    = 6;
-        // Updates a new node must already draw in before the one it replaces goes, so the swap never shows a hole.
+        // Updates a new tile must already draw in before the one it replaces goes, so the swap never shows a hole.
         constexpr uint16 kDrawnSettleFrames     = 3;
-        // A node that cannot draw, such as one whose mesh never resolves, stops holding the old one after this.
+        // A tile that cannot draw, such as one whose mesh never resolves, stops holding the old one after this.
         constexpr uint16 kMaxDrawWaitFrames     = 120;
-        // Aggregates nearer than this queue ahead of the rest, since they are what the view sees popping in.
-        constexpr float  kNearBuildDistance     = 400.0f;
-        // Scattering a tile is cheap next to voxelizing one, so plants get their own allowance.
-        constexpr int32  kMaxInstanceBuilds     = 16;
         // A sculpt stroke bumps the heightmap every frame, so the forest waits for the terrain to settle.
         constexpr uint32 kTerrainSettleFrames   = 30;
-        // Instance tiles follow a stroke live, and aggregates, which take seconds, wait this long after it.
-        constexpr uint32 kPaintSettleFrames     = 20;
         // Tiles nearer than this hold every species, and further ones leave out the plants that vanish before it.
-        constexpr int32  kNearInstanceLevel     = -1;
-        constexpr int32  kFarInstanceLevel      = -2;
+        constexpr int32  kNearBand              = 0;
+        constexpr int32  kFarBand               = 1;
         constexpr float  kNearBandDistance      = 160.0f;
-        // Ground behind the view refines as if this many times further, since it only shows once the view turns, and the coarser cover holds until then.
-        constexpr float  kBehindDistanceScale   = 4.0f;
-        // Degrees past the horizontal half angle of the view still treated as in front, for the edges of a wide screen and a turning head.
-        constexpr float  kViewMarginDegrees     = 20.0f;
-        constexpr float  kReferenceAspect       = 16.0f / 9.0f;
-        constexpr int32  kMaxLevels             = 12;
 
-        bool Overlaps(const Forest::FNodeKey& A, const Forest::FNodeKey& B)
+        bool Overlaps(const FTileKey& A, const FTileKey& B)
         {
-            const int32 LA = Math::Max(A.Level, 0);
-            const int32 LB = Math::Max(B.Level, 0);
-            if (LA >= LB)
-            {
-                return (B.X >> (LA - LB)) == A.X && (B.Z >> (LA - LB)) == A.Z;
-            }
-            return (A.X >> (LB - LA)) == B.X && (A.Z >> (LB - LA)) == B.Z;
+            return A.X == B.X && A.Z == B.Z;
         }
 
-        Forest::FNodeKey UnpackKey(uint64 Packed)
+        FTileKey UnpackKey(uint64 Packed)
         {
             return { (int32)(int8)(uint8)(Packed >> 56), (int32)((Packed >> 28) & 0x0FFFFFFFull), (int32)(Packed & 0x0FFFFFFFull) };
         }
 
-        Forest::FArea GetNodeArea(const Forest::FRules& Rules, const Forest::FNodeKey& Key)
+        FVector2 GetTileMin(const Forest::FRules& Rules, const FTileKey& Key)
         {
-            const int32 Level = Math::Max(Key.Level, 0);
-            const FVector2 Min = Forest::GetNodeMin(Rules, { Level, Key.X, Key.Z });
-            return { Min, Min + FVector2(Forest::GetNodeSize(Rules, Level)) };
+            return Rules.GetMinCorner() + FVector2((float)Key.X, (float)Key.Z) * Rules.TileSize;
         }
 
-        // The node keeps its entity on screen while the rebuild runs, and ApplyBuild swaps it out.
-        void RebuildUnder(FForestState& State, const TVector<Forest::FArea>& Areas, bool bAggregates)
+        // The tile keeps its entity on screen while the rebuild runs, and ApplyBuild swaps it out.
+        void RebuildUnder(FForestState& State, const TVector<Forest::FArea>& Areas)
         {
-            for (auto& [Packed, Node] : State.Nodes)
+            for (auto& [Packed, Tile] : State.Tiles)
             {
-                const Forest::FNodeKey Key = UnpackKey(Packed);
-                if ((Key.Level >= 0) != bAggregates)
-                {
-                    continue;
-                }
-                const Forest::FArea Area = GetNodeArea(*State.Rules, Key);
+                const FVector2      Min  = GetTileMin(*State.Rules, UnpackKey(Packed));
+                const Forest::FArea Area = { Min, Min + FVector2(State.Rules->TileSize) };
                 if (Algo::AnyOf(Areas, [&](const Forest::FArea& Changed) { return Changed.Overlaps(Area); }))
                 {
-                    Node.bReady = false;
-                    if (Node.Build)
+                    Tile.bReady = false;
+                    if (Tile.Build)
                     {
-                        Node.Build->bCanceled.store(true, std::memory_order_relaxed);
+                        Tile.Build->bCanceled.store(true, std::memory_order_relaxed);
                     }
-                    Node.Build.reset();
+                    Tile.Build.reset();
                 }
             }
-        }
-
-        uint32 AggregateResolution(const SForestComponent& Forest)
-        {
-            return (uint32)Math::NextPowerOfTwo(Math::Clamp(Forest.AggregateResolution, 16, 512));
         }
     }
 
@@ -134,7 +102,7 @@ namespace Lumina
         {
             if (!Algo::Contains(Live, Entity))
             {
-                ReleaseNodes(*World, State);
+                ReleaseTiles(*World, State);
                 Gone.Add(Entity);
             }
         }
@@ -165,20 +133,20 @@ namespace Lumina
         Forests.Reset();
     }
 
-    void CForestSystem::ReleaseNodes(CWorld& World, ForestSystemInternal::FForestState& State)
+    void CForestSystem::ReleaseTiles(CWorld& World, ForestSystemInternal::FForestState& State)
     {
-        for (auto& [Packed, Node] : State.Nodes)
+        for (auto& [Packed, Tile] : State.Tiles)
         {
-            if (Node.Build)
+            if (Tile.Build)
             {
-                Node.Build->bCanceled.store(true, std::memory_order_relaxed);
+                Tile.Build->bCanceled.store(true, std::memory_order_relaxed);
             }
-            if (World.IsValidEntity(Node.Entity))
+            if (World.IsValidEntity(Tile.Entity))
             {
-                World.DestroyEntity(Node.Entity);
+                World.DestroyEntity(Tile.Entity);
             }
         }
-        State.Nodes.Reset();
+        State.Tiles.Reset();
     }
 
     bool CForestSystem::RefreshState(CWorld& World, const SForestComponent& Forest, const FVector3& Center, bool bWritten, ForestSystemInternal::FForestState& State)
@@ -241,15 +209,11 @@ namespace Lumina
         TSharedPtr<Forest::FRules> Rules = MakeShared<Forest::FRules>();
         Forest::CaptureRules(Forest, Center, Move(Snapshots), *Rules);
 
-        uint64 Hash = Containers::CombineHash(Rules->Hash, AggregateResolution(Forest));
-        Hash = Containers::CombineHash(Hash, Forest.bCacheAggregates ? 1u : 0u);
+        uint64 Hash = Rules->Hash;
         for (const SForestSpecies& Species : Forest.Species)
         {
             const SFoliageType& Type = Species.Type;
-            const CStaticMesh*  Mesh = Type.Mesh.Get();
-            const bool bDecodable = Mesh != nullptr && Mesh->TryGetMeshResource() != nullptr && !Mesh->TryGetMeshResource()->MeshletData.IsEmpty();
-            Hash = Containers::CombineHash(Hash, (uint64)(uintptr_t)Mesh);
-            Hash = Containers::CombineHash(Hash, bDecodable ? 1u : 0u);
+            Hash = Containers::CombineHash(Hash, (uint64)(uintptr_t)Type.Mesh.Get());
             const float Render[] = { Type.CullDistance, Type.ThinningStartDistance, Type.WorldPositionOffsetDisableDistance };
             Hash = Containers::CombineHash(Hash, Containers::HashBytes(Render, sizeof(Render)));
             Hash = Containers::CombineHash(Hash, (uint64)Type.bCastShadow | ((uint64)Type.bReceiveShadow << 1) | ((uint64)Type.bEnableCollision << 2)
@@ -261,12 +225,6 @@ namespace Lumina
         {
             if (PaintHash == State.PaintHash)
             {
-                ++State.PaintStableFrames;
-                if (State.PaintStableFrames >= kPaintSettleFrames && !State.StaleAggregateAreas.IsEmpty())
-                {
-                    RebuildUnder(State, State.StaleAggregateAreas, true);
-                    State.StaleAggregateAreas.Reset();
-                }
                 return false;
             }
 
@@ -279,9 +237,7 @@ namespace Lumina
             Repainted->Paint = Move(Paint);
             State.Rules = Repainted;
             State.PaintHash = PaintHash;
-            State.PaintStableFrames = 0;
-            RebuildUnder(State, Changed, false);
-            State.StaleAggregateAreas.Append(Changed);
+            RebuildUnder(State, Changed);
             return false;
         }
 
@@ -289,84 +245,54 @@ namespace Lumina
         Forest::CapturePaint(Forest, Center, *Paint);
         Rules->Paint = Move(Paint);
 
-        ReleaseNodes(World, State);
+        ReleaseTiles(World, State);
         State.StateHash = Hash;
         State.PaintHash = PaintHash;
-        State.StaleAggregateAreas.Reset();
         State.Rules = Rules;
-        State.Geometry.Reset();
         State.Types.Reset();
         for (const SForestSpecies& Species : Forest.Species)
         {
-            const CStaticMesh* Mesh = Species.Type.Mesh.Get();
-            State.Geometry.Add(Mesh != nullptr ? Forest::DecodeSpecies(*Mesh) : nullptr);
             State.Types.Add(Species.Type);
         }
         return true;
     }
 
-    void CForestSystem::ApplyBuild(CWorld& World, const Forest::FNodeKey& Key, ForestSystemInternal::FNode& Node, ForestSystemInternal::FForestState& State)
+    void CForestSystem::ApplyBuild(CWorld& World, ForestSystemInternal::FTile& Tile, ForestSystemInternal::FForestState& State)
     {
         using namespace ForestSystemInternal;
 
-        TSharedPtr<FBuild> Build = Move(Node.Build);
-        Node.bReady      = true;
-        Node.ReadyFrames = 0;
-        Node.DrawnFrames = 0;
-        // A repainted node held its old entity until now.
-        if (World.IsValidEntity(Node.Entity))
+        TSharedPtr<FBuild> Build = Move(Tile.Build);
+        Tile.bReady      = true;
+        Tile.ReadyFrames = 0;
+        Tile.DrawnFrames = 0;
+        // A repainted tile held its old entity until now.
+        if (World.IsValidEntity(Tile.Entity))
         {
-            World.DestroyEntity(Node.Entity);
+            World.DestroyEntity(Tile.Entity);
         }
-        Node.Entity = ECS::NullEntity;
-
-        if (Key.Level < 0)
-        {
-            if (Build->Plants.IsEmpty())
-            {
-                return;
-            }
-            const ECS::FEntity Entity = World.ConstructEntity("ForestTile");
-            World.EmplaceComponent<FTransientEntityTag>(Entity);
-            World.EmplaceComponent<FHideInSceneOutliner>(Entity);
-            SFoliageComponent& Foliage = World.EmplaceComponent<SFoliageComponent>(Entity);
-            Foliage.Types = State.Types;
-            Foliage.Instances.Reserve(Build->Plants.Num());
-            for (const Forest::FPlant& Plant : Build->Plants)
-            {
-                SFoliageInstance& Instance = Foliage.Instances.EmplaceGetRef();
-                Instance.Position  = Plant.Position;
-                Instance.SetRotationQuat(Plant.Rotation);
-                Instance.Scale     = FVector3(Plant.Scale);
-                Instance.TypeIndex = (int32)Plant.Species;
-            }
-            Foliage.MarkInstancesChanged();
-            Node.Entity = Entity;
-            return;
-        }
-
-        Forest::FAggregateResult& Result = Build->Aggregate;
-        if (Result.bEmpty)
+        Tile.Entity = ECS::NullEntity;
+        if (Build->Plants.IsEmpty())
         {
             return;
         }
 
-        const ECS::FEntity Entity = World.ConstructEntity("ForestAggregate", FTransform(Result.Origin));
+        const ECS::FEntity Entity = World.ConstructEntity("ForestTile");
         World.EmplaceComponent<FTransientEntityTag>(Entity);
         World.EmplaceComponent<FHideInSceneOutliner>(Entity);
-        SDynamicMeshComponent& Mesh = World.EmplaceComponent<SDynamicMeshComponent>(Entity);
-        // A far aggregate's sway is lost under a shadow texel, so its shadow stays still and the sun's cache can hold it.
-        Mesh.bShadowWorldPositionOffset = false;
-        for (uint32 Source : Result.SectionSources)
+        SFoliageComponent& Foliage = World.EmplaceComponent<SFoliageComponent>(Entity);
+        Foliage.Types = State.Types;
+        Foliage.Instances.Reserve(Build->Plants.Num());
+        for (const Forest::FPlant& Plant : Build->Plants)
         {
-            const uint32 Species = Source >> 16;
-            const uint32 Surface = Source & 0xFFFFu;
-            const Forest::FSpeciesGeometry* Geometry = Species < (uint32)State.Geometry.Num() ? State.Geometry[Species].get() : nullptr;
-            CMaterialInterface* Material = Geometry != nullptr && Surface < (uint32)Geometry->Surfaces.Num() ? Geometry->Surfaces[Surface].Material : nullptr;
-            Mesh.MaterialOverrides.Add(TStrongObjectPtr<CMaterialInterface>(Material));
+            SFoliageInstance& Instance = Foliage.Instances.EmplaceGetRef();
+            Instance.Position  = Plant.Position;
+            Instance.SetRotationQuat(Plant.Rotation);
+            Instance.Scale     = FVector3(Plant.Scale);
+            Instance.TypeIndex = (int32)Plant.Species;
         }
-        Mesh.CommitBuiltResource(Move(Result.Resource), Result.LocalMin, Result.LocalMax);
-        Node.Entity = Entity;
+        Foliage.MarkInstancesChanged();
+        Tile.Entity = Entity;
+
     }
 
     void CForestSystem::UpdateForest(CWorld& World, ECS::FEntity Entity, const SForestComponent& Forest, bool bWritten, ForestSystemInternal::FForestState& State)
@@ -385,11 +311,11 @@ namespace Lumina
         GatherWanted(World, Forest, Center, *State.Rules, Wanted);
 
         THashSet<uint64> WantedSet;
-        TVector<Forest::FNodeKey> Unready;
-        TrackDrawnNodes(World, State);
+        TVector<FTileKey> Unready;
+        TrackDrawnTiles(World, State);
         StartBuilds(Forest, Wanted, State, WantedSet, Unready);
         ApplyFinishedBuilds(World, Wanted, State);
-        RetireStaleNodes(World, WantedSet, Unready, State);
+        RetireStaleTiles(World, WantedSet, Unready, State);
         PublishStats(World, State);
     }
 
@@ -399,60 +325,30 @@ namespace Lumina
 
         CCameraSubsystem* Camera = World.GetCamera();
         const FVector3 ViewPosition = Camera != nullptr ? Camera->GetViewPosition() : Center;
-        const float    FOV          = Camera != nullptr && Camera->GetFieldOfView() > 1.0f ? Camera->GetFieldOfView() : 60.0f;
-        const float    PixelAngle   = 2.0f * Math::Tan(Math::Radians(FOV) * 0.5f) / kReferenceScreenHeight;
-        const uint32   Resolution   = AggregateResolution(Forest);
-        const float    MaxPixels    = Math::Max(Forest.MaxVoxelPixels, 0.25f);
-        const FVector3 ViewForward  = Camera != nullptr ? Camera->GetViewForward() : FVector3(0.0f, 0.0f, 1.0f);
-        const float    HalfWidth    = Math::Degrees(Math::Atan(Math::Tan(Math::Radians(FOV) * 0.5f) * kReferenceAspect));
-        const float    InViewCos    = Math::Cos(Math::Radians(Math::Min(HalfWidth + kViewMarginDegrees, 179.0f)));
+        const float    ViewDistance = Math::Max(Forest.ViewDistance, Rules.TileSize);
+        const float    Size         = Rules.TileSize;
+        const int32    Tiles        = (int32)Math::Ceil(Rules.Extent / Size);
+        const FVector2 ForestMin    = Rules.GetMinCorner();
 
-        int32 TopLevel = 0;
-        while (TopLevel < kMaxLevels && Forest::GetNodeSize(Rules, TopLevel) < Rules.Extent)
+        // Only the tiles the view distance can reach, so a big forest never walks its whole grid.
+        const int32 MinX = Math::Max((int32)Math::Floor((ViewPosition.x - ViewDistance - ForestMin.x) / Size), 0);
+        const int32 MinZ = Math::Max((int32)Math::Floor((ViewPosition.z - ViewDistance - ForestMin.y) / Size), 0);
+        const int32 MaxX = Math::Min((int32)Math::Floor((ViewPosition.x + ViewDistance - ForestMin.x) / Size), Tiles - 1);
+        const int32 MaxZ = Math::Min((int32)Math::Floor((ViewPosition.z + ViewDistance - ForestMin.y) / Size), Tiles - 1);
+        for (int32 Z = MinZ; Z <= MaxZ; ++Z)
         {
-            ++TopLevel;
-        }
-
-        const FVector2 ForestMax = Rules.GetMinCorner() + FVector2(Rules.Extent);
-
-        TVector<Forest::FNodeKey> Stack;
-        Stack.Add({ TopLevel, 0, 0 });
-        while (!Stack.IsEmpty())
-        {
-            const Forest::FNodeKey Key = Stack.Pop();
-            const float    Size = Forest::GetNodeSize(Rules, Key.Level);
-            const FVector2 Min  = Forest::GetNodeMin(Rules, Key);
-            if (Min.x >= ForestMax.x || Min.y >= ForestMax.y)
+            for (int32 X = MinX; X <= MaxX; ++X)
             {
-                continue;
-            }
-
-            float Ground = Center.y;
-            Forest::FindGround(Rules, Min.x + Size * 0.5f, Min.y + Size * 0.5f, Ground);
-            // Plants stand on the ground and reach a few tens of meters up, which is the box the view is measured to.
-            const FVector3 BoxMin(Min.x, Ground - 20.0f, Min.y);
-            const FVector3 BoxMax(Min.x + Size, Ground + 40.0f, Min.y + Size);
-            const FVector3 ToBox    = Math::Clamp(ViewPosition, BoxMin, BoxMax) - ViewPosition;
-            const float    Distance = Math::Length(ToBox);
-            const float    Cos      = Distance > 1e-3f ? Math::Dot(ToBox / Distance, ViewForward) : 1.0f;
-            const float    Behind   = Math::Clamp((InViewCos - Cos) / (InViewCos + 1.0f), 0.0f, 1.0f);
-            // Real plants carry collision, so the band around the view keeps them on every side.
-            const float    Weighted = Key.Level > 0 ? Distance * Math::Mix(1.0f, kBehindDistanceScale, Behind) : Distance;
-            const float VoxelPixels = (Size / (float)Resolution) / Math::Max(Weighted * PixelAngle, 1e-6f);
-
-            if (!Forest.bInstancesOnly && VoxelPixels <= MaxPixels)
-            {
-                Out.Add({ Key, Distance });
-            }
-            else if (Key.Level == 0)
-            {
-                Out.Add({ { Distance < kNearBandDistance ? kNearInstanceLevel : kFarInstanceLevel, Key.X, Key.Z }, Distance });
-            }
-            else
-            {
-                for (int32 Child = 0; Child < 4; ++Child)
+                const FVector2 Min = ForestMin + FVector2((float)X, (float)Z) * Size;
+                float Ground = Center.y;
+                Forest::FindGround(Rules, Min.x + Size * 0.5f, Min.y + Size * 0.5f, Ground);
+                // Plants stand on the ground and reach a few tens of meters up, which is the box the view is measured to.
+                const FVector3 BoxMin(Min.x, Ground - 20.0f, Min.y);
+                const FVector3 BoxMax(Min.x + Size, Ground + 40.0f, Min.y + Size);
+                const float    Distance = Math::Length(Math::Clamp(ViewPosition, BoxMin, BoxMax) - ViewPosition);
+                if (Distance <= ViewDistance)
                 {
-                    Stack.Add({ Key.Level - 1, Key.X * 2 + (Child & 1), Key.Z * 2 + (Child >> 1) });
+                    Out.Add({ { Distance < kNearBandDistance ? kNearBand : kFarBand, X, Z }, Distance });
                 }
             }
         }
@@ -462,86 +358,48 @@ namespace Lumina
     }
 
     void CForestSystem::StartBuilds(const SForestComponent& Forest, const TVector<ForestSystemInternal::FWanted>& Wanted, ForestSystemInternal::FForestState& State,
-                                    THashSet<uint64>& OutWantedSet, TVector<Forest::FNodeKey>& OutUnready)
+                                    THashSet<uint64>& OutWantedSet, TVector<ForestSystemInternal::FTileKey>& OutUnready)
     {
         using namespace ForestSystemInternal;
 
         State.Running.RemoveAll([](const TSharedPtr<FBuild>& Build) { return Build->bDone.load(std::memory_order_acquire); });
-        int32 AggregateBuilds = 0;
-        int32 InstanceBuilds  = 0;
-        for (const TSharedPtr<FBuild>& Build : State.Running)
-        {
-            if (!Build->bCanceled.load(std::memory_order_relaxed))
-            {
-                ++(Build->bInstances ? InstanceBuilds : AggregateBuilds);
-            }
-        }
+        int32 Builds = (int32)Algo::CountIf(State.Running, [](const TSharedPtr<FBuild>& Build) { return !Build->bCanceled.load(std::memory_order_relaxed); });
 
         for (const FWanted& Want : Wanted)
         {
             const uint64 Packed = Want.Key.Pack();
             OutWantedSet.Add(Packed);
-            FNode& Node = State.Nodes.FindOrAdd(Packed);
-            if (Node.bReady)
+            FTile& Tile = State.Tiles.FindOrAdd(Packed);
+            if (Tile.bReady)
             {
-                if (Node.DrawnFrames < kDrawnSettleFrames && Node.ReadyFrames < kMaxDrawWaitFrames)
+                if (Tile.DrawnFrames < kDrawnSettleFrames && Tile.ReadyFrames < kMaxDrawWaitFrames)
                 {
                     OutUnready.Add(Want.Key);
                 }
                 continue;
             }
             OutUnready.Add(Want.Key);
-            if (Node.Build)
-            {
-                continue;
-            }
-
-            const bool bInstances = Want.Key.Level < 0;
-            if ((bInstances && InstanceBuilds >= kMaxInstanceBuilds) || (!bInstances && AggregateBuilds >= Forest.MaxConcurrentBuilds))
+            if (Tile.Build || Builds >= Math::Max(Forest.MaxConcurrentBuilds, 1))
             {
                 continue;
             }
 
             TSharedPtr<FBuild> Build = MakeShared<FBuild>();
-            Build->bInstances = bInstances;
-            Node.Build = Build;
+            Tile.Build = Build;
             State.Running.Add(Build);
+            ++Builds;
 
-            if (bInstances)
-            {
-                ++InstanceBuilds;
-                const FVector2 Min = Forest::GetNodeMin(*State.Rules, { 0, Want.Key.X, Want.Key.Z });
-                const float MinViewDistance = Want.Key.Level == kFarInstanceLevel ? kNearBandDistance : 0.0f;
-                // A scatter is a few milliseconds and the plants around the view wait on it, so it does not queue behind aggregate builds.
-                Jobs::Spawn(Jobs::EJobPriority::Low, [](TSharedPtr<FBuild> Target, TSharedPtr<const Forest::FRules> TileRules, FVector2 TileMin, float NearestView) -> Jobs::TTask<void>
-                {
-                    if (!Target->bCanceled.load(std::memory_order_relaxed))
-                    {
-                        Forest::ScatterRect(*TileRules, TileMin, TileMin + FVector2(TileRules->TileSize), Target->Plants, NearestView);
-                    }
-                    Target->bDone.store(true, std::memory_order_release);
-                    co_return;
-                }, Build, State.Rules, Min, MinViewDistance);
-                continue;
-            }
-
-            ++AggregateBuilds;
-            Forest::FAggregateRequest Request;
-            Request.Rules      = State.Rules;
-            Request.Geometry   = State.Geometry;
-            Request.Key        = Want.Key;
-            Request.Resolution = AggregateResolution(Forest);
-            Request.bUseCache  = Forest.bCacheAggregates;
-            const Jobs::EJobPriority Priority = Want.Distance < kNearBuildDistance ? Jobs::EJobPriority::Low : Jobs::EJobPriority::Background;
-            Jobs::Spawn(Priority, [](TSharedPtr<FBuild> Target, Forest::FAggregateRequest Input) -> Jobs::TTask<void>
+            const FVector2 Min = GetTileMin(*State.Rules, Want.Key);
+            const float MinViewDistance = Want.Key.Band == kFarBand ? kNearBandDistance : 0.0f;
+            Jobs::Spawn(Jobs::EJobPriority::Low, [](TSharedPtr<FBuild> Target, TSharedPtr<const Forest::FRules> TileRules, FVector2 TileMin, float NearestView) -> Jobs::TTask<void>
             {
                 if (!Target->bCanceled.load(std::memory_order_relaxed))
                 {
-                    Forest::BuildAggregate(Input, Target->Aggregate);
+                    Forest::ScatterRect(*TileRules, TileMin, TileMin + FVector2(TileRules->TileSize), Target->Plants, NearestView);
                 }
                 Target->bDone.store(true, std::memory_order_release);
                 co_return;
-            }, Build, Move(Request));
+            }, Build, State.Rules, Min, MinViewDistance);
         }
     }
 
@@ -556,31 +414,31 @@ namespace Lumina
             {
                 return;
             }
-            FNode* Node = State.Nodes.Find(Want.Key.Pack());
-            if (Node == nullptr || Node->bReady || !Node->Build || !Node->Build->bDone.load(std::memory_order_acquire))
+            FTile* Tile = State.Tiles.Find(Want.Key.Pack());
+            if (Tile == nullptr || Tile->bReady || !Tile->Build || !Tile->Build->bDone.load(std::memory_order_acquire))
             {
                 continue;
             }
-            ApplyBuild(World, Want.Key, *Node, State);
+            ApplyBuild(World, *Tile, State);
             ++Applied;
         }
     }
 
-    void CForestSystem::RetireStaleNodes(CWorld& World, const THashSet<uint64>& WantedSet, const TVector<Forest::FNodeKey>& Unready, ForestSystemInternal::FForestState& State)
+    void CForestSystem::RetireStaleTiles(CWorld& World, const THashSet<uint64>& WantedSet, const TVector<ForestSystemInternal::FTileKey>& Unready, ForestSystemInternal::FForestState& State)
     {
         using namespace ForestSystemInternal;
 
-        // A node the view no longer wants stays until whatever replaces it over its ground is ready, so the forest never opens a hole.
+        // A tile the view no longer wants stays until whatever replaces it over its ground is ready, so the forest never opens a hole.
         TVector<uint64> Stale;
-        for (auto& [Packed, Node] : State.Nodes)
+        for (auto& [Packed, Tile] : State.Tiles)
         {
             if (WantedSet.Contains(Packed))
             {
                 continue;
             }
-            const Forest::FNodeKey Key = UnpackKey(Packed);
-            const bool bCovering = Node.bReady && World.IsValidEntity(Node.Entity)
-                && Algo::AnyOf(Unready, [&](const Forest::FNodeKey& Pending) { return Overlaps(Key, Pending); });
+            const FTileKey Key = UnpackKey(Packed);
+            const bool bCovering = Tile.bReady && World.IsValidEntity(Tile.Entity)
+                && Algo::AnyOf(Unready, [&](const FTileKey& Pending) { return Overlaps(Key, Pending); });
             if (!bCovering)
             {
                 Stale.Add(Packed);
@@ -588,36 +446,31 @@ namespace Lumina
         }
         for (uint64 Packed : Stale)
         {
-            FNode* Node = State.Nodes.Find(Packed);
-            if (Node != nullptr && Node->Build)
+            FTile* Tile = State.Tiles.Find(Packed);
+            if (Tile != nullptr && Tile->Build)
             {
-                Node->Build->bCanceled.store(true, std::memory_order_relaxed);
+                Tile->Build->bCanceled.store(true, std::memory_order_relaxed);
             }
-            if (Node != nullptr && World.IsValidEntity(Node->Entity))
+            if (Tile != nullptr && World.IsValidEntity(Tile->Entity))
             {
-                World.DestroyEntity(Node->Entity);
+                World.DestroyEntity(Tile->Entity);
             }
-            State.Nodes.Remove(Packed);
+            State.Tiles.Remove(Packed);
         }
     }
 
-    void CForestSystem::TrackDrawnNodes(CWorld& World, ForestSystemInternal::FForestState& State)
+    void CForestSystem::TrackDrawnTiles(CWorld& World, ForestSystemInternal::FForestState& State)
     {
         using namespace ForestSystemInternal;
 
-        const auto IsDrawn = [&World](const FNode& Node)
+        const auto IsDrawn = [&World](const FTile& Tile)
         {
-            // An empty node draws nothing, so nothing waits on it.
-            if (!World.IsValidEntity(Node.Entity))
+            // An empty tile draws nothing, so nothing waits on it.
+            if (!World.IsValidEntity(Tile.Entity))
             {
                 return true;
             }
-            if (const SDynamicMeshComponent* Mesh = World.TryGetComponent<SDynamicMeshComponent>(Node.Entity))
-            {
-                const uint32 Version = Mesh->LoadRenderDataVersion();
-                return Version != 0u && Mesh->SyncedRenderDataVersion == Version && Mesh->ResolvedRenderDataVersion == Version;
-            }
-            if (const SFoliageComponent* Foliage = World.TryGetComponent<SFoliageComponent>(Node.Entity))
+            if (const SFoliageComponent* Foliage = World.TryGetComponent<SFoliageComponent>(Tile.Entity))
             {
                 return Foliage->BakedVersion == Foliage->InstancesVersion && !Foliage->bBakeIncomplete
                     && Algo::AllOf(Foliage->Types, [](const SFoliageType& Type) { return Type.ResolveHandle != Constants::kIndexNoneU32; });
@@ -626,44 +479,35 @@ namespace Lumina
         };
 
         int64 Awaiting = 0;
-        for (auto& [Packed, Node] : State.Nodes)
+        for (auto& [Packed, Tile] : State.Tiles)
         {
-            if (!Node.bReady)
+            if (!Tile.bReady)
             {
                 continue;
             }
-            Node.ReadyFrames = (uint16)Math::Min<uint32>(Node.ReadyFrames + 1u, kMaxDrawWaitFrames);
-            Node.DrawnFrames = IsDrawn(Node) ? (uint16)Math::Min<uint32>(Node.DrawnFrames + 1u, kDrawnSettleFrames) : 0u;
-            Awaiting += Node.DrawnFrames < kDrawnSettleFrames && Node.ReadyFrames < kMaxDrawWaitFrames ? 1 : 0;
+            Tile.ReadyFrames = (uint16)Math::Min<uint32>(Tile.ReadyFrames + 1u, kMaxDrawWaitFrames);
+            Tile.DrawnFrames = IsDrawn(Tile) ? (uint16)Math::Min<uint32>(Tile.DrawnFrames + 1u, kDrawnSettleFrames) : 0u;
+            Awaiting += Tile.DrawnFrames < kDrawnSettleFrames && Tile.ReadyFrames < kMaxDrawWaitFrames ? 1 : 0;
         }
         LUMINA_PROFILE_VALUE("Forest/AwaitingDraw", Awaiting);
     }
 
     void CForestSystem::PublishStats(CWorld& World, const ForestSystemInternal::FForestState& State)
     {
-        int64 Aggregates = 0;
-        int64 AggregateTriangles = 0;
         int64 Tiles = 0;
         int64 Plants = 0;
-        for (const auto& [Packed, Node] : State.Nodes)
+        for (const auto& [Packed, Tile] : State.Tiles)
         {
-            if (!World.IsValidEntity(Node.Entity))
+            if (!World.IsValidEntity(Tile.Entity))
             {
                 continue;
             }
-            if (const SDynamicMeshComponent* Mesh = World.TryGetComponent<SDynamicMeshComponent>(Node.Entity))
-            {
-                ++Aggregates;
-                AggregateTriangles += Mesh->GetTriangleCount();
-            }
-            else if (const SFoliageComponent* Foliage = World.TryGetComponent<SFoliageComponent>(Node.Entity))
+            if (const SFoliageComponent* Foliage = World.TryGetComponent<SFoliageComponent>(Tile.Entity))
             {
                 ++Tiles;
                 Plants += Foliage->Instances.Num();
             }
         }
-        LUMINA_PROFILE_VALUE("Forest/Aggregates", Aggregates);
-        LUMINA_PROFILE_VALUE("Forest/AggregateTriangles", AggregateTriangles);
         LUMINA_PROFILE_VALUE("Forest/InstanceTiles", Tiles);
         LUMINA_PROFILE_VALUE("Forest/Plants", Plants);
         LUMINA_PROFILE_VALUE("Forest/BuildsRunning", (int64)State.Running.Num());

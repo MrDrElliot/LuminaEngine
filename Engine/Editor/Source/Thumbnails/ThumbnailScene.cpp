@@ -126,9 +126,28 @@ namespace Lumina
         const FVector3 Right   = Math::Normalize(Math::Cross(WorldUp, Forward));
         const FVector3 Up      = Math::Normalize(Math::Cross(Forward, Right));
         Camera.SetView(Position, Forward, Up);
+        PublishCameraView();
+    }
 
-        // Extract reads FResolvedSceneView, and an unticked world leaves it default, culling the subject.
-        FResolvedSceneView& Resolved = World->GetEntityRegistry().Ctx().Get<FResolvedSceneView>();
+    void FThumbnailScene::SetCameraOrthographic(const FVector3& Position, const FVector3& Forward, const FVector3& Up, float Width)
+    {
+        if (!bInitialized || CameraEntity == ECS::NullEntity)
+        {
+            return;
+        }
+
+        World->GetComponent<STransformComponent>(CameraEntity).SetLocalLocation(Position);
+        SCameraComponent& Camera = World->GetComponent<SCameraComponent>(CameraEntity);
+        Camera.SetAspectRatio(1.0f);
+        Camera.SetOrthographic(Width);
+        Camera.SetView(Position, Forward, Up);
+        PublishCameraView();
+    }
+
+    void FThumbnailScene::PublishCameraView()
+    {
+        const SCameraComponent& Camera = World->GetComponent<SCameraComponent>(CameraEntity);
+        FResolvedSceneView& Resolved   = World->GetEntityRegistry().Ctx().Get<FResolvedSceneView>();
         Resolved.ViewVolume      = Camera.GetViewVolume();
         Resolved.bHasView        = true;
         Resolved.bHasPostProcess = false;
@@ -145,7 +164,7 @@ namespace Lumina
         uint64           Value     = 0;   // graphics timeline value that signals the copy is done
     };
 
-    bool FThumbnailScene::RecordCapture(FPendingCapture& Out)
+    bool FThumbnailScene::RenderFrame()
     {
         if (!bInitialized || !World.IsValid() || World->GetRenderer() == nullptr)
         {
@@ -158,45 +177,52 @@ namespace Lumina
         const uint8 FrameIndex = (uint8)Render().GetCurrentFrameIndex();
         World->Extract();
 
+        // Queued uploads only land at the next BeginFrame, so culling would chase a null Bounds address.
+        RHI::FlushUploadsAndWait();
+
+        IRenderScene* Scene = World->GetRenderer();
+        Scene->PrepareRender(FrameIndex);
+        Scene->RenderView(FrameIndex);
+        return true;
+    }
+
+    bool FThumbnailScene::RecordCapture(FPendingCapture& Out)
+    {
+        if (!RenderFrame())
         {
-            // Queued uploads only land at the next BeginFrame, so culling would chase a null Bounds address.
-            RHI::FlushUploadsAndWait();
-
-            IRenderScene* Scene = World->GetRenderer();
-            Scene->PrepareRender(FrameIndex);
-            Scene->RenderView(FrameIndex);
-
-            auto* Renderer = static_cast<FDefaultSceneRenderer*>(Scene);
-            const FSceneImage& Output = Renderer->GetDisplayImage();
-            if (!Output.IsValid())
-            {
-                return false;
-            }
-
-            Out.Width  = Output.GetSizeX();
-            Out.Height = Output.GetSizeY();
-            Out.Readback = RHI::Malloc((uint64)Out.Width * Out.Height * 4u, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
-            if (Out.Readback.Gpu == 0)
-            {
-                return false;
-            }
-            RHI::SetDebugName(Out.Readback.Gpu, "Readback.Thumbnail");
-
-            RHI::FCmdListH CL = RHI::OpenCommandList();
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
-                RHI::EStageFlags::Transfer,
-                RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
-            RHI::CmdCopyTextureToMemory(CL, Output.Texture, RHI::FTextureSlice{}, Out.Readback, Out.Width);
-            RHI::CmdBarrier(CL,
-                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                RHI::EStageFlags::Host,
-                RHI::EAccessFlags::HostRead);
-
-            // Submits without waiting and keeps the timeline value, so the caller can poll instead of blocking.
-            Out.Semaphore = RHI::GetQueueTimeline(RHI::EQueueType::Graphics);
-            Out.Value     = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
+            return false;
         }
+
+        auto* Renderer = static_cast<FDefaultSceneRenderer*>(World->GetRenderer());
+        const FSceneImage& Output = Renderer->GetDisplayImage();
+        if (!Output.IsValid())
+        {
+            return false;
+        }
+
+        Out.Width  = Output.GetSizeX();
+        Out.Height = Output.GetSizeY();
+        Out.Readback = RHI::Malloc((uint64)Out.Width * Out.Height * 4u, RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
+        if (Out.Readback.Gpu == 0)
+        {
+            return false;
+        }
+        RHI::SetDebugName(Out.Readback.Gpu, "Readback.Thumbnail");
+
+        RHI::FCmdListH CL = RHI::OpenCommandList();
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::ColorWrite,
+            RHI::EStageFlags::Transfer,
+            RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
+        RHI::CmdCopyTextureToMemory(CL, Output.Texture, RHI::FTextureSlice{}, Out.Readback, Out.Width);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Host,
+            RHI::EAccessFlags::HostRead);
+
+        // Submits without waiting and keeps the timeline value, so the caller can poll instead of blocking.
+        Out.Semaphore = RHI::GetQueueTimeline(RHI::EQueueType::Graphics);
+        Out.Value     = RHI::Submit(RHI::EQueueType::Graphics, TSpan<const RHI::FCmdListH>{&CL, 1});
 
         return true;
     }

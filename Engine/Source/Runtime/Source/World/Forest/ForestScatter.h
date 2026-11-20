@@ -85,11 +85,9 @@ namespace Lumina::Forest
         float                             TileSize  = 64.0f;
         // Finest first, so a plant stands on the most detailed terrain under it and a coarse backdrop carries the rest.
         TVector<TSharedPtr<const FTerrainSnapshot>> Terrains;
-        // How far away an aggregate whose voxels are one unit wide is first shown, at the reference screen.
-        float                             ViewDistancePerVoxel = 0.0f;
-        // Changes whenever any placement above does, which is what a cached aggregate is keyed by.
+        // Changes whenever any placement above does, which rebuilds every tile.
         uint64                            Hash      = 0;
-        // Left out of Hash, since a stroke only touches the tiles under it and GetRegionHash keys those.
+        // Left out of Hash, since a stroke only rebuilds the tiles under the chunks DiffPaint finds changed.
         TSharedPtr<const FPaint>          Paint;
 
         FVector2 GetMinCorner() const { return FVector2(Center.x - Extent * 0.5f, Center.z - Extent * 0.5f); }
@@ -102,9 +100,6 @@ namespace Lumina::Forest
 
     RUNTIME_API void CapturePaint(const SForestComponent& Forest, const FVector3& Center, FPaint& Out);
 
-    // Mixes the painted chunks over [Min, Max), so a tile's cache key moves with the paint on it.
-    RUNTIME_API uint64 GetRegionHash(const FRules& Rules, const FVector2& Min, const FVector2& Max);
-
     RUNTIME_API FArea GetChunkArea(const FRules& Rules, uint64 PackedChunk);
 
     // The ground under every chunk that differs between two captures.
@@ -115,7 +110,4 @@ namespace Lumina::Forest
 
     // Every plant whose cell lies in [Min, Max), the same however the region is split, less species that vanish before MinViewDistance.
     RUNTIME_API void ScatterRect(const FRules& Rules, const FVector2& Min, const FVector2& Max, TVector<FPlant>& Out, float MinViewDistance = 0.0f);
-
-    // Matches the streamer, a 60 degree view on a 1440 pixel tall screen.
-    RUNTIME_API float GetReferencePixelAngle();
 }

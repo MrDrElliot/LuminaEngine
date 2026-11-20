@@ -137,6 +137,24 @@ namespace Lumina
         bool bHit = false;
     };
 
+    // One body an overlap touched, so each foliage or forest instance is its own result under the owner Entity.
+    REFLECT()
+    struct SOverlapResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY(Hidden)
+        ECS::FEntity Entity = ECS::NullEntity;
+
+        // Index into the owner's SFoliageComponent::Instances, Constants::kIndexNone for the entity's own body.
+        PROPERTY(Hidden)
+        int32 InstanceIndex = Constants::kIndexNone;
+
+        bool IsInstance() const { return InstanceIndex != Constants::kIndexNone; }
+
+        bool operator==(const SOverlapResult&) const = default;
+    };
+
     REFLECT()
     struct SRayCastSettings
     {

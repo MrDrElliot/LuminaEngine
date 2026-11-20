@@ -150,26 +150,29 @@ bool IsShadowLevelCasterCulled(FCullView View, float3 Center, float Radius)
     return IsVirtualShadowPageCulled(View.ShadowLevel, Bit, Center, Radius);
 }
 
-// The raster's write, which lands only in pages the layer draws this frame.
+uint VirtualShadowPageEntry(uint Level, int2 GlobalPage)
+{
+    return GetSceneRoot().VirtualShadowPages.At(VirtualShadowPageIndex(Level, GlobalPage)).Entry;
+}
+
+// The raster's write of one virtual texel through its page's entry, which lands only in pages the layer draws this frame.
+void WriteVirtualShadowPageTexel(uint PageEntry, bool bStatic, uint2 Texel, float Depth)
+{
+    const uint Needed = bStatic ? VSM_PAGE_RENDER_STATIC : VSM_PAGE_REQUESTED;
+    if ((PageEntry & Needed) == 0u || Depth < 0.0 || Depth > 1.0)
+    {
+        return;
+    }
+
+    const uint2 Physical = VirtualShadowPhysicalPageOrigin(PageEntry & VSM_PAGE_PHYSICAL_MASK, !bStatic) + (Texel & (VSM_PAGE_SIZE - 1u));
+    GetSceneRoot().VirtualShadowPoolRW.InterlockedMin(Physical, asuint(Depth));
+}
+
 void WriteVirtualShadowLevelDepth(uint Level, bool bStatic, float4 Position)
 {
-    if (Position.z < 0.0 || Position.z > 1.0)
-    {
-        return;
-    }
-
-    const uint2 Texel   = uint2(Position.xy);
-    const FVirtualShadowLevel Lv = VirtualShadowLevel(Level);
-    const int2  Global  = Lv.PageOrigin + int2(Texel >> VSM_PAGE_SHIFT);
-    const FVirtualShadowPage Page = GetSceneRoot().VirtualShadowPages.Get(VirtualShadowPageIndex(Level, Global));
-    const uint  Needed  = bStatic ? VSM_PAGE_RENDER_STATIC : VSM_PAGE_REQUESTED;
-    if ((Page.Entry & Needed) == 0u)
-    {
-        return;
-    }
-
-    const uint2 Physical = VirtualShadowPhysicalPageOrigin(Page.Entry & VSM_PAGE_PHYSICAL_MASK, !bStatic) + (Texel & (VSM_PAGE_SIZE - 1u));
-    GetSceneRoot().VirtualShadowPoolRW.InterlockedMin(Physical, asuint(Position.z));
+    const uint2 Texel = uint2(Position.xy);
+    const int2  Page  = VirtualShadowLevel(Level).PageOrigin + int2(Texel >> VSM_PAGE_SHIFT);
+    WriteVirtualShadowPageTexel(VirtualShadowPageEntry(Level, Page), bStatic, Texel, Position.z);
 }
 
 // A mesh caster's write, whose cull view names its level and layer.

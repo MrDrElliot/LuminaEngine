@@ -47,7 +47,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Skeleton")
         TStrongObjectPtr<CSkeleton> Skeleton;
 
-        /** Attach points for this mesh only. One named like a skeleton socket replaces it on this mesh. */
+        // Attach points for this mesh only, each replacing a skeleton socket of the same name on this mesh.
         PROPERTY(Editable, Category = "Sockets")
         TVector<SMeshSocket> Sockets;
 
@@ -71,7 +71,8 @@ namespace Lumina
             }
         };
 
-        TStrongObjectPtr<CSkeleton> SkeletonJointIndicesAddress;
+        // The skeleton whose bone order the joint indices currently follow, which a reassigned Skeleton remaps them from.
+        TStrongObjectPtr<CSkeleton> JointIndicesSkeleton;
 
         // Never freed before the mesh, because animation threads hold pointers into them without a lock.
         mutable TVector<TUniquePtr<FBoneLODLayoutEntry>> BoneLODLayouts;

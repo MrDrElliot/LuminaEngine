@@ -197,6 +197,14 @@ namespace Lumina
     {
         constexpr ImVec4 kProjDialogAccentBlue = ImVec4(0.36f, 0.66f, 1.00f, 1.00f);
 
+        void BakeFoliageImpostorsCommand()
+        {
+            if (Global::GEditorEngine != nullptr)
+            {
+                static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI())->BakeFoliageImpostors();
+            }
+        }
+
         /** A button's three states. Hover lightens and press darkens, unlike ImGuiX::ButtonEx. */
         struct FButtonColors
         {
@@ -512,6 +520,9 @@ namespace Lumina
 
         // Init ThumbnailManager before world load so engine primitive meshes are in the transient package before deserialization.
         (void)CThumbnailManager::Get();
+
+        FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("Impostor.BakeFoliage",
+            "Bakes an impostor for every mesh the open world's forests and painted foliage scatter, leaving their packages dirty.", &BakeFoliageImpostorsCommand));
 
         // Content-browser tiles that draw their own body (curves, etc) instead of a rendered thumbnail.
         AssetTilePainters::RegisterBuiltin();
@@ -1066,6 +1077,15 @@ namespace Lumina
 
         MaterialCompiles.Tick();
         ParticleCompiles.Tick();
+        ImpostorBaker.Tick();
+    }
+
+    void FEditorUI::BakeFoliageImpostors()
+    {
+        if (WorldEditorTool != nullptr && WorldEditorTool->GetWorld() != nullptr)
+        {
+            ImpostorBaker.EnqueueFoliage(*WorldEditorTool->GetWorld());
+        }
     }
 
     void FEditorUI::OnEndFrame(const FUpdateContext& UpdateContext)

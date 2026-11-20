@@ -37,6 +37,7 @@ namespace Lumina
         FMaterialCompileTarget               Target;
         uint64                               GraphContentVersion = 0;
         uint64                               SourceHashBefore    = 0;
+        bool                                 bOffsetKnownBefore  = false;
         bool                                 bFunctionChange     = false;
         bool                                 bSaveWhenComplete   = false;
     };
@@ -173,7 +174,8 @@ namespace Lumina
     {
         CMaterial* Material = Request.Material.Get();
         const bool bFunctionChange = Request.Kind == ERequestKind::FunctionRecompile;
-        const bool bCurrent = Material->CompiledTemplateHash == CMaterial::GetShaderTemplateHash() && Material->SourceHash != 0;
+        const bool bCurrent = Material->CompiledTemplateHash == CMaterial::GetShaderTemplateHash() && Material->SourceHash != 0
+                           && Material->bWorldPositionOffsetKnown;
         if (!bFunctionChange && bCurrent)
         {
             return;
@@ -191,6 +193,7 @@ namespace Lumina
         Job->Graph               = Graph;
         Job->GraphContentVersion = Graph->GetTreeContentVersion();
         Job->SourceHashBefore    = Material->SourceHash;
+        Job->bOffsetKnownBefore  = Material->bWorldPositionOffsetKnown;
         Job->bFunctionChange     = bFunctionChange;
         Job->bSaveWhenComplete   = bFunctionChange && !Material->GetPackage()->IsDirty() && !Graph->NeedsCompile();
 
@@ -264,7 +267,7 @@ namespace Lumina
 
         // A template edit alone only refreshed the artifact cache, so the asset stays clean for source control.
         CPackage* Package = Material->GetPackage();
-        if (Package == nullptr || Material->SourceHash == Job.SourceHashBefore)
+        if (Package == nullptr || (Material->SourceHash == Job.SourceHashBefore && Job.bOffsetKnownBefore))
         {
             return;
         }

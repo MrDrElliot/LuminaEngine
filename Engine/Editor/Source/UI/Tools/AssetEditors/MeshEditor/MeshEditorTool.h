@@ -53,9 +53,6 @@ namespace Lumina
         // AABB overlay in Update() to show which part of the mesh it covers.
         int32 SelectedSurfaceIndex = -1;
 
-        // -1 = automatic (distance-driven), 0..MAX_MESH_LODS-1 = forced.
-        int32 PreviewLODIndex = -1;
-
         ECS::FEntity DirectionalLightEntity = ECS::NullEntity;
         ECS::FEntity MeshEntity = ECS::NullEntity;
 

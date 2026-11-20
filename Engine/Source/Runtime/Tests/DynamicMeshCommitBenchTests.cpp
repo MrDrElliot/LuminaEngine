@@ -73,14 +73,14 @@ namespace
 // Run with --gtest_also_run_disabled_tests to see where a dynamic mesh commit spends its CPU time.
 TEST(DynamicMeshCommitBench, DISABLED_StageCosts)
 {
-    struct FCase { const char* Name; bool bTangents; bool bOptimize; bool bFast; uint32 LODs; };
+    struct FCase { const char* Name; bool bTangents; bool bOptimize; bool bFast; bool bHierarchy; };
     const FCase Cases[] =
     {
-        { "component defaults", true,  true,  true,  1 },
-        { "no tangents",        false, true,  true,  1 },
-        { "no meshlet optimize", true, false, true,  1 },
-        { "neither",            false, false, true,  1 },
-        { "full meshlet build", true,  true,  false, 1 },
+        { "component defaults", true,  true,  true,  false },
+        { "no tangents",        false, true,  true,  false },
+        { "no meshlet optimize", true, false, true,  false },
+        { "neither",            false, false, true,  false },
+        { "full meshlet build", true,  true,  false, false },
     };
     const uint32 Sizes[][2] = { { 32, 64 }, { 48, 200 }, { 64, 512 } };
 
@@ -93,7 +93,7 @@ TEST(DynamicMeshCommitBench, DISABLED_StageCosts)
             Options.bGenerateTangents = Case.bTangents;
             Options.bOptimizeMeshlets = Case.bOptimize;
             Options.bFastMeshletBuild = Case.bFast;
-            Options.MaxLODs = Case.LODs;
+            Options.bLODHierarchy = Case.bHierarchy;
             const FStageTimes T = TimeCommit(Size[0], Size[1], Options, 7);
             std::printf("[bench] %6u tris  %-20s build %7.3f ms  meshlets %7.3f ms  total %7.3f ms\n",
                 Triangles, Case.Name, T.BuildMs, T.MeshletsMs, T.BuildMs + T.MeshletsMs);

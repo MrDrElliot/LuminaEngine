@@ -190,7 +190,7 @@ TEST(MeshletBuild, StaticVerticesAreSharedAcrossMeshlets)
 {
     constexpr uint32 N = 128u;
     FMeshResource Resource;
-    Resource.MaxLODs = 1;
+    Resource.bLODHierarchy = false;
     BuildGrid(Resource, N, false);
     Import::Mesh::GenerateMeshlets(Resource);
 

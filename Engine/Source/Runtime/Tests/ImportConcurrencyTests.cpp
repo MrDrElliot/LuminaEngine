@@ -56,7 +56,7 @@ namespace
     TVector<uint32> BuildFanTangents()
     {
         FMeshResource Resource;
-        Resource.MaxLODs = 1u;
+        Resource.bLODHierarchy = false;
         BuildFan(Resource);
         Import::Mesh::GenerateMeshlets(Resource);
         return Resource.Tangents;

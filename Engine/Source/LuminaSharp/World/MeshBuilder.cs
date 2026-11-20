@@ -434,7 +434,7 @@ public class MeshBuilder
     }
 
     /// Builds the geometry once as a static mesh that many entities or foliage instances can share. The world keeps it alive.
-    public CStaticMesh? BuildStaticMesh(CWorld World, CMaterialInterface? Material = null, int MaxLODs = 1)
+    public CStaticMesh? BuildStaticMesh(CWorld World, CMaterialInterface? Material = null, bool bLODHierarchy = true)
     {
         if (IsEmpty)
         {
@@ -447,7 +447,7 @@ public class MeshBuilder
             MemoryMarshal.Cast<FVector2, float>(UVs),
             MemoryMarshal.Cast<FVector4, float>(Linear),
             MemoryMarshal.Cast<int, uint>(CollectionsMarshal.AsSpan(Indices)),
-            Material!, MaxLODs);
+            Material!, bLODHierarchy);
     }
 
     /// Replaces the dynamic mesh's geometry with this one, for geometry unique to one entity or rebuilt often.

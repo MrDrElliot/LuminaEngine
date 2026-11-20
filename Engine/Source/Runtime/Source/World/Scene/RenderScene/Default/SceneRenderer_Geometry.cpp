@@ -292,6 +292,104 @@ namespace Lumina
         Barriers::RasterToRead(CL);
     }
 
+    void FDefaultSceneRenderer::VisBufferComputeRasterPass(RHI::FCmdListH CL, bool bLate)
+    {
+        static const FShaderH RasterShader = FShaderLibrary::Get("VisBufferComputeRaster.slang");
+        static const FShaderH FullscreenVS = FShaderLibrary::Get("FullscreenQuad.slang");
+        static const FShaderH ResolvePS    = FShaderLibrary::Get("VisBufferComputeResolve.slang");
+        if (!bCameraComputeRaster || !bCullBucketsValid || !RasterShader || !FullscreenVS || !ResolvePS)
+        {
+            return;
+        }
+
+        SCENE_GPU_SCOPE(CL, bLate ? "VisBuffer Compute Raster Late" : "VisBuffer Compute Raster Early");
+
+        // The cull's list and draw entries, and the hardware phase's depth the resolve tests against.
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                        RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+
+        struct FRasterPC
+        {
+            RHI::TGPUSpan<uint32> List;
+            RHI::TGPUSpan<uint32> Cursors;
+            RHI::TGPUSpan<uint64> Target;
+            uint32                TargetSize[2];
+            uint32                _Pad0;
+            uint32                _Pad1;
+        } RasterPC = {};
+        static_assert(sizeof(FRasterPC) == 64, "FRasterPC must match VisBufferComputeRaster.slang.");
+        RasterPC.List          = { CameraRasterList, VISBUFFER_COMPUTE_RASTER_CAPACITY };
+        RasterPC.Cursors       = { CameraRasterCursors, 2u };
+        RasterPC.Target        = { CameraRasterTarget, CameraRasterSize.x * CameraRasterSize.y };
+        RasterPC.TargetSize[0] = CameraRasterSize.x;
+        RasterPC.TargetSize[1] = CameraRasterSize.y;
+        {
+            SCENE_GPU_SCOPE(CL, "Raster");
+            DispatchCompute(CL, RasterShader, RasterPC, VISBUFFER_COMPUTE_RASTER_GROUPS, 1u, 1u);
+        }
+
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                        RHI::EStageFlags::PixelShader | RHI::EStageFlags::Transfer,
+                        RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::TransferRead);
+
+        // The late cull appends after what the early raster drew, so the late raster starts where this one ended.
+        if (!bLate)
+        {
+            RHI::CmdMemcpy(CL, { CameraRasterCursors.Gpu + sizeof(uint32), sizeof(uint32) }, { CameraRasterCursors.Gpu, sizeof(uint32) });
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        }
+
+        const FSceneImage& VisRT   = GetNamedImage(ENamedImage::VisBuffer);
+        const FSceneImage& DepthRT = GetNamedImage(ENamedImage::DepthAttachment);
+
+        RHI::FRenderAttachment Color;
+        Color.Texture = VisRT.Texture;
+        Color.LoadOp  = RHI::ELoadOp::Load;
+        Color.StoreOp = RHI::EStoreOp::Store;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments         = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.DepthAttachment.Texture  = DepthRT.Texture;
+        Pass.DepthAttachment.LoadOp   = RHI::ELoadOp::Load;
+        Pass.DepthAttachment.StoreOp  = RHI::EStoreOp::Store;
+        Pass.RenderArea               = CameraRasterSize;
+
+        SCENE_GPU_SCOPE(CL, "Resolve");
+        RHI::CmdBeginRenderPass(CL, Pass);
+        SetViewportScissor(CL, CameraRasterSize);
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+
+        // The hardware draws' own test, so a compute pixel lands only where it is nearer than what they wrote.
+        RHI::FDepthStencilDesc DepthDesc;
+        DepthDesc.DepthMode = RHI::EDepthFlags::Read | RHI::EDepthFlags::Write;
+        DepthDesc.DepthTest = RHI::EOp::Greater;
+        RHI::CmdSetDepthStencil(CL, DepthDesc);
+
+        FGraphicsPipelineKey Key;
+        Key.VS          = FullscreenVS;
+        Key.PS          = ResolvePS;
+        Key.DepthFormat = EFormat::D32;
+        Key.ColorTargets.Add({ VisRT.Desc.Format, {} });
+        RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        struct FResolvePC
+        {
+            RHI::TGPUSpan<uint64> Target;
+            uint32                TargetSize[2];
+            uint32                _Pad0;
+            uint32                _Pad1;
+        } ResolvePC = {};
+        static_assert(sizeof(FResolvePC) == 32, "FResolvePC must match VisBufferComputeResolve.slang.");
+        ResolvePC.Target        = RasterPC.Target;
+        ResolvePC.TargetSize[0] = CameraRasterSize.x;
+        ResolvePC.TargetSize[1] = CameraRasterSize.y;
+        RHI::CmdDraw(CL, MakeArgs(ResolvePC), 3, 1, 0, 0);
+
+        RHI::CmdEndRenderPass(CL);
+        Barriers::RasterToRead(CL);
+    }
+
     bool FDefaultSceneRenderer::IsTwoPhaseView(const FFrameData& Frame, uint32 ViewIndex)
     {
         return ViewIndex < static_cast<uint32>(Frame.Views.CullViews.Num())

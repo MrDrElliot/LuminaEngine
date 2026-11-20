@@ -212,7 +212,7 @@ namespace Lumina
             SceneGlobalData.TemporalJitterU = 0.0f;
             SceneGlobalData.TemporalJitterV = 0.0f;
 
-            if (IsTemporalAAEnabledFor(PrimaryView) || IsTemporalUpscalerFor(PrimaryView))
+            if ((IsTemporalAAEnabledFor(PrimaryView) || IsTemporalUpscalerFor(PrimaryView)) && !FrameSettings.bExactCapture)
             {
                 // A bailed extract must not flip parity, or the resolve blends a slot against itself.
                 PrimaryView.PendingTemporalFrameIndex = PrimaryView.TemporalFrameIndex + 1;
@@ -278,15 +278,17 @@ namespace Lumina
         {
             // Read live from the project settings, like the other quality toggles; there is no per-world copy.
             const CRendererSettings* Renderer = GetDefault<CRendererSettings>();
-            const bool bVoxelFar = Renderer == nullptr || Renderer->bVoxelFarRepresentation;
-            const bool bProxies  = Renderer == nullptr || Renderer->bFarProxies;
-            SceneGlobalData.CullData.VirtualGeometryFlags = (bVoxelFar ? VG_FLAG_VOXEL_FAR : 0u) | (bProxies ? VG_FLAG_PROXIES : 0u);
-            SceneGlobalData.CullData.ProxyTransitionPixels = Renderer != nullptr ? Math::Clamp(Renderer->ProxyTransitionPixels, 0.0f, 16.0f) : 2.0f;
+            const bool bProxies = (Renderer == nullptr || Renderer->bFarProxies) && !FrameSettings.bExactCapture;
+            SceneGlobalData.CullData.VirtualGeometryFlags     = bProxies ? VG_FLAG_PROXIES : 0u;
+            SceneGlobalData.CullData.ProxyTransitionPixels    = Renderer != nullptr ? Math::Clamp(Renderer->ProxyTransitionPixels, 0.0f, 16.0f) : 2.0f;
+            SceneGlobalData.CullData.ImpostorTransitionPixels = Renderer != nullptr ? Math::Clamp(Renderer->ImpostorTransitionPixels, 0.0f, 1024.0f) : 96.0f;
         }
         ShadowMinTexels                                 = 0.0f;
         // Built here because the skinned gather picks against it on workers before the cull views exist.
         Frame.Views.CameraLODView                       = MakeCameraLODView(ViewVolume, (float)DisplaySize.y);
         Frame.Views.CameraLODView.LODErrorScale        /= DrawPressureLODDivisor.load(std::memory_order_relaxed);
+        SceneGlobalData.CullData.CameraLODOriginAndFlags = Frame.Views.CameraLODView.ViewOriginAndFlags;
+        SceneGlobalData.CullData.CameraLODErrorScale     = FrameSettings.bUseLODs ? Frame.Views.CameraLODView.LODErrorScale : 0.0f;
         SceneGlobalData.CullData.DebugMode              = (uint32)FrameSettings.Flags;
         #if !defined(LE_SHIPPING)
         if (const int32 Override = CVarDebugViewOverride.GetValue(); Override >= 0)
@@ -675,7 +677,8 @@ namespace Lumina
         const uint32 OtherViewLayers = Layers.IsForegroundActive() ? ~RenderLayers::kForegroundMask : RenderLayers::kAllMask;
         uint32 PushLayers = Layers.CullMask;
 
-        const float DrawPressureDivisor = DrawPressureLODDivisor.load(std::memory_order_relaxed);
+        // With LODs off every view keeps the source level, which a zero scale pins through the same cut.
+        const float LODScaleFactor = FrameSettings.bUseLODs ? 1.0f / DrawPressureLODDivisor.load(std::memory_order_relaxed) : 0.0f;
         auto PushView = [&](const FMatrix4& ViewProjection, const FVector3& Origin, uint32 Flags, float LODErrorScale,
                             uint32 ShadowLevel = Constants::kIndexNoneU32, float MinBoundsDiameter = 0.0f)
         {
@@ -690,7 +693,7 @@ namespace Lumina
             View.ViewOriginAndFlags = FVector4(Origin, std::bit_cast<float>(Flags));
             View.ShadowLevel        = ShadowLevel;
             View.MinBoundsDiameter  = MinBoundsDiameter;
-            View.LODErrorScale      = LODErrorScale / DrawPressureDivisor;
+            View.LODErrorScale      = LODErrorScale * LODScaleFactor;
             View.LayerMask          = PushLayers;
             CullViews.Add(View);
 

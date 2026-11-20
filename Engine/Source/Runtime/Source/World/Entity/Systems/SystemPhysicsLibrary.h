@@ -37,7 +37,7 @@ namespace Lumina
         static void ShapeCastAll(const SSystemContext& Context, SQueryShape Shape, FVector3 Start, FVector3 End, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask, TVector<SRayResult>& Out);
 
         FUNCTION(ScriptInternal)
-        static void Overlap(const SSystemContext& Context, SQueryShape Shape, FVector3 Center, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask, TVector<ECS::FEntity>& Out);
+        static void Overlap(const SSystemContext& Context, SQueryShape Shape, FVector3 Center, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask, TVector<SOverlapResult>& Out);
 
         //~ Body reads.
 

@@ -33,9 +33,6 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Distance Field")
         bool bTwoSided = false;
-
-        PROPERTY(Editable, Category = "Distance Field", ClampMin = "0", ClampMax = "3")
-        uint32 SourceLOD = 0;
     };
 
     // A built field, left unreflected because it is bulk payload serialized by hand alongside FMeshResource.

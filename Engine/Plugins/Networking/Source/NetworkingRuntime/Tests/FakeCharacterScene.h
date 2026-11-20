@@ -65,7 +65,7 @@ namespace Lumina
         TOptional<SRayResult> CastRayAgainst(ECS::FEntity, const FVector3&, const FVector3&) override { return {}; }
         void CastShapeAll(const SQueryShape&, const FVector3&, const FVector3&, ECollisionProfiles, TSpan<const ECS::FEntity>, TVector<SRayResult>& OutHits) override { OutHits.Reset(); }
         TOptional<SRayResult> CastShapeClosest(const SQueryShape&, const FVector3&, const FVector3&, ECollisionProfiles, TSpan<const ECS::FEntity>) override { return {}; }
-        int32 OverlapShape(const SQueryShape&, const FVector3&, ECollisionProfiles, TSpan<const ECS::FEntity>, TSpan<ECS::FEntity>) override { return 0; }
+        int32 OverlapShape(const SQueryShape&, const FVector3&, ECollisionProfiles, TSpan<const ECS::FEntity>, TSpan<SOverlapResult>) override { return 0; }
         bool GetClosestPointOnBody(ECS::FEntity, const FVector3&, FVector3&) const override { return false; }
         bool GetBodyBounds(ECS::FEntity, SAABB&) const override { return false; }
         void AddForce(ECS::FEntity, const FVector3&) override {}

@@ -877,10 +877,7 @@ namespace Lumina
         R.MaterialID            = (uint64)ConcreteMaterial;
         R.MaterialIdx           = (uint32)Material->GetMaterialIndex();
         R.bMaterialCastsShadows = Material->DoesCastShadows();
-        // Every material without an offset compiles to the default's geometry stage, so a different one is the offset.
-        const CMaterial* DefaultMaterial = CMaterial::GetDefaultMaterial();
-        R.bWorldPositionOffset  = DefaultMaterial != nullptr
-            && R.MeshShaderShadow != DefaultMaterial->GetStageForKey(ActiveMeshletStage(EMaterialShaderStage::MeshShadow), DefaultMaterial->GetStaticSwitchKey());
+        R.bWorldPositionOffset  = ConcreteMaterial == nullptr || ConcreteMaterial->HasWorldPositionOffset();
 
         // Casting is what shadow-only draws, so the two together are the only useful combination.
         const bool bShadowOnly = Material->IsShadowOnly() && R.bMaterialCastsShadows;
@@ -915,6 +912,7 @@ namespace Lumina
             .bModulate    = (bModulate    ? 1u : 0u),
             .bWriteDepth  = (bWriteDepth  ? 1u : 0u),
             .bTwoSided    = (bTwoSided    ? 1u : 0u),
+            .bWorldPositionOffset = (R.bWorldPositionOffset ? 1u : 0u),
         };
 
         return bReady;
@@ -1045,8 +1043,23 @@ namespace Lumina
         Out.Surfaces.Reset();
         Out.Surfaces.Reserve(Resource.GeometrySurfaces.Num());
 
+        // The largest surface draws the impostor, so its material picks how the whole mesh shades far away.
+        const bool bImpostor = Mesh->HasImpostor() && !Resource.bSkinnedMesh;
+        int32 ImpostorOwner = Constants::kIndexNone;
+        uint32 OwnerMeshlets = 0;
+        for (int32 Index = 0; Index < Resource.GeometrySurfaces.Num(); ++Index)
+        {
+            const uint32 Meshlets = Resource.GeometrySurfaces[Index].FinestMeshletCount(Resource.MeshletData);
+            if (Meshlets > OwnerMeshlets)
+            {
+                OwnerMeshlets = Meshlets;
+                ImpostorOwner = Index;
+            }
+        }
+
         for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
         {
+            const bool bOwnsImpostor = Out.Surfaces.Num() == ImpostorOwner;
             FResolvedSurface& R = Out.Surfaces.EmplaceGetRef();
 
             R.NumLODs     = Surface.NumLODs;
@@ -1082,6 +1095,12 @@ namespace Lumina
             if (Mesh->HasDistanceField())
             {
                 R.MaterialFlags |= EInstanceFlags::HasDistanceField;
+            }
+            if (bImpostor)
+            {
+                R.MaterialFlags      |= EInstanceFlags::Impostor;
+                R.Proxy.LocalCenter   = Resource.Impostor.Center;
+                R.Proxy.SplatHalfSize = bOwnsImpostor ? Resource.Impostor.Radius : -Resource.Impostor.Radius;
             }
 
             MeshResolveCacheInternal::AddDependency(Out, (const void*)RawMaterial);

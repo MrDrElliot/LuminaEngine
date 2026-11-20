@@ -32,7 +32,7 @@ namespace Lumina
 
     struct FMeshBuildOptions
     {
-        uint32 MaxLODs             = 1;
+        bool   bLODHierarchy       = false;
         bool   bGenerateTangents   = false;
         bool   bMeshletConeCulling = false;
         bool   bOptimizeMeshlets   = true;
@@ -106,9 +106,6 @@ namespace Lumina
         // Commit's build, run at once whatever batch is open; the batch itself calls this for every pending commit.
         bool CommitNow();
 
-        // Publishes a resource GenerateMeshlets already ran on, such as one loaded from a cache, without staging any streams.
-        bool CommitBuiltResource(FMeshResource&& Built, const FVector3& LocalMin, const FVector3& LocalMax);
-
         // Set by a Commit made while a mesh build batch was open, and cleared when the batch builds it.
         bool bCommitPending = false;
 
@@ -148,15 +145,9 @@ namespace Lumina
         // Takes every stream and section without copying, replacing whatever was staged.
         void SetBuildData(FDynamicMeshBuildData&& Data);
 
-        /** How many LOD levels Commit() builds, 1 meaning LOD 0 only. Each extra level is another full
-         *  meshopt_simplify pass over the WHOLE LOD-0 index range (levels are not cascaded), plus a
-         *  full-size scratch allocation, so cost is roughly linear in this. Clamped to MAX_MESH_LODS.
-         *
-         *  Defaults to 1 because this component exists for geometry that is rebuilt often, where the build
-         *  lands on the frame that rebuilds it and the LOD ramp only pays off for meshes also viewed at
-         *  range. Raise it for procedural geometry that is built once and seen from far away. */
+        // Off by default since Commit() builds on the frame that rebuilds, and only geometry seen far away earns the hierarchy's build cost.
         PROPERTY(Editable, Category = "Rendering")
-        int32 MaxLODs = 1;
+        bool bLODHierarchy = false;
 
         /** Build per-meshlet normal cones so the GPU can cull backfacing clusters. Costs twice at build
          *  time: it selects meshopt's cone-weighted clustering (the expensive mode) and adds a bounds

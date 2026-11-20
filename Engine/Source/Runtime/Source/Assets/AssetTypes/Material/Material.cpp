@@ -451,8 +451,8 @@ namespace Lumina
             {
                 CommitSerializedShaders();
 #if USING(WITH_EDITOR)
-                // Recompiled once in the background so the asset gains a source hash and can drop its embedded bytecode.
-                if (SourceHash == 0 && GetPackage() != nullptr)
+                // Recompiled once in the background so the asset gains a source hash and learns whether its graph offsets vertices.
+                if ((SourceHash == 0 || !bWorldPositionOffsetKnown) && GetPackage() != nullptr)
                 {
                     QueueEditorRecompile(this);
                 }
@@ -1361,6 +1361,7 @@ namespace Lumina
         CMaterial* Material = NewObject<CMaterial>(nullptr, Name);
         Material->AddToRoot();
         Material->BlendMode = InBlendMode;
+        Material->bWorldPositionOffsetKnown = true;
         Material->Parameters.Reset();
         Material->Parameters.Append(InParameters.begin(), InParameters.end());
 
@@ -1399,6 +1400,7 @@ namespace Lumina
         }
 
         CMaterial* Material = NewObject<CMaterial>(nullptr, "DefaultTerrainMaterial");
+        Material->bWorldPositionOffsetKnown = true;
         Material->AddToRoot();
         Material->MaterialType = EMaterialType::Terrain;
         GDefaultTerrainMaterial = Material;

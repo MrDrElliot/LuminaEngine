@@ -73,6 +73,7 @@ enum EInstanceFlags
     ShadowOnly      = BIT(10),
     NoDecals        = BIT(11),
     NoContactShadows = BIT(12),
+    Impostor        = BIT(13),
     HasDistanceField = BIT(14),
     Foliage         = BIT(15),
 }
@@ -322,10 +323,6 @@ struct FSurfaceDesc
     // The mesh LOD distance scale, multiplied into every error above and into the per-meshlet bounds at selection time.
     float LODErrorMultiplier;
     uint  _Pad1;
-
-    property bool bClusterLOD { get { return (Flags & SURFACE_DESC_CLUSTER_LOD) != 0u; } }
-    bool IsVoxelSlot(uint Slot)       { return (Flags & (1u << (SURFACE_DESC_VOXEL_SHIFT + Slot))) != 0u; }
-    bool HasVoxelParent(uint Slot)    { return (Flags & (1u << (SURFACE_DESC_VOXEL_PARENT_SHIFT + Slot))) != 0u; }
 }
 
 // Mirror of Lumina::FMeshletLODBounds (48 B), one per meshlet of a cluster LOD mesh.
@@ -339,9 +336,6 @@ struct FMeshletLODBounds
     float  ParentError;
     uint   Flags;
     uint   Level;
-
-    property bool bVoxel       { get { return (Flags & MESHLET_LOD_FLAG_VOXEL) != 0u; } }
-    property bool bVoxelParent { get { return (Flags & MESHLET_LOD_FLAG_VOXEL_PARENT) != 0u; } }
 }
 
 // Mirror of Lumina::FMeshlet.
@@ -356,9 +350,6 @@ struct FMeshlet
     property uint TriangleCount    { get { return (PackedCounts >> MESHLET_TRIANGLE_COUNT_SHIFT) & MESHLET_COUNT_MASK; } }
     property uint LODIndex         { get { return (PackedCounts >> MESHLET_LOD_SHIFT) & MESHLET_LOD_MASK; } }
     property bool bShortVertexRefs { get { return ((PackedCounts >> MESHLET_SHORT_REFS_SHIFT) & 1u) != 0u; } }
-    property bool bVoxel           { get { return ((PackedCounts >> MESHLET_VOXEL_SHIFT) & 1u) != 0u; } }
-    property bool bCompactSplat    { get { return ((PackedCounts >> MESHLET_COMPACT_SPLAT_SHIFT) & 1u) != 0u; } }
-    property uint SplatReachBits   { get { return PackedCounts >> MESHLET_SPLAT_REACH_SHIFT; } }
 };
 
 // Built from the float exponent field rather than exp2 so C++ and the shader produce identical bits.
@@ -494,6 +485,14 @@ struct FMeshletHeader
     // Per meshlet, read only while Flags carries MESH_HEADER_FLAG_CLUSTER_LOD.
     FMeshletLODBounds* LODBounds;
     uint            Flags;
+
+    // Bindless slots of the impostor atlas, whose views number ImpostorFrames along a side, 0 with no impostor.
+    uint            ImpostorBaseColorIndex;
+    uint            ImpostorNormalDepthIndex;
+    uint            ImpostorFrames;
+    float           ImpostorCenterX, ImpostorCenterY, ImpostorCenterZ;
+    float           ImpostorRadius;
+    uint            ImpostorFrameSize;
     uint            _Pad0;
 
     property bool bClusterLOD { get { return (Flags & MESH_HEADER_FLAG_CLUSTER_LOD) != 0u; } }
@@ -502,6 +501,8 @@ struct FMeshletHeader
     property float3 DistanceFieldSize { get { return float3(DistanceFieldSizeX, DistanceFieldSizeY, DistanceFieldSizeZ); } }
     property float3 LocalBoundsMin    { get { return float3(LocalMinX, LocalMinY, LocalMinZ); } }
     property float3 LocalBoundsMax    { get { return float3(LocalMaxX, LocalMaxY, LocalMaxZ); } }
+    property float3 ImpostorCenter    { get { return float3(ImpostorCenterX, ImpostorCenterY, ImpostorCenterZ); } }
+    property bool   bHasImpostor      { get { return ImpostorFrames >= 2u; } }
 };
 
 // Mirror of Lumina::FInstanceBlockBounds, the distance bounds of one workgroup's slots.
@@ -520,19 +521,17 @@ struct FInstanceCullEntry
     uint   DrawIDAndFlags;    // same packing as FGPUInstance; carries Active and HasGeometry
     uint   SurfaceDescIndex;
     float  MaxDrawDistance;   // 0 never distance-culls
-    uint   LODAndThinning;    // Lumina::PackLODAndThinning
-
-    property int ForcedLODIndex { get { return int(LODAndThinning & INSTANCE_FORCED_LOD_MASK) - 1; } }
+    uint   FlagsAndThinning;    // Lumina::PackFlagsAndThinning
 
     // Past this camera distance a foliage instance thins out, 0 never.
-    property float ThinningStartDistance { get { return UnpackHalf(LODAndThinning >> 16u); } }
+    property float ThinningStartDistance { get { return UnpackHalf(FlagsAndThinning >> 16u); } }
 
     // Clear for the Default layer, which is nearly everything, so only the rest load their mask from FInstanceStatic.
-    property bool bCustomLayers { get { return (LODAndThinning & INSTANCE_CUSTOM_LAYERS_BIT) != 0u; } }
+    property bool bCustomLayers { get { return (FlagsAndThinning & INSTANCE_CUSTOM_LAYERS_BIT) != 0u; } }
 
-    property uint CustomDepthStencil { get { return (LODAndThinning >> INSTANCE_CUSTOM_DEPTH_SHIFT) & CUSTOM_DEPTH_WORD_MASK; } }
+    property uint CustomDepthStencil { get { return (FlagsAndThinning >> INSTANCE_CUSTOM_DEPTH_SHIFT) & CUSTOM_DEPTH_WORD_MASK; } }
 
-    property bool bNoShadowWPO { get { return (LODAndThinning & INSTANCE_NO_SHADOW_WPO_BIT) != 0u; } }
+    property bool bNoShadowWPO { get { return (FlagsAndThinning & INSTANCE_NO_SHADOW_WPO_BIT) != 0u; } }
 
     bool HasFlag(EInstanceFlags Flag)
     {
@@ -654,6 +653,14 @@ struct FMeshletDraw
     {
         return (FrameTag << MESHLET_DRAW_INDEX_BITS) | (MeshletIndex & MESHLET_DRAW_INDEX_MASK);
     }
+
+    static FMeshletDraw Make(uint InstanceID, uint MeshletIndex, uint FrameTag)
+    {
+        FMeshletDraw Draw;
+        Draw.InstanceID        = InstanceID;
+        Draw.PackedIndexAndTag = Pack(MeshletIndex, FrameTag);
+        return Draw;
+    }
 };
 
 // Count is load-bearing, since a partial block's spare lanes would address the next LOD.
@@ -696,6 +703,11 @@ struct FRenderBucket
     uint BlockDemand;
     // Blocks the late pass appended from the end of the block region, in a two-phase bucket that fits its whole demand.
     uint BlockBackCount;
+    // Draws the compute rasterizer took, slotted down from the end of the draw region so the hardware slices never reach them.
+    uint DrawBackCursor;
+    uint _Pad0;
+    uint _Pad1;
+    uint _Pad2;
     // Relative to DrawBase and indexed by MESHLET_SLICE_*, because both VisBuffer phases share cull view 0.
     uint SliceBase[MESHLET_SLICE_COUNT];
     uint SliceCount[MESHLET_SLICE_COUNT];
@@ -1017,9 +1029,12 @@ struct FCullData
     uint     VirtualGeometryFlags;
     // Projected diameter in pixels under which an instance leaves the meshlet path for its far proxy.
     float    ProxyTransitionPixels;
-    uint     _Pad0;
-    uint     _Pad1;
+    // The camera's LOD view, which cuts a skinned mesh on every cull view since its pre-skin slice holds only that cut.
+    float    CameraLODErrorScale;
+    // Projected diameter in pixels under which an instance whose mesh has an impostor swaps to it.
+    float    ImpostorTransitionPixels;
     uint     _Pad2;
+    float4   CameraLODOriginAndFlags;
 };
 
 // Debug visualization modes. Must match Lumina::ERenderSceneDebugFlags.
@@ -1060,6 +1075,8 @@ struct FCullData
 // Shading lanes per 2x2 quad that survived to the VisBuffer; the micro-triangle cost readout.
 #define DEBUG_MODE_QUAD_EFFICIENCY      31u
 #define DEBUG_MODE_SCREEN_SPACE_GI      32u
+// Sun shadow casters by how their virtual shadow meshlets rasterized, green in compute and red in hardware.
+#define DEBUG_MODE_SHADOW_RASTER        33u
 
 // Global scale on every material's POM settings. Matches FParallaxSettings in SceneRenderTypes.h.
 struct FParallaxSettings

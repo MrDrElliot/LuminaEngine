@@ -160,73 +160,12 @@ static const float kProxyTransitionBand = 0.25;
 // Seeded apart from thinning, whose survivors would otherwise all draw from the low end of the band.
 static const uint kProxyTransitionSeed = 0x9e3779b9u;
 
-// Whether the camera sees an instance as a splat, each instance crossing at its own size inside the band so no row of them swaps together.
-bool IsProxySized(float3 Center, float Radius, float3 Position)
+// Whether the camera sees an instance as its proxy, each instance crossing at its own size inside the band so no row of them swaps together.
+bool IsProxySized(float3 Center, float Radius, float3 Position, float TransitionPixels)
 {
     const float Dither    = 2.0 * PositionHash(Position, kProxyTransitionSeed) - 1.0;
-    const float Threshold = Scene().CullData.ProxyTransitionPixels * (1.0 + kProxyTransitionBand * Dither);
+    const float Threshold = TransitionPixels * (1.0 + kProxyTransitionBand * Dither);
     return ProjectedDiameterPixels(Center, Radius) < Threshold;
-}
-
-// The project's runtime toggle for the baked voxel levels.
-bool VoxelFarEnabled()
-{
-    return (Scene().CullData.VirtualGeometryFlags & VG_FLAG_VOXEL_FAR) != 0u;
-}
-
-// Slots a view may pick from, which stops short of the voxel levels while they are off for it.
-uint SelectableLODCount(FSurfaceDesc Desc, bool bVoxels)
-{
-    const uint NumLODs = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
-    if (bVoxels)
-    {
-        return NumLODs;
-    }
-    for (uint i = 0u; i < NumLODs; ++i)
-    {
-        if (Desc.IsVoxelSlot(i))
-        {
-            return i;
-        }
-    }
-    return NumLODs;
-}
-
-// The coarsest LOD whose projected error the view tolerates, mirrored by SelectLODForView in SceneRenderer_Extract.cpp.
-uint SelectLODForView(FSurfaceDesc Desc, FCullView View, float4 SphereBounds, float MaxScale)
-{
-    const uint NumLODs = SelectableLODCount(Desc, VoxelFarEnabled());
-    if (NumLODs <= 1u || View.LODErrorScale <= 0.0)
-    {
-        return 0u;
-    }
-
-    // Nearest point of the bounds, so a large mesh is never coarser than its closest part allows.
-    const float Reach = View.HasFlag(CULL_VIEW_FLAG_ORTHOGRAPHIC_LOD)
-                      ? 1.0
-                      : max(length(SphereBounds.xyz - View.ViewOrigin) - SphereBounds.w, 0.0);
-    const float ErrorScale = View.LODErrorScale * MaxScale * Desc.LODErrorMultiplier;
-
-    uint Picked = 0u;
-    for (uint i = 1u; i < NumLODs; ++i)
-    {
-        if (Desc.LODError[i] * ErrorScale > Reach)
-        {
-            break;
-        }
-        Picked = i;
-    }
-    return Picked;
-}
-
-// A root whose parent is a voxel level has no parent at all while those levels are off.
-float ClusterSlotParentError(FSurfaceDesc Desc, uint Slot, bool bVoxels)
-{
-    if (!bVoxels && Desc.HasVoxelParent(Slot))
-    {
-        return MESHLET_LOD_ERROR_INFINITE;
-    }
-    return Desc.LODParentError[Slot];
 }
 
 // Group spheres nest loosely inside the instance sphere, so the reach bounds give them this much room.
@@ -235,8 +174,7 @@ static const float kClusterReachSlack = 1.25;
 // The slots of a cluster surface that can hold part of this view's cut, x the first and y the last.
 uint2 SelectClusterSlotRange(FSurfaceDesc Desc, FCullView View, float4 SphereBounds, float MaxScale)
 {
-    const bool bVoxels  = VoxelFarEnabled();
-    const uint NumSlots = SelectableLODCount(Desc, bVoxels);
+    const uint NumSlots = min(Desc.NumLODs, (uint)MESHLET_MAX_LODS);
     if (NumSlots <= 1u || View.LODErrorScale <= 0.0)
     {
         return uint2(0u, 0u);
@@ -250,7 +188,7 @@ uint2 SelectClusterSlotRange(FSurfaceDesc Desc, FCullView View, float4 SphereBou
 
     // A slot whose every parent the view accepts draws nothing, and parents only grow with the slot.
     uint Lo = 0u;
-    while (Lo + 1u < NumSlots && ClusterSlotParentError(Desc, Lo, bVoxels) * ErrorScale <= ReachNear)
+    while (Lo + 1u < NumSlots && Desc.LODParentError[Lo] * ErrorScale <= ReachNear)
     {
         ++Lo;
     }
@@ -308,11 +246,6 @@ bool IsMeshletRunCulled(FMeshletHeader* Header, uint Run, FCullView View, float4
         return false;
     }
 
-    const bool bVoxels = VoxelFarEnabled();
-    if (Lod.bVoxel && !bVoxels)
-    {
-        return true;
-    }
     const float ErrorScale = View.LODErrorScale * MaxScale * LODErrorMultiplier;
     if (ErrorScale <= 0.0)
     {
@@ -328,53 +261,45 @@ bool IsMeshletRunCulled(FMeshletHeader* Header, uint Run, FCullView View, float4
         return true;
     }
 
-    const float ParentError = (Lod.bVoxelParent && !bVoxels) ? MESHLET_LOD_ERROR_INFINITE : Lod.ParentError;
-    if (ParentError >= MESHLET_LOD_ERROR_INFINITE)
+    if (Lod.ParentError >= MESHLET_LOD_ERROR_INFINITE)
     {
         return false;
     }
     // Even the coarsest parent accepted from the run's near side means every meshlet's parent draws instead.
     const float3 ParentCenter = mul(Model, float4(Lod.ParentCenter, 1.0)).xyz;
     const float  NearReach    = bOrtho ? 1.0 : max(length(ParentCenter - View.ViewOrigin) - Lod.ParentRadius * MaxScale, 0.0);
-    return ParentError * ErrorScale <= NearReach;
+    return Lod.ParentError * ErrorScale <= NearReach;
 }
 
 // The pick's meshlet range, x the mesh-global offset and y the count, and the most of it one cut can draw. A cluster surface's slots are contiguous, so a slot span is one range.
 uint2 SelectViewMeshletRange(FSurfaceDesc Desc, FCullView View, float4 SphereBounds, float MaxScale, out uint DrawBound)
 {
-    if (Desc.bClusterLOD)
+    const uint2 Slots = SelectClusterSlotRange(Desc, View, SphereBounds, MaxScale);
+    const uint  Begin = Desc.LODMeshletOffset[Slots.x];
+    const uint  End   = Desc.LODMeshletOffset[Slots.y] + Desc.LODMeshletCount[Slots.y];
+    const uint  Count = End > Begin ? End - Begin : 0u;
+
+    // The cut gathers around the slot the instance center picks and spreads a slot either way, which is what the list is reserved for; the survivors the readback reports grow it from there.
+    const float Dist = View.HasFlag(CULL_VIEW_FLAG_ORTHOGRAPHIC_LOD) ? 1.0 : length(SphereBounds.xyz - View.ViewOrigin);
+    const float ES   = View.LODErrorScale * MaxScale * Desc.LODErrorMultiplier;
+    uint Mid = Slots.x;
+    for (uint s = Slots.x + 1u; s <= Slots.y; ++s)
     {
-        const uint2 Slots = SelectClusterSlotRange(Desc, View, SphereBounds, MaxScale);
-        const uint  Begin = Desc.LODMeshletOffset[Slots.x];
-        const uint  End   = Desc.LODMeshletOffset[Slots.y] + Desc.LODMeshletCount[Slots.y];
-        const uint  Count = End > Begin ? End - Begin : 0u;
-
-        // The cut gathers around the slot the instance center picks and spreads a slot either way, which is what the list is reserved for; the survivors the readback reports grow it from there.
-        const float Dist = View.HasFlag(CULL_VIEW_FLAG_ORTHOGRAPHIC_LOD) ? 1.0 : length(SphereBounds.xyz - View.ViewOrigin);
-        const float ES   = View.LODErrorScale * MaxScale * Desc.LODErrorMultiplier;
-        uint Mid = Slots.x;
-        for (uint s = Slots.x + 1u; s <= Slots.y; ++s)
+        if (Desc.LODError[s] * ES > Dist)
         {
-            if (Desc.LODError[s] * ES > Dist)
-            {
-                break;
-            }
-            Mid = s;
+            break;
         }
-        const uint First = Mid > Slots.x ? Mid - 1u : Slots.x;
-        const uint Last  = min(Mid + 1u, Slots.y);
-        uint Expected = MESHLET_CULL_GROUP_SIZE;
-        for (uint s = First; s <= Last; ++s)
-        {
-            Expected += Desc.LODMeshletCount[s];
-        }
-        DrawBound = min(Count, Expected);
-        return uint2(Begin, Count);
+        Mid = s;
     }
-
-    const uint LOD = SelectLODForView(Desc, View, SphereBounds, MaxScale);
-    DrawBound = Desc.LODMeshletCount[LOD];
-    return uint2(Desc.LODMeshletOffset[LOD], Desc.LODMeshletCount[LOD]);
+    const uint First = Mid > Slots.x ? Mid - 1u : Slots.x;
+    const uint Last  = min(Mid + 1u, Slots.y);
+    uint Expected = MESHLET_CULL_GROUP_SIZE;
+    for (uint s = First; s <= Last; ++s)
+    {
+        Expected += Desc.LODMeshletCount[s];
+    }
+    DrawBound = min(Count, Expected);
+    return uint2(Begin, Count);
 }
 
 // Diameter of a world sphere in pixels of the cull camera, unbounded when the camera is inside it.

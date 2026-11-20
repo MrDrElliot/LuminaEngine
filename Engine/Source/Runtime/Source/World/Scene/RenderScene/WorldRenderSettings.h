@@ -53,6 +53,9 @@ namespace Lumina
         // Builds a missing pipeline on the spot instead of drawing the default material until it is ready, for one-shot captures such as thumbnails.
         bool bWaitForPipelines = false;
 
+        // An offline capture such as an impostor bake, which needs the exact surface, so it draws without jitter, proxies or impostors.
+        bool bExactCapture = false;
+
         bool ShouldDrawBillboards() const { return bDrawBillboards && !bHideEditorOverlays; }
     };
 }

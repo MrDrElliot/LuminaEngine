@@ -22,8 +22,8 @@ namespace Lumina::Physics
             TSpan<const ECS::FEntity>     IgnoreEntities;
             TVector<SRayResult>*    Hits = nullptr;
             SRayResult*             Closest = nullptr;
-            TSpan<ECS::FEntity>     OutEntities;
-            int32                   EntityCount = 0;
+            TSpan<SOverlapResult>   Overlaps;
+            int32                   OverlapCount = 0;
             FVector3                Start;
             FVector3                End;
             float                   Length = 0.0f;
@@ -177,30 +177,30 @@ namespace Lumina::Physics
         {
             FQueryContext& Query = *static_cast<FQueryContext*>(Context);
 
-            const b3BodyId BodyId = b3Shape_GetBody(ShapeId);
-            void* UserData = b3Body_IsValid(BodyId) ? b3Body_GetUserData(BodyId) : nullptr;
-
-            if (IsIgnored(Query.IgnoreEntities, EntityOfBody(BodyId)))
+            const ECS::FEntity Entity = EntityOfBody(b3Shape_GetBody(ShapeId));
+            if (IsIgnored(Query.IgnoreEntities, Entity))
             {
                 return true;
             }
 
-            const ECS::FEntity Entity = UnpackEntity(UserData);
+            SOverlapResult Overlap;
+            Overlap.Entity = Entity;
+            Overlap.InstanceIndex = Box3DUtils::UnpackInstanceIndex(b3Shape_GetUserData(ShapeId));
 
             // Box3D visits shapes in broad-phase tree order, so a compound body's shapes can arrive interleaved with other bodies'.
-            const int32 Written = Query.EntityCount;
-            if (Algo::Contains(Query.OutEntities.Left(Written), Entity))
+            const int32 Written = Query.OverlapCount;
+            if (Algo::Contains(Query.Overlaps.Left(Written), Overlap))
             {
                 return true;
             }
 
-            if (Written >= Query.OutEntities.Num())
+            if (Written >= Query.Overlaps.Num())
             {
                 return false;
             }
 
-            Query.OutEntities[Written] = Entity;
-            Query.EntityCount = Written + 1;
+            Query.Overlaps[Written] = Overlap;
+            Query.OverlapCount = Written + 1;
             return true;
         }
     }
@@ -441,7 +441,7 @@ namespace Lumina::Physics
     }
 
     int32 FBox3DPhysicsScene::OverlapShape(const SQueryShape& Shape, const FVector3& Center, ECollisionProfiles LayerMask,
-                                           TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
+                                           TSpan<const ECS::FEntity> IgnoreEntities, TSpan<SOverlapResult> Out)
     {
         b3Vec3 Points[8];
         const b3ShapeProxy Proxy = MakeProxy(Shape, Points);
@@ -449,10 +449,10 @@ namespace Lumina::Physics
         FQueryContext Query;
         Query.Scene = this;
         Query.IgnoreEntities = IgnoreEntities;
-        Query.OutEntities = OutEntities;
+        Query.Overlaps = Out;
 
         b3World_OverlapShape(WorldId, Box3DUtils::ToB3Vec3(Center), &Proxy, MakeLayerFilter(LayerMask), &OverlapCallback, &Query);
-        return Query.EntityCount;
+        return Query.OverlapCount;
     }
 
     bool FBox3DPhysicsScene::GetClosestPointOnBody(ECS::FEntity Entity, const FVector3& Point, FVector3& OutPoint) const

@@ -17,7 +17,6 @@ namespace Lumina
         {
             Prim.CustomData         = Component.CustomPrimitiveData.Data.Packed;
             Prim.BoundsScale        = Component.BoundsScale;
-            Prim.ForcedLODIndex     = Component.ForcedLODIndex;
             Prim.bCastShadow        = Component.bCastShadow;
             Prim.bShadowWPO         = Component.bShadowWorldPositionOffset;
             Prim.WPODisableDistance = Component.WorldPositionOffsetDisableDistance;

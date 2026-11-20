@@ -728,11 +728,11 @@ TEST_F(PhysicsSceneLifecycle, OverlapsFollowShapeRotationAndLayerMask)
     const ECS::FEntity Entity = Spawn();
     Scene->Update(0.0);
 
-    ECS::FEntity Found[4];
+    SOverlapResult Found[4];
     const FVector3 Above(0.0f, 1.2f, 0.0f);
     EXPECT_EQ(Scene->OverlapShape(SQueryShape::Capsule(0.1f, 1.0f, FQuat::Identity()), Above, ECollisionProfiles::All, {}, Found), 1)
         << "a standing capsule reaches down into the sphere";
-    EXPECT_EQ(Found[0], Entity);
+    EXPECT_EQ(Found[0].Entity, Entity);
 
     const FQuat Lying = Math::FromAxisAngle(FVector3(0.0f, 0.0f, 1.0f), Math::HalfPi<float>());
     EXPECT_EQ(Scene->OverlapShape(SQueryShape::Capsule(0.1f, 1.0f, Lying), Above, ECollisionProfiles::All, {}, Found), 0)
@@ -747,16 +747,16 @@ TEST_F(PhysicsSceneLifecycle, OverlapReturnsACompoundBodyOnlyOnce)
     const ECS::FEntity Entity = SpawnCompound();
     Scene->Update(0.0);
 
-    ECS::FEntity Found[4];
+    SOverlapResult Found[4];
     EXPECT_EQ(Scene->OverlapSphere(FVector3(0.0f), 1.0f, {}, Found), 1)
         << "a compound body's shapes must collapse to one entity";
-    EXPECT_EQ(Found[0], Entity);
+    EXPECT_EQ(Found[0].Entity, Entity);
 
     EXPECT_EQ(Scene->OverlapBox(FVector3(0.0f), FVector3(1.0f), FQuat::Identity(), {}, Found), 1);
-    EXPECT_EQ(Found[0], Entity);
+    EXPECT_EQ(Found[0].Entity, Entity);
 
     EXPECT_EQ(Scene->OverlapShape(SQueryShape::Sphere(1.0f), FVector3(0.0f), ECollisionProfiles::All, {}, Found), 1);
-    EXPECT_EQ(Found[0], Entity);
+    EXPECT_EQ(Found[0].Entity, Entity);
 }
 
 TEST_F(PhysicsSceneLifecycle, CompoundCylinderSubShapeBuildsACylinderHullNotABoxHull)
@@ -791,7 +791,7 @@ TEST_F(PhysicsSceneLifecycle, OverlapReturnsACompoundBodyOnceWhenManyBodiesSitBe
     SpawnCompound(50.0f);
     Scene->Update(0.0);
 
-    ECS::FEntity Found[32];
+    SOverlapResult Found[32];
     const int32 Count = Scene->OverlapBox(FVector3(0.0f), FVector3(60.0f, 1.0f, 1.0f), FQuat::Identity(), {}, Found);
     EXPECT_EQ(Count, ClusterCount * 2 + 1) << "the compound's far shapes must not be reported twice";
 }
@@ -805,13 +805,13 @@ TEST_F(PhysicsSceneLifecycle, OverlapFillsTheBufferWithoutDuplicatesWhenMoreEnti
     }
     Scene->Update(0.0);
 
-    ECS::FEntity Found[2];
+    SOverlapResult Found[2];
     const int32 Count = Scene->OverlapSphere(FVector3(0.0f), 1.0f, {}, Found);
     EXPECT_EQ(Count, 2) << "the buffer should be filled exactly, not short-circuited by a false duplicate";
-    EXPECT_NE(Found[0], Found[1]);
-    for (ECS::FEntity Result : Found)
+    EXPECT_NE(Found[0].Entity, Found[1].Entity);
+    for (const SOverlapResult& Result : Found)
     {
-        EXPECT_TRUE(Algo::Contains(Entities, Result));
+        EXPECT_TRUE(Algo::Contains(Entities, Result.Entity));
     }
 }
 

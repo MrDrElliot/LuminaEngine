@@ -16,11 +16,17 @@ namespace Lumina
         constexpr uint32 kModeInitialize = 7u;
         constexpr uint32 kModeCount      = 8u;
 
-        constexpr uint32 kCounterSlots   = 8u;
+        constexpr uint32 kCounterSlots   = 9u;
         constexpr uint32 kFreeCount      = 0u;
         constexpr uint32 kStaticCount    = 2u;
         constexpr uint32 kRequestedCount = 3u;
         constexpr uint32 kAllocFailures  = 4u;
+        // The static layer's count, with the dynamic layer's in the slot after it.
+        constexpr uint32 kComputeRasterCount = 7u;
+        // Below this many eligible meshlets the dispatches and barriers cost more than the hardware raster they replace.
+        constexpr uint32 kMinComputeRasterMeshlets = 4096u;
+        // Each camera meshlet saves about a nanosecond, so below this many the two fullscreen resolves cost more than they win back.
+        constexpr uint32 kMinCameraRasterMeshlets = 1u << 17;
 
         // Texels past the filter's reach a pixel's request covers, for the normal offset the lighting adds.
         constexpr float  kMarkMarginTexels = 4.0f;
@@ -101,7 +107,8 @@ namespace Lumina
             return true;
         }
 
-        for (FSceneBuffer* Buffer : { &Res.Pages, &Res.Masks, &Res.FreeStack, &Res.Counters, &Res.StaticList, &Res.RequestedList, &Res.FillArgs })
+        for (FSceneBuffer* Buffer : { &Res.Pages, &Res.Masks, &Res.FreeStack, &Res.Counters, &Res.StaticList, &Res.RequestedList, &Res.FillArgs,
+                                      &Res.ComputeRasterList })
         {
             Buffer->Release();
         }
@@ -116,6 +123,7 @@ namespace Lumina
         Res.StaticList.Allocate((uint64)PoolPages * sizeof(uint32));
         Res.RequestedList.Allocate((uint64)PoolPages * sizeof(uint32));
         Res.FillArgs.Allocate(2ull * sizeof(FUIntVector4));
+        Res.ComputeRasterList.Allocate(2ull * VSM_COMPUTE_RASTER_CAPACITY * sizeof(FUIntVector2));
 
         // The static layer's rows, then the dynamic layer's below them.
         RHI::FTextureDesc Desc;
@@ -139,6 +147,114 @@ namespace Lumina
         Res.bInitialized = true;
         Res.bNeedsTable  = true;
         return true;
+    }
+
+    void FDefaultSceneRenderer::GetVirtualShadowComputeRaster(RHI::FCmdListH CL, RHI::TGPUSpan<FUIntVector2>& OutList, RHI::TGPUSpan<uint32>& OutCursors,
+                                                              RHI::TGPUSpan<uint32>& OutDebug)
+    {
+        using namespace SceneRendererVirtualShadowInternal;
+
+        OutList    = {};
+        OutCursors = {};
+        OutDebug   = {};
+
+        auto& Res = VirtualShadowResources;
+        Res.bComputeRasterActive    = false;
+        Res.bComputeRasterCounting  = false;
+        Res.ComputeRasterDebugWords = 0u;
+
+        // Recorded whether or not the compute raster runs, so the view shows hardware casters too.
+        if (RenderFrame->SceneGlobalData.CullData.DebugMode == (uint32)ERenderSceneDebugFlags::ShadowRaster && Res.bInitialized)
+        {
+            const uint32 Words = 2u * FrameVisibleInstanceCapacity;
+            ReserveBuffer(CL, Res.ComputeRasterDebug, (SIZE_T)Math::Max(Words, 2u) * sizeof(uint32));
+            if (Res.ComputeRasterDebug && Res.ComputeRasterDebug.CapacityOf<uint32>() >= Words)
+            {
+                RHI::CmdMemset(CL, { Res.ComputeRasterDebug.Gpu, (uint64)Words * sizeof(uint32) }, 0u);
+                Barriers::TransferToCompute(CL);
+                Res.ComputeRasterDebugWords = Words;
+                OutDebug = { Res.ComputeRasterDebug, Words };
+            }
+        }
+
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        if (Settings == nullptr || !Settings->bVirtualShadowComputeRaster || !Res.bInitialized || !Res.ComputeRasterList
+            || ComputeRasterBatchSpan.Count == 0u)
+        {
+            return;
+        }
+
+        // An inactive frame still counts its candidates through a list with no room, so demand keeps being measured.
+        Res.bComputeRasterCounting = true;
+        Res.bComputeRasterActive   = Res.ComputeRasterDemand >= kMinComputeRasterMeshlets;
+        OutList    = { Res.ComputeRasterList, 2u * VSM_COMPUTE_RASTER_CAPACITY };
+        OutList.Count = Res.bComputeRasterActive ? OutList.Count : 0u;
+        OutCursors.Address = Res.Counters.Gpu + kComputeRasterCount * sizeof(uint32);
+        OutCursors.Count   = 2u;
+    }
+
+    void FDefaultSceneRenderer::PrepareComputeRaster(RHI::FCmdListH CL)
+    {
+        using namespace SceneRendererVirtualShadowInternal;
+
+        ComputeRasterBatchBits.Reset();
+        ComputeRasterBatchSpan = {};
+        bCameraComputeRasterCounting = false;
+        bCameraComputeRaster         = false;
+
+        const FFrameData& Frame = *RenderFrame;
+        const uint32 NumDraws = Math::Max(Frame.Views.NumDrawsPerView, 1u);
+        ComputeRasterBatchBits.Init(0u, (int32)RenderUtils::GetGroupCount(NumDraws, 32u));
+        bool bAny = false;
+        for (uint32 OpaqueIdx : Frame.Geometry.OpaqueDrawList)
+        {
+            const FMeshDrawCommand& Batch = Frame.Geometry.DrawCommands[OpaqueIdx];
+            const uint32 DrawID = Batch.IndirectDrawOffset;
+            // The compute raster draws the bare mesh, so a caster that clips texels or moves vertices stays in hardware.
+            if (Batch.bMasked || Batch.bWorldPositionOffset || DrawID >= NumDraws)
+            {
+                continue;
+            }
+            ComputeRasterBatchBits[DrawID >> 5u] |= 1u << (DrawID & 31u);
+            bAny = true;
+        }
+        if (bAny)
+        {
+            ComputeRasterBatchSpan = RHI::CopyTransientArray(ComputeRasterBatchBits.GetData(), ComputeRasterBatchBits.Num());
+        }
+
+        // Wireframe draws edges the compute raster never produces, and a device without 64-bit buffer atomics cannot keep depth and ID together.
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        const FSceneImage& VisRT = GetNamedImage(ENamedImage::VisBuffer);
+        if (Settings == nullptr || !Settings->bVisBufferComputeRaster || !RHI::SupportsBufferInt64Atomics() || FrameSettings.bWireframe
+            || !VisRT.IsValid() || Frame.Views.CullViews.IsEmpty())
+        {
+            return;
+        }
+
+        if (!bAny)
+        {
+            return;
+        }
+        ReserveBuffer(CL, CameraRasterCursors, 2u * sizeof(uint32));
+        if (!CameraRasterCursors)
+        {
+            return;
+        }
+
+        // Last frame's eligible meshlets decide this frame, since the cull only learns how many there are by counting them.
+        const FUIntVector2 Size = VisRT.GetExtent();
+        if (LastCameraRasterDemand >= kMinCameraRasterMeshlets)
+        {
+            ReserveBuffer(CL, CameraRasterList, (uint64)VISBUFFER_COMPUTE_RASTER_CAPACITY * sizeof(uint32));
+            ReserveBuffer(CL, CameraRasterTarget, (uint64)Size.x * Size.y * sizeof(uint64));
+            bCameraComputeRaster = CameraRasterList && CameraRasterTarget.CapacityOf<uint64>() >= (uint64)Size.x * Size.y;
+        }
+
+        // Published by the transfer barrier that follows the bucket reset.
+        RHI::CmdMemset(CL, { CameraRasterCursors.Gpu, 2u * sizeof(uint32) }, 0u);
+        CameraRasterSize             = Size;
+        bCameraComputeRasterCounting = true;
     }
 
     void FDefaultSceneRenderer::VirtualShadowPagePass(RHI::FCmdListH CL)
@@ -175,6 +291,8 @@ namespace Lumina
             LUMINA_PROFILE_VALUE("Shadows/VirtualPagesDrawn",     (int64)Counters[kStaticCount]);
             LUMINA_PROFILE_VALUE("Shadows/VirtualPagesResident",  (int64)(PoolPages - Math::Min(Counters[kFreeCount], PoolPages)));
             LUMINA_PROFILE_VALUE("Shadows/VirtualPageFailures",   (int64)Counters[kAllocFailures]);
+            Res.ComputeRasterDemand = Counters[kComputeRasterCount] + Counters[kComputeRasterCount + 1u];
+            LUMINA_PROFILE_VALUE("Shadows/ComputeRasterMeshlets", (int64)Res.ComputeRasterDemand);
         }
 
         FPagePassPC PC;
@@ -267,6 +385,31 @@ namespace Lumina
 
         SCENE_GPU_SCOPE(CL, "Virtual Shadows");
 
+        static const FShaderH ComputeRasterShader = FShaderLibrary::Get("VirtualShadowComputeRaster.slang");
+        const bool bComputeRaster = ComputeRasterShader && Res.bComputeRasterActive;
+        const auto ComputeRaster = [&](bool bStatic)
+        {
+            struct FComputeRasterPC
+            {
+                RHI::TGPUSpan<FUIntVector2> List;
+                RHI::TGPUSpan<uint32>       Cursors;
+                uint32                      bStatic = 0u;
+                uint32                      _Pad0 = 0u;
+                uint32                      _Pad1 = 0u;
+                uint32                      _Pad2 = 0u;
+            } PC;
+            static_assert(sizeof(FComputeRasterPC) == 48, "FComputeRasterPC must match VirtualShadowComputeRaster.slang.");
+
+            SCENE_GPU_SCOPE(CL, bStatic ? "Compute Raster Static" : "Compute Raster Dynamic");
+            PC.List            = { Res.ComputeRasterList, 2u * VSM_COMPUTE_RASTER_CAPACITY };
+            PC.Cursors.Address = Res.Counters.Gpu + kComputeRasterCount * sizeof(uint32);
+            PC.Cursors.Count   = 2u;
+            PC.bStatic        = bStatic ? 1u : 0u;
+            DispatchCompute(CL, ComputeRasterShader, PC, VSM_COMPUTE_RASTER_GROUPS, 1u, 1u);
+            RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                            RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        };
+
         const RHI::FRect   Full{ 0, (int32)VSM_VIRTUAL_SIZE, 0, (int32)VSM_VIRTUAL_SIZE };
         const FUIntVector2 Extent(VSM_VIRTUAL_SIZE, VSM_VIRTUAL_SIZE);
 
@@ -312,6 +455,10 @@ namespace Lumina
             {
                 RHI::CmdBarrier(CL, RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite,
                                 RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+                if (bComputeRaster)
+                {
+                    ComputeRaster(/*bStatic*/ true);
+                }
                 FFillPC Fill;
                 Fill.Pages     = { Res.Pages, kTotalPages };
                 Fill.List      = { Res.RequestedList, Res.PoolPages };
@@ -322,6 +469,24 @@ namespace Lumina
                 DispatchComputeIndirect(CL, FillShader, Fill, RHI::FGPURange{ Res.FillArgs.Gpu + sizeof(FUIntVector4), sizeof(FUIntVector4) });
                 RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
                                 RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+            }
+            else
+            {
+                if (bComputeRaster)
+                {
+                    RHI::CmdBarrier(CL, RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderWrite,
+                                    RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+                    ComputeRaster(/*bStatic*/ false);
+                }
+
+                // The page pass read the counters back before the cull filled these, and an inactive frame still needs its demand.
+                if (Res.bComputeRasterCounting)
+                {
+                    const uint64 CountOffset = kComputeRasterCount * sizeof(uint32);
+                    RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead);
+                    RHI::CmdMemcpy(CL, { Res.StatsReadback[CurrentFrameSlot].Gpu + CountOffset, 2u * sizeof(uint32) },
+                                   { Res.Counters.Gpu + CountOffset, 2u * sizeof(uint32) });
+                }
             }
         }
         Barriers::RasterToRead(CL);

@@ -700,6 +700,8 @@ namespace Lumina
         if (!Target.bPermutation)
         {
             Material->SourceHash = Result.SourceHash;
+            Material->bWorldPositionOffsetKnown = true;
+            Material->bWorldPositionOffset      = Compiler.IsWorldPositionOffsetDriven();
         }
 
         Material->PostLoad();

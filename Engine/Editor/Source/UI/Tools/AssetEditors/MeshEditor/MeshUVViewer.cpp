@@ -71,7 +71,7 @@ namespace Lumina
         bTruncated = false;
 
         const FMeshletData& MeshletData = Resource.MeshletData;
-        const bool bSkinned = Resource.IsSkinnedMesh();
+        const bool bSkinned = Resource.bSkinnedMesh;
 
         const size_t NumVertices = bSkinned ? MeshletData.MeshletSkinnedVertices.Num() : MeshletData.VertexAttributes.Num();
         if (NumVertices == 0)
@@ -389,7 +389,7 @@ namespace Lumina
 
     void FMeshUVViewer::Draw(const FMeshResource& Resource)
     {
-        const bool bSkinned = Resource.IsSkinnedMesh();
+        const bool bSkinned = Resource.bSkinnedMesh;
         const uint32 MeshletCount = (uint32)Resource.MeshletData.Meshlets.Num();
         const uint32 VertexCount  = (uint32)(bSkinned
             ? Resource.MeshletData.MeshletSkinnedVertices.Num()

@@ -124,7 +124,8 @@ namespace Lumina
         Velocity            = 30,
         QuadEfficiency      = 31,
         ScreenSpaceGI       = 32,
-        Num                 = 33,
+        ShadowRaster        = 33,
+        Num                 = 34,
     };
 
     constexpr FStringView RenderFlagsAsString(ERenderSceneDebugFlags Flags)
@@ -163,6 +164,7 @@ namespace Lumina
             case ERenderSceneDebugFlags::Velocity:          return "Velocity";
             case ERenderSceneDebugFlags::QuadEfficiency:    return "Quad Efficiency";
             case ERenderSceneDebugFlags::ScreenSpaceGI:     return "Screen Space GI";
+            case ERenderSceneDebugFlags::ShadowRaster:      return "Shadow Raster";
             default:                                        return "Lit";
         }
     }
@@ -203,6 +205,7 @@ namespace Lumina
         ShadowOnly              = BIT(10),  // survives shadow views only; every camera view rejects it
         NoDecals                = BIT(11),  // decals pass over it, for things that move through them
         NoContactShadows        = BIT(12),  // thin geometry whose screen-space contact march only returns noise
+        Impostor                = BIT(13),  // the mesh has a baked impostor, which every surface of the instance swaps to at once
         HasDistanceField        = BIT(14),  // the mesh carries a distance field the sun's far shadows can trace
         Foliage                 = BIT(15),  // scattered grass and painted foliage, which rain splashes pass through
     };
@@ -997,7 +1000,7 @@ namespace Lumina
         uint32  LODMeshletOffset[MAX_MESH_LODS];
         uint32  LODMeshletCount[MAX_MESH_LODS];
         float   LODError[MAX_MESH_LODS];
-        // A cluster slot's largest parent error; zero on a discrete LOD surface.
+        // A cluster slot's largest parent error.
         float   LODParentError[MAX_MESH_LODS];
         uint32  NumLODs;
         // SURFACE_DESC_* bits.
@@ -1033,13 +1036,17 @@ namespace Lumina
         uint32 DrawDemand;
         uint32 BlockDemand;
         uint32 BlockBackCount;
+        uint32 DrawBackCursor;
+        uint32 _Pad0;
+        uint32 _Pad1;
+        uint32 _Pad2;
         // Per-slice (EMeshletSlice) view of the draw region, relative to DrawBase.
         uint32 SliceBase[kMeshletSliceCount];
         uint32 SliceCount[kMeshletSliceCount];
         // Read as the indirect draw count at offsetof(SubDrawCount) + slice * 4; keep last.
         uint32 SubDrawCount[kMeshletSliceCount];
     };
-    static_assert(sizeof(FRenderBucketGPU) == 80, "FRenderBucketGPU layout must match FRenderBucket in Common.slang");
+    static_assert(sizeof(FRenderBucketGPU) == 96, "FRenderBucketGPU layout must match FRenderBucket in Common.slang");
 
     // One meshlet sub-draw, read as mesh-task group counts or as an unindexed instanced draw, so both paths share one argument layout.
     struct FMeshletDrawArgs
@@ -1122,7 +1129,7 @@ namespace Lumina
     struct alignas(16) FInstanceProxy
     {
         FVector3    LocalCenter;
-        // Half the side of a square as large as the surface's mean projected area.
+        // Half the side of a square as large as the surface's mean projected area, or on an impostor slot the radius of the mesh's sphere, negative on every surface but the one that draws it.
         float       SplatHalfSize;
         uint32      PackedNormal;       // PackNormal
         uint32      PackedUV;           // PackHalf2x16
@@ -1139,7 +1146,7 @@ namespace Lumina
         uint32      DrawIDAndFlags;     // PackDrawIDAndFlags; carries Active and HasGeometry
         uint32      SurfaceDescIndex;   // into the interned LOD tables
         float       MaxDrawDistance;    // 0 = never distance-culled
-        uint32      LODAndThinning;     // PackLODAndThinning
+        uint32      FlagsAndThinning;   // PackFlagsAndThinning
     };
     static_assert(sizeof(FInstanceCullEntry) == 32, "FInstanceCullEntry layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FInstanceCullEntry);
@@ -1169,7 +1176,7 @@ namespace Lumina
         uint32      SkinnedVertexBase;
         // Assigned by FScenePrimitiveSet::AssignMeshletVisibility; kNoMeshletVisibility for none.
         uint32      MeshletVisibilityBase;
-        // Read only when LODAndThinning carries INSTANCE_CUSTOM_LAYERS_BIT, so a zeroed payload still reads as Default.
+        // Read only when FlagsAndThinning carries INSTANCE_CUSTOM_LAYERS_BIT, so a zeroed payload still reads as Default.
         uint32      RenderLayers;
         // Past this camera distance the material's world position offset is skipped in every pass, 0 never.
         float       WPODisableDistance;
@@ -1274,16 +1281,13 @@ namespace Lumina
         return bRenderCustomDepth ? (CUSTOM_DEPTH_ENABLED_BIT | StencilValue) : 0u;
     }
 
-    static_assert(MESHLET_MAX_LODS < INSTANCE_FORCED_LOD_MASK, "A forced LOD plus one must fit INSTANCE_FORCED_LOD_MASK");
-
-    // The forced LOD plus one in the low bits (0 is automatic), the custom layer and shadow offset bits, the custom depth word, and the foliage thinning start distance as a half float in the high half.
-    inline uint32 PackLODAndThinning(int32 ForcedLODIndex, float ThinningStartDistance, uint32 RenderLayers = RENDER_LAYER_DEFAULT_MASK,
-                                     uint32 CustomDepthStencil = 0u, bool bShadowWPO = true, bool bShadowCacheable = false)
+    // The custom layer and shadow offset bits, the custom depth word, and the foliage thinning start distance as a half float in the high half.
+    inline uint32 PackFlagsAndThinning(float ThinningStartDistance, uint32 RenderLayers = RENDER_LAYER_DEFAULT_MASK,
+                                       uint32 CustomDepthStencil = 0u, bool bShadowWPO = true, bool bShadowCacheable = false)
     {
-        const uint32 LOD    = (uint32)Math::Clamp(ForcedLODIndex + 1, 0, (int32)INSTANCE_FORCED_LOD_MASK);
         const uint32 Layers = RenderLayers != RENDER_LAYER_DEFAULT_MASK ? INSTANCE_CUSTOM_LAYERS_BIT : 0u;
         const uint32 Shadow = (bShadowWPO ? 0u : INSTANCE_NO_SHADOW_WPO_BIT) | (bShadowCacheable ? INSTANCE_SHADOW_CACHEABLE_BIT : 0u);
-        return LOD | Layers | Shadow | (CustomDepthStencil << INSTANCE_CUSTOM_DEPTH_SHIFT)
+        return Layers | Shadow | (CustomDepthStencil << INSTANCE_CUSTOM_DEPTH_SHIFT)
              | ((uint32)FHalf(Math::Clamp(ThinningStartDistance, 0.0f, 65000.0f)).Bits << 16);
     }
 
@@ -1350,9 +1354,12 @@ namespace Lumina
         uint32 VirtualGeometryFlags = 0;
         // Projected diameter in pixels under which an instance leaves the meshlet path for its far proxy.
         float  ProxyTransitionPixels = 0.0f;
-        uint32 _Pad0 = 0;
-        uint32 _Pad1 = 0;
+        // The camera's LOD view, which cuts a skinned mesh on every cull view since its pre-skin slice holds only that cut.
+        float  CameraLODErrorScale = 0.0f;
+        // Projected diameter in pixels under which an instance whose mesh has an impostor swaps to it.
+        float  ImpostorTransitionPixels = 0.0f;
         uint32 _Pad2 = 0;
+        FVector4 CameraLODOriginAndFlags = FVector4(0.0f);
     };
 
     VERIFY_SSBO_ALIGNMENT(FCullData);

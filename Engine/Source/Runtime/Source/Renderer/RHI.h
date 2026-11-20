@@ -615,6 +615,9 @@ namespace Lumina::RHI
     
     RUNTIME_API bool           SupportsMeshShaders();
 
+    // 64-bit atomics on storage buffers, which the compute rasterizer needs to keep the nearest depth and its ID together.
+    RUNTIME_API bool           SupportsBufferInt64Atomics();
+
     RUNTIME_API uint32         GetMaxMeshWorkGroupCount();
 
     // How many viewports one draw can address, which caps the views a multi-view shadow draw covers.

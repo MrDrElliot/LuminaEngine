@@ -341,7 +341,7 @@ namespace Lumina::DistanceField
             }
         }
 
-        void GatherTriangles(const FMeshResource& Resource, uint32 RequestedLOD, TVector<FTriangle>& Out)
+        void GatherTriangles(const FMeshResource& Resource, TVector<FTriangle>& Out)
         {
             const FMeshletData& MD = Resource.MeshletData;
             const bool bSkinned    = Resource.bSkinnedMesh;
@@ -354,14 +354,8 @@ namespace Lumina::DistanceField
 
             for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
             {
-                if (Surface.NumLODs == 0)
-                {
-                    continue;
-                }
-
-                const uint32 Slot   = Math::Min(RequestedLOD, Surface.NumLODs - 1u);
-                const uint32 Offset = Surface.LODMeshletOffset[Slot];
-                const uint32 Count  = Surface.LODMeshletCount[Slot];
+                const uint32 Offset = Surface.LODMeshletOffset[0];
+                const uint32 Count  = Surface.FinestMeshletCount(MD);
 
                 for (uint32 m = 0; m < Count; ++m)
                 {
@@ -425,11 +419,10 @@ namespace Lumina::DistanceField
         }
 
         FBVH BVH;
-        GatherTriangles(Resource, Settings.SourceLOD, BVH.Triangles);
+        GatherTriangles(Resource, BVH.Triangles);
         if (BVH.Triangles.IsEmpty())
         {
-            LOG_WARN("Distance field skipped for mesh '{}': no triangles at LOD {}.",
-                     *Resource.Name, Settings.SourceLOD);
+            LOG_WARN("Distance field skipped for mesh '{}': no triangles.", *Resource.Name);
             return false;
         }
 
@@ -534,9 +527,9 @@ namespace Lumina::DistanceField
             }
         });
 
-        LOG_INFO("Built distance field for mesh '{}': {}x{}x{} ({} KB) from {} triangles at LOD {}.",
+        LOG_INFO("Built distance field for mesh '{}': {}x{}x{} ({} KB) from {} triangles.",
                  *Resource.Name, Dimensions.x, Dimensions.y, Dimensions.z,
-                 VoxelCount / 1024, BVH.Triangles.Num(), Settings.SourceLOD);
+                 VoxelCount / 1024, BVH.Triangles.Num());
 
         return true;
     }

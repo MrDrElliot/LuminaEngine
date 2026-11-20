@@ -256,7 +256,7 @@ void main(uint3 Tid : SV_DispatchThreadID)
     Cull.DrawIDAndFlags   = P->DrawIDAndFlags | ((uint)EInstanceFlags::Active << 16);
     Cull.SurfaceDescIndex = P->SurfaceDescIndex;
     Cull.MaxDrawDistance  = P->MaxDrawDistance;
-    Cull.LODAndThinning   = 0u;
+    Cull.FlagsAndThinning = 0u;
     (P->OutCullEntries).Set(Slot, Cull);
 
     FInstanceStatic Static;

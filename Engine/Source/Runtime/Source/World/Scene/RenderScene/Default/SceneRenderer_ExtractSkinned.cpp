@@ -14,75 +14,40 @@ namespace Lumina
                  : Math::Max(Math::Length(FVector3(Sphere) - FVector3(View.ViewOriginAndFlags)) - Sphere.w, 0.0f);
         }
 
-        // Mirrors SelectLODForView in Culling.slang.
-        uint32 SelectLODForView(const FSurfaceDescGPU& Desc, const FCullView& View, const FVector4& Sphere, float MaxScale)
+        // Group spheres nest loosely inside the instance sphere, mirroring kClusterReachSlack in Culling.slang.
+        constexpr float kClusterReachSlack = 1.25f;
+
+        // Mirrors SelectClusterSlotRange in Culling.slang, so the slots pre-skinned hold every meshlet the camera's cut can take.
+        FUIntVector2 SelectClusterSlotRange(const FSurfaceDescGPU& Desc, const FCullView& View, const FVector4& Sphere, float MaxScale)
         {
-            const uint32 NumLODs = Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS);
-            if (NumLODs <= 1u || View.LODErrorScale <= 0.0f)
+            const uint32 NumSlots = Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS);
+            if (NumSlots <= 1u || View.LODErrorScale <= 0.0f)
             {
-                return 0u;
+                return FUIntVector2(0u, 0u);
             }
 
-            const float Reach         = LODReach(View, Sphere);
-            const float ErrorScale    = View.LODErrorScale * MaxScale * Desc.LODErrorMultiplier;
+            const bool  bOrtho     = (GetCullViewFlags(View) & ECullViewFlags::OrthographicLOD) != 0u;
+            const float Dist       = Math::Length(FVector3(Sphere) - FVector3(View.ViewOriginAndFlags));
+            const float ReachNear  = bOrtho ? 1.0f : Math::Max(Dist - Sphere.w * kClusterReachSlack, 0.0f);
+            const float ReachFar   = bOrtho ? 1.0f : Dist + Sphere.w * kClusterReachSlack;
+            const float ErrorScale = View.LODErrorScale * MaxScale * Desc.LODErrorMultiplier;
 
-            uint32 Picked = 0;
-            for (uint32 i = 1; i < NumLODs; ++i)
+            uint32 Lo = 0u;
+            while (Lo + 1u < NumSlots && Desc.LODParentError[Lo] * ErrorScale <= ReachNear)
             {
-                if (Desc.LODError[i] * ErrorScale > Reach)
-                {
-                    break;
-                }
-                Picked = i;
+                ++Lo;
             }
-            return Picked;
-        }
-
-        // Component override beats global setting; both clamped to surface NumLODs.
-        uint32 ResolveSurfaceLOD(const FSurfaceDescGPU& Desc, int32 ForcedLODIndex, bool bUseLODs,
-                                 const FCullView* CameraView, const FVector4& Sphere, float MaxScale)
-        {
-            if (Desc.NumLODs <= 1)
+            uint32 Hi = NumSlots - 1u;
+            while (Hi > Lo && Desc.LODError[Hi] * ErrorScale > ReachFar)
             {
-                return 0u;
+                --Hi;
             }
-            if (ForcedLODIndex >= 0)
-            {
-                return (uint32)Math::Min((int32)Desc.NumLODs - 1, ForcedLODIndex);
-            }
-            if (bUseLODs && CameraView != nullptr)
-            {
-                return SelectLODForView(Desc, *CameraView, Sphere, MaxScale);
-            }
-            return 0u;
+            return FUIntVector2(Lo, Hi);
         }
 
         // The mesh-local error the camera tolerates here, which is what picks a skinned LOD and how much of the skeleton may hold still.
-        float ResolveBoneLODTolerance(const FScenePrimitive& Prim, const FSurfaceBinding* Bindings,
-                                      const FSurfaceDescGPU* SurfaceDescs, uint32 NumSurfaceDescs,
-                                      const SWorldRenderSettings& Settings, const FCullView* CameraView,
-                                      const FVector4& Sphere, float MaxScale)
+        float ResolveBoneLODTolerance(const SWorldRenderSettings& Settings, const FCullView* CameraView, const FVector4& Sphere, float MaxScale)
         {
-            // A forced LOD previews the cut that LOD's own error allows.
-            if (Prim.ForcedLODIndex >= 0)
-            {
-                float Tolerance = 0.0f;
-                for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
-                {
-                    if (Bindings[s].SurfaceDescIndex >= NumSurfaceDescs)
-                    {
-                        continue;
-                    }
-                    const FSurfaceDescGPU& Desc = SurfaceDescs[Bindings[s].SurfaceDescIndex];
-                    const uint32 NumLODs = Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS);
-                    if (NumLODs > 1u)
-                    {
-                        Tolerance = Math::Max(Tolerance, Desc.LODError[Math::Min((uint32)Prim.ForcedLODIndex, NumLODs - 1u)]);
-                    }
-                }
-                return Tolerance;
-            }
-
             if (!Settings.bUseLODs || CameraView == nullptr || CameraView->LODErrorScale <= 0.0f || MaxScale <= 0.0f)
             {
                 return 0.0f;
@@ -111,13 +76,13 @@ namespace Lumina
         constexpr uint64 kNoPreSkinShareKey = ~0ull;
 
         // Packs what decides a borrowed pose's skinned vertices, or returns none when a field outgrows its bits.
-        uint64 PreSkinShareKey(uint32 BoneArenaBase, uint32 MeshletHeaderSlot, uint32 LODIndex, uint32 Surface)
+        uint64 PreSkinShareKey(uint32 BoneArenaBase, uint32 MeshletHeaderSlot, FUIntVector2 Slots, uint32 Surface)
         {
-            if (BoneArenaBase >= (1u << 24) || MeshletHeaderSlot >= (1u << 16) || LODIndex >= (1u << 3) || Surface >= (1u << 5))
+            if (BoneArenaBase >= (1u << 24) || MeshletHeaderSlot >= (1u << 16) || Slots.x >= (1u << 4) || Slots.y >= (1u << 4) || Surface >= (1u << 5))
             {
                 return kNoPreSkinShareKey;
             }
-            return ((uint64)BoneArenaBase << 24) | ((uint64)MeshletHeaderSlot << 8) | ((uint64)LODIndex << 5) | Surface;
+            return ((uint64)BoneArenaBase << 29) | ((uint64)MeshletHeaderSlot << 13) | ((uint64)Slots.x << 9) | ((uint64)Slots.y << 5) | Surface;
         }
 
         // The LOD table comes from the interned FSurfaceDescGPU the binding names, so many instances of few meshes read a handful of descs.
@@ -147,15 +112,16 @@ namespace Lumina
                 }
                 const FSurfaceDescGPU& Desc = SurfaceDescs[Binding.SurfaceDescIndex];
 
-                // Shadows take the camera's pick too, so both views share one pre-skin slice.
-                const uint32 LODIndex = ResolveSurfaceLOD(Desc, Prim.ForcedLODIndex, Settings.bUseLODs, CameraView, Sphere, MaxScale);
+                // Shadows take the camera's pick too, so every view cuts within one pre-skin slice.
+                const FUIntVector2 Slots = Settings.bUseLODs && CameraView != nullptr ? SelectClusterSlotRange(Desc, *CameraView, Sphere, MaxScale) : FUIntVector2(0u, 0u);
 
                 const uint32 LastLOD = Desc.NumLODs > 0u ? Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS) - 1u : 0u;
+                const uint32 SliceEnd = Desc.LODMeshletOffset[Slots.y] + Desc.LODMeshletCount[Slots.y];
 
                 FSkinnedFrameData Data = {};
                 // Zero meshlet count gates the cull shader's MeshletHeader deref.
-                Data.SurfaceMeshletCount     = MeshletHeaderSlot ? Desc.LODMeshletCount[LODIndex] : 0u;
-                Data.SurfaceMeshletOffset    = Desc.LODMeshletOffset[LODIndex];
+                Data.SurfaceMeshletCount     = MeshletHeaderSlot && SliceEnd > Desc.LODMeshletOffset[Slots.x] ? SliceEnd - Desc.LODMeshletOffset[Slots.x] : 0u;
+                Data.SurfaceMeshletOffset    = Desc.LODMeshletOffset[Slots.x];
                 Data.MeshletTotalCount       = MeshletHeaderSlot
                                              ? Desc.LODMeshletOffset[LastLOD] + Desc.LODMeshletCount[LastLOD]
                                              : 0u;
@@ -163,7 +129,7 @@ namespace Lumina
                 Data.SkinnedVertexBase       = kNoPreSkinBase;
                 if (PreSkinShare && MeshletHeaderSlot && SkinnedIndex < kPreSkinShareBit)
                 {
-                    const uint64 Key = PreSkinShareKey(BoneArenaBase, MeshletHeaderSlot, LODIndex, s);
+                    const uint64 Key = PreSkinShareKey(BoneArenaBase, MeshletHeaderSlot, Slots, s);
                     const uint32 Owner = Key != kNoPreSkinShareKey ? PreSkinShare->Claim(Key, SkinnedIndex) : SkinnedIndex;
                     if (Owner != SkinnedIndex)
                     {
@@ -697,8 +663,7 @@ namespace Lumina
             MeshComponent->LastDistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
 
             const float MaxScale = Prim.WorldMaxScale;
-            MeshComponent->LastBoneLODTolerance = ResolveBoneLODTolerance(Prim, Bindings + Prim.BindingBase, SurfaceDescs, NumSurfaceDescs,
-                                                                          FrameSettings, CameraView, Sphere, MaxScale);
+            MeshComponent->LastBoneLODTolerance = ResolveBoneLODTolerance(FrameSettings, CameraView, Sphere, MaxScale);
 
             EmitPrimitiveSurfaces(Local, Prim, Bindings + Prim.BindingBase,
                                   SurfaceDescs, NumSurfaceDescs,
@@ -767,6 +732,7 @@ namespace Lumina
             Cmd.bModulate                      = Batch.Key.bModulate;
             Cmd.bWriteDepth                    = Batch.Key.bWriteDepth;
             Cmd.bTwoSided                      = Batch.Key.bTwoSided;
+            Cmd.bWorldPositionOffset           = Batch.Key.bWorldPositionOffset;
             // From the bindings, not this frame's gather, since the GPU cull emits from the whole retained set and a wrong variant reads skinned vertices at the static stride.
             Cmd.bAnySkinned                    = (Batch.SkinnedRefCount != 0u) ? 1u : 0u;
             Cmd.bAnyStatic                     = (Batch.StaticRefCount != 0u) ? 1u : 0u;

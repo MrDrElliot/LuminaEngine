@@ -11,14 +11,14 @@ namespace Lumina::Physics::CollisionGen
 {
     namespace
     {
-        // LOD 0's meshlets are the only geometry an uploaded mesh keeps, since the raw streams are dropped.
+        // The finest meshlets are the only full-detail geometry an uploaded mesh keeps, since the raw streams are dropped.
         void AppendSurface(const FMeshResource& Resource, const FGeometrySurface& Surface,
                            TVector<FVector3>& OutPositions, TVector<uint32>& OutIndices)
         {
             const FMeshletData& MD = Resource.MeshletData;
 
             const uint32 Offset = Surface.LODMeshletOffset[0];
-            const uint32 Count  = Surface.LODMeshletCount[0];
+            const uint32 Count  = Surface.FinestMeshletCount(MD);
 
             for (uint32 i = 0; i < Count; ++i)
             {

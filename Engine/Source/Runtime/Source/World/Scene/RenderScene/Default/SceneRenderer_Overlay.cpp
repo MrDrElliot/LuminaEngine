@@ -55,8 +55,9 @@ namespace Lumina
             uint32 DepthIndex;
             uint32 DrawListCount;
             uint32 _Pad0;
+            RHI::TGPUSpan<uint32> ShadowRasterDebug;
         } PC = {};
-        static_assert(sizeof(FSceneDebugViewPC) == 32, "FSceneDebugViewPC must match SceneDebugViewPixel.slang FSceneDebugViewArgs.");
+        static_assert(sizeof(FSceneDebugViewPC) == 48, "FSceneDebugViewPC must match SceneDebugViewPixel.slang FSceneDebugViewArgs.");
         PC.GBufferAIndex  = (uint32)GetNamedImage(ENamedImage::GBufferA).GetResourceID();
         PC.GBufferBIndex  = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
         PC.GBufferCIndex  = (uint32)GetNamedImage(ENamedImage::GBufferC).GetResourceID();
@@ -64,6 +65,7 @@ namespace Lumina
         PC.VisBufferIndex = (uint32)GetNamedImage(ENamedImage::VisBuffer).GetResourceID();
         PC.DepthIndex     = (uint32)GetNamedImage(ENamedImage::DepthAttachment).GetResourceID();
         PC.DrawListCount  = DrawListCapacity;
+        PC.ShadowRasterDebug = { VirtualShadowResources.ComputeRasterDebug, VirtualShadowResources.ComputeRasterDebugWords };
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);

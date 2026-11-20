@@ -45,6 +45,12 @@ namespace Lumina
         // Recomputes the view matrix immediately because the thumbnail world is never ticked.
         void SetCameraTransform(const FVector3& Position, const FVector3& Target, float FOVDegrees = 35.0f);
 
+        // An orthographic view Width wide, with an explicit up so it can look straight down.
+        void SetCameraOrthographic(const FVector3& Position, const FVector3& Forward, const FVector3& Up, float Width);
+
+        // Extracts and renders one frame with every deferred resolve settled, for a caller reading the renderer's images itself.
+        bool RenderFrame();
+
         // Waits on the GPU and stores RGBA8 downsampled from the render target to ThumbnailUtils::kThumbnailResolution.
         bool Capture(FPackageThumbnail& Thumbnail);
 
@@ -61,6 +67,9 @@ namespace Lumina
         void AbandonCapture();
 
     private:
+
+        // Extract reads FResolvedSceneView, and an unticked world leaves it default, culling the subject.
+        void PublishCameraView();
 
         // GPU-side state of an in-flight capture; RHI types stay out of this header.
         struct FPendingCapture;

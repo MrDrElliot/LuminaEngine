@@ -15,8 +15,8 @@ namespace Lumina
         Cull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
         Cull.SurfaceDescIndex = Binding.SurfaceDescIndex;
         Cull.MaxDrawDistance  = Type.MaxDrawDistance;
-        Cull.LODAndThinning   = PackLODAndThinning(-1, Type.ThinningStartDistance, RENDER_LAYER_DEFAULT_MASK, 0u, Type.bShadowWPO,
-                                                   ScenePrimitiveSetInternal::IsShadowCacheable(Binding, Type.bShadowWPO));
+        Cull.FlagsAndThinning = PackFlagsAndThinning(Type.ThinningStartDistance, RENDER_LAYER_DEFAULT_MASK, 0u, Type.bShadowWPO,
+                                                     ScenePrimitiveSetInternal::IsShadowCacheable(Binding, Type.bShadowWPO));
         return Cull;
     }
 

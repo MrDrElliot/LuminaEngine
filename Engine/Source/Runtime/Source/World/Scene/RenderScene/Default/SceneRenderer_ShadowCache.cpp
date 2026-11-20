@@ -35,6 +35,8 @@ namespace Lumina
         {
             bool bAll = false;
             SunShadowCache.TakeTouches(Virtual.InvalidSpheres, bAll);
+            // The Shadow Raster view shows how every caster rasterizes, so it redraws each cached page rather than only what moved.
+            bAll = bAll || Frame.SceneGlobalData.CullData.DebugMode == (uint32)ERenderSceneDebugFlags::ShadowRaster;
             Virtual.bInvalidateAll = bAll;
             LUMINA_PROFILE_VALUE("Shadows/VirtualInvalidSpheres", (int64)Virtual.InvalidSpheres.Num());
             LUMINA_PROFILE_VALUE("Shadows/VirtualInvalidAll", bAll ? 1 : 0);

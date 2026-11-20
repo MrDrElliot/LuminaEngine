@@ -8,22 +8,21 @@
 
 namespace Lumina
 {
-    /** A named attach point on a mesh asset. Skeletal sockets ride a bone (BoneName); static mesh
-     *  sockets sit relative to the mesh origin (BoneName unused). Gameplay resolves sockets by name. */
+    // A named attach point on a mesh asset, riding a bone on a skeletal mesh or the origin on a static one, which gameplay finds by name.
     REFLECT()
     struct RUNTIME_API SMeshSocket
     {
         GENERATED_BODY()
 
-        /** Name gameplay looks the socket up by (e.g. "WeaponR", "Muzzle"). */
+        // What gameplay looks the socket up by, such as WeaponR or Muzzle.
         PROPERTY(Editable, Category = "Socket")
         FName SocketName;
 
-        /** Bone the socket rides on. Skeletal meshes only; ignored on static meshes. */
+        // The bone the socket rides on, ignored on static meshes.
         PROPERTY(Editable, Category = "Socket", Picker = "Bone")
         FName BoneName;
 
-        /** Offset from the bone (skeletal) or the mesh origin (static). */
+        // Offset from the bone on a skeletal mesh, or from the origin on a static one.
         PROPERTY(Editable, Category = "Socket")
         FTransform RelativeTransform;
     };

@@ -1970,6 +1970,16 @@ namespace Lumina
             FSceneBuffer StaticList    { "VirtualShadow.StaticList", 1.0f };
             FSceneBuffer RequestedList { "VirtualShadow.RequestedList", 1.0f };
             FSceneBuffer FillArgs      { "VirtualShadow.FillArgs", 1.0f };
+            // Small opaque casters the shadow cull hands to the compute raster, an instance and a packed meshlet and view each.
+            FSceneBuffer ComputeRasterList { "VirtualShadow.ComputeRasterList", 1.0f };
+            // Eligible meshlets the last read-back frame counted, which decides whether the compute raster runs at all.
+            uint32       ComputeRasterDemand = 0u;
+            bool         bComputeRasterActive = false;
+            // Set when the cull counts candidates this frame, so their demand is read back whether or not they were drawn.
+            bool         bComputeRasterCounting = false;
+            // The Shadow Raster view's record, two words per visible instance, of the levels it drew in compute and in hardware.
+            FSceneBuffer ComputeRasterDebug { "VirtualShadow.ComputeRasterDebug", 1.25f };
+            uint32       ComputeRasterDebugWords = 0u;
             FSceneImage  Pool;
             // The counters a frame ended with, read back once its slot comes around again.
             TArray<RHI::FGPUAllocation, RHI::kFramesInFlight> StatsReadback = {};
@@ -1981,6 +1991,26 @@ namespace Lumina
         FVirtualShadowResources                             VirtualShadowResources;
         // Allocates the page table and pool for this frame's pool size, true when they are ready to use.
         bool EnsureVirtualShadowResources(RHI::FCmdListH CL);
+        // The shadow cull's compute raster inputs this frame, left empty when the compute raster is off.
+        void GetVirtualShadowComputeRaster(RHI::FCmdListH CL, RHI::TGPUSpan<FUIntVector2>& OutList, RHI::TGPUSpan<uint32>& OutCursors,
+                                           RHI::TGPUSpan<uint32>& OutDebug);
+
+        // A bit per draw whose batch keeps the bare mesh's shape, built once a frame for the camera's compute raster and the sun's.
+        TVector<uint32>                                     ComputeRasterBatchBits;
+        RHI::TGPUSpan<uint32>                               ComputeRasterBatchSpan;
+        // The camera's compute raster, the slots the cull took, its cursor and phase start, and the nearest depth over VisID per pixel.
+        FSceneBuffer                                        CameraRasterList    { "VisBuffer.ComputeRasterList", 1.0f };
+        FSceneBuffer                                        CameraRasterCursors { "VisBuffer.ComputeRasterCursors", 1.0f };
+        FSceneBuffer                                        CameraRasterTarget  { "VisBuffer.ComputeRasterTarget", 1.0f, EBufferInit::Zeroed };
+        FUIntVector2                                        CameraRasterSize = FUIntVector2(0);
+        // The cull counts eligible meshlets whenever the camera could raster in compute, and hands them over only once a frame had enough to pay for the resolve.
+        bool                                                bCameraComputeRasterCounting = false;
+        bool                                                bCameraComputeRaster = false;
+        uint32                                              LastCameraRasterDemand = 0;
+        // Builds the batch bits and readies the camera's compute raster, ahead of the frame's first cull.
+        void PrepareComputeRaster(RHI::FCmdListH CL);
+        // Rasterizes the meshlets the camera's cull handed over in one phase, then merges them into the VisBuffer and depth.
+        void VisBufferComputeRasterPass(RHI::FCmdListH CL, bool bLate);
 
         // The graphics value the next frame's compute cull waits on, the last submission that reads what the cull rewrites.
         uint64                                              FrameCullGateValue = 0;
@@ -2028,6 +2058,9 @@ namespace Lumina
         FSunShadowCache                                     SunShadowCache;
 
         static constexpr uint32                             kTotalsSlots = 10;
+        // The readback carries the totals, then how many meshlets the camera's compute raster could have taken.
+        static constexpr uint32                             kCameraRasterDemandSlot = kTotalsSlots;
+        static constexpr uint32                             kReadbackSlots = kTotalsSlots + 1u;
         // Twice the visibility ID range, room for the shadow views that follow the camera's slots in the draw list.
         static constexpr uint32                             kMaxDrawListEntries = VISBUFFER_MAX_MESHLET_SLOTS * 2u;
 

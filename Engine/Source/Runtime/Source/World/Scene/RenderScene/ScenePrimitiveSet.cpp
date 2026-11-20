@@ -1263,13 +1263,13 @@ namespace Lumina
         }
     }
 
-    uint32 FScenePrimitiveSet::LargestLODMeshletsOf(uint32 Slot) const
+    uint32 FScenePrimitiveSet::VisibilityMeshletsOf(uint32 Slot) const
     {
         const FInstanceCullEntry& Cull = RetainedCullEntries[Slot];
-        return (Cull.DrawIDAndFlags & ScenePrimitiveSetInternal::kActiveBit) != 0u ? LargestLODMeshletsOfSurface(Cull.SurfaceDescIndex) : 0u;
+        return (Cull.DrawIDAndFlags & ScenePrimitiveSetInternal::kActiveBit) != 0u ? VisibilityMeshletsOfSurface(Cull.SurfaceDescIndex) : 0u;
     }
 
-    uint32 FScenePrimitiveSet::LargestLODMeshletsOfSurface(uint32 SurfaceDescIndex) const
+    uint32 FScenePrimitiveSet::VisibilityMeshletsOfSurface(uint32 SurfaceDescIndex) const
     {
         if (SurfaceDescIndex >= (uint32)SurfaceDescs.Num())
         {
@@ -1277,24 +1277,23 @@ namespace Lumina
         }
 
         const FSurfaceDescGPU& Desc = SurfaceDescs[SurfaceDescIndex];
-        const bool bClusterLOD = (Desc.Flags & SURFACE_DESC_CLUSTER_LOD) != 0u;
-        uint32 LargestLOD = 0u;
+        uint32 Meshlets = 0u;
         for (uint32 LOD = 0; LOD < Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS); ++LOD)
         {
-            // A cluster range can span every level at once, so its words cover the whole hierarchy.
-            LargestLOD = bClusterLOD ? LargestLOD + Desc.LODMeshletCount[LOD] : Math::Max(LargestLOD, Desc.LODMeshletCount[LOD]);
+            // A range can span every level at once, so its words cover the whole hierarchy.
+            Meshlets += Desc.LODMeshletCount[LOD];
         }
-        // A cluster's visibility words follow mesh-global runs, so the surface's offset into its first run takes room too.
-        if (bClusterLOD && Desc.NumLODs > 0u)
+        // The visibility words follow mesh-global runs, so the surface's offset into its first run takes room too.
+        if (Desc.NumLODs > 0u)
         {
-            LargestLOD += Desc.LODMeshletOffset[0] % MESHLET_CULL_GROUP_SIZE;
+            Meshlets += Desc.LODMeshletOffset[0] % MESHLET_CULL_GROUP_SIZE;
         }
-        return LargestLOD;
+        return Meshlets;
     }
 
     void FScenePrimitiveSet::UpdateMeshletVisibility(uint32 Slot)
     {
-        const uint32 Meshlets = LargestLODMeshletsOf(Slot);
+        const uint32 Meshlets = VisibilityMeshletsOf(Slot);
         const uint32 Words    = RenderUtils::GetGroupCount(Meshlets, MESHLET_CULL_GROUP_SIZE);
 
         FUIntVector3& Range = SlotMeshletVisibility[Slot];
@@ -1349,7 +1348,7 @@ namespace Lumina
         const auto IsStale = [this](uint32 Slot)
         {
             const FUIntVector3& Range = SlotMeshletVisibility[Slot];
-            return Range.z != LargestLODMeshletsOf(Slot) || RetainedStatic[Slot].MeshletVisibilityBase != Range.x;
+            return Range.z != VisibilityMeshletsOf(Slot) || RetainedStatic[Slot].MeshletVisibilityBase != Range.x;
         };
         constexpr uint32 kMeshletVisibilityScanGrain = 4096;
         Jobs::ParallelForOrSerial(NumCandidates, kMeshletVisibilityScanGrain, [&](const Jobs::FParallelRange& Range)
@@ -1481,13 +1480,13 @@ namespace Lumina
                 continue;
             }
 
-            const uint32 LODAndThinning = PackLODAndThinning(Prim.ForcedLODIndex, 0.0f, Prim.RenderLayers, Prim.CustomDepthStencil, Prim.bShadowWPO,
-                                                             IsShadowCacheable(Binding, Prim.bShadowWPO) && !bRemapped);
+            const uint32 FlagsAndThinning = PackFlagsAndThinning(0.0f, Prim.RenderLayers, Prim.CustomDepthStencil, Prim.bShadowWPO,
+                                                                 IsShadowCacheable(Binding, Prim.bShadowWPO) && !bRemapped);
 
             EInstanceFlags Flags = ComposeInstanceFlags(Prim.BaseFlags, Binding, Prim.bCastShadow && !bRemapped, bActive, bHasGeometry);
             if (bRemapped)
             {
-                Flags &= ~EInstanceFlags::HasDistanceField;
+                Flags &= ~(EInstanceFlags::HasDistanceField | EInstanceFlags::Impostor);
             }
 
             FInstanceCullEntry NewCull = {};
@@ -1495,7 +1494,7 @@ namespace Lumina
             NewCull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
             NewCull.SurfaceDescIndex = Binding.SurfaceDescIndex;
             NewCull.MaxDrawDistance  = Cull.MaxDrawDistance;
-            NewCull.LODAndThinning   = LODAndThinning;
+            NewCull.FlagsAndThinning = FlagsAndThinning;
 
             FInstanceStatic NewStatic = {};
             NewStatic.MeshletHeaderSlot     = Prim.MeshletHeaderSlot;

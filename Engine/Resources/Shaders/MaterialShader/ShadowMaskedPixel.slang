@@ -34,8 +34,7 @@ float ShadowMaskedOpacity(FMaskedVertexOutput Input)
 [shader("fragment")]
 void FragmentMain(FMaskedVertexOutput Input, uint ViewportIndex : SV_ViewportArrayIndex)
 {
-    // A splat already stands for its voxel's coverage, so it casts whole, as it draws.
-    if (!MaskedIsVoxelSplat(Input) && ShadowMaskedOpacity(Input) < GetMaterialOpacityClip(Input.MaterialIndex))
+    if (ShadowMaskedOpacity(Input) < GetMaterialOpacityClip(Input.MaterialIndex))
     {
         discard;
     }

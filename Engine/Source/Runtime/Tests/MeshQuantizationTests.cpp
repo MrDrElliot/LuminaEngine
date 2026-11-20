@@ -1,7 +1,7 @@
 #include "gtest/gtest.h"
 
 #include "Core/Math/Math.h"
-#include "Renderer/MeshData.h"
+#include "Renderer/MeshLegacyFormat.h"
 #include "Renderer/MeshQuantization.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Versioning/CoreVersion.h"
@@ -156,7 +156,7 @@ TEST(MeshQuantization, StructLayoutsMatchTheGPUMirrors)
     EXPECT_EQ(sizeof(FMeshVertexAttributes), 12u);
     EXPECT_EQ(sizeof(FMeshVertexPosition), 8u);
     EXPECT_EQ(sizeof(FMeshletSkinnedVertex), 36u);
-    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 192u);
+    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 224u);
 }
 
 // The shader unpacks the last word with the MESHLET_* shifts, so the bitfield order is part of the format.
@@ -306,6 +306,5 @@ TEST(MeshQuantization, LegacyMeshletWordRepacksOnLoad)
     EXPECT_EQ(Read.Meshlets[0].TriangleCount, 2u);
     EXPECT_EQ(Read.Meshlets[0].LODIndex, 5u);
     EXPECT_TRUE(Read.Meshlets[0].HasShortVertexRefs());
-    EXPECT_EQ(Read.Meshlets[0].bVoxel, 0u);
     EXPECT_EQ(GetStaticVertexIndex(Read, Read.Meshlets[0], 3u), 3u);
 }

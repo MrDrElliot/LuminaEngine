@@ -10,6 +10,7 @@
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/NodeGraph/Material/MaterialCompileScheduler.h"
 #include "Particles/ParticleCompileScheduler.h"
+#include "Tools/Impostor/ImpostorBaker.h"
 #include "Play/StandaloneLauncher.h"
 
 
@@ -190,6 +191,11 @@ namespace Lumina
 
         // Ctrl+P quick-open: a filterable list of every registered asset, Enter to open.
         void OpenAssetSearchModal();
+
+        // Queues an impostor bake for every mesh the open world's forests and painted foliage scatter.
+        void BakeFoliageImpostors();
+
+        FImpostorBaker& GetImpostorBaker() { return ImpostorBaker; }
 
         // File > Save: saves the focused tool, which is what Ctrl+S already does.
         void SaveActiveTool();
@@ -413,6 +419,7 @@ namespace Lumina
         TVector<FEditorTool*>                           EditorTools;
         FMaterialCompileScheduler                       MaterialCompiles;
         FParticleCompileScheduler                       ParticleCompiles;
+        FImpostorBaker                                  ImpostorBaker;
         FStandaloneLauncher                             StandaloneLauncher;
 
         FString                                         SceneTargetTab;

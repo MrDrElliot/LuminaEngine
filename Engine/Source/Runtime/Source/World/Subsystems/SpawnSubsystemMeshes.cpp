@@ -16,7 +16,7 @@ namespace Lumina
     CStaticMesh* CSpawnSubsystem::CreateStaticMesh(const float* Positions, int32 PositionFloats,
         const float* Normals, int32 NormalFloats, const float* UVs, int32 UVFloats,
         const float* Colors, int32 ColorFloats, const uint32* Indices, int32 IndexCount,
-        CMaterialInterface* Material, int32 MaxLODs)
+        CMaterialInterface* Material, bool bLODHierarchy)
     {
         const int32 VertexCount = PositionFloats / 3;
         if (GetWorld() == nullptr || Positions == nullptr || Indices == nullptr || VertexCount == 0 || IndexCount < 3)
@@ -57,7 +57,7 @@ namespace Lumina
 
         // Built once and drawn many times, so the slower, tighter meshlet build pays for itself.
         FMeshBuildOptions Options;
-        Options.MaxLODs             = (uint32)Math::Max(MaxLODs, 1);
+        Options.bLODHierarchy       = bLODHierarchy;
         Options.bMeshletConeCulling = true;
         Options.bFastMeshletBuild   = false;
 

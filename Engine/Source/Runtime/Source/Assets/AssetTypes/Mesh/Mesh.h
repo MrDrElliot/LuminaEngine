@@ -5,31 +5,23 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Renderer/MeshData.h"
-#include "Renderer/VirtualGeometrySettings.h"
 #include "Memory/SmartPtr.h"
 #include "Mesh.generated.h"
 
 namespace Lumina
 {
     class CMaterialInterface;
-    class CMaterialInstance;
-    class CMaterial;
 }
 
 namespace Lumina
 {
     namespace MeshBuffers
     {
-        // Creates the meshlet/bounds/vertex/triangle buffers plus the header that indexes them, and stores
-        // the addresses on Resource.MeshBuffers. Split out of CMesh because the dynamic-mesh component owns
-        // a resource without owning a CMesh -- and unlike CMesh::GenerateGPUBuffers this does NOT bump the
-        // resolve epoch or drop the CPU scratch, which are the asset path's concerns.
+        // Uploads the geometry and writes its header, for a resource with or without a CMesh, keeping the CPU streams and resolve entries as they are.
         RUNTIME_API void CreateForResource(FMeshResource& Resource);
 
-        // Re-uploads Resource.DistanceField into a fresh volume texture and rewrites the meshlet header
-        // IN PLACE with its new heap slot. The header address is preserved, so cached header addresses
-        // stay valid and no resolve-cache invalidation is needed. No-op when the mesh has no header yet.
-        RUNTIME_API void RefreshDistanceField(FMeshResource& Resource);
+        // Republishes the distance field and impostor textures on the same header slot, so cached instances need no new address.
+        RUNTIME_API void RefreshTextures(FMeshResource& Resource);
     }
 
     // Reads Source's finest baked level back into build streams on Resource, false when Source kept no CPU meshlets.
@@ -39,11 +31,11 @@ namespace Lumina
     class RUNTIME_API CMesh : public CObject
     {
         GENERATED_BODY()
-        
+
         friend class CMeshImporter;
-        
+
     public:
-        
+
         void Serialize(FArchive& Ar) override;
         void PostLoad() override;
         void OnReferencesReplaced() override;
@@ -59,28 +51,23 @@ namespace Lumina
         void GenerateBoundingBox();
         void GenerateGPUBuffers();
 
-        /** True when a field is baked and resident. */
         bool HasDistanceField() const;
 
-        /** (Re)voxelize this mesh from its baked meshlets using DistanceFieldSettings, then refresh the
-         *  GPU buffers so the new volume and its heap slot reach the shader. Clears the field instead
-         *  when the settings are disabled. Does NOT mark the package dirty -- the caller decides that.
-         *
-         *  Runs the build synchronously on the calling thread (parallel internally), which for a default
-         *  48^3 field is well under a second, but scales cubically with Resolution. */
+        // Rebuilds the field from the baked meshlets with DistanceFieldSettings, or drops it when they are off, leaving the package clean.
         void BuildDistanceField();
 
-        // Rebuilds the meshlets, LODs and virtual geometry from the baked finest level using VirtualGeometrySettings, so no source file is needed.
-        bool RebuildVirtualGeometry();
+        bool HasImpostor() const;
 
-        // Whether the baked meshlets carry a cluster hierarchy.
-        bool HasClusterLOD() const;
+        // Replaces the baked impostor and publishes it on the live header. Leaves the package clean for the caller to dirty.
+        void SetImpostor(FMeshImpostor&& Impostor);
+
+        // Rebuilds the meshlets and cluster hierarchy from the baked finest level, so no source file is needed.
+        bool RebuildVirtualGeometry();
 
         uint32 GetNumMaterials() const { return (uint32)Materials.Num(); }
         CMaterialInterface* GetMaterialAtSlot(int32 Slot) const;
         void SetMaterialAtSlot(int32 Slot, CMaterialInterface* NewMaterial);
-        
-        FORCEINLINE const FGeometrySurface& GetSurface(int32 Slot) const { return MeshResources->GeometrySurfaces[Slot]; }
+
         FORCEINLINE FMeshResource& GetMeshResource() const { return *MeshResources.get(); }
         FORCEINLINE const FMeshResource* TryGetMeshResource() const { return MeshResources.get(); }
 
@@ -105,23 +92,20 @@ namespace Lumina
         // The two halves a batch runs, the first safely in parallel with other meshes and the second on the game thread.
         void BuildDeferredMeshlets();
         void UploadDeferredBuffers();
-        
+
         FORCEINLINE const FMeshResource::FMeshBuffers& GetMeshBuffers() const { return MeshResources->MeshBuffers; }
-        
+
         virtual bool IsSkinned() const { return false; }
-        
+
         FUNCTION()
         FORCEINLINE const SAABB& GetAABB() const { return BoundingBox; }
 
         // The box the renderer culls against, in the space the mesh is drawn in rather than the one its vertices are stored in.
         virtual SAABB GetCullBounds() const { return BoundingBox; }
-        
+
         template<typename TCallable>
         void ForEachSurface(TCallable&& Lambda) const;
 
-
-        
-        
         PROPERTY(Editable, NoResize, NoReorder, Category = "Materials", DisplayName = "Slots")
         TVector<TStrongObjectPtr<CMaterialInterface>> Materials;
 
@@ -132,22 +116,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Level of Detail", ClampMin = 0.05f, ClampMax = 4.0f)
         float LODDistanceScale = 1.0f;
 
-        /** Build inputs for this mesh's signed distance field. Edited here rather than only at import so
-         *  a field can be added, retuned, or dropped without round-tripping the source file; the mesh
-         *  editor's Build Distance Field action applies them. Seeded from the import dialog. */
+        // Seeded from the import dialog and applied by the mesh editor's Build Distance Field, so a field changes without the source file.
         PROPERTY(Editable, Category = "Distance Field", DisplayName = "Settings")
         SDistanceFieldBuildSettings DistanceFieldSettings;
 
-        // Cluster hierarchy and voxel build inputs, applied by the mesh editor's Rebuild Virtual Geometry action. Seeded from the import dialog.
-        PROPERTY(Editable, Category = "Virtual Geometry", DisplayName = "Settings")
-        SVirtualGeometryBuildSettings VirtualGeometrySettings;
-
-        /** File this mesh was last imported from, so "Reimport From File..." can open on it. Empty for
-         *  procedurally generated meshes and for assets imported before this was recorded. Matches the
-         *  SourcePath that CTexture / CFont / CAudioStream already keep. */
+        // The file this mesh was last imported from, which Reimport From File opens on, empty for procedural meshes.
         PROPERTY(Hidden)
         FString SourcePath;
-        
+
     private:
 
         // Creates the GPU buffers and drops the import-time scratch they were built from.
@@ -163,8 +139,6 @@ namespace Lumina
         TUniquePtr<FMeshResource> PendingMeshResources;
     };
 
-
-    
     template <typename TCallable>
     void CMesh::ForEachSurface(TCallable&& Lambda) const
     {

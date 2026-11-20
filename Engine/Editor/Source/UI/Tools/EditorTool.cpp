@@ -1316,6 +1316,8 @@ namespace Lumina
                     { ERenderSceneDebugFlags::ClusterGrid,     "Light Clusters"   },
                     { ERenderSceneDebugFlags::ShadowLevels,    "Shadow Levels"    },
                     { ERenderSceneDebugFlags::SunFarShadow,    "Sun Far Shadow"   },
+                    // Redraws every cached page while open, so each caster shows how it rasterizes rather than only the ones that moved.
+                    { ERenderSceneDebugFlags::ShadowRaster,    "Shadow Raster"    },
                     { ERenderSceneDebugFlags::GTAO,            "GTAO"             },
                     { ERenderSceneDebugFlags::ScreenSpaceGI,   "Screen Space GI"  },
                     // The two failure modes look identical in a lit view, hence two separate inspectors.

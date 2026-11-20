@@ -32,8 +32,8 @@ namespace Lumina
         );
     }
 
-    // Octahedral 16-16 unit-normal pack.
-    inline uint32 PackNormal(FVector3 n)
+    // A unit vector on the octahedral square [-1, 1], the lower hemisphere folded over the diagonals; matches OctEncode in Common.slang.
+    inline FVector2 OctEncode(FVector3 n)
     {
         n /= Math::Abs(n.x) + Math::Abs(n.y) + Math::Abs(n.z) + 1e-12f;
         FVector2 e = FVector2(n.x, n.y);
@@ -43,16 +43,11 @@ namespace Lumina
                 (1.0f - Math::Abs(e.y)) * (e.x >= 0.0f ? 1.0f : -1.0f),
                 (1.0f - Math::Abs(e.x)) * (e.y >= 0.0f ? 1.0f : -1.0f));
         }
-        int32 qx = (int32)Math::Round(Math::Clamp(e.x, -1.0f, 1.0f) * 32767.0f);
-        int32 qy = (int32)Math::Round(Math::Clamp(e.y, -1.0f, 1.0f) * 32767.0f);
-        return ((uint32)(qx & 0xFFFF)) | (((uint32)(qy & 0xFFFF)) << 16);
+        return e;
     }
 
-    inline FVector3 UnpackNormal(uint32 packed)
+    inline FVector3 OctDecode(FVector2 e)
     {
-        int16 sx = (int16)(packed & 0xFFFF);
-        int16 sy = (int16)((packed >> 16) & 0xFFFF);
-        FVector2 e = FVector2((float)sx, (float)sy) / 32767.0f;
         FVector3 n(e.x, e.y, 1.0f - Math::Abs(e.x) - Math::Abs(e.y));
         if (n.z < 0.0f)
         {
@@ -64,16 +59,25 @@ namespace Lumina
         return Math::Normalize(n);
     }
 
+    // Octahedral 16-16 unit-normal pack.
+    inline uint32 PackNormal(FVector3 n)
+    {
+        const FVector2 e = OctEncode(n);
+        int32 qx = (int32)Math::Round(Math::Clamp(e.x, -1.0f, 1.0f) * 32767.0f);
+        int32 qy = (int32)Math::Round(Math::Clamp(e.y, -1.0f, 1.0f) * 32767.0f);
+        return ((uint32)(qx & 0xFFFF)) | (((uint32)(qy & 0xFFFF)) << 16);
+    }
+
+    inline FVector3 UnpackNormal(uint32 packed)
+    {
+        int16 sx = (int16)(packed & 0xFFFF);
+        int16 sy = (int16)((packed >> 16) & 0xFFFF);
+        return OctDecode(FVector2((float)sx, (float)sy) / 32767.0f);
+    }
+
     inline uint32 PackTangent(FVector3 t, float Sign)
     {
-        t /= Math::Abs(t.x) + Math::Abs(t.y) + Math::Abs(t.z) + 1e-12f;
-        FVector2 e = FVector2(t.x, t.y);
-        if (t.z < 0.0f)
-        {
-            e = FVector2(
-                (1.0f - Math::Abs(e.y)) * (e.x >= 0.0f ? 1.0f : -1.0f),
-                (1.0f - Math::Abs(e.x)) * (e.y >= 0.0f ? 1.0f : -1.0f));
-        }
+        const FVector2 e = OctEncode(t);
         int32 qx = (int32)Math::Round(Math::Clamp(e.x, -1.0f, 1.0f) * 16383.0f);
         int32 qy = (int32)Math::Round(Math::Clamp(e.y, -1.0f, 1.0f) * 16383.0f);
         uint32 Hand = (Sign >= 0.0f) ? 1u : 0u;
@@ -92,28 +96,19 @@ namespace Lumina
         };
         int32 sx = SignExtend15(Packed);
         int32 sy = SignExtend15(Packed >> 15);
-        FVector2 e = FVector2((float)sx, (float)sy) / 16383.0f;
-        FVector3 t(e.x, e.y, 1.0f - Math::Abs(e.x) - Math::Abs(e.y));
-        if (t.z < 0.0f)
-        {
-            float tx = (1.0f - Math::Abs(t.y)) * (t.x >= 0.0f ? 1.0f : -1.0f);
-            float ty = (1.0f - Math::Abs(t.x)) * (t.y >= 0.0f ? 1.0f : -1.0f);
-            t.x = tx;
-            t.y = ty;
-        }
         float Sign = ((Packed >> 30) & 1u) != 0u ? 1.0f : -1.0f;
-        return FVector4(Math::Normalize(t), Sign);
+        return FVector4(OctDecode(FVector2((float)sx, (float)sy) / 16383.0f), Sign);
     }
 
     // CPU-only interleaved staging for import and procedural geometry, with no Slang mirror, so its size is unconstrained.
     struct FSourceVertex
     {
-        FVector3       Position;
-        uint32          Normal;
-        uint32          Tangent;
-        uint32          UV;      // packHalf2x16, TEXCOORD_0
-        uint32          UV1;     // packHalf2x16, TEXCOORD_1; equals UV when the source has one set
-        uint32          Color;
+        FVector3 Position;
+        uint32   Normal;
+        uint32   Tangent;
+        uint32   UV;      // packHalf2x16, TEXCOORD_0
+        uint32   UV1;     // packHalf2x16, TEXCOORD_1, equal to UV when the source has one set
+        uint32   Color;
 
         friend FArchive& operator<<(FArchive& Ar, FSourceVertex& Data)
         {
@@ -178,8 +173,8 @@ namespace Lumina
 
     struct FSourceSkinnedVertex : FSourceVertex
     {
-        FU16Vector4    JointIndices;
-        FU8Vector4     JointWeights;
+        FU16Vector4 JointIndices;
+        FU8Vector4  JointWeights;
 
         friend FArchive& operator<<(FArchive& Ar, FSourceSkinnedVertex& Data)
         {
@@ -225,14 +220,8 @@ namespace Lumina
 
     struct FSimpleElementVertex
     {
-        FVector3   Position;
-        uint32      Color;
-    };
-
-    struct FBillboardVertex
-    {
-        FVector3   Position;
-        float       Size;
+        FVector3 Position;
+        uint32   Color;
     };
 
     // The GPU formats have same-named mirrors in Common.slang, so re-verify the Slang stride when a field moves.
@@ -247,7 +236,5 @@ namespace Lumina
     static_assert(TCanBulkSerialize<FMeshVertexAttributes>::value);
     static_assert(TCanBulkSerialize<FMeshVertexPosition>::value);
     static_assert(TCanBulkSerialize<FMeshletSkinnedVertex>::value);
-    static_assert(TCanBulkSerialize<FBillboardVertex>::value);
     static_assert(TCanBulkSerialize<FSimpleElementVertex>::value);
-
 }

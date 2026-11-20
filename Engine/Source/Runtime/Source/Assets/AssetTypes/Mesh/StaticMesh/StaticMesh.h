@@ -20,7 +20,7 @@ namespace Lumina
         // This mesh's collision when it builds anything, otherwise null so callers fall back to the render mesh.
         const SMeshCollision* GetCollision() const { return Collision.HasCollision() ? &Collision : nullptr; }
 
-        /** Named attach points relative to the mesh origin (BoneName unused). */
+        // Named attach points relative to the mesh origin, whose BoneName goes unused.
         PROPERTY(Editable, Category = "Sockets")
         TVector<SMeshSocket> Sockets;
 

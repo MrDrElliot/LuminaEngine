@@ -237,6 +237,16 @@ namespace Lumina
         PROPERTY(Hidden)
         uint64 SourceHash = 0;
 
+        // Whether the graph drives World Position Offset, known only once a compile has looked at the graph.
+        PROPERTY(Hidden)
+        bool bWorldPositionOffsetKnown = false;
+
+        PROPERTY(Hidden)
+        bool bWorldPositionOffset = false;
+
+        // An unknown graph counts as moving its vertices, so nothing caches or rasterizes it as the bare mesh by mistake.
+        bool HasWorldPositionOffset() const { return !bWorldPositionOffsetKnown || bWorldPositionOffset; }
+
         // Publishes the default set, or one permutation, under this material's source and the current templates.
         void StoreShadersInArtifactCache();
         void StorePermutationInArtifactCache(uint64 Key);

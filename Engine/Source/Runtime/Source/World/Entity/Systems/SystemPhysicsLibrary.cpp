@@ -7,8 +7,6 @@ namespace Lumina
 {
     namespace SystemPhysicsLibraryInternal
     {
-        constexpr int32 MaxOverlapResults = 16384;
-
         TSpan<const ECS::FEntity> IgnoreOf(const ECS::FEntity& Entity)
         {
             return TSpan<const ECS::FEntity>(&Entity, Entity.IsNull() ? 0 : 1);
@@ -73,27 +71,13 @@ namespace Lumina
         }
     }
 
-    void CSystemPhysicsLibrary::Overlap(const SSystemContext& Context, SQueryShape Shape, FVector3 Center, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask, TVector<ECS::FEntity>& Out)
+    void CSystemPhysicsLibrary::Overlap(const SSystemContext& Context, SQueryShape Shape, FVector3 Center, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask, TVector<SOverlapResult>& Out)
     {
-        Physics::IPhysicsQueries* Scene = Context.GetPhysics();
-        if (Scene == nullptr)
+        Out.Reset();
+        if (Physics::IPhysicsQueries* Scene = Context.GetPhysics())
         {
-            return;
+            Scene->OverlapAll(Shape, Center, LayerMask, SystemPhysicsLibraryInternal::IgnoreOf(IgnoreEntity), Out);
         }
-
-        int32 Capacity = 64;
-        int32 Written = 0;
-        for (;;)
-        {
-            Out.SetNum(Capacity);
-            Written = Math::Max(Scene->OverlapShape(Shape, Center, LayerMask, SystemPhysicsLibraryInternal::IgnoreOf(IgnoreEntity), TSpan<ECS::FEntity>(Out.GetData(), (size_t)Capacity)), 0);
-            if (Written < Capacity || Capacity >= SystemPhysicsLibraryInternal::MaxOverlapResults)
-            {
-                break;
-            }
-            Capacity *= 2;
-        }
-        Out.SetNum(Written);
     }
 
     bool CSystemPhysicsLibrary::IsAwake(const SSystemContext& Context, ECS::FEntity Entity)

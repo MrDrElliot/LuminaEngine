@@ -20,7 +20,7 @@ namespace Lumina::Import::ClusterLOD
         // Bounds the walk for a mesh whose groups keep halving, which a million triangles reaches in about fifteen.
         constexpr uint32 kMaxLevels = 24;
 
-        // A lost square of surface counts as an error of half its side, which keeps aggregates detailed until their voxels take over.
+        // A lost square of surface counts as an error of half its side, so sparse cards keep their area through the coarse levels.
         constexpr float kAreaLossErrorScale = 0.5f;
 
         // Islands grow back only once a group has lost this share of the surface it stands for, so solids never swell.
@@ -613,17 +613,4 @@ namespace Lumina::Import::ClusterLOD
         return !Out.Meshlets.IsEmpty();
     }
 
-    void SetRootParents(FBuildOutput& Out, const FVector3& Center, float Radius, float Error, bool bVoxelParent)
-    {
-        for (FMeshletLODBounds& Bounds : Out.LODBounds)
-        {
-            if (Bounds.ParentError >= kMeshletLODErrorInfinite)
-            {
-                Bounds.ParentCenter = Center;
-                Bounds.ParentRadius = Radius;
-                Bounds.ParentError  = Error;
-                Bounds.Flags       |= bVoxelParent ? MESHLET_LOD_FLAG_VOXEL_PARENT : 0u;
-            }
-        }
-    }
 }

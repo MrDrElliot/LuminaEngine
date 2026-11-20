@@ -66,7 +66,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering", ClampMin = 0.0f, Units = "m")
         float FullDensityDistance = 0.0f;
 
-        // Past this the blades give way to patches, many blades merged with voxel levels of their own, so far grass costs a few instances per patch. Zero keeps blades all the way out.
+        // Past this the blades give way to patches, many blades merged into one cluster hierarchy, so far grass costs a few instances per patch. Zero keeps blades all the way out.
         PROPERTY(Editable, Category = "Rendering", ClampMin = 0.0f, Units = "m")
         float PatchDistance = 25.0f;
 

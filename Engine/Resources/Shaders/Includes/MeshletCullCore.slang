@@ -24,6 +24,8 @@ struct FMeshletCullContext
     bool     bShadowCached;
     // The views pick this instance's LOD, so a cluster mesh draws its cut rather than the pinned slot whole.
     bool     bSelectsLOD;
+    // A skinned cluster mesh, which every view cuts as the camera's LOD view does.
+    bool     bCameraCut;
     uint     SurfaceDescIndex;
     // The mesh LOD distance scale, applied to the per-meshlet bounds like the slot table applies it to its errors.
     float    LODErrorMultiplier;
@@ -54,7 +56,8 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     Ctx.bTwoSided   = I.HasFlag(EInstanceFlags::TwoSided);
     Ctx.bCustomDepth = I.bCustomDepth;
     Ctx.bShadowCached = I.bShadowCached;
-    Ctx.bSelectsLOD =I.SurfaceDescIndex != kNoSurfaceDesc;
+    Ctx.bSelectsLOD = I.SurfaceDescIndex != kNoSurfaceDesc && !Ctx.bSkinned;
+    Ctx.bCameraCut  = I.SurfaceDescIndex != kNoSurfaceDesc && Ctx.bSkinned;
     Ctx.SurfaceDescIndex   = I.SurfaceDescIndex;
     Ctx.LODErrorMultiplier = 1.0;
     Ctx.Layers      = I.RenderLayers;
@@ -174,15 +177,10 @@ float ClusterReach(FCullView View, float4x4 Model, float MaxScale, float3 LocalC
     return max(length(WorldCenter - View.ViewOrigin) - LocalRadius * MaxScale, 0.0);
 }
 
-// In the cut when the view accepts the group a meshlet came from but not the group it belongs to, and siblings share both bit for bit.
+// Siblings share both bounds bit for bit, so exactly one level of each region passes.
 bool PassesClusterCut(FMeshletHeader* Header, FMeshletCullContext Ctx, FCullView View, uint MeshletIdx)
 {
     const FMeshletLODBounds Bounds = loadAligned<16>(Header.LODBounds + MeshletIdx);
-    const bool bVoxels = VoxelFarEnabled();
-    if (Bounds.bVoxel && !bVoxels)
-    {
-        return false;
-    }
 
     // A zero scale pins the finest level, which only the source geometry's zero error passes.
     const float ErrorScale = View.LODErrorScale * Ctx.MaxScale * Ctx.LODErrorMultiplier;
@@ -196,15 +194,22 @@ bool PassesClusterCut(FMeshletHeader* Header, FMeshletCullContext Ctx, FCullView
     {
         return false;
     }
-
-    const float ParentError = (Bounds.bVoxelParent && !bVoxels) ? MESHLET_LOD_ERROR_INFINITE : Bounds.ParentError;
-    if (ParentError >= MESHLET_LOD_ERROR_INFINITE)
+    if (Bounds.ParentError >= MESHLET_LOD_ERROR_INFINITE)
     {
         return true;
     }
 
     const float ParentReach = ClusterReach(View, Ctx.Model, Ctx.MaxScale, Bounds.ParentCenter, Bounds.ParentRadius);
-    return ParentError * ErrorScale > ParentReach;
+    return Bounds.ParentError * ErrorScale > ParentReach;
+}
+
+// The view a skinned cut is taken against, which the CPU picked the pre-skin slice from.
+FCullView CameraLODCutView()
+{
+    FCullView View = (FCullView)0;
+    View.ViewOriginAndFlags = Scene().CullData.CameraLODOriginAndFlags;
+    View.LODErrorScale      = Scene().CullData.CameraLODErrorScale;
+    return View;
 }
 
 // The early phase must not Hi-Z cull, since a meshlet dropped there is never redrawn by the late phase.
@@ -230,9 +235,9 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
         bKeep = MeshletIdx < Header.MeshletCount;
 
         // Before the sphere loads, since most of a cluster range sits outside the cut and never needs them.
-        if (bKeep && !bSkipClusterCut && Ctx.bSelectsLOD && Header.bClusterLOD)
+        if (bKeep && !bSkipClusterCut && (Ctx.bSelectsLOD || Ctx.bCameraCut) && Header.bClusterLOD)
         {
-            bKeep = PassesClusterCut(Header, Ctx, View, MeshletIdx);
+            bKeep = PassesClusterCut(Header, Ctx, Ctx.bCameraCut ? CameraLODCutView() : View, MeshletIdx);
         }
 
         if (bKeep)

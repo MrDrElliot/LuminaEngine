@@ -167,6 +167,10 @@ namespace Lumina
         void AddPixelOutput(const FString& Raw) { PixelOutputChunks.Append(Raw); }
         void AddVertexOutput(const FString& Raw) { VertexOutputChunks.Append(Raw); }
 
+        // Set by the output node when its World Position Offset pin is wired, which tells the renderer whether the mesh keeps its shape.
+        void SetWorldPositionOffsetDriven(bool bDriven) { bWorldPositionOffsetDriven = bDriven; }
+        bool IsWorldPositionOffsetDriven() const { return bWorldPositionOffsetDriven; }
+
         // Stage gate for pixel-only nodes (ScreenPosition, FragmentDepth, ...). Returns true when emission
         // may proceed; on a vertex-stage call pushes an error at Node and returns false. Call first in GenerateDefinition.
         bool RequirePixelStage(CMaterialGraphNode* Node, const FString& NodeKindName);
@@ -648,6 +652,7 @@ namespace Lumina
         EMaterialCompileStage CurrentStage = EMaterialCompileStage::Pixel;
         CMaterialOutput* PreviewOutput = nullptr;
         bool bMasked = false;
+        bool bWorldPositionOffsetDriven = false;
 
         TVector<TStrongObjectPtr<CTexture>> BoundImages;
 

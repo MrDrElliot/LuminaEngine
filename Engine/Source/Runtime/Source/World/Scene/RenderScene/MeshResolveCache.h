@@ -54,7 +54,7 @@ namespace Lumina
         uint32  LODMeshletCount[MAX_MESH_LODS]      = {};
         // Mesh-local error per LOD, raw, which LODErrorMultiplier scales at selection time.
         float   LODError[MAX_MESH_LODS]             = {};
-        // A cluster slot largest parent error, raw like LODError; zero on discrete LODs.
+        // A cluster slot largest parent error, raw like LODError.
         float   LODParentError[MAX_MESH_LODS]       = {};
         // SURFACE_DESC_* bits copied from the surface.
         uint32  LODFlags                            = 0;

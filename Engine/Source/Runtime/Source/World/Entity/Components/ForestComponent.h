@@ -60,7 +60,7 @@ namespace Lumina
         TVector<uint8> Weights;
     };
 
-    // A forest kept as rules and a seed, real plants near the camera and cached voxel aggregates of whole tiles further out.
+    // A forest kept as rules and a seed, streamed as tiles of real plants around the camera.
     REFLECT(Component, Category = "Environment")
     struct RUNTIME_API SForestComponent
     {
@@ -84,25 +84,13 @@ namespace Lumina
         PROPERTY(Editable, Category = "Streaming", ClampMin = 8.0f, Units = "m")
         float TileSize = 64.0f;
 
-        // Voxels along a tile aggregate's side at every level, so each level up has voxels twice as wide.
-        PROPERTY(Editable, Category = "Streaming", ClampMin = 16, ClampMax = 512)
-        int32 AggregateResolution = 128;
+        // Furthest a tile of plants streams in, past which the forest shows nothing.
+        PROPERTY(Editable, Category = "Streaming", ClampMin = 8.0f, Units = "m")
+        float ViewDistance = 2048.0f;
 
-        // Largest an aggregate's voxel may look on screen before the tile splits into finer aggregates or real plants.
-        PROPERTY(Editable, Category = "Streaming", ClampMin = 0.25f, ClampMax = 16.0f, Units = "px")
-        float MaxVoxelPixels = 2.0f;
-
-        // Aggregates built at once on background threads.
-        PROPERTY(Editable, Category = "Streaming", ClampMin = 1, ClampMax = 32)
-        int32 MaxConcurrentBuilds = 4;
-
-        // Stores built aggregates in the project's artifact cache, so a tile is voxelized once per machine.
-        PROPERTY(Editable, Category = "Streaming")
-        bool bCacheAggregates = true;
-
-        // Leaves the aggregates out and shows every tile as plants, for comparing the two.
-        PROPERTY(Editable, Category = "Debug")
-        bool bInstancesOnly = false;
+        // Tiles scattered at once on background threads.
+        PROPERTY(Editable, Category = "Streaming", ClampMin = 1, ClampMax = 64)
+        int32 MaxConcurrentBuilds = 16;
 
         PROPERTY(Hidden, Category = "Painting")
         TVector<SForestPaintChunk> Paint;

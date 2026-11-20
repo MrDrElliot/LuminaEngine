@@ -10,8 +10,30 @@ struct FSceneDebugViewArgs
     FTexture2D      Depth;
     uint            DrawListCount;
     uint            _Pad0;
+    // The shadow cull's record for the Shadow Raster view, a word of compute-drawn levels then one of hardware-drawn levels per instance.
+    GPUSpan<uint>   ShadowRasterDebug;
 };
 FSceneDebugViewArgs* Pass() { return GetPassArgs<FSceneDebugViewArgs>(); }
+
+// Green where every virtual shadow level that drew the instance did so in compute, red where all used hardware, gray where none drew it.
+float3 ShadowRasterDebugColor(FVisTriangle T, float3 Lit)
+{
+    const float Shade = 0.35 + 0.65 * dot(Lit / (1.0 + Lit), float3(0.299, 0.587, 0.114));
+    const GPUSpan<uint> Record = Pass().ShadowRasterDebug;
+    if (!T.bValid || !Record.Contains(T.Ref.InstanceID * 2u + 1u))
+    {
+        return float3(0.5, 0.5, 0.5) * Shade;
+    }
+
+    const uint Compute  = countbits(Record.Get(T.Ref.InstanceID * 2u));
+    const uint Hardware = countbits(Record.Get(T.Ref.InstanceID * 2u + 1u));
+    if (Compute + Hardware == 0u)
+    {
+        return float3(0.5, 0.5, 0.5) * Shade;
+    }
+    const float Share = float(Compute) / float(Compute + Hardware);
+    return lerp(float3(1.0, 0.15, 0.1), float3(0.15, 1.0, 0.2), Share) * Shade;
+}
 
 struct FragmentInput
 {
@@ -75,6 +97,11 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
 
     // Shaded as the base because modes ApplyDebugView does not own, like the OIT views, must leave opaque geometry lit.
     const float3 Base = ShadeGBuffer(G, WorldPosition, ViewPosition, In.Position.xy).Color;
+
+    if (DebugMode == DEBUG_MODE_SHADOW_RASTER)
+    {
+        return float4(ShadowRasterDebugColor(T, Base), 1.0);
+    }
 
     return float4(ApplyDebugView(DebugMode, Base, G, Info, WorldPosition, ViewPosition, In.Position.xy), 1.0);
 }

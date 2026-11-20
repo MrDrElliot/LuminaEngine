@@ -18,14 +18,14 @@ namespace Lumina
     {
         const EInstanceFlags Flags = (EInstanceFlags)((Entry.DrawIDAndFlags >> 16u) & 0xFFFFu);
         return EnumHasAllFlags(Flags, EInstanceFlags::Active | EInstanceFlags::HasGeometry | EInstanceFlags::CastShadow)
-            && (Entry.LODAndThinning & INSTANCE_SHADOW_CACHEABLE_BIT) != 0u;
+            && (Entry.FlagsAndThinning & INSTANCE_SHADOW_CACHEABLE_BIT) != 0u;
     }
 
     bool FSunShadowCache::IsSwayCandidate(const FInstanceCullEntry& Entry, const FInstanceStatic& Static)
     {
         const EInstanceFlags Flags = (EInstanceFlags)((Entry.DrawIDAndFlags >> 16u) & 0xFFFFu);
         return EnumHasAllFlags(Flags, EInstanceFlags::Active | EInstanceFlags::HasGeometry | EInstanceFlags::CastShadow)
-            && (Entry.LODAndThinning & INSTANCE_SHADOW_CACHEABLE_BIT) == 0u
+            && (Entry.FlagsAndThinning & INSTANCE_SHADOW_CACHEABLE_BIT) == 0u
             && Static.WPODisableDistance > 0.0f && Static.SkinnedIndex == kNoSkinnedIndex;
     }
 

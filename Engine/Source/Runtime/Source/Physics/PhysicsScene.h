@@ -135,7 +135,7 @@ namespace Lumina::Physics
         const CPhysicsMaterial* Material = nullptr;
         SCollisionProfile       Profile = { .Layer = ECollisionProfiles::Static };
         bool                    bConvex = true;
-        int32                   SourceIndex = -1;       // Echoed back as SRayResult::InstanceIndex on a hit.
+        int32                   SourceIndex = -1;       // Echoed back as the InstanceIndex of ray and overlap results.
     };
 
     // A body no entity owns, for procedural or tool geometry. Shapes come from Collision when set, else from the raw triangles, three indices each.
@@ -246,9 +246,9 @@ namespace Lumina::Physics
         virtual TOptional<SRayResult> CastShapeClosest(const SQueryShape& Shape, const FVector3& Start, const FVector3& End,
                                                        ECollisionProfiles LayerMask, TSpan<const ECS::FEntity> IgnoreEntities) = 0;
 
-        // Distinct entities intersecting the shape; returns the count written, == OutEntities.Num() means possibly more.
+        // Distinct entities and instances intersecting the shape; returns the count written, == Out.Num() means possibly more.
         virtual int32 OverlapShape(const SQueryShape& Shape, const FVector3& Center, ECollisionProfiles LayerMask,
-                                   TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities) = 0;
+                                   TSpan<const ECS::FEntity> IgnoreEntities, TSpan<SOverlapResult> Out) = 0;
 
         // False when the entity has no body.
         virtual bool GetClosestPointOnBody(ECS::FEntity Entity, const FVector3& Point, FVector3& OutPoint) const = 0;
@@ -265,20 +265,40 @@ namespace Lumina::Physics
             return CastShapeClosest(SQueryShape::Sphere(Settings.Radius), Settings.Start, Settings.End, Settings.LayerMask, Settings.IgnoreEntities);
         }
 
-        // Distinct entities whose bodies contain the world point, a zero-radius overlap rather than a sweep.
-        int32 CollidePoint(const FVector3& Point, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
+        // Every overlap result, Out cleared first and grown until the scene stops filling it.
+        void OverlapAll(const SQueryShape& Shape, const FVector3& Center, ECollisionProfiles LayerMask,
+                        TSpan<const ECS::FEntity> IgnoreEntities, TVector<SOverlapResult>& Out)
         {
-            return OverlapShape(SQueryShape::Sphere(0.0f), Point, ECollisionProfiles::All, IgnoreEntities, OutEntities);
+            constexpr int32 MaxOverlapResults = 16384;
+            int32 Capacity = 64;
+            int32 Written = 0;
+            for (;;)
+            {
+                Out.SetNum(Capacity);
+                Written = OverlapShape(Shape, Center, LayerMask, IgnoreEntities, TSpan<SOverlapResult>(Out.GetData(), (size_t)Capacity));
+                if (Written < Capacity || Capacity >= MaxOverlapResults)
+                {
+                    break;
+                }
+                Capacity *= 2;
+            }
+            Out.SetNum(Written);
         }
 
-        int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
+        // Bodies containing the world point, a zero-radius overlap rather than a sweep.
+        int32 CollidePoint(const FVector3& Point, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<SOverlapResult> Out)
         {
-            return OverlapShape(SQueryShape::Sphere(Radius), Center, ECollisionProfiles::All, IgnoreEntities, OutEntities);
+            return OverlapShape(SQueryShape::Sphere(0.0f), Point, ECollisionProfiles::All, IgnoreEntities, Out);
         }
 
-        int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<ECS::FEntity> OutEntities)
+        int32 OverlapSphere(const FVector3& Center, float Radius, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<SOverlapResult> Out)
         {
-            return OverlapShape(SQueryShape::Box(HalfExtents, Rotation), Center, ECollisionProfiles::All, IgnoreEntities, OutEntities);
+            return OverlapShape(SQueryShape::Sphere(Radius), Center, ECollisionProfiles::All, IgnoreEntities, Out);
+        }
+
+        int32 OverlapBox(const FVector3& Center, const FVector3& HalfExtents, const FQuat& Rotation, TSpan<const ECS::FEntity> IgnoreEntities, TSpan<SOverlapResult> Out)
+        {
+            return OverlapShape(SQueryShape::Box(HalfExtents, Rotation), Center, ECollisionProfiles::All, IgnoreEntities, Out);
         }
 
         // An entity whose ragdoll is simulating takes these as one whole ragdoll, pushes shared out by limb mass.

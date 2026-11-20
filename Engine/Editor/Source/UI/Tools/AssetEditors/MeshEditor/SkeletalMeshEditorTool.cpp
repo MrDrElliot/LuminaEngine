@@ -73,7 +73,7 @@ namespace Lumina
         return MD.MeshletBoneIndices[Palette.Offset + PaletteSlot];
     }
 
-    // Walks each surface's LOD 0 meshlet range and hands every vertex to Visit(Meshlet, Index, Vertex).
+    // Walks each surface's source meshlets and hands every vertex to Visit(Meshlet, Index, Vertex).
     template <typename TVisitor>
     static void ForEachLOD0SkinnedVertex(const FMeshResource& Resource, TVisitor&& Visit)
     {
@@ -81,7 +81,7 @@ namespace Lumina
 
         for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
         {
-            const uint32 End = Math::Min(Surface.LODMeshletOffset[0] + Surface.LODMeshletCount[0],
+            const uint32 End = Math::Min(Surface.LODMeshletOffset[0] + Surface.FinestMeshletCount(MD),
                                          (uint32)MD.Meshlets.Num());
 
             for (uint32 m = Surface.LODMeshletOffset[0]; m < End; ++m)
@@ -587,19 +587,19 @@ namespace Lumina
                 ImGui::TableHeadersRow();
 
                 // Measured off meshlets, since GenerateGPUBuffers drops Positions and Indices once the mesh loads.
-                uint32 LOD0Triangles = 0;
-                uint32 MaxLODsAcrossSurfaces = 0;
+                uint32 SourceTriangles = 0;
+                uint32 MaxSlots = 0;
                 for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
                 {
-                    MaxLODsAcrossSurfaces = Math::Max(MaxLODsAcrossSurfaces, Surface.NumLODs);
-                    LOD0Triangles += SumSkinnedTrianglesInRange(MD.Meshlets, Surface.LODMeshletOffset[0], Surface.LODMeshletCount[0]);
+                    MaxSlots = Math::Max(MaxSlots, Surface.NumLODs);
+                    SourceTriangles += SumSkinnedTrianglesInRange(MD.Meshlets, Surface.LODMeshletOffset[0], Surface.FinestMeshletCount(MD));
                 }
 
                 InfoTable::Row("Meshlet Vertices", Format("{}", MD.MeshletSkinnedVertices.Num()));
-                InfoTable::Row("Triangles (LOD 0)", Format("{}", LOD0Triangles));
+                InfoTable::Row("Triangles (source)", Format("{}", SourceTriangles));
                 InfoTable::Row("Meshlets", Format("{}", MD.Meshlets.Num()));
                 InfoTable::Row("Surfaces", Format("{}", Resource.GetNumSurfaces()));
-                InfoTable::Row("LOD Levels", Format("{}", MaxLODsAcrossSurfaces));
+                InfoTable::Row("Hierarchy Slots", Format("{}", MaxSlots));
 
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex(0);
@@ -640,46 +640,7 @@ namespace Lumina
 
             ImGui::Spacing();
 
-            {
-                uint32 AvailableLODs = 1;
-                for (const FGeometrySurface& Surface : Resource.GeometrySurfaces)
-                {
-                    AvailableLODs = Math::Max(AvailableLODs, Surface.NumLODs);
-                }
-                AvailableLODs = Math::Clamp(AvailableLODs, 1u, (uint32)MAX_MESH_LODS);
-
-                char        LODNames[MAX_MESH_LODS][24];
-                const char* PreviewItems[MAX_MESH_LODS + 1];
-                PreviewItems[0] = "Automatic (distance)";
-                for (uint32 i = 0; i < AvailableLODs; ++i)
-                {
-                    if (i == 0)
-                    {
-                        snprintf(LODNames[i], sizeof(LODNames[i]), "LOD %u (full detail)", i);
-                    }
-                    else
-                    {
-                        snprintf(LODNames[i], sizeof(LODNames[i]), "LOD %u", i);
-                    }
-                    PreviewItems[i + 1] = LODNames[i];
-                }
-
-                // A stale selection from a mesh with more LODs would otherwise index past the list.
-                PreviewLODIndex = Math::Min(PreviewLODIndex, (int32)AvailableLODs - 1);
-
-                int PreviewItem = (PreviewLODIndex < 0) ? 0 : PreviewLODIndex + 1;
-                ImGui::SetNextItemWidth(220.0f);
-                if (ImGui::Combo("Preview LOD", &PreviewItem, PreviewItems, (int)AvailableLODs + 1))
-                {
-                    PreviewLODIndex = (PreviewItem == 0) ? -1 : PreviewItem - 1;
-                }
-                ImGuiX::TextTooltip("Force the viewport mesh to a specific LOD regardless of camera distance.");
-
-                if (AvailableLODs == 1)
-                {
-                    ImGui::TextDisabled("This mesh has one LOD, so there is nothing to switch between.");
-                }
-            }
+            ImGui::TextDisabled("The GPU cuts the hierarchy per meshlet against the camera, so the view mixes slots by distance.");
 
             ImGui::Spacing();
 
@@ -774,13 +735,13 @@ namespace Lumina
                             ImGui::TableSetupColumn("##Label", ImGuiTableColumnFlags_WidthFixed, 130.0f);
                             ImGui::TableSetupColumn("##Value", ImGuiTableColumnFlags_WidthStretch);
 
-                            const uint32 SurfaceTris = SumSkinnedTrianglesInRange(MD.Meshlets, Surface.LODMeshletOffset[0],
-                                                                          Surface.LODMeshletCount[0]);
+                            const uint32 SourceMeshlets = Surface.FinestMeshletCount(MD);
+                            const uint32 SurfaceTris = SumSkinnedTrianglesInRange(MD.Meshlets, Surface.LODMeshletOffset[0], SourceMeshlets);
 
                             InfoTable::Row("Material Index:", Format("{}", Surface.MaterialIndex));
-                            InfoTable::Row("LOD Levels:", Format("{}", Surface.NumLODs));
-                            InfoTable::Row("Meshlets (LOD 0):", Format("{}", Surface.LODMeshletCount[0]));
-                            InfoTable::Row("Triangles (LOD 0):", Format("{}", SurfaceTris));
+                            InfoTable::Row("Hierarchy Slots:", Format("{}", Surface.NumLODs));
+                            InfoTable::Row("Meshlets (source):", Format("{}", SourceMeshlets));
+                            InfoTable::Row("Triangles (source):", Format("{}", SurfaceTris));
 
                             if (CMaterialInterface* Material = SkeletalMesh->GetMaterialAtSlot(Surface.MaterialIndex))
                             {
@@ -1017,13 +978,6 @@ namespace Lumina
 
         AdvancePreviewClip((float)UpdateContext.GetDeltaTime());
 
-        // A direct write is not enough, since the retained scene only re-reads primitives reporting a change.
-        if (MeshComponent.ForcedLODIndex != PreviewLODIndex)
-        {
-            MeshComponent.ForcedLODIndex = PreviewLODIndex;
-            MeshComponent.MarkRenderStateDirty();
-        }
-
         const FMatrix4 EntityMatrix = Transform.GetWorldMatrix();
 
         if (bShowAABB)
@@ -1046,12 +1000,8 @@ namespace Lumina
                 const FGeometrySurface& Surface = Resource.GeometrySurfaces[SelectedSurfaceIndex];
                 const FMeshletData&     MD      = Resource.MeshletData;
 
-                const uint32 OverlayLOD = (PreviewLODIndex >= 0 && Surface.NumLODs > 0)
-                    ? (uint32)Math::Min((int32)Surface.NumLODs - 1, PreviewLODIndex)
-                    : 0u;
-
-                const uint32 Offset = Surface.LODMeshletOffset[OverlayLOD];
-                const uint32 End    = Math::Min(Offset + Surface.LODMeshletCount[OverlayLOD], (uint32)MD.MeshletSpheres.Num());
+                const uint32 Offset = Surface.LODMeshletOffset[0];
+                const uint32 End    = Math::Min(Offset + Surface.FinestMeshletCount(MD), (uint32)MD.MeshletSpheres.Num());
 
                 if (End > Offset)
                 {
@@ -1182,7 +1132,6 @@ namespace Lumina
         PointsCachedForBone = -1;
         SelectedBonePoints.Reset();
         SelectedSurfaceIndex = -1;
-        PreviewLODIndex = -1;
 
         CSkeletalMesh* SkeletalMesh = CastAsserted<CSkeletalMesh>(Asset.Get());
         SocketHierarchy.Initialize(SkeletalMesh->Skeleton.Get(), SkeletalMesh, &GetTransactionManager());

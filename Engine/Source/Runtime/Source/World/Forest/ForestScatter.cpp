@@ -1,7 +1,6 @@
 #include "RuntimePCH.h"
 #include "ForestScatter.h"
 
-#include "Containers/Algorithm.h"
 #include "Containers/HashPrimitives.h"
 #include "World/Entity/Components/ForestComponent.h"
 
@@ -148,31 +147,6 @@ namespace Lumina::Forest
         return Area;
     }
 
-    uint64 GetRegionHash(const FRules& Rules, const FVector2& Min, const FVector2& Max)
-    {
-        if (!Rules.Paint)
-        {
-            return 0;
-        }
-        const FArea Region{ Min, Max };
-        TVector<TPair<uint64, uint64>> Overlapping;
-        for (const auto& [Packed, Chunk] : Rules.Paint->Chunks)
-        {
-            if (GetChunkArea(Rules, Packed).Overlaps(Region))
-            {
-                Overlapping.Emplace(Packed, Chunk.Hash);
-            }
-        }
-        // Map order is not stable, so the chunks are mixed in key order.
-        Algo::Sort(Overlapping, [](const TPair<uint64, uint64>& A, const TPair<uint64, uint64>& B) { return A.Key < B.Key; });
-        uint64 Hash = 0;
-        for (const TPair<uint64, uint64>& Entry : Overlapping)
-        {
-            Hash = Containers::CombineHash(Hash, Entry.Value);
-        }
-        return Hash;
-    }
-
     void DiffPaint(const FRules& Rules, const FPaint* Before, const FPaint* After, TVector<FArea>& OutAreas)
     {
         if (After != nullptr)
@@ -218,8 +192,6 @@ namespace Lumina::Forest
         {
             Hash = Containers::CombineHash(Hash, Terrain->Hash);
         }
-        Out.ViewDistancePerVoxel = 1.0f / (Math::Max(Forest.MaxVoxelPixels, 0.25f) * GetReferencePixelAngle());
-        Hash = Containers::CombineHash(Hash, Containers::HashBytes(&Out.ViewDistancePerVoxel, sizeof(float)));
 
         for (const SForestSpecies& Species : Forest.Species)
         {
@@ -256,13 +228,6 @@ namespace Lumina::Forest
             }
         }
         return nullptr;
-    }
-
-    float GetReferencePixelAngle()
-    {
-        constexpr float kReferenceFOV          = 60.0f;
-        constexpr float kReferenceScreenHeight = 1440.0f;
-        return 2.0f * Math::Tan(Math::Radians(kReferenceFOV) * 0.5f) / kReferenceScreenHeight;
     }
 
     void ScatterRect(const FRules& Rules, const FVector2& Min, const FVector2& Max, TVector<FPlant>& Out, float MinViewDistance)

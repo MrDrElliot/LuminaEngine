@@ -590,6 +590,8 @@ namespace Lumina
                     SCENE_GPU_SCOPE(CL, "VisBuffer Early");
                     VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true, ECullPhase::Early);
                 }
+                // Merged before the pyramid, so the late cull occludes against what compute drew as well.
+                VisBufferComputeRasterPass(CL, /*bLate*/ false);
 
                 // Before the pyramid, so custom geometry occludes the late cull like terrain does.
                 CallbackDepthPass(CL);
@@ -606,6 +608,7 @@ namespace Lumina
                     SCENE_GPU_SCOPE(CL, "VisBuffer Late");
                     VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ false, ECullPhase::Late);
                 }
+                VisBufferComputeRasterPass(CL, /*bLate*/ true);
 
                 CustomDepthStencilPass(CL);
 
@@ -1338,13 +1341,13 @@ namespace Lumina
 
             if (MeshletBoundReadback[Slot].Gpu == 0)
             {
-                MeshletBoundReadback[Slot] = RHI::Malloc(sizeof(uint32) * kTotalsSlots,
+                MeshletBoundReadback[Slot] = RHI::Malloc(sizeof(uint32) * kReadbackSlots,
                                                          RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
                 RHI::SetDebugName(MeshletBoundReadback[Slot].Gpu, "Readback.MeshletBounds");
 
                 if (void* Host = MeshletBoundReadback[Slot].Cpu)
                 {
-                    Memory::Memzero(Host, sizeof(uint32) * kTotalsSlots);
+                    Memory::Memzero(Host, sizeof(uint32) * kReadbackSlots);
                 }
             }
         }
@@ -1941,12 +1944,13 @@ namespace Lumina
         View.Images[(int)ENamedImage::PickerFoliage] = CreateSceneImage(Desc);
         #endif
 
+        // Transfer sources too, so an impostor bake can read the surface back.
         Desc.Format = EFormat::R32_UINT;
-        Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled;
+        Desc.Usage  = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferSrc;
         View.Images[(int)ENamedImage::VisBuffer] = CreateSceneImage(Desc);
 
-        // Storage and Sampled only; never cleared, since lighting walks the same compacted list.
-        Desc.Usage  = RHI::EImageUsageFlags::Storage | RHI::EImageUsageFlags::Sampled;
+        // Never cleared, since lighting walks the same compacted list.
+        Desc.Usage  = RHI::EImageUsageFlags::Storage | RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::TransferSrc;
         Desc.Format = EFormat::RGBA8_UNORM;
         View.Images[(int)ENamedImage::GBufferA] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
         View.Images[(int)ENamedImage::GBufferC] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);

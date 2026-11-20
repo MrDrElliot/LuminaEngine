@@ -21,6 +21,9 @@ static const uint kAllocFailures    = 4u;
 // Requested pages without a physical page, counted before the release so it knows whether the pool will run out.
 static const uint kNeeded           = 5u;
 static const uint kFreeAtReset      = 6u;
+// Meshlets the shadow cull handed to the compute raster this frame, the static layer's then the dynamic layer's.
+static const uint kComputeRasterCount = 7u;
+static const uint kComputeRasterDynamicCount = 8u;
 // Frames a page may go unrequested once the pool is short, so a fast turn reclaims what it left behind at once.
 static const uint kPressuredEvictFrames = 1u;
 
@@ -258,6 +261,8 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
             Pass().Counters.Set(kAllocFailures, 0u);
             Pass().Counters.Set(kNeeded, 0u);
             Pass().Counters.Set(kFreeAtReset, Pass().Counters.Get(kFreeCount));
+            Pass().Counters.Set(kComputeRasterCount, 0u);
+            Pass().Counters.Set(kComputeRasterDynamicCount, 0u);
         }
     }
     else if (Mode == kModeInvalidate)

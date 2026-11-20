@@ -147,7 +147,6 @@ namespace
         Settings.Resolution      = Resolution;
         Settings.NarrowBandScale = 0.2f;
         Settings.bTwoSided       = false;
-        Settings.SourceLOD       = 0;
         return Settings;
     }
 }
@@ -330,7 +329,7 @@ TEST(DistanceField, SerializationRoundTrips)
 // Transcribed from FMeshletHeader in Common.slang, which is hand-written; if one moves, check it.
 TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
 {
-    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 192u);
+    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 224u);
 
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletsAddress), 0u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, SpheresAddress), 8u);
@@ -374,7 +373,13 @@ TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
 
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, LODBoundsAddress), 176u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, Flags), 184u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _Pad0), 188u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorBaseColorIndex), 188u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorNormalDepthIndex), 192u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorFrames), 196u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorCenterX), 200u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorRadius), 212u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorFrameSize), 216u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _Pad0), 220u);
 
     // Every member is accounted for above, so a new one shows up here as a size mismatch.
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, _Pad0) + sizeof(FMeshletHeaderGPU::_Pad0),

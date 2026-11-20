@@ -16,7 +16,7 @@ namespace Lumina
     void CSkeletalMesh::PostLoad()
     {
         CMesh::PostLoad();
-        SkeletonJointIndicesAddress = Skeleton;
+        JointIndicesSkeleton = Skeleton;
     }
 
     // A rig can bake an axis change into its bind pose, so the vertex box is carried through each skinning bone's bind matrix.
@@ -163,16 +163,16 @@ namespace Lumina
 
     void CSkeletalMesh::RemapJointIndicesToSkeleton()
     {
-        if (Skeleton == SkeletonJointIndicesAddress || Skeleton == nullptr)
+        if (Skeleton == JointIndicesSkeleton || Skeleton == nullptr)
         {
             return;
         }
 
-        const FSkeletonResource* From = SkeletonJointIndicesAddress != nullptr ? SkeletonJointIndicesAddress->GetSkeletonResource() : nullptr;
+        const FSkeletonResource* From = JointIndicesSkeleton != nullptr ? JointIndicesSkeleton->GetSkeletonResource() : nullptr;
         const FSkeletonResource* To   = Skeleton->GetSkeletonResource();
         if (From == nullptr || To == nullptr)
         {
-            SkeletonJointIndicesAddress = Skeleton;
+            JointIndicesSkeleton = Skeleton;
             return;
         }
 
@@ -202,20 +202,20 @@ namespace Lumina
         if (MatchedBones == 0)
         {
             LOG_WARN("[SkeletalMesh] '{}': no bone of '{}' matches '{}' by name, joint indices left unchanged; it will skin to the wrong bones.",
-                     GetName(), SkeletonJointIndicesAddress->GetName(), Skeleton->GetName());
+                     GetName(), JointIndicesSkeleton->GetName(), Skeleton->GetName());
             return;
         }
 
         if (MatchedBones < (uint32)From->GetNumBones())
         {
             LOG_WARN("[SkeletalMesh] '{}': {} bone(s) of '{}' missing from '{}' (first: '{}'); their vertices now follow the nearest matching parent.",
-                     GetName(), From->GetNumBones() - (int32)MatchedBones, SkeletonJointIndicesAddress->GetName(),
+                     GetName(), From->GetNumBones() - (int32)MatchedBones, JointIndicesSkeleton->GetName(),
                      Skeleton->GetName(), FirstUnmatched);
         }
 
         TVector<FMatrix4> FromBindPose;
         TVector<FMatrix4> ToBindPose;
-        SkeletonJointIndicesAddress->ComputeBindPoseSkinningMatrices(FromBindPose);
+        JointIndicesSkeleton->ComputeBindPoseSkinningMatrices(FromBindPose);
         Skeleton->ComputeBindPoseSkinningMatrices(ToBindPose);
 
         // Remapped on a copy, so instances keep drawing the live geometry until the copy's upload lands.
@@ -256,11 +256,11 @@ namespace Lumina
         if (WorstBindPoseDelta > 1e-3f)
         {
             LOG_WARN("[SkeletalMesh] '{}': bind pose of '{}' differs from '{}' by up to {} at bone '{}'; the mesh will deform. Import both from the same file at the same scale.",
-                     GetName(), Skeleton->GetName(), SkeletonJointIndicesAddress->GetName(), WorstBindPoseDelta,
+                     GetName(), Skeleton->GetName(), JointIndicesSkeleton->GetName(), WorstBindPoseDelta,
                      From->GetBone((int32)WorstBone).Name);
         }
 
-        SkeletonJointIndicesAddress = Skeleton;
+        JointIndicesSkeleton = Skeleton;
         SetMeshResource(Move(Remapped));
     }
 }

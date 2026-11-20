@@ -1,5 +1,5 @@
 #include "RuntimePCH.h"
-#include "Renderer/MeshData.h"
+#include "Renderer/MeshLegacyFormat.h"
 #include "Renderer/MeshletHeaderSlab.h"
 #include "Renderer/MeshQuantization.h"
 #include "Renderer/RenderRelease.h"
@@ -306,7 +306,7 @@ namespace Lumina
         if (this != &Other)
         {
             ReleaseAll();
-            RHI::Textures::Release(DistanceFieldTexture);
+            ReleaseTextures();
             Steal(Other);
         }
         return *this;
@@ -315,7 +315,14 @@ namespace Lumina
     FMeshResource::FMeshBuffers::~FMeshBuffers()
     {
         ReleaseAll();
+        ReleaseTextures();
+    }
+
+    void FMeshResource::FMeshBuffers::ReleaseTextures()
+    {
         RHI::Textures::Release(DistanceFieldTexture);
+        RHI::Textures::Release(ImpostorBaseColorTexture);
+        RHI::Textures::Release(ImpostorNormalDepthTexture);
     }
 
     void FMeshResource::FMeshBuffers::ReleaseGeometryBuffers()
@@ -329,22 +336,22 @@ namespace Lumina
         }
         RHI::RetireAfterExtract(GeometryBlock);
 
-        GeometryBlock         = {};
-        VertexStreamBytes     = 0;
-        MeshletBuffer         = 0;
-        MeshletSphereBuffer   = 0;
-        MeshletConeBuffer     = 0;
-        MeshletVertexBuffer   = 0;
-        MeshletPositionBuffer = 0;
-        MeshletVertexRefBuffer = 0;
-        VertexUV1Buffer       = 0;
-        VertexColorBuffer     = 0;
-        MeshletTriangleBuffer = 0;
+        GeometryBlock            = {};
+        VertexStreamBytes        = 0;
+        MeshletBuffer            = 0;
+        MeshletSphereBuffer      = 0;
+        MeshletConeBuffer        = 0;
+        MeshletVertexBuffer      = 0;
+        MeshletPositionBuffer    = 0;
+        MeshletVertexRefBuffer   = 0;
+        VertexUV1Buffer          = 0;
+        VertexColorBuffer        = 0;
+        MeshletTriangleBuffer    = 0;
         MeshletBonePaletteBuffer = 0;
         MeshletBoneIndexBuffer   = 0;
         MeshletLODBoundsBuffer   = 0;
-        MeshletCount          = 0;
-        UploadBatch           = 0;
+        MeshletCount             = 0;
+        UploadBatch              = 0;
     }
 
     void FMeshResource::FMeshBuffers::ReleaseAll()
@@ -356,43 +363,26 @@ namespace Lumina
 
     void FMeshResource::FMeshBuffers::Steal(FMeshBuffers& Other)
     {
-        GeometryBlock         = Other.GeometryBlock;
-        MeshletBuffer         = Other.MeshletBuffer;
-        MeshletSphereBuffer   = Other.MeshletSphereBuffer;
-        MeshletConeBuffer     = Other.MeshletConeBuffer;
-        MeshletVertexBuffer   = Other.MeshletVertexBuffer;
-        MeshletPositionBuffer = Other.MeshletPositionBuffer;
-        MeshletVertexRefBuffer = Other.MeshletVertexRefBuffer;
-        VertexUV1Buffer       = Other.VertexUV1Buffer;
-        VertexColorBuffer     = Other.VertexColorBuffer;
-        MeshletTriangleBuffer = Other.MeshletTriangleBuffer;
-        MeshletBonePaletteBuffer = Other.MeshletBonePaletteBuffer;
-        MeshletBoneIndexBuffer   = Other.MeshletBoneIndexBuffer;
-        MeshletLODBoundsBuffer   = Other.MeshletLODBoundsBuffer;
-        MeshletHeaderSlot     = Other.MeshletHeaderSlot;
-        MeshletCount          = Other.MeshletCount;
-        VertexStreamBytes     = Other.VertexStreamBytes;
-        UploadBatch           = Other.UploadBatch;
-        DistanceFieldTexture  = Other.DistanceFieldTexture;
-
-        Other.GeometryBlock         = {};
-        Other.MeshletBuffer         = 0;
-        Other.MeshletSphereBuffer   = 0;
-        Other.MeshletConeBuffer     = 0;
-        Other.MeshletVertexBuffer   = 0;
-        Other.MeshletPositionBuffer = 0;
-        Other.MeshletVertexRefBuffer = 0;
-        Other.VertexUV1Buffer       = 0;
-        Other.VertexColorBuffer     = 0;
-        Other.MeshletTriangleBuffer = 0;
-        Other.MeshletBonePaletteBuffer = 0;
-        Other.MeshletBoneIndexBuffer   = 0;
-        Other.MeshletLODBoundsBuffer   = 0;
-        Other.MeshletHeaderSlot     = 0;
-        Other.MeshletCount          = 0;
-        Other.VertexStreamBytes     = 0;
-        Other.UploadBatch           = 0;
-        Other.DistanceFieldTexture  = RHI::FManagedTexture{};
+        GeometryBlock              = std::exchange(Other.GeometryBlock, {});
+        MeshletBuffer              = std::exchange(Other.MeshletBuffer, {});
+        MeshletSphereBuffer        = std::exchange(Other.MeshletSphereBuffer, {});
+        MeshletConeBuffer          = std::exchange(Other.MeshletConeBuffer, {});
+        MeshletVertexBuffer        = std::exchange(Other.MeshletVertexBuffer, {});
+        MeshletPositionBuffer      = std::exchange(Other.MeshletPositionBuffer, {});
+        MeshletVertexRefBuffer     = std::exchange(Other.MeshletVertexRefBuffer, {});
+        VertexUV1Buffer            = std::exchange(Other.VertexUV1Buffer, {});
+        VertexColorBuffer          = std::exchange(Other.VertexColorBuffer, {});
+        MeshletTriangleBuffer      = std::exchange(Other.MeshletTriangleBuffer, {});
+        MeshletBonePaletteBuffer   = std::exchange(Other.MeshletBonePaletteBuffer, {});
+        MeshletBoneIndexBuffer     = std::exchange(Other.MeshletBoneIndexBuffer, {});
+        MeshletLODBoundsBuffer     = std::exchange(Other.MeshletLODBoundsBuffer, {});
+        MeshletHeaderSlot          = std::exchange(Other.MeshletHeaderSlot, {});
+        MeshletCount               = std::exchange(Other.MeshletCount, {});
+        VertexStreamBytes          = std::exchange(Other.VertexStreamBytes, {});
+        UploadBatch                = std::exchange(Other.UploadBatch, {});
+        DistanceFieldTexture       = std::exchange(Other.DistanceFieldTexture, {});
+        ImpostorBaseColorTexture   = std::exchange(Other.ImpostorBaseColorTexture, {});
+        ImpostorNormalDepthTexture = std::exchange(Other.ImpostorNormalDepthTexture, {});
     }
 
     FArchive& operator<<(FArchive& Ar, FMeshResource& Data)
@@ -402,10 +392,9 @@ namespace Lumina
         Ar << Data.GeometrySurfaces;
         Ar << Data.MeshletData;
 
-        const bool bHasLODErrors  = Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESH_LOD_ERROR;
-        const bool bHasClusterLOD = Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESH_CLUSTER_LOD;
-        const uint32 StoredLODs   = bHasClusterLOD ? MAX_MESH_LODS : MESHLET_LEGACY_MAX_LODS;
-        bool bDroppedLegacyLODs = false;
+        // Older files hold fewer slots without parent errors, and CMesh::PostLoad rebuilds their hierarchy from the source level.
+        const bool   bHasClusterLOD = Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESH_CLUSTER_LOD;
+        const uint32 StoredLODs     = bHasClusterLOD ? MAX_MESH_LODS : MESHLET_LEGACY_MAX_LODS;
 
         for (FGeometrySurface& Surface : Data.GeometrySurfaces)
         {
@@ -428,24 +417,18 @@ namespace Lumina
             {
                 Surface.LODFlags = 0u;
             }
-
-            if (Ar.IsReading() && !bHasLODErrors)
-            {
-                bDroppedLegacyLODs = bDroppedLegacyLODs || Surface.NumLODs > 1;
-                Surface.NumLODs = Math::Min(Surface.NumLODs, 1u);
-                for (float& Error : Surface.LODError)
-                {
-                    Error = 0.0f;
-                }
-            }
-        }
-
-        if (bDroppedLegacyLODs)
-        {
-            LOG_WARN("FMeshResource '{}' predates error-based LODs and renders LOD 0 only until it is reimported", Data.Name);
         }
 
         Ar << Data.DistanceField;
+        if (Ar.GetFileVersion() >= (int32)ELuminaEngineVersion::MESH_IMPOSTOR)
+        {
+            Ar << Data.Impostor;
+            if (Ar.IsReading() && Data.Impostor.Frames != 0u && !Data.Impostor.IsValid())
+            {
+                LOG_WARN("FMeshResource '{}' has a malformed impostor, which is dropped", Data.Name);
+                Data.Impostor.Reset();
+            }
+        }
 
         // Offsets index CPU arrays and GPU buffers unchecked, so a corrupt package loads an empty mesh instead.
         const char* Reason = nullptr;
@@ -528,15 +511,6 @@ namespace Lumina
                 if ((uint64)Meshlet.VertexOffset + Meshlet.VertexCount > NumVertices)
                 {
                     OutReason = "skinned meshlet vertex range out of bounds";
-                    return false;
-                }
-            }
-            else if (Meshlet.bCompactSplat)
-            {
-                // One vertex per splat from BaseVertex onward, with no refs to check.
-                if ((uint64)Meshlet.BaseVertex + Meshlet.VertexCount / 3u > NumVertices || Meshlet.VertexCount != Meshlet.TriangleCount * 3u)
-                {
-                    OutReason = "compact splat meshlet past the vertex count";
                     return false;
                 }
             }

@@ -56,6 +56,7 @@ namespace LuminaFoliageCollisionTests
                 Physics::FStaticInstanceDesc& Desc = Descs.EmplaceGetRef();
                 Desc.Position = FVector3(Index * 4.0f, 0.0f, 0.0f);
                 Desc.Collision = &Collision;
+                Desc.SourceIndex = Index;
             }
             Registry().Emplace<SFoliageComponent>(Entity).CollisionGroupID = Scene().CreateStaticBodyGroup(Entity, Descs);
             Scene().Update(1.0 / 60.0);
@@ -86,5 +87,27 @@ namespace LuminaFoliageCollisionTests
         W.Registry().Remove<SFoliageComponent>(Foliage);
         W.Scene().Update(1.0 / 60.0);
         EXPECT_EQ(W.Scene().GetBodyCount(), 0u);
+    }
+
+    TEST(FoliageCollision, OverlapReportsEachInstanceUnderItsOwner)
+    {
+        FFoliageCollisionWorld W;
+        const ECS::FEntity Foliage = W.SpawnBakedFoliage(3);
+
+        SOverlapResult Found[8];
+        const int32 Count = W.Scene().OverlapBox(FVector3(4.0f, 0.5f, 0.5f), FVector3(6.0f, 1.0f, 1.0f), FQuat::Identity(), {}, Found);
+        ASSERT_EQ(Count, 3);
+
+        bool bSeen[3] = {};
+        for (int32 i = 0; i < Count; ++i)
+        {
+            EXPECT_EQ(Found[i].Entity, Foliage);
+            ASSERT_TRUE(Found[i].InstanceIndex >= 0 && Found[i].InstanceIndex < 3);
+            bSeen[Found[i].InstanceIndex] = true;
+        }
+        EXPECT_TRUE(bSeen[0] && bSeen[1] && bSeen[2]);
+
+        EXPECT_EQ(W.Scene().OverlapSphere(FVector3(4.2f, 0.2f, 0.2f), 0.1f, {}, Found), 1);
+        EXPECT_EQ(Found[0].InstanceIndex, 1);
     }
 }
