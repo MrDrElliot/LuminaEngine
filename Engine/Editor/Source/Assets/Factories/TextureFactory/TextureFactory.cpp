@@ -511,16 +511,24 @@ namespace Lumina
         return Alpha.IsEmpty() ? 0.0f : float(Passing) / float(Alpha.Num());
     }
 
-    // Coverage only rises with the scale, so bisection finds the scale that restores the target.
+    // Coverage only rises with the scale, and of the scales that restore the target the one nearest 1 moves alpha least, since an opaque texel scaled to the cutoff dithers away.
     static float FindCoverageScale(const TVector<float>& Alpha, float Cutoff, float TargetCoverage)
     {
         constexpr float MaxScale = 16.0f;
-        float Low = 0.0f;
-        float High = MaxScale;
+        const float CoverageAtOne = CoverageAtScale(Alpha, 1.0f, Cutoff);
+        if (CoverageAtOne == TargetCoverage)
+        {
+            return 1.0f;
+        }
+
+        const bool bRaise = CoverageAtOne < TargetCoverage;
+        float Low  = bRaise ? 1.0f : 0.0f;
+        float High = bRaise ? MaxScale : 1.0f;
         for (int32 Step = 0; Step < 20; ++Step)
         {
             const float Mid = (Low + High) * 0.5f;
-            if (CoverageAtScale(Alpha, Mid, Cutoff) < TargetCoverage)
+            const float Coverage = CoverageAtScale(Alpha, Mid, Cutoff);
+            if (bRaise ? Coverage < TargetCoverage : Coverage <= TargetCoverage)
             {
                 Low = Mid;
             }
@@ -529,7 +537,7 @@ namespace Lumina
                 High = Mid;
             }
         }
-        return High;
+        return bRaise ? High : Low;
     }
 
     // Cutout art usually leaves white or black behind its mask, which filtering drags into the visible edge, so hidden texels take the color of the nearest visible ones.

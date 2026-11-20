@@ -108,6 +108,18 @@ namespace Lumina
             uint32              RetainedSlots;
         };
 
+        constexpr uint64 kNoPreSkinShareKey = ~0ull;
+
+        // Packs what decides a borrowed pose's skinned vertices, or returns none when a field outgrows its bits.
+        uint64 PreSkinShareKey(uint32 BoneArenaBase, uint32 MeshletHeaderSlot, uint32 LODIndex, uint32 Surface)
+        {
+            if (BoneArenaBase >= (1u << 24) || MeshletHeaderSlot >= (1u << 16) || LODIndex >= (1u << 3) || Surface >= (1u << 5))
+            {
+                return kNoPreSkinShareKey;
+            }
+            return ((uint64)BoneArenaBase << 24) | ((uint64)MeshletHeaderSlot << 8) | ((uint64)LODIndex << 5) | Surface;
+        }
+
         // The LOD table comes from the interned FSurfaceDescGPU the binding names, so many instances of few meshes read a handful of descs.
         void EmitPrimitiveSurfaces(FDefaultSceneRenderer::FThreadLocalDrawData& Local,
                                    const FScenePrimitive& Prim,
@@ -119,7 +131,8 @@ namespace Lumina
                                    const SWorldRenderSettings& Settings,
                                    const FCullView* CameraView,
                                    const FVector4& Sphere,
-                                   float MaxScale)
+                                   float MaxScale,
+                                   FPreSkinShareTable* PreSkinShare)
         {
             const uint32 MeshletHeaderSlot = Prim.MeshletHeaderSlot;
 
@@ -148,6 +161,15 @@ namespace Lumina
                                              : 0u;
                 // Seeded to the sentinel so a rejected slot keeps no slice rather than last frame's base.
                 Data.SkinnedVertexBase       = kNoPreSkinBase;
+                if (PreSkinShare && MeshletHeaderSlot && SkinnedIndex < kPreSkinShareBit)
+                {
+                    const uint64 Key = PreSkinShareKey(BoneArenaBase, MeshletHeaderSlot, LODIndex, s);
+                    const uint32 Owner = Key != kNoPreSkinShareKey ? PreSkinShare->Claim(Key, SkinnedIndex) : SkinnedIndex;
+                    if (Owner != SkinnedIndex)
+                    {
+                        Data.SkinnedVertexBase = kPreSkinShareBit | Owner;
+                    }
+                }
                 Data.BoneOffset              = BoneArenaBase;
                 Data.RetainedSlot            = InstanceSlot;
 
@@ -242,6 +264,7 @@ namespace Lumina
             SkinnedCandidateBones.SetNum(NumSkeletal);
             PendingSliceAllocs.SetNum(NumSkeletal);
             SharedPoseCandidates.SetNum(NumSkeletal);
+            SharedPoseLeaders.SetNum(NumSkeletal);
         }
         SkinnedCandidateCursor.store(0, std::memory_order_relaxed);
 
@@ -402,6 +425,59 @@ namespace Lumina
         Flush();
     }
 
+    void FPreSkinShareTable::Prepare(uint32 MinEntries)
+    {
+        constexpr uint64 kFrameShift = 48;
+        const uint32 Wanted = (uint32)Math::NextPowerOfTwo((int)Math::Max(MinEntries * 2u, 64u));
+        uint64 Frame = (FrameBits >> kFrameShift) + 1u;
+        if ((uint32)Keys.Num() < Wanted || Frame > 0xFFFFu)
+        {
+            Keys.Init(0ull, (int32)Math::Max(Wanted, (uint32)Keys.Num()));
+            Owners.Init(0ull, Keys.Num());
+            Frame = 1u;
+        }
+        FrameBits = Frame << kFrameShift;
+    }
+
+    uint32 FPreSkinShareTable::Claim(uint64 Key, uint32 SkinnedIndex)
+    {
+        constexpr uint64 kFrameMask = 0xFFFF000000000000ull;
+        constexpr uint32 kMaxProbes = 64;
+        if (Keys.IsEmpty())
+        {
+            return SkinnedIndex;
+        }
+        const uint64 Tagged = FrameBits | Key;
+        const uint32 Mask   = (uint32)Keys.Num() - 1u;
+        uint32 Probe        = (uint32)Containers::MixHash64(Key) & Mask;
+
+        for (uint32 Step = 0; Step < kMaxProbes && Step <= Mask; ++Step, Probe = (Probe + 1u) & Mask)
+        {
+            std::atomic_ref<uint64> Slot(Keys[Probe]);
+            uint64 Seen = Slot.load(std::memory_order_acquire);
+            if ((Seen & kFrameMask) != FrameBits && Slot.compare_exchange_strong(Seen, Tagged, std::memory_order_acq_rel))
+            {
+                std::atomic_ref<uint64>(Owners[Probe]).store(FrameBits | SkinnedIndex, std::memory_order_release);
+                return SkinnedIndex;
+            }
+            if (Seen != Tagged)
+            {
+                continue;
+            }
+
+            // The winner stores its index right after its exchange, so this waits out a handful of instructions.
+            std::atomic_ref<uint64> Owner(Owners[Probe]);
+            uint64 Claimed = Owner.load(std::memory_order_acquire);
+            while ((Claimed & kFrameMask) != FrameBits)
+            {
+                _mm_pause();
+                Claimed = Owner.load(std::memory_order_acquire);
+            }
+            return (uint32)Claimed;
+        }
+        return SkinnedIndex;
+    }
+
     void FDefaultSceneRenderer::LayoutSkinnedBoneSlices(TVector<FThreadLocalDrawData>& ThreadLocal, const auto& FollowerStorage, const auto& SkeletalStorage)
     {
         using namespace SceneRendererExtractSkinnedInternal;
@@ -451,7 +527,12 @@ namespace Lumina
                         const uint32 Slot = SharedPoseCursor.fetch_add(1, std::memory_order_relaxed);
                         if (Slot < (uint32)SharedPoseCandidates.Num())
                         {
+                            // Only the entity and bone count are read here, which nothing in this pass writes.
+                            const uint32 Leader = ScenePrimitives.FindSkeletalPrimitive(Follower->CopiedLeader);
+                            const bool bCanLend = Leader < NumPrimitives && Leader != Index && LayoutPrims[Leader].Entity == Follower->CopiedLeader &&
+                                                  LayoutPrims[Leader].BoneCount == LayoutPrims[Index].BoneCount;
                             SharedPoseCandidates[Slot] = c;
+                            SharedPoseLeaders[Slot]    = bCanLend ? Leader : Constants::kIndexNoneU32;
                         }
                         continue;
                     }
@@ -485,18 +566,16 @@ namespace Lumina
         // A leader nothing else gathered this frame still owes its followers a pose, which is packed here once.
         UngatheredLeaderScratch.Reset();
         const uint32 NumShared = Math::Min(SharedPoseCursor.load(std::memory_order_relaxed), (uint32)SharedPoseCandidates.Num());
+        PreSkinShare.Prepare(NumShared);
         for (uint32 n = 0; n < NumShared; ++n)
         {
-            const uint32 c     = SharedPoseCandidates[n];
-            const uint32 Index = SkinnedCandidates[c];
+            const uint32 c      = SharedPoseCandidates[n];
+            const uint32 Index  = SkinnedCandidates[c];
+            const uint32 Leader = SharedPoseLeaders[n];
             const FScenePrimitive& Prim = LayoutPrims[Index];
 
-            const SFollowerPoseComponent* Link = FollowerStorage.TryGet(Prim.Entity);
-            const uint32 Leader = Link != nullptr ? ScenePrimitives.FindSkeletalPrimitive(Link->CopiedLeader) : Constants::kIndexNoneU32;
-
             uint32 Base = kNoBoneSlice;
-            if (Leader < NumPrimitives && Leader != Index && LayoutPrims[Leader].Entity == Link->CopiedLeader &&
-                LayoutPrims[Leader].BoneCount == Prim.BoneCount)
+            if (Leader != Constants::kIndexNoneU32)
             {
                 if (LayoutPrims[Leader].BoneSliceFrame == BoneSliceFrameNumber)
                 {
@@ -623,7 +702,8 @@ namespace Lumina
 
             EmitPrimitiveSurfaces(Local, Prim, Bindings + Prim.BindingBase,
                                   SurfaceDescs, NumSurfaceDescs,
-                                  BoneArenaBase, Target, FrameSettings, CameraView, Sphere, MaxScale);
+                                  BoneArenaBase, Target, FrameSettings, CameraView, Sphere, MaxScale,
+                                  BoneSliceBorrowed[i] && BoneArenaBase != kNoBoneSlice ? &PreSkinShare : nullptr);
         }
     }
 

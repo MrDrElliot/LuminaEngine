@@ -1,7 +1,6 @@
 #include "Includes/AppendBuffer.slang"
 #include "Includes/MeshletCullCore.slang"
 #include "Includes/MeshletGeometry.slang"
-#include "Includes/ShadowReceiver.slang"
 
 // The early phase replays last frame's visible meshlets and the late phase tests the rest against this frame's pyramid.
 
@@ -15,10 +14,10 @@ struct FMeshletCullArgs
     uint            VisibilityTag;
     // Matches the block build, so the late phase reads the back region only when the build put blocks there.
     uint            bSplitPhases;
-    // 1 keeps near cascades out of this dispatch, 2 culls only them, against ReceiverMask once the frame's depth is final.
-    uint            bDeferCascades;
-    uint            ReceiverMaskDim;
-    int             SunShadowDataIndex;
+    // 1 keeps shadow levels out of this dispatch, 2 culls only them, against this frame's pages once its depth is final.
+    uint            bDeferShadows;
+    uint            _Pad0;
+    uint            _Pad1;
 
     GPUSpan<FRenderBucket> Buckets;
     GPUSpan<FMeshletBlock> BlockList;
@@ -28,7 +27,6 @@ struct FMeshletCullArgs
     GPUSpan<uint>          OutVisibility;
     // One word per block of an instance's camera LOD. Both phases read it, and only the late phase replaces it.
     GPUSpan<uint>          MeshletVisibility;
-    GPUSpan<uint>          ReceiverMask;
     // Word 3 is how many blocks BuildMeshletCullArgs gave each group.
     GPUSpan<uint4>         CullDispatch;
     GPUSpan<FSurfaceDesc>  SurfaceDescs;
@@ -41,7 +39,7 @@ FMeshletCullArgs* Pass() { return GetPassArgs<FMeshletCullArgs>(); }
 
 static const uint kBlockTwoPhase        = 1u;
 static const uint kBlockWasVisible      = 2u;
-static const uint kBlockDeferredCascade = 4u;
+static const uint kBlockDeferredShadow = 4u;
 // The block build fell back to a whole slot, so every meshlet draws without the cluster cut.
 static const uint kBlockForceAll        = 8u;
 
@@ -95,12 +93,6 @@ uint FindBlockForItem(uint Item, uint NumBlocks)
     return Lo;
 }
 
-// The receiver test against this pass's mask, which only the cascade phase binds.
-bool IsShadowUnreceived(uint CascadeIndex, float3 Center, float Radius)
-{
-    return IsShadowUnreceived(Pass().ReceiverMask, Pass().ReceiverMaskDim, Pass().SunShadowDataIndex, CascadeIndex, Center, Radius);
-}
-
 [shader("compute")]
 [numthreads(MESHLET_CULL_GROUP_SIZE, 1, 1)]
 void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
@@ -137,18 +129,17 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
         const uint BlockIdx      = bBackRegion ? (Bucket.BlockBase + Bucket.BlockCapacity - BlocksWritten + BlockSlot)
                                                : (Bucket.BlockBase + BlockSlot);
 
-        // Single-phase views belong to the early dispatch, except near cascades waiting on this frame's receiver mask.
-        const uint ViewIndex        = ArgIdx / NumDraws;
-        const bool bTwoPhase        = CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_MESHLET_HIZ);
-        const bool bDeferredCascade = Pass().bDeferCascades != 0u && CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_CASCADE)
-                                   && !CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_FAR_CASCADE);
-        const bool bCascadePhase    = Pass().bDeferCascades == 2u;
-        bHasWork = bBlockInRange && (bCascadePhase ? bDeferredCascade : (!bDeferredCascade && (!bLate || bTwoPhase)));
+        // Single-phase views belong to the early dispatch, except shadow levels waiting on this frame's pages.
+        const uint ViewIndex       = ArgIdx / NumDraws;
+        const bool bTwoPhase       = CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_MESHLET_HIZ);
+        const bool bDeferredShadow = Pass().bDeferShadows != 0u && IsDeferredShadowView(ViewIndex);
+        const bool bShadowPhase    = Pass().bDeferShadows == 2u;
+        bHasWork = bBlockInRange && (bShadowPhase ? bDeferredShadow : (!bDeferredShadow && (!bLate || bTwoPhase)));
         if (bHasWork)
         {
             Block = Pass().BlockList.Get(BlockIdx);
         }
-        Flags = (bTwoPhase ? kBlockTwoPhase : 0u) | (bDeferredCascade ? kBlockDeferredCascade : 0u)
+        Flags = (bTwoPhase ? kBlockTwoPhase : 0u) | (bDeferredShadow ? kBlockDeferredShadow : 0u)
               | ((Block.PackedBaseAndCount & MESHLET_BLOCK_FORCE_ALL_BIT) != 0u ? kBlockForceAll : 0u);
     }
 
@@ -166,7 +157,25 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     uint MeshletVisibilityWord = 0u;
     bool bHasMeshletVisibility = false;
     uint MeshletVisibilityBits = ~0u;
-    if (bTwoPhaseWork && Inst.MeshletVisibilityBase != kNoMeshletVisibility && Block.MeshletBase >= Inst.SurfaceMeshletOffset)
+    // A cluster block keeps its meshlets' bits at their places in the run, so the word means the same whatever range the LOD picks.
+    uint MeshletVisibilityShift = 0u;
+    const uint DescIndex = Inst.SurfaceDescIndex;
+    const bool bRuns = bHasWork && DescIndex != kNoSurfaceDesc && Pass().SurfaceDescs.Contains(DescIndex) && Pass().SurfaceDescs.At(DescIndex).bClusterLOD;
+    if (bRuns && bTwoPhaseWork && Inst.MeshletVisibilityBase != kNoMeshletVisibility)
+    {
+        const uint FirstMeshlet = Pass().SurfaceDescs.At(DescIndex).LODMeshletOffset[0];
+        if (Block.MeshletBase >= FirstMeshlet)
+        {
+            MeshletVisibilityWord  = Inst.MeshletVisibilityBase + Block.MeshletBase / MESHLET_CULL_GROUP_SIZE - FirstMeshlet / MESHLET_CULL_GROUP_SIZE;
+            MeshletVisibilityShift = Block.MeshletBase % MESHLET_CULL_GROUP_SIZE;
+            bHasMeshletVisibility  = Pass().MeshletVisibility.Contains(MeshletVisibilityWord);
+            if (bHasMeshletVisibility)
+            {
+                MeshletVisibilityBits = Pass().MeshletVisibility.Get(MeshletVisibilityWord) >> MeshletVisibilityShift;
+            }
+        }
+    }
+    else if (bTwoPhaseWork && Inst.MeshletVisibilityBase != kNoMeshletVisibility && Block.MeshletBase >= Inst.SurfaceMeshletOffset)
     {
         const uint RangeOffset = Block.MeshletBase - Inst.SurfaceMeshletOffset;
         if (RangeOffset < Inst.SurfaceMeshletCount && (RangeOffset % MESHLET_CULL_GROUP_SIZE) == 0u)
@@ -192,7 +201,21 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
         bInstanceOccluded = Proj.bValid && IsHiZOccluded(Proj);
     }
 
-    const uint Meshlets = (bHasWork && !bInstanceOccluded) ? Block.Count : 0u;
+    // A block is one run of a cluster mesh, so a run the view or the cut takes nothing from skips all its meshlet tests.
+    bool bRunCulled = false;
+    if (bRuns && !bInstanceOccluded)
+    {
+        FMeshletHeader* Header = MeshletHeaders().At(Inst.MeshletHeaderSlot);
+        if (Header.bClusterLOD)
+        {
+            const FCullView View = CullViews().GetAligned(ArgIdx / NumDraws);
+            const bool bFrustum  = View.HasFlag(CULL_VIEW_FLAG_FRUSTUM) && !FGPUInstance::HasFlag(Inst, EInstanceFlags::NoCull);
+            bRunCulled = IsMeshletRunCulled(Header, Block.MeshletBase / MESHLET_CULL_GROUP_SIZE, View, Inst.ModelMatrix, TransformMaxScale(Inst.Transform),
+                                            Pass().SurfaceDescs.At(DescIndex).LODErrorMultiplier, bFrustum, (Flags & kBlockForceAll) == 0u);
+        }
+    }
+
+    const uint Meshlets = (bHasWork && !bInstanceOccluded && !bRunCulled) ? Block.Count : 0u;
     const uint Start    = WavePrefixSum(Meshlets);
     const uint Total    = WaveActiveSum(Meshlets);
     if (ThreadID < NumBlocks)
@@ -253,9 +276,9 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
 
                 // No Hi-Z in the early replay, since the late phase never re-emits what the early phase drew.
                 bool bVisible = TestMeshletAgainstView(Ctx, View, KeepMeshlet, Cache, bLate, (OwnerFlags & kBlockForceAll) != 0u);
-                if (bVisible && (OwnerFlags & kBlockDeferredCascade) != 0u && Ctx.bPosedBounds)
+                if (bVisible && (OwnerFlags & kBlockDeferredShadow) != 0u && Ctx.bPosedBounds)
                 {
-                    bVisible = !IsShadowUnreceived(View.CascadeIndex, Cache.WorldCenter, Cache.WorldRadius);
+                    bVisible = !IsShadowLevelCasterCulled(View, Cache.WorldCenter, Cache.WorldRadius);
                 }
 
                 bKeep = bEmitPhase && bVisible;
@@ -306,7 +329,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
     // This block owns its whole word, so a plain store replaces it.
     if (bLate && bHasMeshletVisibility)
     {
-        Pass().MeshletVisibility.Set(MeshletVisibilityWord, VisibleMeshlets);
+        Pass().MeshletVisibility.Set(MeshletVisibilityWord, VisibleMeshlets << MeshletVisibilityShift);
     }
 
     // Every visible block stores the same stamp, so an occluded block of the same instance cannot undo it.

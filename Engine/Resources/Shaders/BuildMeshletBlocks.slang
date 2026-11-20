@@ -1,7 +1,6 @@
 #include "Includes/AppendBuffer.slang"
 #include "Includes/SceneGlobals.slang"
 #include "Includes/Culling.slang"
-#include "Includes/ShadowReceiver.slang"
 
 // Reads back the range CullInstances reserved against, so the two cannot disagree on LOD or rejects.
 
@@ -26,12 +25,11 @@ struct FBuildMeshletBlocksArgs
     uint                   VisibilityTag;
     GPUSpan<uint>          PrevVisibility;
 
-    // 1 leaves near cascades for a later build, 2 builds only them, dropping instances whose shadow reaches nothing seen.
-    uint                   bDeferCascades;
-    uint                   ReceiverMaskDim;
-    int                    SunShadowDataIndex;
+    // 1 leaves shadow levels for a later build, 2 builds only them, dropping instances that land in no page this frame needs.
+    uint                   bDeferShadows;
     uint                   _Pad0;
-    GPUSpan<uint>          ReceiverMask;
+    uint                   _Pad1;
+    uint                   _Pad2;
 };
 FBuildMeshletBlocksArgs* Pass() { return GetPassArgs<FBuildMeshletBlocksArgs>(); }
 
@@ -39,38 +37,10 @@ static const uint MESHLET_BUILD_EARLY         = 0u;
 static const uint MESHLET_BUILD_LATE          = 1u;
 static const uint MESHLET_BUILD_EARLY_NOSPLIT = 2u;
 
-// Claims Count units only while they fit, so a refused run never moves the counter and everything below it stays written.
-bool ClaimWithin(uint* Counter, uint Capacity, uint Count, out uint Old)
-{
-    Old = 0u;
-    uint Current;
-    InterlockedAdd(Counter[0], 0u, Current);
-
-    // Bounded, since a run that keeps losing the race on a full bucket would not fit anyway.
-    for (uint Attempt = 0u; Attempt < 16u; ++Attempt)
-    {
-        if (Current > Capacity || Capacity - Current < Count)
-        {
-            return false;
-        }
-
-        uint Seen;
-        InterlockedCompareExchange(Counter[0], Current, Current + Count, Seen);
-        if (Seen == Current)
-        {
-            Old = Current;
-            return true;
-        }
-        Current = Seen;
-    }
-    return false;
-}
-
 // A bucket whose whole demand fits takes the plain append, which cannot fail since demand rounds each run's blocks the same way.
-bool TryReserveRun(uint BucketIndex, FRenderBucket* Bucket, uint Count, out uint Slot)
+bool TryReserveRun(uint BucketIndex, FRenderBucket* Bucket, uint Blocks, uint DrawCharge, out uint Slot)
 {
     Slot = 0u;
-    const uint Blocks = (Count + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
 
     if (Bucket.DrawDemand <= Bucket.DrawCapacity && Bucket.BlockDemand <= Bucket.BlockCapacity)
     {
@@ -80,15 +50,58 @@ bool TryReserveRun(uint BucketIndex, FRenderBucket* Bucket, uint Count, out uint
 
     // Draw budget a refused block claim already took stays spent, which only makes later runs in this short bucket more conservative.
     uint OldDraw;
-    uint OldBlock;
-    if (!ClaimWithin(&Bucket.DrawBudgetCursor, Bucket.DrawCapacity, Count, OldDraw)
-        || !ClaimWithin(&Bucket.BlockCursor, Bucket.BlockCapacity, Blocks, OldBlock))
+    uint OldBlock = 0u;
+    const bool bDrawClaimed = WaveClaimWithinKeyed(BucketIndex, &Bucket.DrawBudgetCursor, Bucket.DrawCapacity, DrawCharge, OldDraw);
+    bool bBlockClaimed = false;
+    if (bDrawClaimed)
+    {
+        bBlockClaimed = WaveClaimWithinKeyed(BucketIndex, &Bucket.BlockCursor, Bucket.BlockCapacity, Blocks, OldBlock);
+    }
+    if (!bBlockClaimed)
     {
         return false;
     }
 
     Slot = Bucket.BlockBase + OldBlock;
     return true;
+}
+
+// Ranges of a cluster mesh split on runs, so MeshletCull can drop a block whole from its run's bounds.
+bool UsesMeshletRuns(FGPUInstance* Inst)
+{
+    const uint DescIndex = Inst.SurfaceDescIndex;
+    return DescIndex != kNoSurfaceDesc && Pass().SurfaceDescs.Contains(DescIndex) && Pass().SurfaceDescs.Get(DescIndex).bClusterLOD;
+}
+
+void WriteBlocks(uint InstanceID, uint2 Range, bool bRuns, uint ForceBits, uint Slot)
+{
+    const uint Blocks = RangeBlockCount(Range, bRuns);
+    for (uint b = 0u; b < Blocks; ++b)
+    {
+        const uint2 Part = RangeBlock(Range, b, bRuns);
+        FMeshletBlock Block;
+        Block.InstanceID         = InstanceID;
+        Block.PackedBaseAndCount = FMeshletBlock::Pack(Part.x, Part.y) | ForceBits;
+        Pass().OutBlockList.Set(Slot + b, Block);
+    }
+}
+
+// What CullInstances charged the bucket for this range, the meshlets its cut can draw rather than every slot it spans, so a short bucket charges the same.
+uint ViewDrawCharge(FGPUInstance* Inst, uint ViewIndex, uint Count)
+{
+    const uint DescIndex = Inst.SurfaceDescIndex;
+    if (DescIndex == kNoSurfaceDesc || !Pass().SurfaceDescs.Contains(DescIndex))
+    {
+        return Count;
+    }
+    const FSurfaceDesc Desc = Pass().SurfaceDescs.Get(DescIndex);
+    if (!Desc.bClusterLOD)
+    {
+        return Count;
+    }
+    uint Bound = Count;
+    SelectViewMeshletRange(Desc, CullViews().GetAligned(ViewIndex), loadAligned<16>(&Inst.SphereBounds), TransformMaxScale(Inst.Transform), Bound);
+    return min(Bound, Count);
 }
 
 // The LOD after the one Current starts at, empty when there is none or the instance cannot re-select.
@@ -162,9 +175,8 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         return;
     }
 
-    const bool bDeferredCascade = Pass().bDeferCascades != 0u && CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_CASCADE)
-                               && !CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_FAR_CASCADE);
-    if ((Pass().bDeferCascades == 2u) != bDeferredCascade)
+    const bool bDeferredShadow = Pass().bDeferShadows != 0u && IsDeferredShadowView(ViewIndex);
+    if ((Pass().bDeferShadows == 2u) != bDeferredShadow)
     {
         return;
     }
@@ -178,11 +190,10 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
 
     FGPUInstance* Inst = Instances() + InstanceID;
 
-    if (Pass().bDeferCascades == 2u && !FGPUInstance::HasFlag(Inst, EInstanceFlags::NoCull))
+    if (Pass().bDeferShadows == 2u && !FGPUInstance::HasFlag(Inst, EInstanceFlags::NoCull))
     {
         const float4 Sphere = loadAligned<16>(&Inst.SphereBounds);
-        if (IsShadowUnreceived(Pass().ReceiverMask, Pass().ReceiverMaskDim, Pass().SunShadowDataIndex,
-                               CullViews().GetAligned(ViewIndex).CascadeIndex, Sphere.xyz, Sphere.w))
+        if (IsShadowLevelCasterCulled(CullViews().GetAligned(ViewIndex), Sphere.xyz, Sphere.w))
         {
             return;
         }
@@ -227,7 +238,8 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         }
 
         // Early-drawn instances come back too, since a sphere-level flag lets coarse pyramid tiles keep whole trees early for good.
-        const uint BackBlocks = (Range.y + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
+        const bool bRuns = UsesMeshletRuns(Inst);
+        const uint BackBlocks = RangeBlockCount(Range, bRuns);
         const uint OldBack = WaveInterlockedAddKeyed(BucketIndex, &Bucket.BlockBackCount, BackBlocks);
 
         // Front and back together never pass the demand this bucket fits, so this only guards against a broken reservation.
@@ -237,16 +249,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
             return;
         }
 
-        const uint BackSlot = Bucket.BlockBase + Bucket.BlockCapacity - OldBack - BackBlocks;
-        for (uint b = 0u; b < BackBlocks; ++b)
-        {
-            const uint First = b * MESHLET_CULL_GROUP_SIZE;
-
-            FMeshletBlock Block;
-            Block.InstanceID         = InstanceID;
-            Block.PackedBaseAndCount = FMeshletBlock::Pack(Range.x + First, min(MESHLET_CULL_GROUP_SIZE, Range.y - First));
-            Pass().OutBlockList.Set(BackSlot + b, Block);
-        }
+        WriteBlocks(InstanceID, Range, bRuns, 0u, Bucket.BlockBase + Bucket.BlockCapacity - OldBack - BackBlocks);
         return;
     }
 
@@ -256,9 +259,11 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
     }
 
     // Only an instance that does not fit steps down, one LOD at a time, so a short frame degrades the overflow and nothing else.
-    uint Slot;
+    const bool bRuns = UsesMeshletRuns(Inst);
     bool bForceAll = false;
-    if (!TryReserveRun(BucketIndex, Bucket, Range.y, Slot))
+    uint Blocks = RangeBlockCount(Range, bRuns);
+    uint Slot;
+    if (!TryReserveRun(BucketIndex, Bucket, Blocks, ViewDrawCharge(Inst, ViewIndex, Range.y), Slot))
     {
         bool bFitted = false;
         for (uint Step = 0u; Step < (uint)MESHLET_MAX_LODS && !bFitted; ++Step)
@@ -269,7 +274,8 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
                 break;
             }
             Range   = Coarser;
-            bFitted = TryReserveRun(BucketIndex, Bucket, Range.y, Slot);
+            Blocks  = RangeBlockCount(Range, bRuns);
+            bFitted = TryReserveRun(BucketIndex, Bucket, Blocks, Range.y, Slot);
         }
         if (!bFitted)
         {
@@ -277,17 +283,5 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
         }
     }
 
-    const uint Count     = Range.y;
-    const uint Blocks    = (Count + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
-    const uint ForceBits = bForceAll ? MESHLET_BLOCK_FORCE_ALL_BIT : 0u;
-    for (uint b = 0u; b < Blocks; ++b)
-    {
-        const uint First = b * MESHLET_CULL_GROUP_SIZE;
-
-        FMeshletBlock Block;
-        Block.InstanceID         = InstanceID;
-        Block.PackedBaseAndCount = FMeshletBlock::Pack(Range.x + First,
-                                                       min(MESHLET_CULL_GROUP_SIZE, Count - First)) | ForceBits;
-        Pass().OutBlockList.Set(Slot + b, Block);
-    }
+    WriteBlocks(InstanceID, Range, bRuns, bForceAll ? MESHLET_BLOCK_FORCE_ALL_BIT : 0u, Slot);
 }

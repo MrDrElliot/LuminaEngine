@@ -224,7 +224,7 @@ float3 RainLightAt(float3 WorldPos)
     {
         const FLight Sun = GetLightAt(0);
         Light += UnpackColor(Sun.Color).rgb * Sun.Intensity * (0.25 * INV_PI)
-               * SampleSunCascadeByContainment(Sun, WorldPos) * SampleDirectionalCloudShadow(WorldPos);
+               * SampleSunShadowPoint(Sun, WorldPos) * SampleDirectionalCloudShadow(WorldPos);
     }
     return min(Light, float3(kRainMaxLight, kRainMaxLight, kRainMaxLight));
 }

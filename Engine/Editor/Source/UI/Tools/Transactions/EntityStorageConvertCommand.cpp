@@ -25,7 +25,7 @@ namespace Lumina
 
         ECS::FRegistry& Registry = W->GetEntityRegistry();
         TVector<ECS::FEntity> Entities;
-        Registry.ForEachEntityExcept<FEditorComponent>([&](ECS::FEntity Entity)
+        Registry.ForEachEntityExcept<FEditorComponent, FTransientEntityTag>([&](ECS::FEntity Entity)
         {
             Entities.Add(Entity);
         });

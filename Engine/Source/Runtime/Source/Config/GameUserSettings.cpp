@@ -36,6 +36,7 @@ namespace Lumina
             {
             case EUpscaler::DLSS: return "DLSS";
             case EUpscaler::FSR:  return "FSR";
+            case EUpscaler::TAA:  return "TAA";
             case EUpscaler::None: break;
             }
             return "None";
@@ -237,7 +238,7 @@ namespace Lumina
         FrameRateLimit = GetDefault<CRendererSettings>()->MaxFPS;
         SetOverallQuality(EQualityLevel::Default);
         bOverrideUpscaling = false;
-        Upscaler = EUpscaler::None;
+        Upscaler = EUpscaler::TAA;
         UpscalerMode = EUpscalerMode::Custom;
         ScreenPercentage = 100.0f;
         Input = SPlayerInputSettings();

@@ -36,6 +36,7 @@ struct FVisVertexContext
 #ifdef VISBUFFER_MASKED_GEOM
     uint     MaterialIndex;
 #endif
+    bool     bApplyWPO;
 };
 
 FVisVertexContext LoadVisVertexContext(FMeshletRef Ref)
@@ -48,6 +49,7 @@ FVisVertexContext LoadVisVertexContext(FMeshletRef Ref)
 #ifdef VISBUFFER_MASKED_GEOM
     Ctx.MaterialIndex = Ref.Inst.MaterialIndex;
 #endif
+    Ctx.bApplyWPO     = Ref.Inst.bApplyWPO;
     return Ctx;
 }
 
@@ -58,10 +60,13 @@ FVisVertexOutput VisBufferVertex(FMeshletRef Ref, uint LocalVertex, FVisVertexCo
     FMeshletWorldVertex W  = TransformMeshletVertex(VertexData, Ctx.ModelMatrix, Ctx.NormalMatrix);
 
     float4 WorldPos = float4(W.WorldPos, 1.0);
-    const FMaterialVertexInputs Material =
-        EvalMaterialVertex(Ref.Inst, Ctx.ModelMatrix, VertexData, WorldPos,
-                           W.NormalWS, W.TangentWS.xyz, W.TangentWS.w);
-    WorldPos.xyz += Material.WorldPositionOffset;
+    if (Ctx.bApplyWPO)
+    {
+        const FMaterialVertexInputs Material =
+            EvalMaterialVertex(Ref.Inst, Ctx.ModelMatrix, VertexData, WorldPos,
+                               W.NormalWS, W.TangentWS.xyz, W.TangentWS.w);
+        WorldPos.xyz += Material.WorldPositionOffset;
+    }
 
 #ifdef VISBUFFER_MASKED_GEOM
     return MakeMaskedVertexOutput(Ref, W, WorldPos.xyz, Ctx.CameraView, Ctx.CameraProj, Ctx.MaterialIndex);
@@ -137,7 +142,9 @@ void MeshMain(
             const uint  t      = min(StoreT, TriCount - 1u);
             const uint3 Idx    = UnpackMeshletTriangleSafe(Ref, t);
 
-            const bool bCull = IsDegenerateTriangleIndices(Idx)
+            // Only the camera's views have to fit the ID range, and a slot past it would alias the proxy bit.
+            const bool bCull = MeshletSlot > VISBUFFER_MAX_MESHLET_SLOTS
+                             | IsDegenerateTriangleIndices(Idx)
                              | IsMeshletTriangleCulled(ShuffleMeshletClip(Clip, Idx.x),
                                                        ShuffleMeshletClip(Clip, Idx.y),
                                                        ShuffleMeshletClip(Clip, Idx.z),
@@ -170,7 +177,7 @@ FVisVertexStageOutput VertexMain(uint VertexIndex   : SV_VulkanVertexID,
 
     FVisVertexStageOutput Out = (FVisVertexStageOutput)0;
     Out.VisID = PackVisID(Corner.MeshletSlot, Corner.TriIdx);
-    if (Corner.bValid)
+    if (Corner.bValid && Corner.MeshletSlot <= VISBUFFER_MAX_MESHLET_SLOTS)
     {
         Out.Vertex = VisBufferVertex(Corner.Ref, Corner.LocalVertex, LoadVisVertexContext(Corner.Ref));
     }

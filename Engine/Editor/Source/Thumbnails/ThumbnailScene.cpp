@@ -46,9 +46,8 @@ namespace Lumina
             SWorldRenderSettings& Settings = World->GetRenderSettings();
             Settings.bDrawBillboards = false;
             
-            Settings.bOcclusionCull       = false;
-            Settings.bShadowOcclusionCull = false;
-            Settings.bWaitForPipelines    = true;
+            Settings.bOcclusionCull    = false;
+            Settings.bWaitForPipelines = true;
         }
 
         CameraEntity = World->ConstructEntity("ThumbnailCamera");

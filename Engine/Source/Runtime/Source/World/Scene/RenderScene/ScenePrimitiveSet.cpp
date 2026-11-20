@@ -70,6 +70,7 @@ namespace Lumina
             Proto.MaterialIndex         = Surface.MaterialIdx;
             Proto.MaterialFlags         = Surface.MaterialFlags;
             Proto.bMaterialCastsShadows = Surface.bMaterialCastsShadows;
+            Proto.bWorldPositionOffset  = Surface.bWorldPositionOffset;
             Proto.TexelFactor           = Surface.TexelFactor;
             return Proto;
         }
@@ -80,7 +81,8 @@ namespace Lumina
                 && Have.SurfaceDescIndex      == Want.SurfaceDescIndex
                 && Have.MaterialIndex         == Want.MaterialIndex
                 && Have.MaterialFlags         == Want.MaterialFlags
-                && Have.bMaterialCastsShadows == Want.bMaterialCastsShadows;
+                && Have.bMaterialCastsShadows == Want.bMaterialCastsShadows
+                && Have.bWorldPositionOffset  == Want.bWorldPositionOffset;
         }
 
         void ReleasePrimitiveBoneSlice(FBoneSliceArena& Arena, FScenePrimitive& Prim)
@@ -1052,6 +1054,21 @@ namespace Lumina
             return Slot;
         }
 
+        // A free block is free slots too, so a single carved from the lowest one keeps the extent from growing above a released grass peak.
+        if (!FreeSlotBlocks.IsEmpty())
+        {
+            FUIntVector2& Block = FreeSlotBlocks[0];
+            const uint32 Slot = Block.x;
+            ++Block.x;
+            if (--Block.y == 0u)
+            {
+                FreeSlotBlocks.RemoveAt(0);
+            }
+            MarkInstanceDirty(Slot);
+            MarkStaticDirty(Slot);
+            return Slot;
+        }
+
         const uint32 Slot = (uint32)RetainedCullEntries.Num();
 
         RetainedCullEntries.Emplace();
@@ -1070,17 +1087,18 @@ namespace Lumina
         // Deliberately not the free list: the block must be contiguous so the GPU can index it from one base.
         const uint32 Base = (uint32)RetainedCullEntries.Num();
 
-        RetainedCullEntries.SetNum(Base + Count);
-        RetainedTransforms.SetNum(Base + Count);
-        RetainedStatic.SetNum(Base + Count);
-        RetainedProxies.SetNum(Base + Count);
-
-        // The scatter relies on its unused slots reading inactive, so the block starts from uploaded zeros.
-        for (uint32 Slot = Base; Slot < Base + Count; ++Slot)
+        const auto GrowZeroed = [Base, Count](auto& Array)
         {
-            MarkInstanceDirty(Slot);
-            MarkStaticDirty(Slot);
-        }
+            Array.SetNum((int32)(Base + Count));
+            Memory::Memzero(&Array[Base], (SIZE_T)Count * sizeof(Array[0]));
+        };
+        GrowZeroed(RetainedCullEntries);
+        GrowZeroed(RetainedTransforms);
+        GrowZeroed(RetainedStatic);
+        GrowZeroed(RetainedProxies);
+
+        // The scatter relies on its unused slots reading inactive, and the device range may hold slots from before a trim.
+        ZeroedSlotRanges.Emplace(Base, Count);
         return Base;
     }
 
@@ -1112,6 +1130,76 @@ namespace Lumina
 
         DeactivateInstanceSlot(Slot);
         InstanceFreeSlots.Add(Slot);
+    }
+
+    void FScenePrimitiveSet::TrimRetainedTail()
+    {
+        constexpr uint32 kMinTrimSlots       = 65536;
+        constexpr uint32 kTrimIntervalFrames = 60;
+
+        const uint32 SlotCount = (uint32)RetainedCullEntries.Num();
+        uint64 FreeSlots = (uint64)InstanceFreeSlots.Num();
+        for (const FUIntVector2& Block : FreeSlotBlocks)
+        {
+            FreeSlots += Block.y;
+        }
+        // The free list sort below is only worth it once a quarter of the slots are free, and then not every frame.
+        if (SlotCount < kMinTrimSlots || FreeSlots * 4u < SlotCount)
+        {
+            return;
+        }
+        if (RetainedTrimCountdown > 0u)
+        {
+            --RetainedTrimCountdown;
+            return;
+        }
+        RetainedTrimCountdown = kTrimIntervalFrames;
+
+        // Highest first, so the tail run sits at the front and the allocator's pop from the back reuses the lowest slots.
+        Algo::Sort(InstanceFreeSlots, [](uint32 A, uint32 B) { return A > B; });
+
+        uint32 NewCount = SlotCount;
+        int32  TailFree = 0;
+        for (;;)
+        {
+            if (!FreeSlotBlocks.IsEmpty() && FreeSlotBlocks.Last().x + FreeSlotBlocks.Last().y == NewCount)
+            {
+                NewCount = FreeSlotBlocks.Last().x;
+                FreeSlotBlocks.Pop();
+            }
+            else if (TailFree < InstanceFreeSlots.Num() && InstanceFreeSlots[TailFree] + 1u == NewCount)
+            {
+                --NewCount;
+                ++TailFree;
+            }
+            else
+            {
+                break;
+            }
+        }
+        if (NewCount == SlotCount)
+        {
+            return;
+        }
+
+        InstanceFreeSlots.RemoveAt(0, TailFree);
+        const auto Trim = [NewCount](auto& Array)
+        {
+            if ((uint32)Array.Num() > NewCount)
+            {
+                Array.SetNum((int32)NewCount);
+            }
+            if ((uint32)Array.Max() > NewCount * 2u)
+            {
+                Array.Shrink();
+            }
+        };
+        Trim(RetainedCullEntries);
+        Trim(RetainedTransforms);
+        Trim(RetainedStatic);
+        Trim(RetainedProxies);
+        Trim(SlotMeshletVisibility);
+        LOG_INFO("RenderScene: retained slots trimmed from {} to {}.", SlotCount, NewCount);
     }
 
     void FScenePrimitiveSet::DeactivateInstanceSlot(uint32 Slot)
@@ -1196,6 +1284,11 @@ namespace Lumina
             // A cluster range can span every level at once, so its words cover the whole hierarchy.
             LargestLOD = bClusterLOD ? LargestLOD + Desc.LODMeshletCount[LOD] : Math::Max(LargestLOD, Desc.LODMeshletCount[LOD]);
         }
+        // A cluster's visibility words follow mesh-global runs, so the surface's offset into its first run takes room too.
+        if (bClusterLOD && Desc.NumLODs > 0u)
+        {
+            LargestLOD += Desc.LODMeshletOffset[0] % MESHLET_CULL_GROUP_SIZE;
+        }
         return LargestLOD;
     }
 
@@ -1241,53 +1334,48 @@ namespace Lumina
             SlotMeshletVisibility.SetNum(SlotCount, FUIntVector3(kNoMeshletVisibility, 0u, 0u));
         }
 
-        if (bFullInstanceUpload || bFullStaticUpload)
-        {
-            // Nearly every slot already holds the range its LODs need, so the check runs wide and only the stale ones allocate, in slot order.
-            ResetParallelBuckets();
-
-            const auto IsStale = [this](uint32 Slot)
-            {
-                const FUIntVector3& Range = SlotMeshletVisibility[Slot];
-                return Range.z != LargestLODMeshletsOf(Slot) || RetainedStatic[Slot].MeshletVisibilityBase != Range.x;
-            };
-            constexpr uint32 kMeshletVisibilityScanGrain = 4096;
-            Jobs::ParallelForOrSerial(SlotCount, kMeshletVisibilityScanGrain, [&](const Jobs::FParallelRange& Range)
-            {
-                TVector<uint32>& Stale = BucketFor(Range.Thread).Slots;
-                for (uint32 Slot = Range.Start; Slot < Range.End; ++Slot)
-                {
-                    if (IsStale(Slot))
-                    {
-                        Stale.Add(Slot);
-                    }
-                }
-            });
-
-            MeshletVisibilityScratch.Reset();
-            for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
-            {
-                MeshletVisibilityScratch.Append(Bucket.Slots);
-                Bucket.Slots.Reset();
-            }
-            Algo::Sort(MeshletVisibilityScratch);
-            for (uint32 Slot : MeshletVisibilityScratch)
-            {
-                UpdateMeshletVisibility(Slot);
-            }
-            return;
-        }
-
-        // Copied first, since a base that moves marks its slot static-dirty and grows the list being walked.
+        // A full upload checks every slot. Otherwise only the dirty ones, copied first, since a base that moves marks its slot static-dirty and grows the list.
+        const bool bEverySlot = bFullInstanceUpload || bFullStaticUpload;
         MeshletVisibilityScratch.Reset();
-        MeshletVisibilityScratch.Append(DirtyInstanceSlots);
-        MeshletVisibilityScratch.Append(DirtyStaticSlots);
+        if (!bEverySlot)
+        {
+            MeshletVisibilityScratch.Append(DirtyInstanceSlots);
+            MeshletVisibilityScratch.Append(DirtyStaticSlots);
+        }
+        const uint32 NumCandidates = bEverySlot ? SlotCount : (uint32)MeshletVisibilityScratch.Num();
+
+        // Nearly every candidate already holds the range its LODs need, a moved one included, so the check runs wide and only the stale ones allocate, in slot order.
+        ResetParallelBuckets();
+        const auto IsStale = [this](uint32 Slot)
+        {
+            const FUIntVector3& Range = SlotMeshletVisibility[Slot];
+            return Range.z != LargestLODMeshletsOf(Slot) || RetainedStatic[Slot].MeshletVisibilityBase != Range.x;
+        };
+        constexpr uint32 kMeshletVisibilityScanGrain = 4096;
+        Jobs::ParallelForOrSerial(NumCandidates, kMeshletVisibilityScanGrain, [&](const Jobs::FParallelRange& Range)
+        {
+            TVector<uint32>& Stale = BucketFor(Range.Thread).Slots;
+            for (uint32 Candidate = Range.Start; Candidate < Range.End; ++Candidate)
+            {
+                const uint32 Slot = bEverySlot ? Candidate : MeshletVisibilityScratch[Candidate];
+                if (Slot < SlotCount && IsStale(Slot))
+                {
+                    Stale.Add(Slot);
+                }
+            }
+        });
+
+        MeshletVisibilityScratch.Reset();
+        for (FDirtySlotBucket& Bucket : ParallelDirtySlots)
+        {
+            MeshletVisibilityScratch.Append(Bucket.Slots);
+            Bucket.Slots.Reset();
+        }
+        Algo::Sort(MeshletVisibilityScratch);
+        MeshletVisibilityScratch.SetNum(static_cast<int32>(Algo::Unique(MeshletVisibilityScratch) - MeshletVisibilityScratch.begin()));
         for (uint32 Slot : MeshletVisibilityScratch)
         {
-            if (Slot < SlotCount)
-            {
-                UpdateMeshletVisibility(Slot);
-            }
+            UpdateMeshletVisibility(Slot);
         }
     }
 
@@ -1365,183 +1453,6 @@ namespace Lumina
         return NewIndex;
     }
 
-    //~ Grass
-
-    FScenePrimitiveSet::FGrassSpeciesBinding FScenePrimitiveSet::AcquireGrassSpecies(const FGrassSpeciesKey& Key, CStaticMesh* Mesh, uint32 ResolveHandle, uint32 Capacity)
-    {
-        if (Mesh == nullptr || Capacity == 0u || !FMeshResolveCache::Get().IsValidHandle(ResolveHandle))
-        {
-            return {};
-        }
-
-        // One surface only, since a multi-material grass mesh would need a block per surface.
-        const FResolvedMesh& Resolved = FMeshResolveCache::Get().GetEntry(ResolveHandle);
-        if (Resolved.Surfaces.IsEmpty())
-        {
-            return {};
-        }
-
-        if (FGrassSpeciesBinding* Existing = GrassSpecies.Find(Key))
-        {
-            Existing->SeenSerial = GrassSerial;
-            if (Existing->Mesh == Mesh && Existing->Capacity >= Capacity)
-            {
-                // The first resolve may have been the default material standing in for one still compiling or loading.
-                if (Existing->ResolvedGeneration != Resolved.Generation)
-                {
-                    BindGrassSurface(*Existing, Resolved);
-                }
-                return *Existing;
-            }
-
-            // Outgrown or remeshed, so the old block goes back inactive rather than drawing its last blades forever.
-            ReleaseGrassBlock(*Existing);
-        }
-
-        FGrassSpeciesBinding Result;
-        Result.Mesh              = Mesh;
-        Result.InstanceSlotBase  = TakeGrassBlock(Capacity);
-        Result.SeenSerial        = GrassSerial;
-        Result.Capacity          = Capacity;
-        Result.MeshletHeaderSlot = Mesh->GetMeshResource().MeshBuffers.MeshletHeaderSlot;
-        // Enclosing-sphere radius of the bind-pose AABB, which is what the cull's sphere test wants.
-        const FVector3 Extent = Mesh->GetAABB().GetSize() * 0.5f;
-        Result.MeshBoundsRadius  = Math::Sqrt(Extent.x * Extent.x + Extent.y * Extent.y + Extent.z * Extent.z);
-        Result.bValid            = true;
-        BindGrassSurface(Result, Resolved);
-
-        // The block starts inactive so a frame that dispatches no scatter draws nothing rather than garbage.
-        for (uint32 i = 0; i < Capacity; ++i)
-        {
-            RetainedCullEntries[Result.InstanceSlotBase + i] = {};
-        }
-
-        GrassSpecies.Add(Key, Result);
-        GrassSlotCount += Capacity;
-        return Result;
-    }
-
-    // Freed blocks are kept whole for the next species, since single slots from the free list could never form one again.
-    void FScenePrimitiveSet::ReleaseGrassBlock(const FGrassSpeciesBinding& Binding)
-    {
-        Batches.ReleaseBatchRef(Binding.BatchIndex, false);
-        for (uint32 Slot = Binding.InstanceSlotBase; Slot < Binding.InstanceSlotBase + Binding.Capacity; ++Slot)
-        {
-            DeactivateInstanceSlot(Slot);
-        }
-        AddGrassFreeBlock(Binding.InstanceSlotBase, Binding.Capacity);
-        GrassSlotCount -= Binding.Capacity;
-    }
-
-    // Sorted by base and merged with its neighbors, so repeated release and reacquire cannot fragment the retained arrays.
-    void FScenePrimitiveSet::AddGrassFreeBlock(uint32 Base, uint32 Count)
-    {
-        int32 Insert = 0;
-        while (Insert < GrassFreeBlocks.Num() && GrassFreeBlocks[Insert].x < Base)
-        {
-            ++Insert;
-        }
-        GrassFreeBlocks.Insert(FUIntVector2(Base, Count), Insert);
-
-        if (Insert + 1 < GrassFreeBlocks.Num() && GrassFreeBlocks[Insert].x + GrassFreeBlocks[Insert].y == GrassFreeBlocks[Insert + 1].x)
-        {
-            GrassFreeBlocks[Insert].y += GrassFreeBlocks[Insert + 1].y;
-            GrassFreeBlocks.RemoveAt(Insert + 1);
-        }
-        if (Insert > 0 && GrassFreeBlocks[Insert - 1].x + GrassFreeBlocks[Insert - 1].y == GrassFreeBlocks[Insert].x)
-        {
-            GrassFreeBlocks[Insert - 1].y += GrassFreeBlocks[Insert].y;
-            GrassFreeBlocks.RemoveAt(Insert);
-        }
-    }
-
-    FScenePrimitiveSet::FMeshletDemand FScenePrimitiveSet::GetGrassMeshletDemand() const
-    {
-        FMeshletDemand Demand;
-        for (const auto& [Key, Binding] : GrassSpecies)
-        {
-            const uint32 Meshlets = LargestLODMeshletsOfSurface(Binding.SurfaceDescIndex);
-            Demand.Words    += (uint64)Binding.Capacity * RenderUtils::GetGroupCount(Meshlets, MESHLET_CULL_GROUP_SIZE);
-            Demand.Meshlets += (uint64)Binding.Capacity * Meshlets;
-        }
-        return Demand;
-    }
-
-    void FScenePrimitiveSet::KeepGrassSpecies(ECS::FEntity Terrain)
-    {
-        for (auto& [Key, Binding] : GrassSpecies)
-        {
-            if (Key.Terrain == Terrain)
-            {
-                Binding.SeenSerial = GrassSerial;
-            }
-        }
-    }
-
-    uint32 FScenePrimitiveSet::TakeGrassBlock(uint32 Capacity)
-    {
-        for (int32 Index = 0; Index < GrassFreeBlocks.Num(); ++Index)
-        {
-            FUIntVector2& Block = GrassFreeBlocks[Index];
-            if (Block.y < Capacity)
-            {
-                continue;
-            }
-            const uint32 Base = Block.x;
-            Block.x += Capacity;
-            Block.y -= Capacity;
-            if (Block.y == 0u)
-            {
-                GrassFreeBlocks.RemoveAt(Index);
-            }
-            for (uint32 Slot = Base; Slot < Base + Capacity; ++Slot)
-            {
-                MarkInstanceDirty(Slot);
-                MarkStaticDirty(Slot);
-            }
-            return Base;
-        }
-        return AllocateInstanceSlotBlock(Capacity);
-    }
-
-    void FScenePrimitiveSet::ReleaseUnseenGrassSpecies()
-    {
-        for (auto It = GrassSpecies.begin(); It != GrassSpecies.end();)
-        {
-            if (It->Value.SeenSerial != GrassSerial)
-            {
-                ReleaseGrassBlock(It->Value);
-                It = GrassSpecies.Remove(It);
-            }
-            else
-            {
-                ++It;
-            }
-        }
-        ++GrassSerial;
-    }
-
-    void FScenePrimitiveSet::BindGrassSurface(FGrassSpeciesBinding& Binding, const FResolvedMesh& Resolved)
-    {
-        const FResolvedSurface& Surface = Resolved.Surfaces[0];
-
-        const uint32 BatchIndex = Batches.FindOrAddBatch(Surface);
-        Batches.AddBatchRef(BatchIndex, false);
-        if (Binding.ResolvedGeneration != 0u)
-        {
-            Batches.ReleaseBatchRef(Binding.BatchIndex, false);
-        }
-
-        // Grass is never skinned and always has geometry once its mesh resolved; Active is set per blade by the scatter.
-        const EInstanceFlags Flags = EInstanceFlags::HasGeometry | Surface.MaterialFlags;
-
-        Binding.BatchIndex         = BatchIndex;
-        Binding.DrawIDAndFlags     = PackDrawIDAndFlags(BatchIndex, Flags);
-        Binding.SurfaceDescIndex   = InternSurfaceDesc(Surface);
-        Binding.MaterialIndex      = Surface.MaterialIdx;
-        Binding.ResolvedGeneration = Resolved.Generation;
-    }
-
     //~ Instance refresh
 
     void FScenePrimitiveSet::RefreshInstances(uint32 Index, const FMatrix4& Transform, FDirtySlotBucket* Sink)
@@ -1561,8 +1472,6 @@ namespace Lumina
         const bool                bActive      = Prim.Surfaces != nullptr && !(Prim.Source == EPrimitiveSource::SkeletalMesh && Prim.BoneCount == 0u);
         const bool                bHasGeometry = Prim.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot;
         const FTransform3x4       NewTransform = PackTransform3x4(InstanceTransformOf(Prim, Transform));
-        const uint32              LODAndThinning = PackLODAndThinning(Prim.ForcedLODIndex, 0.0f, Prim.RenderLayers, Prim.CustomDepthStencil);
-
         for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
         {
             const FSurfaceBinding& Binding = Bindings[Prim.BindingBase + s];
@@ -1572,7 +1481,10 @@ namespace Lumina
                 continue;
             }
 
-            EInstanceFlags Flags = ComposeInstanceFlags(Prim.BaseFlags, Binding, Prim.bCastShadow && !bRemapped, Prim.bCastFarShadow, bActive, bHasGeometry);
+            const uint32 LODAndThinning = PackLODAndThinning(Prim.ForcedLODIndex, 0.0f, Prim.RenderLayers, Prim.CustomDepthStencil, Prim.bShadowWPO,
+                                                             IsShadowCacheable(Binding, Prim.bShadowWPO) && !bRemapped);
+
+            EInstanceFlags Flags = ComposeInstanceFlags(Prim.BaseFlags, Binding, Prim.bCastShadow && !bRemapped, bActive, bHasGeometry);
             if (bRemapped)
             {
                 Flags &= ~EInstanceFlags::HasDistanceField;
@@ -1594,6 +1506,7 @@ namespace Lumina
             // Owned by AssignMeshletVisibility, which a rebuilt payload must not undo.
             NewStatic.MeshletVisibilityBase = RetainedStatic[Slot].MeshletVisibilityBase;
             NewStatic.RenderLayers          = Prim.RenderLayers;
+            NewStatic.WPODisableDistance    = Prim.WPODisableDistance;
 
             // A resolve bump onto identical values must not dirty the slot, or every instance re-uploads.
             const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);

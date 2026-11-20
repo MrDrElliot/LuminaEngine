@@ -142,6 +142,10 @@ namespace Lumina
         PROPERTY()
         FString Category;
 
+        // Lists GPU allocations under their full names instead of grouping them by the prefix before the first dot.
+        PROPERTY()
+        bool bGpuFullNames = false;
+
         // Forces a managed collection first, so garbage waiting on the collector does not read as a leak.
         PROPERTY()
         bool bCollectManaged = true;

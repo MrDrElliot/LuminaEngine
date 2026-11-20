@@ -37,7 +37,8 @@ namespace Lumina
         uint32 bShortVertexRefs : 1;
         // A voxel splat level, whose quads stand for a surface and skip the material's opacity clip.
         uint32 bVoxel           : 1;
-        uint32 _Pad0            : 32 - 2 * MESHLET_COUNT_BITS - MESHLET_LOD_BITS - 2;
+        uint32 bCompactSplat    : 1;
+        uint32 SplatReach       : MESHLET_SPLAT_REACH_BITS;
 
         FORCEINLINE bool HasShortVertexRefs() const { return bShortVertexRefs != 0u; }
 
@@ -537,6 +538,9 @@ namespace Lumina
 
         // Multiplies the voxel levels' errors, so above 1 the splats take over further away.
         float                     VoxelErrorScale = 1.0f;
+
+        // Builds the voxel levels alone, which stand for geometry drawn some other way up close, such as a forest tile's trees.
+        bool                      bVoxelLevelsOnly = false;
 
         FORCEINLINE int32 GetNumSurfaces() const { return GeometrySurfaces.Num(); }
         FORCEINLINE int32 GetNumVertices() const { return Positions.Num(); }

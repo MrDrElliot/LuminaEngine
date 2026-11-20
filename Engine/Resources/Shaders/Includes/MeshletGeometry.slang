@@ -45,7 +45,7 @@ FMeshletRef ResolveMeshlet(uint MeshletSlot)
     }
 
     // The draw entry names the meshlet outright, since the cull picks the LOD per view and the raster cannot know which.
-    Ref.SkinnedVertexBase    = Ref.Inst.SkinnedVertexBase;
+    Ref.SkinnedVertexBase    = ResolvePreSkinBase(Ref.Inst.SkinnedVertexBase);
 
     // Also bounded by the header count (0 for a dead mesh's null header), since these counts reach SetMeshOutputCounts.
     if (Draw.MeshletIndex >= min(Ref.Inst.MeshletTotalCount, Ref.Header.MeshletCount))
@@ -89,7 +89,7 @@ struct FMeshletPassArgs
     uint                    MaxMeshGroups;     // sub-draw d covers meshlets [d*MaxMeshGroups, (d+1)*...)
     uint                    CullViewIndex;
     int                     ShadowDataIndex;   // Shadow raster variants only
-    int                     ViewIndex;         // Shadow raster variants only (cascade, face or spot)
+    int                     ViewIndex;         // Shadow raster variants only (sun level, face or spot)
     // The atlas tile size for a shadow pass, as two scalars so neither block layout pads.
     float                   ViewportW;
     float                   ViewportH;

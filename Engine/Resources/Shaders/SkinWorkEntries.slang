@@ -22,7 +22,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     }
 
     const FSkinnedFrameData Data = Pass().SkinnedData.Get(Pass().SlotList.Get(Entry));
-    if (Data.SkinnedVertexBase == kNoPreSkinBase)
+    if (!HasPreSkinSlice(Data.SkinnedVertexBase))
     {
         return;
     }

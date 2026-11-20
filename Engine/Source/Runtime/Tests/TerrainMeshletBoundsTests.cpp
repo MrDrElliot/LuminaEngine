@@ -59,10 +59,16 @@ namespace
             const FTerrainMeshletInfo& Meshlet = State.Meshlets[m];
             const FTerrainChunkInfo& Chunk = State.Chunks[Meshlet.ChunkIndex];
 
-            const int32 SampleX0 = Chunk.QuadOrigin.x + Meshlet.ChunkLocalQuadOrigin.x;
-            const int32 SampleY0 = Chunk.QuadOrigin.y + Meshlet.ChunkLocalQuadOrigin.y;
-            const int32 NVertsX  = Meshlet.QuadExtent.x + 1;
-            const int32 NVertsY  = Meshlet.QuadExtent.y + 1;
+            // A coarser level's quads span 1 << Level samples, the last one clamped to the chunk's own extent.
+            const FIntVector2 Extent = GetTerrainChunkExtent(Chunk.QuadOrigin, QuadsPerChunk, Resolution);
+            const int32 FineX0   = Meshlet.ChunkLocalQuadOrigin.x << Meshlet.Level;
+            const int32 FineY0   = Meshlet.ChunkLocalQuadOrigin.y << Meshlet.Level;
+            const int32 FineX1   = Math::Min((Meshlet.ChunkLocalQuadOrigin.x + Meshlet.QuadExtent.x) << Meshlet.Level, Extent.x);
+            const int32 FineY1   = Math::Min((Meshlet.ChunkLocalQuadOrigin.y + Meshlet.QuadExtent.y) << Meshlet.Level, Extent.y);
+            const int32 SampleX0 = Chunk.QuadOrigin.x + FineX0;
+            const int32 SampleY0 = Chunk.QuadOrigin.y + FineY0;
+            const int32 NVertsX  = FineX1 - FineX0 + 1;
+            const int32 NVertsY  = FineY1 - FineY0 + 1;
 
             float WantMin =  TNumericLimits<float>::Infinity();
             float WantMax = -TNumericLimits<float>::Infinity();
@@ -94,7 +100,7 @@ TEST(TerrainMeshletBounds, MatchesScalarReferenceOnAlignedGrid)
 
 TEST(TerrainMeshletBounds, MatchesScalarReferenceWhenMeshletsRunPastTheEdge)
 {
-    // Resolution-1 is not a whole number of chunks, so the last chunk samples past the heightmap and clamps.
+    // Resolution-1 is not a whole number of chunks, so the last chunk is narrower than the rest.
     ExpectBoundsMatchScalarReference(50, 17, 100.0f);
 }
 
@@ -157,6 +163,40 @@ TEST(TerrainMeshletBounds, TranslateMatchesRebuildAtNewOrigin)
         {
             EXPECT_NEAR(Moved.CPUState.Chunks[i].BoundsMin[Axis], Rebuilt.CPUState.Chunks[i].BoundsMin[Axis], 1e-3f);
             EXPECT_NEAR(Moved.CPUState.Chunks[i].BoundsMax[Axis], Rebuilt.CPUState.Chunks[i].BoundsMax[Axis], 1e-3f);
+        }
+    }
+}
+
+TEST(TerrainMeshletBounds, EveryLevelCoversItsWholeChunk)
+{
+    // 49 quads in 16-quad chunks leaves a narrow last chunk, whose clamped coarse quads must still reach its edge.
+    STerrainComponent Terrain = MakeTerrain(50, 17, 100.0f);
+    TerrainMeshletBuilder::Build(Terrain, FVector3(0.0f));
+    const FTerrainCPUState& State = Terrain.CPUState;
+
+    for (int32 c = 0; c < State.Chunks.Num(); ++c)
+    {
+        const FTerrainChunkInfo& Chunk = State.Chunks[c];
+        const FIntVector2 Extent = GetTerrainChunkExtent(Chunk.QuadOrigin, 16, 50);
+        for (uint32 Level = 0; Level < GTerrainLODLevels; ++Level)
+        {
+            int32 FarX = 0;
+            int32 FarY = 0;
+            int32 Count = 0;
+            for (uint32 m = Chunk.MeshletOffset; m < Chunk.MeshletOffset + Chunk.MeshletCount; ++m)
+            {
+                const FTerrainMeshletInfo& Meshlet = State.Meshlets[m];
+                if (Meshlet.Level != Level)
+                {
+                    continue;
+                }
+                ++Count;
+                FarX = Math::Max(FarX, Math::Min((Meshlet.ChunkLocalQuadOrigin.x + Meshlet.QuadExtent.x) << Level, Extent.x));
+                FarY = Math::Max(FarY, Math::Min((Meshlet.ChunkLocalQuadOrigin.y + Meshlet.QuadExtent.y) << Level, Extent.y));
+            }
+            EXPECT_EQ(Count, GetTerrainLevelMeshletsSide(Extent.x, Level) * GetTerrainLevelMeshletsSide(Extent.y, Level)) << "chunk " << c << " level " << Level;
+            EXPECT_EQ(FarX, Extent.x) << "chunk " << c << " level " << Level;
+            EXPECT_EQ(FarY, Extent.y) << "chunk " << c << " level " << Level;
         }
     }
 }

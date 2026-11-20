@@ -827,18 +827,20 @@ namespace Lumina
         const bool bMasked  = BlendMode == EBlendMode::Masked;
         // Only the translucent passes bind a meshlet material's forward stages, and only the opaque ones its deferred stage.
         const bool bForward = IsOITResolved() || IsUnorderedBlend();
+        // Terrain rasters its own meshlets into the VisBuffer and shades in the deferred pass, with no forward stages.
+        const bool bTerrain = MaterialType == EMaterialType::Terrain;
 
         switch (Stage)
         {
-        case EMaterialShaderStage::Pixel:                return !bMeshlet || bForward;
+        case EMaterialShaderStage::Pixel:                return (!bMeshlet && !bTerrain) || bForward;
         case EMaterialShaderStage::Vertex:               return MaterialDomain::UsesVertexStage(MaterialType);
         case EMaterialShaderStage::MeshBase:
         case EMaterialShaderStage::MeshBaseVertex:       return bMeshlet && bForward;
-        case EMaterialShaderStage::Deferred:             return bMeshlet && !bForward;
-        case EMaterialShaderStage::MeshShadow:
+        case EMaterialShaderStage::Deferred:             return (bMeshlet && !bForward) || bTerrain;
         case EMaterialShaderStage::VisBufferMesh:
-        case EMaterialShaderStage::MeshShadowVertex:
-        case EMaterialShaderStage::VisBufferVertex:      return bMeshlet;
+        case EMaterialShaderStage::VisBufferVertex:      return bMeshlet || bTerrain;
+        case EMaterialShaderStage::MeshShadow:
+        case EMaterialShaderStage::MeshShadowVertex:     return bMeshlet;
         case EMaterialShaderStage::VisBufferMeshMasked:
         case EMaterialShaderStage::MaskedVisBufferPixel:
         case EMaterialShaderStage::MeshShadowMasked:
@@ -1411,8 +1413,9 @@ namespace Lumina
 
         const FString NoOffset = "Material.WorldPositionOffset = float3(0.0);\n";
 
-        CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::Pixel,  "TerrainBasePixelPass.slang",  nullptr, { { kPixelInputsToken, PixelInputs } });
-        CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::Vertex, "TerrainBaseVertexPass.slang", nullptr, { { kVertexInputsToken, NoOffset } });
+        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::VisBufferMesh, "TerrainVisBuffer.slang", nullptr, { { kVertexInputsToken, NoOffset } });
+        CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::Deferred, "TerrainDeferredMaterial.slang", nullptr,
+                            { { kVertexInputsToken, NoOffset }, { kPixelInputsToken, PixelInputs } });
 
         Compiler->Flush();
         Material->PostLoad();

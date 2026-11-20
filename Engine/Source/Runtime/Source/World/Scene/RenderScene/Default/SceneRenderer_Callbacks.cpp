@@ -197,7 +197,7 @@ namespace Lumina
         SCENE_GPU_SCOPE(CL, StageMarker(ERenderStage::Depth));
 
         // Stamping empty into the visibility buffer keeps deferred from shading a mesh the custom geometry covers.
-        static const FShaderH StampPixelShader = FShaderLibrary::Get("TerrainDepthPixel.slang");
+        static const FShaderH StampPixelShader = FShaderLibrary::Get("VisBufferEmptyPixel.slang");
 
         const FSceneImage& VisRT   = GetNamedImage(ENamedImage::VisBuffer);
         const FSceneImage& DepthRT = GetNamedImage(ENamedImage::DepthAttachment);

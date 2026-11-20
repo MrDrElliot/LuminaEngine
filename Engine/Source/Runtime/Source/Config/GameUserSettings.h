@@ -63,7 +63,7 @@ namespace Lumina
         bool bOverrideUpscaling = false;
 
         PROPERTY(Hidden)
-        EUpscaler Upscaler = EUpscaler::None;
+        EUpscaler Upscaler = EUpscaler::TAA;
 
         PROPERTY(Hidden)
         EUpscalerMode UpscalerMode = EUpscalerMode::Custom;

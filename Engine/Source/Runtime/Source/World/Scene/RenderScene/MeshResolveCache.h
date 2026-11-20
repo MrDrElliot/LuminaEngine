@@ -46,6 +46,8 @@ namespace Lumina
         uint64          MaterialID    = 0;
         uint32          MaterialIdx   = 0;
         bool            bMaterialCastsShadows = true;
+        // The material moves its vertices, so its shadow changes every frame unless the instance casts from the still mesh.
+        bool            bWorldPositionOffset = false;
 
         uint32  NumLODs                             = 1;
         uint32  LODMeshletOffset[MAX_MESH_LODS]     = {};

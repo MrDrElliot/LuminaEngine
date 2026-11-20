@@ -678,7 +678,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, EditCondition = "RenderMode == Ribbon")
         float RibbonTailWidth = 0.0f;
 
-        // Draws the particles into the sun's shadow cascades, faded by their alpha.
+        // Draws the particles into the sun's virtual shadow, faded by their alpha.
         PROPERTY(Editable, Category = "Render")
         bool bCastShadows = false;
 
@@ -841,6 +841,8 @@ namespace Lumina
         uint32          SortCount           = 0;
         // Cleared each frame; false means the sim was skipped and the draw args describe a past frame.
         bool            bSimulatedThisFrame = false;
+        // The batched wave this frame's step ran in, or -1 when it ran on its own or not at all.
+        int8            BatchWave           = -1;
         float           SpawnAccumulator    = 0.0f;
         float           DistanceAccumulator = 0.0f;
         float           TotalTime           = 0.0f;

@@ -699,8 +699,8 @@ namespace Lumina
             PendingLoadBytes += StagingBytes;
             Entry.bLoadInFlight = true;
 
-            // Only the disk read is off-thread, and the residency change it feeds runs on the game thread.
-            Jobs::Spawn(Jobs::EJobPriority::Background, [](FPendingLoad* InFlight) -> Jobs::TTask<void>
+            // Only the disk read is off-thread, and it runs ahead of background builds since a surface on screen waits on it.
+            Jobs::Spawn(Jobs::EJobPriority::Low, [](FPendingLoad* InFlight) -> Jobs::TTask<void>
             {
                 InFlight->Read();
                 co_return;

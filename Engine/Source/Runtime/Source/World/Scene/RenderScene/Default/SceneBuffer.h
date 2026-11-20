@@ -21,6 +21,8 @@ namespace Lumina
         EBufferInit Init           = EBufferInit::Undefined;
         bool        bAllowShrink   = true;
         uint32      LowUsageFrames = 0;
+        // The most the slack may reach, for a buffer whose readers never address past a fixed count.
+        uint64      MaxBytes       = ~0ull;
 
         constexpr FSceneBuffer() = default;
         constexpr FSceneBuffer(const char* InDebugName, float InSlack, EBufferInit InInit = EBufferInit::Undefined, bool bInAllowShrink = true)
@@ -50,7 +52,7 @@ namespace Lumina
 
         NODISCARD uint64 SlackedBytes(uint64 NeededBytes) const
         {
-            const uint64 Bytes = (uint64)((double)NeededBytes * Slack);
+            const uint64 Bytes = Math::Max(NeededBytes, Math::Min((uint64)((double)NeededBytes * Slack), MaxBytes));
             return (Bytes + 15ull) & ~15ull;
         }
 

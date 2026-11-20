@@ -3,7 +3,7 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/SunDFShadowCommon.slang"
 
-// Sun occlusion the cascades cannot hold, marched per pixel from the depth buffer and read back by the lighting.
+// Sun occlusion the virtual shadow levels cannot hold, marched per pixel from the depth buffer and read back by the lighting.
 
 // Covers a 4x4 open-world terrain tiling with shadow casting enabled on every tile.
 static const uint kMaxTerrainShadowRecords = 16u;
@@ -126,7 +126,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
             Visibility = min(Visibility, TraceTerrainShadow(Pass().Terrains[i], P, ViewDistance));
         }
 
-        // Meshes take over from the cascades here and dissolve over the last tenth of their range.
+        // Meshes take over from the virtual shadow levels here and dissolve over the last tenth of their range.
         if (Pass().bDistanceField != 0u && Visibility > 0.0 && ViewDistance >= Pass().DFNear && ViewDistance <= Pass().DFFar)
         {
             const float Traced = TraceSunDFShadows(&Pass().DFGrid, P, Pass().ToSun, Pass().TanHalfAngle, Pass().DFMaxTrace);

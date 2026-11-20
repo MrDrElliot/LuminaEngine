@@ -17,6 +17,11 @@ namespace Lumina
         {
             return;
         }
+        if (ManagedTick != nullptr)
+        {
+            ManagedTick(&Context);
+            return;
+        }
 
         ECS::FRegistry& Registry = Context.GetRegistry();
         if (Sim->GetTick() == 0)

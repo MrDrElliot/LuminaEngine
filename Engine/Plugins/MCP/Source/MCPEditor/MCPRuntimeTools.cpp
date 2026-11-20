@@ -206,7 +206,7 @@ namespace Lumina::MCP
 
                 const FStringView FullName(Allocation.Name);
                 const int32 PrefixEnd = FullName.Find('.');
-                const FStringView Prefix = FullName.IsEmpty() ? FStringView("<unnamed>") : (PrefixEnd == Constants::kIndexNone ? FullName : FullName.Left(PrefixEnd));
+                const FStringView Prefix = FullName.IsEmpty() ? FStringView("<unnamed>") : (PrefixEnd == Constants::kIndexNone || In.bGpuFullNames ? FullName : FullName.Left(PrefixEnd));
                 const char* MemoryName = bTexture ? "Texture"
                     : Allocation.Memory == RHI::EMemoryType::CPUWrite ? "CPUWrite"
                     : Allocation.Memory == RHI::EMemoryType::CPURead ? "CPURead" : "GPUOnly";

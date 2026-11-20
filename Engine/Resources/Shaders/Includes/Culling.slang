@@ -1,5 +1,6 @@
 #pragma once
 #include "SceneGlobals.slang"
+#include "VirtualShadow.slang"
 
 // Hi-Z math here must match the depth pyramid build (min-reduction sampler, reverse-Z).
 
@@ -263,6 +264,81 @@ uint2 SelectClusterSlotRange(FSurfaceDesc Desc, FCullView View, float4 SphereBou
     return uint2(Lo, Hi);
 }
 
+// A cluster mesh's ranges split on runs, MESHLET_CULL_GROUP_SIZE meshlets aligned on the mesh-global index, so each block has one run's bounds.
+uint RangeBlockCount(uint2 Range, bool bRuns)
+{
+    if (Range.y == 0u)
+    {
+        return 0u;
+    }
+    if (!bRuns)
+    {
+        return (Range.y + (MESHLET_CULL_GROUP_SIZE - 1u)) / MESHLET_CULL_GROUP_SIZE;
+    }
+    return (Range.x + Range.y - 1u) / MESHLET_CULL_GROUP_SIZE - Range.x / MESHLET_CULL_GROUP_SIZE + 1u;
+}
+
+// Block b of a range, x its first meshlet and y its count.
+uint2 RangeBlock(uint2 Range, uint Block, bool bRuns)
+{
+    if (!bRuns)
+    {
+        const uint First = Block * MESHLET_CULL_GROUP_SIZE;
+        return uint2(Range.x + First, min(MESHLET_CULL_GROUP_SIZE, Range.y - First));
+    }
+    const uint Run   = Range.x / MESHLET_CULL_GROUP_SIZE + Block;
+    const uint Begin = max(Range.x, Run * MESHLET_CULL_GROUP_SIZE);
+    const uint End   = min(Range.x + Range.y, (Run + 1u) * MESHLET_CULL_GROUP_SIZE);
+    return uint2(Begin, End - Begin);
+}
+
+// True when no meshlet of the run can survive the view, from the two bounds MeshBuffers appends per run after the per-meshlet ones.
+bool IsMeshletRunCulled(FMeshletHeader* Header, uint Run, FCullView View, float4x4 Model, float MaxScale, float LODErrorMultiplier, bool bFrustum, bool bCut)
+{
+    const uint Entry = Header.MeshletCount + Run * 2u;
+    const FMeshletLODBounds Lod    = loadAligned<16>(Header.LODBounds + Entry);
+    const FMeshletLODBounds Extent = loadAligned<16>(Header.LODBounds + Entry + 1u);
+
+    if (bFrustum && !FrustumContainsSphere(View.FrustumPlanes, mul(Model, float4(Extent.SelfCenter, 1.0)).xyz, Extent.SelfRadius * MaxScale))
+    {
+        return true;
+    }
+    if (!bCut)
+    {
+        return false;
+    }
+
+    const bool bVoxels = VoxelFarEnabled();
+    if (Lod.bVoxel && !bVoxels)
+    {
+        return true;
+    }
+    const float ErrorScale = View.LODErrorScale * MaxScale * LODErrorMultiplier;
+    if (ErrorScale <= 0.0)
+    {
+        return Lod.SelfError > 0.0;
+    }
+
+    const bool bOrtho = View.HasFlag(CULL_VIEW_FLAG_ORTHOGRAPHIC_LOD);
+    // Even the finest group rejected from the run's far side means every meshlet's own group is rejected.
+    const float3 SelfCenter = mul(Model, float4(Lod.SelfCenter, 1.0)).xyz;
+    const float  FarReach   = bOrtho ? 1.0 : length(SelfCenter - View.ViewOrigin) + Lod.SelfRadius * MaxScale;
+    if (Lod.SelfError * ErrorScale > FarReach)
+    {
+        return true;
+    }
+
+    const float ParentError = (Lod.bVoxelParent && !bVoxels) ? MESHLET_LOD_ERROR_INFINITE : Lod.ParentError;
+    if (ParentError >= MESHLET_LOD_ERROR_INFINITE)
+    {
+        return false;
+    }
+    // Even the coarsest parent accepted from the run's near side means every meshlet's parent draws instead.
+    const float3 ParentCenter = mul(Model, float4(Lod.ParentCenter, 1.0)).xyz;
+    const float  NearReach    = bOrtho ? 1.0 : max(length(ParentCenter - View.ViewOrigin) - Lod.ParentRadius * MaxScale, 0.0);
+    return ParentError * ErrorScale <= NearReach;
+}
+
 // The pick's meshlet range, x the mesh-global offset and y the count, and the most of it one cut can draw. A cluster surface's slots are contiguous, so a slot span is one range.
 uint2 SelectViewMeshletRange(FSurfaceDesc Desc, FCullView View, float4 SphereBounds, float MaxScale, out uint DrawBound)
 {
@@ -395,66 +471,23 @@ bool IsHiZOccluded(FCullSphereProjection P)
     return DepthSphere < PyramidDepth;
 }
 
-// The previous frame's cascade depth is standard Z, so the reduction is max. bMid picks the pyramid and its transforms together.
-bool IsCascadeHZBOccluded(uint CascadeIndex, float3 CenterWS, float RadiusWS, bool bMid = false)
+// A shadow level splits its casters between its static and dynamic views, so each instance lands in exactly one.
+bool IsShadowCacheSplitRejected(FCullView View, bool bShadowCached)
 {
-    const uint bValid = bMid ? Scene().CullData.bCascadeHZBMidValid : Scene().CullData.bCascadeHZBValid;
-    if (bValid == 0u || CascadeIndex >= (uint)NUM_CASCADES)
-    {
-        return false;
-    }
-
-    const float4x4 CascadeVP = bMid ? Scene().CullData.CascadeHZBViewProjectionMid[CascadeIndex]
-                                    : Scene().CullData.CascadeHZBViewProjection[CascadeIndex];
-    const float3   NdcScale  = bMid ? Scene().CullData.CascadeHZBNdcScaleMid[CascadeIndex].xyz
-                                    : Scene().CullData.CascadeHZBNdcScale[CascadeIndex].xyz;
-
-    // Ortho w is 1, so clip space is already NDC.
-    const float3 Ndc       = mul(CascadeVP, float4(CenterWS, 1.0)).xyz;
-    const float3 NdcRadius = RadiusWS * NdcScale;
-
-    const float2 MinNdc = Ndc.xy - NdcRadius.xy;
-    const float2 MaxNdc = Ndc.xy + NdcRadius.xy;
-    const float  NearZ  = Ndc.z - NdcRadius.z;
-
-    // A sphere partly outside the cascade volume was clipped by the raster, so the pyramid cannot prove it hidden.
-    if (any(MinNdc < -1.0) || any(MaxNdc > 1.0) || NearZ < 0.0)
-    {
-        return false;
-    }
-
-    // The ortho projection already bakes Vulkan +Y-down, so NDC maps to the tile directly.
-    const float4 Tile     = Scene().CullData.CascadeHZBTile[CascadeIndex];
-    const float2 LocalMin = MinNdc * 0.5 + 0.5;
-    const float2 LocalMax = MaxNdc * 0.5 + 0.5;
-
-    const float2 UvMin = Tile.xy + LocalMin * Tile.zw;
-    const float2 UvMax = Tile.xy + LocalMax * Tile.zw;
-
-    const float Level    = HiZOcclusionMip(float4(UvMin, UvMax),
-                                           float2(Scene().CullData.CascadePyramidWidth, Scene().CullData.CascadePyramidHeight));
-    const float MaxLevel = max((float)Scene().CullData.CascadePyramidMipCount - 1.0, 0.0);
-
-    // Past the allocated chain one tap no longer covers the footprint, so it cannot prove anything.
-    if (Level > MaxLevel)
-    {
-        return false;
-    }
-
-    const float2 SampleUV = (UvMin + UvMax) * 0.5;
-
-    // Standard Z needs max reduction, the opposite of the camera's reverse-Z pyramid.
-    const float PyramidDepth = Scene().CullData.CascadePyramid.SampleLevel(Samplers::MaxReduction, SampleUV, Level).x;
-
-    // Occluded when the whole sphere sits behind the farthest depth in its footprint.
-    return NearZ > PyramidDepth;
+    return (View.HasFlag(CULL_VIEW_FLAG_SHADOW_CACHE_STATIC) && !bShadowCached)
+        || (View.HasFlag(CULL_VIEW_FLAG_SHADOW_CACHE_DYNAMIC) && bShadowCached);
 }
 
 // CullInstances sizes buckets from this and BuildMeshletBlocks appends against it, so they must agree.
 bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool bNoCull, bool bCaster,
-                             bool bShadowOnly, bool bFarCaster, bool bFoliage, bool bCustomDepth, uint Layers)
+                             bool bShadowOnly, bool bFoliage, bool bCustomDepth, uint Layers, bool bShadowCached)
 {
     if ((View.LayerMask & Layers) == 0u)
+    {
+        return false;
+    }
+
+    if (IsShadowCacheSplitRejected(View, bShadowCached))
     {
         return false;
     }
@@ -476,10 +509,6 @@ bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool b
     {
         return false;
     }
-    if (View.HasFlag(CULL_VIEW_FLAG_FAR_CASCADE) && !bFarCaster)
-    {
-        return false;
-    }
 
     // The mirror of the line above, so a shadow-only instance reaches shadow maps and nothing else.
     if (!bShadowView && bShadowOnly)
@@ -497,18 +526,10 @@ bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool b
         return false;
     }
 
-    if (View.HasFlag(CULL_VIEW_FLAG_CASCADE))
+    // A shadow level keeps what lands in last frame's requested pages grown by two, and the fresh pages it misses draw again next frame.
+    if (View.HasFlag(CULL_VIEW_FLAG_VIRTUAL_SHADOW) && IsVirtualShadowPageCulled(View.ShadowLevel, VSM_MASK_HOT, Center, Radius))
     {
-        // Cascade ortho boxes overlap, so test the camera slice swept toward the sun instead.
-        if (!FrustumContainsSphere(Scene().CullData.CascadeFrustum[View.CascadeIndex], Center, Radius))
-        {
-            return false;
-        }
-        if (Scene().CullData.bShadowOcclusionCull != 0u &&
-            IsCascadeHZBOccluded(View.CascadeIndex, Center, Radius))
-        {
-            return false;
-        }
+        return false;
     }
 
     // No camera Hi-Z here since only last frame's pyramid exists and a reject is unrecoverable. MeshletCull's late phase tests it.

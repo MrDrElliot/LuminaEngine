@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <meshoptimizer.h>
 #include "Containers/Span.h"
@@ -19,6 +19,7 @@ namespace Lumina
 {
     struct FAnimationResource;
     struct FMeshResource;
+    struct FMeshletData;
     struct FSkeletonResource;
     struct FSourceVertex;
     class FScopedSlowTask;
@@ -488,6 +489,9 @@ namespace Lumina::Import
         RUNTIME_API void OptimizeNewlyImportedMesh(FMeshResource& MeshResource, FScopedSlowTask* Progress = nullptr);
         /** When Progress is set, advances StepPerSurface of progress for each surface meshletized. */
         RUNTIME_API void GenerateMeshlets(FMeshResource& MeshResource, FScopedSlowTask* Progress = nullptr, float StepPerSurface = 0.0f);
+
+        // Rewrites a mesh of voxel splats alone to one vertex per splat, whose corners the decode rebuilds. False leaves Data as it was.
+        RUNTIME_API bool CompactSplatMeshlets(FMeshletData& Data);
         RUNTIME_API void AnalyzeMeshStatistics(FMeshResource& MeshResource, FMeshStatistics& OutMeshStats);
         // Pieces that share a source material share one merged slot, so a merge never adds slots per object.
         RUNTIME_API int16 FindOrAddMergedMaterialSlot(TVector<int16>& SlotToSource, int16 SourceMaterial);

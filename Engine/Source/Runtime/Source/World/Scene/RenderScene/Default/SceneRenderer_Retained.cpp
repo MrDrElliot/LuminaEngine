@@ -12,6 +12,7 @@ namespace Lumina
 
         // The bounds build reads the retained slots this sync rewrites.
         JoinInstanceBlockBounds();
+        ScenePrimitives.TrimRetainedTail();
 
         ScenePrimitives.SetForegroundView(ExtractFrame->ViewVolume, ExtractFrame->ViewLayers);
 
@@ -96,7 +97,10 @@ namespace Lumina
         FFrameData::FGeometry::FRetainedUpload& Out = ExtractFrame->Geometry.RetainedUpload;
 
         // Ahead of everything below, since a base that moves marks its slot static-dirty.
-        ScenePrimitives.AssignMeshletVisibility();
+        {
+            LUMINA_PROFILE_SECTION("Publish/Meshlet Visibility");
+            ScenePrimitives.AssignMeshletVisibility();
+        }
         Out.MeshletVisibilityWords = ScenePrimitives.GetMeshletVisibilityExtent();
         Out.LargestLODMeshlets     = ScenePrimitives.GetLargestLODMeshletTotal();
         Out.GrassMeshlets          = ScenePrimitives.GetGrassMeshletDemand();
@@ -108,6 +112,7 @@ namespace Lumina
         Out.DirtySlots.Reset();
         Out.DirtyStaticSlots.Reset();
         Out.DeactivatedSlots.Reset();
+        Out.ZeroedSlotRanges.Reset();
 
         const uint32 DeviceCapacity = RetainedDeviceCapacity.load(std::memory_order_acquire);
         // Growth keeps the device contents, so only a device holding nothing valid needs everything again.
@@ -119,6 +124,7 @@ namespace Lumina
 
         if (!Out.bFull || !Out.bFullStatic)
         {
+            LUMINA_PROFILE_SECTION("Publish/Collect Dirty Slots");
             // A bitmap over the slot range yields the sorted, unique list in linear time, where a sort did not.
             DirtySlotBits.SetNum(IntCastChecked<int32>(RenderUtils::GetGroupCount(SlotCount, 64u)));
             auto Collect = [this, SlotCount](const TVector<uint32>& In, TVector<uint32>& OutList)
@@ -190,6 +196,13 @@ namespace Lumina
                 if (Slot < SlotCount)
                 {
                     Out.DeactivatedSlots.Add(Slot);
+                }
+            }
+            for (const FUIntVector2& Range : ScenePrimitives.GetZeroedSlotRanges())
+            {
+                if (Range.x < SlotCount && Range.y != 0u)
+                {
+                    Out.ZeroedSlotRanges.Emplace(Range.x, Math::Min(Range.y, SlotCount - Range.x));
                 }
             }
         }

@@ -55,6 +55,8 @@ public readonly unsafe partial struct SSystemContext
 
     public SystemPhysics Physics => new(this);
 
+    public SystemSimulation Simulation => new(this);
+
     // Runs Work at the next flush on the main thread with the world in reach, for anything a system cannot do beside others.
     public void Defer(Action<SExclusiveContext> Work)
     {
@@ -114,6 +116,8 @@ public readonly unsafe partial struct SExclusiveContext
     public void Patch<T>(FEntity Entity, PatchFunc<T> Mutator) where T : struct, IComponent<T> => Shared.Patch(Entity, Mutator);
 
     public SystemPhysics Physics => new(this);
+
+    public SystemSimulation Simulation => new(this);
 
     public void Defer(Action<SExclusiveContext> Work) => Shared.Defer(Work);
 }

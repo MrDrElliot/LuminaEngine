@@ -153,7 +153,7 @@ namespace Lumina
         const FVector3 Up       = Math::Abs(Fall.z) < 0.99f ? FVector3(0.0f, 0.0f, 1.0f) : FVector3(1.0f, 0.0f, 0.0f);
         const FVector3 Camera   = ExtractFrame->ViewVolume.GetViewPosition();
 
-        // Snapped to whole texels like the cascades, so the map does not crawl as the camera moves.
+        // Snapped to whole texels, so the map does not crawl as the camera moves.
         const FMatrix4 Rotation = Math::LookAt(-Fall * kOcclusionHalfDepth, FVector3(0.0f), Up);
         FVector4 CenterLS = Rotation * FVector4(Camera, 1.0f);
         CenterLS.x = std::round(CenterLS.x / TexelWorld) * TexelWorld;

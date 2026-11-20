@@ -14,11 +14,10 @@ namespace Lumina
 {
     class CWorld;
     struct SCameraComponent;
-    struct SFoliageComponent;
+    struct SForestComponent;
     struct STerrainComponent;
 
-    // Foliage painting viewport mode: manage foliage types (static mesh + scatter/instancing settings), then
-    // paint/erase instances onto the terrain (or ground plane). Instances follow the terrain when sculpted.
+    // Paints a forest's species in and out of the ground and places single plants, all streamed by the forest.
     class FFoliageEditMode final : public IWorldEditorMode
     {
     public:
@@ -26,7 +25,7 @@ namespace Lumina
         const char* GetIcon() const override { return LE_ICON_FOREST; }
         const char* GetTooltip() const override
         {
-            return "Paint instanced foliage (grass, trees, rocks). Instances follow the terrain when you sculpt it.";
+            return "Paint forest species onto the ground, erase them, or place single plants. Everything follows the terrain.";
         }
 
         void OnExit(CWorld* World) override;
@@ -35,56 +34,64 @@ namespace Lumina
         void DrawOverlay(CWorld* World, ImVec2 ViewportScreenOrigin, ImVec2 ViewportSize, const SCameraComponent& Camera) override;
         void Tick(CWorld* World, const SCameraComponent& Camera, bool bViewportHovered, ImVec2 ViewportScreenOrigin, ImVec2 ViewportSize) override;
 
-        // Painting captures viewport input (suppress select/gizmo while in the mode).
         bool ConsumesViewportInput() const override { return true; }
 
     private:
-        enum class EFoliageBrushMode : int32 { Paint = 0, Erase = 1 };
+        enum class EBrushMode : int32 { Paint, Erase, Place };
+
+        struct FGround
+        {
+            const STerrainComponent* Terrain = nullptr;
+            FVector3                        Origin  = FVector3(0.0f);
+            float                           Spacing = 0.0f;
+        };
 
         bool  bShowSettings = true;
 
-        EFoliageBrushMode Mode = EFoliageBrushMode::Paint;
-        float Radius   = 384.0f;
-        float Falloff  = 0.5f;
-        int32 ActiveType = 0;
+        EBrushMode Mode     = EBrushMode::Paint;
+        float      Radius   = 32.0f;
+        float      Falloff  = 0.5f;
+        float      Strength = 0.5f;
+        int32      ActiveSpecies = 0;
 
         FVector3 LastHit   = FVector3(0.0f);
-        bool      bHitValid = false;
+        bool     bHitValid = false;
 
         bool  bTransactionOpen = false;
 
-        // Accumulates fractional paint budget across frames so low densities still place instances.
-        float PaintAccumulator = 0.0f;
+        // Fractional plants owed by the Place brush, carried across frames so sparse species still place.
+        float PlaceAccumulator = 0.0f;
 
-        // Cheap xorshift RNG for scatter jitter (editor-only; determinism not required).
+        // Brush jitter only, so it needs no determinism.
         uint32 RngState = 0x9E3779B9u;
         float  RandFloat();
 
-        static SFoliageComponent* FindFoliage(CWorld* World, ECS::FEntity* OutEntity = nullptr);
-        static SFoliageComponent* FindOrCreateFoliage(CWorld* World);
-        STerrainComponent* FindTerrain(CWorld* World, FVector3& OutOrigin) const;
+        struct FTarget
+        {
+            SForestComponent* Forest = nullptr;
+            FVector3          Center = FVector3(0.0f);
+        };
 
-        // Project a world XZ onto the paint surface (terrain if present, else ground plane). Always succeeds.
-        bool ProjectToSurface(CWorld* World, STerrainComponent* Terrain, const FVector3& TerrainOrigin, float WorldX, float WorldZ, FVector3& OutPos, FVector3& OutNormal) const;
+        // Finest terrain first, the order the forest grounds its plants in.
+        static TVector<FGround> GatherGround(CWorld* World);
+        static bool ProjectToGround(const TVector<FGround>& Ground, float WorldX, float WorldZ, FVector3& OutPosition, FVector3& OutNormal);
+        static bool RaycastGround(const TVector<FGround>& Ground, const FVector3& RayOrigin, const FVector3& RayDir, FVector3& OutHit);
 
-        void PaintDab(CWorld* World, SFoliageComponent& Foliage, STerrainComponent* Terrain, const FVector3& TerrainOrigin, const FVector3& Center, float DeltaSeconds);
-        void EraseDab(SFoliageComponent& Foliage, const FVector3& Center);
+        // The forest whose square holds the point, else the first one.
+        static FTarget FindForest(CWorld* World, const FVector3& Near);
+        static FTarget CreateForest(CWorld* World, const TVector<FGround>& Ground);
+        static ECS::FEntity FindLegacyFoliage(CWorld* World);
 
-        // Foliage is null until the first type is added, so entering the mode creates nothing outside undo.
-        void DrawTypePanel(CWorld* World, SFoliageComponent* Foliage);
+        float BrushWeight(float Distance) const;
+        void  PaintDab(const FTarget& Target, const FVector3& Hit, float DeltaSeconds, float Sign);
+        void  PlaceDab(const FTarget& Target, const TVector<FGround>& Ground, const FVector3& Hit, float DeltaSeconds);
 
-        /** Both foliage caches, together. See MarkFoliageChanged in FoliageComponent.h for why. */
-        static void MarkFoliageDirty(CWorld* World);
+        void DrawSpeciesPanel(CWorld* World, const FTarget& Target);
+        void ConvertLegacyFoliage(CWorld* World, ECS::FEntity Legacy);
 
-        /** Points TypeSettings at the active SFoliageType, rebuilding only when the binding actually moved.
-         *  Types is a TVector, so adding one can reallocate and leave the table holding a dangling pointer;
-         *  the bound address is tracked rather than just the index for exactly that reason. */
-        void RebindTypeSettings(CWorld* World, SFoliageComponent* Foliage);
-
-        // Draws the active type's reflected properties, which is what gives the mesh slot the standard
-        // asset picker and every numeric its PROPERTY clamp -- all of it was hand-rolled before, so the
-        // widgets and their limits drifted from the metadata that was already there.
-        FPropertyTable TypeSettings;
-        void*          BoundTypeData = nullptr;
+        // Bound by address, since adding a species can reallocate the array under the table.
+        void RebindSpeciesSettings(SForestComponent* Forest);
+        FPropertyTable SpeciesSettings;
+        void*          BoundSpeciesData = nullptr;
     };
 }

@@ -3,7 +3,7 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
 
-// Reverse-Z camera pyramids reduce with min and standard-Z cascade atlases with max; ReduceMax is a push constant so the branch is wave-uniform.
+// Reverse-Z camera pyramids reduce with min and standard-Z depth with max; ReduceMax is a push constant so the branch is wave-uniform.
 
 #define TILE_THREAD_WIDTH 16
 #define TILE_THREAD_COUNT (TILE_THREAD_WIDTH * TILE_THREAD_WIDTH)

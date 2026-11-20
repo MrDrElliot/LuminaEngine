@@ -67,8 +67,7 @@ namespace Lumina
                 RHI::CopyTransient(MakeSecondaryViewGlobals(Bake.FaceGlobals[Face])));
 
             TerrainCullPass(CL);
-            const bool bTerrainCleared = TerrainDepthPrePass(CL, /*bClear*/ true);
-            VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ !bTerrainCleared);
+            VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
             ClusterBuildPass(CL);
             LightCullPass(CL);
 
@@ -102,7 +101,6 @@ namespace Lumina
             VisBufferClassifyPass(CL);
             MaterialGBufferPass(CL);
             DeferredLightingPass(CL);
-            TerrainRenderPass(CL);
 
             const FSceneImage& FaceColor = GetNamedImage(ENamedImage::HDR);
 

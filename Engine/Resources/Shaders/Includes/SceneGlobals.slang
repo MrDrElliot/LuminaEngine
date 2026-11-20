@@ -1,6 +1,8 @@
 ﻿#pragma once
 #include "Common.slang"
 #include "GlobalRHI.slang"
+#include "TerrainTypes.slang"
+#include "VirtualShadowTypes.slang"
 
 // The mip count rides in the top byte, so a roughness LOD range needs no per-pixel GetDimensions.
 struct FMippedTextureCube
@@ -19,7 +21,7 @@ struct FMippedTextureCubeArray
     uint MipCount()             { return Packed >> 24; }
 };
 
-// Must match FSceneRoot in SceneRenderTypes.h (416 B, scalar layout).
+// Must match FSceneRoot in SceneRenderTypes.h (576 B, scalar layout).
 struct FSceneRoot
 {
     GPUSpan<FBoneTransform>      Bones;
@@ -52,6 +54,8 @@ struct FSceneRoot
     GPUSpan<FMeshletCone>        SkinnedMeshletCones;
     // Parallel to PreSkinnedVertices, and empty when no view wants motion vectors.
     GPUSpan<FPrevSkinnedPosition> PreSkinnedPrevPositions;
+    // Read by the draw path to resolve an instance that shares another's pre-skin slice.
+    GPUSpan<FSkinnedFrameData>    SkinnedFrameData;
 
     // The retained slot arrays, read by the far proxy pass since a proxy has no compacted instance.
     GPUSpan<FTransform3x4>       RetainedTransforms;
@@ -59,16 +63,29 @@ struct FSceneRoot
     GPUSpan<FInstanceProxy>      RetainedProxies;
     // Retained slots CullInstances turned into proxies this frame, in proxy draw order.
     GPUSpan<uint>                ProxyList;
+    // One bit per retained slot the sun's shadow cache holds, empty while the cache is off.
+    GPUSpan<uint>                ShadowCacheBits;
+    // Every terrain the frame draws, in the order their VisID slot ranges follow.
+    GPUSpan<FTerrainRecord>      Terrains;
+    // The sun's virtual shadow pages, level by level, each level's mask mips, and the levels themselves.
+    GPUSpan<FVirtualShadowPage>  VirtualShadowPages;
+    GPUSpan<uint>                VirtualShadowMasks;
+    GPUSpan<FVirtualShadowLevel> VirtualShadowLevels;
 
     FTexture2D         BRDFLut;
     FTextureCube       SkyIrradiance;
     FMippedTextureCube SkyPrefilter;
-    FTexture2D         ShadowCascadeTexture;
     FTexture2D         ShadowAtlasTexture;
     // Full resolution, for sharp near-mirror reflections.
     FTextureCube            SkyCube;
     FMippedTextureCubeArray ProbeCubeArray;
+    FTexture2DUInt          VirtualShadowPool;
+    FRWTexture2DUInt        VirtualShadowPoolRW;
+    // Page rows per layer of the pool, with the dynamic layer below the static one.
+    uint                    VirtualShadowPoolRows;
     uint                    _Pad0;
+    uint                    _Pad1;
+    uint                    _Pad2;
 };
 
 FSceneRoot* GetSceneRoot() { return GetSceneRootPointer<FSceneRoot>(); }
@@ -109,6 +126,12 @@ bool CullViewHasFlag(uint ViewIndex, uint Flag)
 {
     return (asuint(CullViews().At(ViewIndex).ViewOriginAndFlags.w) & Flag) == Flag;
 }
+
+// A shadow level's view, whose blocks and meshlets wait for this frame's depth to say which pages need them.
+bool IsDeferredShadowView(uint ViewIndex)
+{
+    return CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_VIRTUAL_SHADOW);
+}
 GPUSpan<FMeshletHeader>      MeshletHeaders()        { return GetSceneRoot().MeshletHeaders; }
 
 // Slot 0 is the null header and the slot is clamped, so this always returns something readable even off a garbage instance.
@@ -129,10 +152,34 @@ extension FInstanceStatic
 GPUSpan<FMeshletDraw>        MeshletDrawList()       { return GetSceneRoot().MeshletDrawList; }
 GPUSpan<FPreSkinnedVertex>   PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVertices; }
 GPUSpan<FPrevSkinnedPosition> PreSkinnedPrevPositions() { return GetSceneRoot().PreSkinnedPrevPositions; }
+
+// A sharer's base names the skinned index whose entry holds the slice the cull granted its group.
+uint ResolvePreSkinBase(uint Base)
+{
+    if (!IsPreSkinShare(Base))
+    {
+        return Base;
+    }
+    const GPUSpan<FSkinnedFrameData> Data = GetSceneRoot().SkinnedFrameData;
+    const uint Owner = Base & ~kPreSkinShareBit;
+    if (!Data.Contains(Owner))
+    {
+        return kNoPreSkinBase;
+    }
+    const uint Resolved = Data.Get(Owner).SkinnedVertexBase;
+    return HasPreSkinSlice(Resolved) ? Resolved : kNoPreSkinBase;
+}
 GPUSpan<FTransform3x4>       RetainedTransforms()    { return GetSceneRoot().RetainedTransforms; }
 GPUSpan<FInstanceStatic>     RetainedStatic()        { return GetSceneRoot().RetainedStatic; }
 GPUSpan<FInstanceProxy>      RetainedProxies()       { return GetSceneRoot().RetainedProxies; }
 GPUSpan<uint>                ProxyList()             { return GetSceneRoot().ProxyList; }
+
+bool IsShadowCached(uint RetainedSlot)
+{
+    const GPUSpan<uint> Bits = GetSceneRoot().ShadowCacheBits;
+    const uint Word = RetainedSlot >> 5u;
+    return Bits.Contains(Word) && ((Bits.Get(Word) >> (RetainedSlot & 31u)) & 1u) != 0u;
+}
 GPUSpan<FMeshletSphere>      SkinnedMeshletBounds()  { return GetSceneRoot().SkinnedMeshletBounds; }
 GPUSpan<FMeshletCone>        SkinnedMeshletCones()   { return GetSceneRoot().SkinnedMeshletCones; }
 GPUSpan<FWidgetInstance>     Widgets()               { return GetSceneRoot().Widgets; }
@@ -235,8 +282,79 @@ float3 LoadStaticPositionAt(FMeshletHeader* Header, uint VertexIndex)
     return DecodeMeshPosition(Header.PositionGrid, loadAligned<8>(Header.Positions + VertexIndex));
 }
 
+// sin(60 degrees), the half width of the equilateral splat triangle over its corner reach.
+static const float kSplatHalfSide = 0.8660254;
+
+// One corner of a compact splat, rebuilt with the frame and winding VoxelFarBuilder emits, turned by a hash of the splat's vertex.
+struct FSplatCorner
+{
+    uint   VertexIndex;
+    uint   Corner;
+    float3 Center;
+    float3 Tangent;
+    float3 Bitangent;
+};
+
+FSplatCorner MakeSplatCorner(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
+{
+    FSplatCorner C;
+    const uint Splat = VertexLocalIdx / 3u;
+    C.Corner      = VertexLocalIdx - Splat * 3u;
+    C.VertexIndex = M.BaseVertex + Splat;
+    C.Center      = LoadStaticPositionAt(Header, C.VertexIndex);
+
+    // The tangent word holds the splat plane's normal, which the shading normal no longer equals once it leans toward the open side.
+    const float3 Plane  = UnpackNormal((reinterpret<FMeshVertexAttributes*>(Header.Vertices) + C.VertexIndex).Tangent);
+    const float3 Helper = abs(Plane.y) < 0.9 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+    const float3 Axis0  = normalize(cross(Helper, Plane));
+    const float3 Axis1  = cross(Plane, Axis0);
+    uint Hash = C.VertexIndex * 0x9E3779B1u;
+    Hash ^= Hash >> 15u;
+    Hash *= 0x85EBCA77u;
+    Hash ^= Hash >> 13u;
+    const float Spin = float(Hash >> 8u) * (TWO_PI / 16777216.0);
+    C.Tangent   = Axis0 * cos(Spin) + Axis1 * sin(Spin);
+    C.Bitangent = cross(Plane, C.Tangent);
+    return C;
+}
+
+// The stored bits are the top of a half float, unpacked without the Float16 capability the device never enables.
+float SplatReach(FMeshlet M)
+{
+    return UnpackHalf2(M.SplatReachBits << (16u - MESHLET_SPLAT_REACH_BITS - 1u)).x;
+}
+
+float3 SplatCornerPosition(FSplatCorner C, float Reach)
+{
+    const float3 Offset = C.Corner == 0u ? C.Bitangent
+                        : (C.Corner == 1u ? -C.Tangent * kSplatHalfSide - C.Bitangent * 0.5 : C.Tangent * kSplatHalfSide - C.Bitangent * 0.5);
+    return C.Center + Offset * Reach;
+}
+
+// The UV box spans UV0 to UV1, and each corner takes the box corner VoxelFarBuilder gave it.
+FVertexData LoadSplatVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
+{
+    const FSplatCorner C = MakeSplatCorner(Header, M, VertexLocalIdx);
+    const FMeshVertexAttributes V = reinterpret<FMeshVertexAttributes*>(Header.Vertices)[C.VertexIndex];
+    const float2 UVMin = UnpackUV(V.UV);
+    const float2 UVMax = (Header.VertexStreamFlags & MESH_VERTEX_STREAM_UV1) != 0u ? UnpackUV(Header.VertexUV1s[C.VertexIndex]) : UVMin;
+
+    FVertexData Data;
+    Data.Position = SplatCornerPosition(C, SplatReach(M));
+    Data.Normal   = UnpackNormal(V.Normal);
+    Data.Tangent  = float4(C.Tangent, 1.0);
+    Data.UV       = C.Corner == 0u ? UVMin : (C.Corner == 1u ? float2(UVMax.x, UVMin.y) : float2(UVMin.x, UVMax.y));
+    Data.UV1      = Data.UV;
+    Data.Color    = (Header.VertexStreamFlags & MESH_VERTEX_STREAM_COLOR) != 0u ? UnpackColor(Header.VertexColors[C.VertexIndex]) : float4(1.0, 1.0, 1.0, 1.0);
+    return Data;
+}
+
 float3 LoadStaticPosition(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
+    if (M.bCompactSplat)
+    {
+        return SplatCornerPosition(MakeSplatCorner(Header, M, VertexLocalIdx), SplatReach(M));
+    }
     return LoadStaticPositionAt(Header, StaticVertexIndex(Header, M, VertexLocalIdx));
 }
 
@@ -251,6 +369,10 @@ void LoadOptionalStaticStreams(FMeshletHeader* Header, uint VertexIndex, inout F
 // Field by field through the pointer, so whatever a pass leaves unused is never fetched at all.
 FVertexData LoadStaticVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
+    if (M.bCompactSplat)
+    {
+        return LoadSplatVertex(Header, M, VertexLocalIdx);
+    }
     const uint             VertexIndex = StaticVertexIndex(Header, M, VertexLocalIdx);
     FMeshVertexAttributes* V           = reinterpret<FMeshVertexAttributes*>(Header.Vertices) + VertexIndex;
 
@@ -266,6 +388,10 @@ FVertexData LoadStaticVertex(FMeshletHeader* Header, FMeshlet M, uint VertexLoca
 // One load of the attributes, for a pass that consumes every one and would otherwise issue many narrow loads.
 FVertexData LoadStaticVertexWhole(FMeshletHeader* Header, FMeshlet M, uint VertexLocalIdx)
 {
+    if (M.bCompactSplat)
+    {
+        return LoadSplatVertex(Header, M, VertexLocalIdx);
+    }
     const uint                  VertexIndex = StaticVertexIndex(Header, M, VertexLocalIdx);
     const FMeshVertexAttributes V           = reinterpret<FMeshVertexAttributes*>(Header.Vertices)[VertexIndex];
 

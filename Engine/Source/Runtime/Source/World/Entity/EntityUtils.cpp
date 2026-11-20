@@ -564,7 +564,7 @@ namespace Lumina::ECS::Utils
             int32 NumEntitiesSerialized = 0;
             Ar << NumEntitiesSerialized;
 
-            Registry.ForEachEntityExcept<FEditorComponent>([&](ECS::FEntity Entity)
+            Registry.ForEachEntityExcept<FEditorComponent, FTransientEntityTag>([&](ECS::FEntity Entity)
             {
                 if (ShouldWrite != nullptr && !ShouldWrite(Registry, Entity))
                 {

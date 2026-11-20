@@ -230,7 +230,8 @@ namespace Lumina
             TVector<IUpscaler*> Registered;
             FUpscalerRegistry::GetRegistered(Registered);
 
-            TVector<EUpscaler> Types;
+            // Built into every renderer rather than registered, so it is always on offer.
+            TVector<EUpscaler> Types = { EUpscaler::TAA };
             for (IUpscaler* Upscaler : Registered)
             {
                 if (Upscaler != nullptr && Upscaler->IsSupported())

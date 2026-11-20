@@ -877,6 +877,10 @@ namespace Lumina
         R.MaterialID            = (uint64)ConcreteMaterial;
         R.MaterialIdx           = (uint32)Material->GetMaterialIndex();
         R.bMaterialCastsShadows = Material->DoesCastShadows();
+        // Every material without an offset compiles to the default's geometry stage, so a different one is the offset.
+        const CMaterial* DefaultMaterial = CMaterial::GetDefaultMaterial();
+        R.bWorldPositionOffset  = DefaultMaterial != nullptr
+            && R.MeshShaderShadow != DefaultMaterial->GetStageForKey(ActiveMeshletStage(EMaterialShaderStage::MeshShadow), DefaultMaterial->GetStaticSwitchKey());
 
         // Casting is what shadow-only draws, so the two together are the only useful combination.
         const bool bShadowOnly = Material->IsShadowOnly() && R.bMaterialCastsShadows;

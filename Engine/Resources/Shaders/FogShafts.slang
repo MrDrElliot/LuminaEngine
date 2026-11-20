@@ -73,9 +73,6 @@ float4 MarchShafts(float2 UV, float2 TexelPos, float Depth)
     const FFogPhaseTerms Phase = Fog_MultiScatterPhaseTerms(uFog, CosSun, uFog.VolumetricParams.y);
     const float DirStart      = uFog.VolumetricParams.w;
     const float AlbedoLobe    = pow(saturate(CosSun), uFog.DirectionalColor.w);
-    // The march only recedes, so each step resumes the cascade search where the last one hit.
-    int CascadeCursor = 0;
-
     float3 InScatter = float3(0.0);
     float  Trans     = 1.0;
     for (uint i = 0u; i < Pass().Steps; ++i)
@@ -95,7 +92,7 @@ float4 MarchShafts(float2 UV, float2 TexelPos, float Depth)
             continue;
         }
 
-        float Shadow = SampleSunCascadeFrom(Sun, P, CascadeCursor)
+        float Shadow = SampleSunShadowPoint(Sun, P)
                      * CloudShadow_Sample(Pass().CloudShadow, P, ShadowCenter, Pass().CloudShadowExtent);
 
         float3 Light  = Ambient + SunRadiance * Fog_ApplyPhaseShadow(Phase, Shadow);

@@ -3,7 +3,7 @@
 #include "Includes/GBuffer.slang"
 #include "Includes/ShadowSampling.slang"
 
-// Short screen-space march toward the sun, folded into the sun mask so props stop floating where a cascade texel is coarser than the gap.
+// Short screen-space march toward the sun, folded into the sun mask so props stop floating where a shadow texel is coarser than the gap.
 
 // Mirror of Lumina::FSunContactShadowArgs.
 struct FPushConstants
@@ -32,7 +32,7 @@ float TraceContact(int2 Pixel, float Raw, float3 ViewP)
         return 1.0;
     }
 
-    // Terrain shades forward and leaves no GBuffer, so only deferred pixels carry the opt-out bit and a stored normal.
+    // Custom depth geometry leaves no GBuffer, so only deferred pixels carry the opt-out bit and a stored normal.
     float3 ViewN;
     if (Pass().SlotImage.Load(Pixel) != 0u)
     {

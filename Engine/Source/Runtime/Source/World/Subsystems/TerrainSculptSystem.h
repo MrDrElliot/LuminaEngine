@@ -39,6 +39,21 @@ namespace Lumina
         float               RampHalfWidth   = 0.0f;
     };
 
+    // A terrain's heights as the renderer draws them, which a caller may hold a copy of and sample from any thread.
+    struct RUNTIME_API FTerrainHeightView
+    {
+        const float* Heights       = nullptr;
+        int32        Resolution    = 0;
+        float        TileWorldSize = 0.0f;
+        float        MaxHeight     = 0.0f;
+        // The owning entity's world position, which the terrain centers on.
+        FVector3     Origin        = FVector3(0.0f);
+
+        bool     SampleHeight(float WorldX, float WorldZ, float& OutHeight) const;
+        // World up when the point is off the terrain.
+        FVector3 SampleNormal(float WorldX, float WorldZ) const;
+    };
+
     // Stateless utility applying brush dabs to a terrain; parallelized across footprint rows via GTaskSystem.
     // Each apply marks only the touched rect dirty. One stroke at a time -- don't apply concurrently on one component.
     class RUNTIME_API FTerrainSculptSystem
@@ -61,6 +76,9 @@ namespace Lumina
         // Surface normal at (WorldX, WorldZ) from the height gradient (central differences). Returns world up
         // if the point is off the terrain.
         static FVector3 SampleNormal(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, float WorldX, float WorldZ);
+
+        // Null heights when the heightmap does not hold Resolution squared samples.
+        static FTerrainHeightView MakeHeightView(const STerrainComponent& Terrain, const FVector3& TerrainOrigin);
 
     private:
         static void ApplySculpt (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);

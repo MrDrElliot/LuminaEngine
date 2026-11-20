@@ -67,7 +67,7 @@ namespace Lumina
         const FUIntVector2 Extent    = GetNamedImage(ENamedImage::HDR).GetExtent();
 
         // With no mesh draws the VisBuffer was never written, but the outline and the later picker writers still read this image.
-        if (RenderFrame->Geometry.DrawCommands.IsEmpty())
+        if (!HasVisBufferGeometry())
         {
             RHI::FRenderAttachment Cleared[2];
             Cleared[0].Texture = PickerImg.Texture;

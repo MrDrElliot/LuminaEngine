@@ -45,7 +45,7 @@ namespace Lumina
 		"\tuint   EntityID      = Inst.EntityID;\n"
 		"\tfloat3 ViewPosition  = float3(0.0);\n";
 
-	// The terrain vertex pass lacks the shared structs, and matching alias names keep node code reusable.
+	// The terrain templates place vertices from the heightmap without the mesh structs, and matching alias names keep node code reusable.
 	static const char* GVertexStageAliasPreambleTerrain =
 		"\t// Material graph variable aliases (vertex stage, terrain).\n"
 		"\tfloat3 WorldPosition = WorldPos;\n"
@@ -94,7 +94,7 @@ namespace Lumina
 	{
 		const FString BasePath = Paths::GetEngineResourceDirectory() + "/Shaders/MaterialShader/";
 		const FString FragmentPath = (MaterialType == EMaterialType::Terrain)
-			? BasePath + "TerrainBasePixelPass.slang"
+			? BasePath + "TerrainDeferredMaterial.slang"
 			: BasePath + "BasePixelPass.slang";
 
 		FString LoadedString;
@@ -132,7 +132,7 @@ namespace Lumina
 		case EMaterialType::PostProcess: return "PostProcessPixelPass.slang";
 		case EMaterialType::UI:          return "UIPixelPass.slang";
 		case EMaterialType::Decal:       return "DecalPixelPass.slang";
-		case EMaterialType::Terrain:     return "TerrainBasePixelPass.slang";
+		case EMaterialType::Terrain:     return "TerrainDeferredMaterial.slang";
 		case EMaterialType::Particle:    return "ParticlePixelPass.slang";
 		case EMaterialType::LightFunction: return "LightFunctionPixelPass.slang";
 		default:                         return "BasePixelPass.slang";
@@ -189,10 +189,10 @@ namespace Lumina
 			return;
 		}
 
-		// Terrain is the only domain still rastering meshlet geometry through a vertex stage.
+		// Terrain's geometry stage is its VisBuffer raster, compiled with the meshlet stages.
 		if (bIsTerrain)
 		{
-			OutVertexShader = BuildVertexShaderFromTemplate(BasePath + "TerrainBaseVertexPass.slang", MaterialType);
+			OutVertexShader = BuildVertexShaderFromTemplate(BasePath + "TerrainVisBuffer.slang", MaterialType);
 		}
 	}
 

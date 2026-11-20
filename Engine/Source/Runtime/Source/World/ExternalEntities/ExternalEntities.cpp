@@ -421,7 +421,7 @@ namespace Lumina
                     continue;
                 }
 
-                if (Registry.HasAny<FEditorComponent>(Entity))
+                if (Registry.HasAny<FEditorComponent, FTransientEntityTag>(Entity))
                 {
                     continue;
                 }

@@ -13,10 +13,6 @@
 // FMeshletDraw packs a mesh-global meshlet index into this many bits; past the bound it silently resolves the wrong meshlet.
 #define MESHLET_DRAW_INDEX_BITS         20u
 
-// The spare 12 bits record a cascade entry's deferring cascade, so the cull drops a defer past 1024 rather than wrap.
-#define MESHLET_DEFER_DRAWID_BITS       10u
-#define MESHLET_DEFER_MAX_DRAWID        1024u
-
 // Mirrored by RHI::kMeshletCullGroupSize, which MeshData.h static_asserts against.
 #define MESHLET_CULL_GROUP_SIZE         32
 
@@ -43,6 +39,11 @@
 #define MESHLET_SHORT_REFS_SHIFT        18u
 // Set on a voxel splat meshlet, whose quads stand for a surface and so skip the material's opacity clip.
 #define MESHLET_VOXEL_SHIFT             19u
+// Set on a compact splat meshlet, one vertex per splat at BaseVertex onward, whose triangle corners the decode rebuilds.
+#define MESHLET_COMPACT_SPLAT_SHIFT     20u
+// The splats' corner reach as the top 11 bits of a half float without its sign, since every splat of a meshlet shares a voxel size.
+#define MESHLET_SPLAT_REACH_SHIFT       21u
+#define MESHLET_SPLAT_REACH_BITS        11
 
 // FSurfaceDesc::Flags. The cluster bit turns a view's pick from one slot into a slot range the per-meshlet cut then refines.
 #define SURFACE_DESC_CLUSTER_LOD        1u
@@ -66,8 +67,19 @@
 // FMeshletBlock bit above its count, set when the cull must draw every meshlet of the block without the cluster cut.
 #define MESHLET_BLOCK_FORCE_ALL_BIT     (1u << 26u)
 
-// The high bit of a VisBuffer word marks a far proxy, whose low bits hold its proxy draw index plus one.
+// The high bit of a VisBuffer word marks a far proxy, whose low 30 bits hold its proxy draw index plus one.
 #define VISBUFFER_PROXY_BIT             0x80000000u
+// Set with the proxy bit it marks terrain instead, whose low 30 bits pack a terrain meshlet slot and a triangle like a mesh VisID.
+#define VISBUFFER_TERRAIN_BIT           0x40000000u
+#define VISBUFFER_FLAG_MASK             (VISBUFFER_PROXY_BIT | VISBUFFER_TERRAIN_BIT)
+// A mesh VisID has the other 31 bits, so its draw-list slot stays below the one whose packed ID would reach the proxy bit.
+#define VISBUFFER_MAX_MESHLET_SLOTS     0x00FFFFFFu
+
+// One terrain meshlet is a 7 by 7 quad grid, so 64 vertices and 98 triangles.
+#define TERRAIN_MESHLET_QUADS           7u
+#define TERRAIN_MESHLET_VERTS_PER_SIDE  8u
+#define TERRAIN_MESHLET_MAX_VERTICES    64u
+#define TERRAIN_MESHLET_MAX_TRIANGLES   98u
 
 // Which optional per-vertex streams a static mesh carries; an absent UV1 reads as UV0 and an absent color as white.
 #define MESH_VERTEX_STREAM_UV1          1u
@@ -139,10 +151,43 @@
 // A contact-shadowed local light's reach in centimeters rides bits 16-23 of its flags.
 #define LIGHT_CONTACT_LENGTH_SHIFT      16u
 #define LIGHT_CONTACT_LENGTH_MASK       255u
-#define NUM_CASCADES                    4
 
-// Hard cap on cull views, covering the camera, NUM_CASCADES, six per point light and one per spot.
+// Hard cap on cull views, covering the camera, two per virtual shadow level, six per point light and one per spot.
 #define MAX_CULL_VIEWS                  128
+
+// The sun's virtual shadow is a clipmap of square levels, each a 16384 texel virtual map cut into 128 pages of 128 texels per side.
+#define VSM_PAGE_SIZE                   128u
+#define VSM_PAGE_SHIFT                  7u
+#define VSM_LEVEL_PAGES                 128u
+#define VSM_LEVEL_PAGES_SHIFT           7u
+#define VSM_PAGES_PER_LEVEL             (VSM_LEVEL_PAGES * VSM_LEVEL_PAGES)
+#define VSM_VIRTUAL_SIZE                (VSM_PAGE_SIZE * VSM_LEVEL_PAGES)
+#define VSM_MAX_LEVELS                  16u
+// Level 0 spans this many meters each side of its center, and each level after doubles it.
+#define VSM_FIRST_LEVEL_RADIUS          4.0f
+// The physical pool is this many pages wide, with the dynamic layer's rows below the static layer's.
+#define VSM_POOL_PAGES_X                64u
+// Mask mips run from one cell per page down to one cell per level, summed per level in VSM_MASK_CELLS_PER_LEVEL.
+#define VSM_MASK_MIPS                   8u
+#define VSM_MASK_CELLS_PER_LEVEL        21845u
+#define VSM_MASK_STATIC                 1u
+#define VSM_MASK_REQUESTED              2u
+#define VSM_MASK_HOT                    4u
+// A page entry holds its physical page in the low half and these flags above it.
+#define VSM_PAGE_PHYSICAL_MASK          0xFFFFu
+#define VSM_PAGE_ALLOCATED              0x10000u
+#define VSM_PAGE_REQUESTED              0x20000u
+#define VSM_PAGE_RENDER_STATIC          0x40000u
+// A page's persistent state, an invalid flag and the frames left before a fresh page counts as complete.
+#define VSM_STATE_STATIC_INVALID        1u
+#define VSM_STATE_FRESH_SHIFT           1u
+#define VSM_STATE_FRESH_MASK            6u
+#define VSM_FRESH_FRAMES                2u
+// A page nothing has asked for in this many frames goes back to the pool.
+#define VSM_EVICT_FRAMES                60u
+#define VSM_MARK_GROUP_SIZE             8u
+#define VSM_PAGE_GROUP_SIZE             64u
+#define VSM_FILL_GROUP_SIZE             256u
 
 // LightCull gives each workgroup this block of clusters, so one bounding box pre-culls the lights for all of them.
 #define CLUSTER_CULL_BLOCK_X            8
@@ -182,9 +227,20 @@
 #define INSTANCE_FORCED_LOD_MASK        0xFu
 // Set in an instance's LODAndThinning when its layers are anything but Default, so only those instances load their mask.
 #define INSTANCE_CUSTOM_LAYERS_BIT      0x10u
+// Set in an instance's LODAndThinning when its shadow falls from the undisplaced mesh, so shadow passes skip the vertex graph.
+#define INSTANCE_NO_SHADOW_WPO_BIT      0x20u
+// Set in an instance's LODAndThinning when nothing about its shadow changes on its own, so the sun's shadow cache may hold it.
+#define INSTANCE_SHADOW_CACHEABLE_BIT   0x40u
 // Where an instance's custom depth word sits in its LODAndThinning, nine bits below the thinning half.
 #define INSTANCE_CUSTOM_DEPTH_SHIFT     7u
 #define CUSTOM_DEPTH_WORD_MASK          0x1FFu
 // Set in a custom depth word when the instance draws into custom depth, above its stencil byte.
 #define CUSTOM_DEPTH_ENABLED_BIT        0x100u
 #define CUSTOM_DEPTH_STENCIL_MASK       0xFFu
+// Set by the instance cull above a compacted instance's custom depth word, so every pass drawing it this frame agrees on its offset.
+#define GPU_INSTANCE_NO_WPO_BIT         0x10000u
+#define GPU_INSTANCE_NO_SHADOW_WPO_BIT  0x20000u
+// Held by the sun's static shadow cache, so cached sun shadow views draw it and the per-frame ones skip it.
+#define GPU_INSTANCE_SHADOW_CACHED_BIT  0x40000u
+// Retained slots per instance cull workgroup, which is also the span one FInstanceBlockBounds covers.
+#define INSTANCE_CULL_BLOCK_SIZE        64u

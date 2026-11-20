@@ -113,18 +113,20 @@ namespace Lumina
             return Math::Sqrt(Math::Max(Math::Dot(AxisX, AxisX), Math::Max(Math::Dot(AxisY, AxisY), Math::Dot(AxisZ, AxisZ))));
         }
 
+        // Nothing redraws its shadow on its own, so only a change to the slot itself takes it out of the sun's shadow cache.
+        FORCEINLINE bool IsShadowCacheable(const FSurfaceBinding& Binding, bool bShadowWPO)
+        {
+            return !Binding.bSkinned && (!Binding.bWorldPositionOffset || !bShadowWPO);
+        }
+
         // The flags every retained instance derives from its owner, its surface's material and whether it draws at all.
         FORCEINLINE EInstanceFlags ComposeInstanceFlags(EInstanceFlags BaseFlags, const FSurfaceBinding& Binding, bool bCastShadow,
-                                                        bool bCastFarShadow, bool bActive, bool bHasGeometry)
+                                                        bool bActive, bool bHasGeometry)
         {
             EInstanceFlags Flags = BaseFlags | Binding.MaterialFlags;
             if (bCastShadow && Binding.bMaterialCastsShadows)
             {
                 Flags |= EInstanceFlags::CastShadow;
-                if (bCastFarShadow)
-                {
-                    Flags |= EInstanceFlags::CastFarShadow;
-                }
             }
             if (bActive)
             {

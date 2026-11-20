@@ -473,6 +473,7 @@ namespace Lumina::Import::Mesh
 
         // Levels a 128 voxel grid halves through before it stops at two a side.
         constexpr uint32 kMaxVoxelLevels = 7;
+        constexpr uint32 kMaxAggregateVoxelLevels = 3;
 
         uint64 PositionKey(const FVector3& Position)
         {
@@ -1346,6 +1347,106 @@ namespace Lumina::Import::Mesh
         }
     }
 
+    bool CompactSplatMeshlets(FMeshletData& Data)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        if (Data.Meshlets.IsEmpty() || Data.VertexPositions.IsEmpty() || Data.VertexAttributes.Num() != Data.VertexPositions.Num())
+        {
+            return false;
+        }
+        const bool bHasUV1   = Data.VertexUV1s.Num() == Data.VertexPositions.Num();
+        const bool bHasColor = Data.VertexColors.Num() == Data.VertexPositions.Num();
+
+        TVector<FMeshVertexPosition>   Positions;
+        TVector<FMeshVertexAttributes> Attributes;
+        TVector<uint32>                UVMaxes;
+        TVector<uint32>                Colors;
+        TVector<uint32>                Triangles;
+        TVector<FMeshlet>              Meshlets = Data.Meshlets;
+        TVector<FMeshletSphere>        Spheres  = Data.MeshletSpheres;
+
+        for (int32 m = 0; m < Meshlets.Num(); ++m)
+        {
+            FMeshlet& M = Meshlets[m];
+            if (!M.bVoxel || M.TriangleCount == 0u || M.TriangleCount * 3u > MESHLET_COUNT_MASK)
+            {
+                return false;
+            }
+
+            const uint32 Base = (uint32)Positions.Num();
+            const uint32 TriangleBase = (uint32)Triangles.Num();
+            float Reach = -1.0f;
+            FVector3 SphereMin(FLT_MAX);
+            FVector3 SphereMax(-FLT_MAX);
+            for (uint32 t = 0; t < M.TriangleCount; ++t)
+            {
+                const uint32 Packed = Data.MeshletTriangles[M.TriangleOffset + t];
+                const uint32 Corners[3] = { GetStaticVertexIndex(Data, M, Packed & 0xFFu), GetStaticVertexIndex(Data, M, (Packed >> 8) & 0xFFu), GetStaticVertexIndex(Data, M, (Packed >> 16) & 0xFFu) };
+                FVector3 P[3];
+                FVector2 UVMin(FLT_MAX);
+                FVector2 UVMax(-FLT_MAX);
+                for (int32 c = 0; c < 3; ++c)
+                {
+                    P[c] = DecodeMeshPosition(Data.PositionGrid, Data.VertexPositions[Corners[c]]);
+                    const FVector2 UV = Math::UnpackHalf2x16(Data.VertexAttributes[Corners[c]].UV);
+                    UVMin = Math::Min(UVMin, UV);
+                    UVMax = Math::Max(UVMax, UV);
+                }
+                const FVector3 Center = (P[0] + P[1] + P[2]) / 3.0f;
+                const float    Corner = Math::Length(P[0] - Center);
+                // Every splat of a meshlet comes from one voxel level, so a reach that differs means this is not a splat mesh.
+                if (Reach < 0.0f)
+                {
+                    Reach = Corner;
+                }
+                else if (Math::Abs(Corner - Reach) > Reach * 0.02f + 1e-5f)
+                {
+                    return false;
+                }
+
+                const FVector3 Face = Math::Cross(P[1] - P[0], P[2] - P[0]);
+                const FVector3 Plane = Math::Dot(Face, Face) > 1e-20f ? Math::Normalize(Face) : FVector3(0.0f, 1.0f, 0.0f);
+                Positions.Add(EncodeMeshPosition(Data.PositionGrid, Center));
+                Attributes.Add({ Data.VertexAttributes[Corners[0]].Normal, PackNormal(Plane), Math::PackHalf2x16(UVMin) });
+                UVMaxes.Add(Math::PackHalf2x16(UVMax));
+                Colors.Add(bHasColor ? Data.VertexColors[Corners[0]] : 0xFFFFFFFFu);
+                Triangles.Add((t * 3u) | ((t * 3u + 1u) << 8) | ((t * 3u + 2u) << 16));
+                SphereMin = Math::Min(SphereMin, Center);
+                SphereMax = Math::Max(SphereMax, Center);
+            }
+
+            M.BaseVertex       = Base;
+            M.VertexOffset     = 0u;
+            M.TriangleOffset   = TriangleBase;
+            M.VertexCount      = M.TriangleCount * 3u;
+            M.bShortVertexRefs = 0u;
+            M.bCompactSplat    = 1u;
+            M.SplatReach       = EncodeSplatReach(Reach);
+
+            // The corners turn freely about their center, so the bounds take every center out to the full reach.
+            const FVector3 SphereCenter = (SphereMin + SphereMax) * 0.5f;
+            float SphereRadius = 0.0f;
+            for (uint32 t = 0; t < M.TriangleCount; ++t)
+            {
+                SphereRadius = Math::Max(SphereRadius, Math::Length(DecodeMeshPosition(Data.PositionGrid, Positions[Base + t]) - SphereCenter));
+            }
+            Spheres[m] = { SphereCenter, SphereRadius + DecodeSplatReach(M.SplatReach) };
+        }
+
+        Data.Meshlets          = Move(Meshlets);
+        Data.MeshletSpheres    = Move(Spheres);
+        Data.MeshletTriangles  = Move(Triangles);
+        Data.VertexPositions   = Move(Positions);
+        Data.VertexAttributes  = Move(Attributes);
+        // The upload wants a reference stream, and a compact meshlet never reads it.
+        Data.MeshletVertexRefs = { 0u };
+        Data.VertexUV1s        = Move(UVMaxes);
+        Data.VertexColors      = bHasColor ? Move(Colors) : TVector<uint32>();
+        (void)bHasUV1;
+        return true;
+    }
+
     void GenerateMeshlets(FMeshResource& MeshResource, FScopedSlowTask* Progress, float StepPerSurface)
     {
         LUMINA_PROFILE_SCOPE();
@@ -1447,9 +1548,12 @@ namespace Lumina::Import::Mesh
         const bool bDestructiveLODs = MeshResource.bDestructiveLODs && !MeshResource.bSkinnedMesh;
 
         // Both virtual geometry paths want the compact per-surface space, and neither applies to skinning.
-        const bool   bClusterLOD     = MeshResource.bClusterLODs && !MeshResource.bSkinnedMesh;
+        const bool   bVoxelOnly      = MeshResource.bVoxelLevelsOnly && !MeshResource.bSkinnedMesh;
+        const bool   bClusterLOD     = MeshResource.bClusterLODs && !MeshResource.bSkinnedMesh && !bVoxelOnly;
+        // An aggregate spans many meshes, so it may take a grid as fine as the voxel key packs.
+        const uint32 MaxVoxelResolution = bVoxelOnly ? 512u : 128u;
         const uint32 VoxelResolution = !MeshResource.bSkinnedMesh && MeshResource.VoxelFarResolution >= 4u
-                                     ? (uint32)Math::NextPowerOfTwo((int)Math::Min(MeshResource.VoxelFarResolution, 128u)) : 0u;
+                                     ? (uint32)Math::NextPowerOfTwo((int)Math::Min(MeshResource.VoxelFarResolution, MaxVoxelResolution)) : 0u;
         const float  VoxelErrorScale = Math::Clamp(MeshResource.VoxelErrorScale, 0.25f, 8.0f);
 
         const TVector<FSurfaceSimplifyInput> SimplifyInputs = (LODCount > 1u || bClusterLOD || VoxelResolution > 0u)
@@ -1484,6 +1588,39 @@ namespace Lumina::Import::Mesh
         TVector<FSurfaceMeshletResult>  VoxelResults(VoxelResolution > 0u ? NumSurfaces * kMaxVoxelLevels : 0u);
         TVector<TInlineVector<float, kMaxVoxelLevels>> SurfaceVoxelErrors(NumSurfaces);
 
+        auto MakeVoxelInput = [&](const FSurfaceSimplifyInput& Input)
+        {
+            VoxelFar::FBuildInput In;
+            In.Indices        = TSpan<const uint32>(Input.Indices.GetData(), Input.Indices.Num());
+            In.Positions      = TSpan<const FVector3>(Input.Positions.GetData(), Input.Positions.Num());
+            In.Attributes     = TSpan<const float>(Input.Attributes.GetData(), Input.Attributes.Num());
+            In.AttributeCount = kSimplifyAttributeCount;
+            In.GridMin        = VoxelGridMin;
+            In.VoxelSize      = VoxelSize;
+            In.Resolution     = VoxelResolution;
+            In.bCullOccluded  = bVoxelOnly;
+            In.bCanopyNormals = true;
+            In.bFaceOutward   = bVoxelOnly;
+            return In;
+        };
+
+        // An aggregate's surfaces are many plants' bark and leaves in one volume, so each voxel draws only the surface holding most of it.
+        TVector<VoxelFar::FSurfaceVoxels> SharedSurfaceVoxels;
+        VoxelFar::FSharedVoxels           SharedVoxels;
+        if (bVoxelOnly && VoxelResolution > 0u && VoxelSize > 0.0f && NumSurfaces > 1u)
+        {
+            SharedSurfaceVoxels.SetNum(NumSurfaces);
+            Jobs::ParallelFor(NumSurfaces, [&](uint32 SurfaceIdx)
+            {
+                LUMINA_MEMORY_SCOPE("Meshes");
+                if (!SimplifyInputs[SurfaceIdx].Indices.IsEmpty())
+                {
+                    VoxelFar::Voxelize(MakeVoxelInput(SimplifyInputs[SurfaceIdx]), SharedSurfaceVoxels[SurfaceIdx]);
+                }
+            });
+            VoxelFar::Share(TSpan<const VoxelFar::FSurfaceVoxels>(SharedSurfaceVoxels.GetData(), SharedSurfaceVoxels.Num()), SharedVoxels);
+        }
+
         auto BuildVoxelLevels = [&](uint32 SurfaceIdx)
         {
             if (VoxelResolution == 0u || !(VoxelSize > 0.0f))
@@ -1496,25 +1633,26 @@ namespace Lumina::Import::Mesh
                 return;
             }
 
-            VoxelFar::FBuildInput In;
-            In.Indices        = TSpan<const uint32>(Input.Indices.GetData(), Input.Indices.Num());
-            In.Positions      = TSpan<const FVector3>(Input.Positions.GetData(), Input.Positions.Num());
-            In.Attributes     = TSpan<const float>(Input.Attributes.GetData(), Input.Attributes.Num());
-            In.AttributeCount = kSimplifyAttributeCount;
-            In.GridMin        = VoxelGridMin;
-            In.VoxelSize      = VoxelSize;
-            In.Resolution     = VoxelResolution;
-
+            const VoxelFar::FBuildInput In = MakeVoxelInput(Input);
             TVector<VoxelFar::FLevel> Levels;
-            VoxelFar::Build(In, Levels);
+            if (SharedSurfaceVoxels.IsEmpty())
+            {
+                VoxelFar::Build(In, Levels);
+            }
+            else
+            {
+                VoxelFar::Emit(In, SharedSurfaceVoxels[SurfaceIdx], &SharedVoxels, SurfaceIdx, Levels);
+            }
 
             uint32 Kept = 0;
-            for (int32 LevelIdx = 0; LevelIdx < Levels.Num() && Kept < kMaxVoxelLevels; ++LevelIdx)
+            // An aggregate's coarser levels are another aggregate's job, so it keeps only the few that blend between them.
+            const uint32 MaxKept = bVoxelOnly ? kMaxAggregateVoxelLevels : kMaxVoxelLevels;
+            for (int32 LevelIdx = 0; LevelIdx < Levels.Num() && Kept < MaxKept; ++LevelIdx)
             {
                 VoxelFar::FLevel& Level = Levels[LevelIdx];
 
                 // An empty level would leave the slot below it parented to an error no slot carries, and half the triangles saves nothing.
-                if (Level.Indices.IsEmpty() || Level.Indices.Num() * 2 >= Input.Indices.Num())
+                if (Level.Indices.IsEmpty() || (!bVoxelOnly && Level.Indices.Num() * 2 >= Input.Indices.Num()))
                 {
                     continue;
                 }
@@ -1718,7 +1856,7 @@ namespace Lumina::Import::Mesh
             }
         }
 
-        Jobs::ParallelFor(bClusterLOD ? 0u : LODCount * NumSurfaces, [&](uint32 Cell)
+        Jobs::ParallelFor((bClusterLOD || bVoxelOnly) ? 0u : LODCount * NumSurfaces, [&](uint32 Cell)
         {
             LUMINA_PROFILE_SECTION("Process Surfaces and LODs");
             LUMINA_MEMORY_SCOPE("Meshes");

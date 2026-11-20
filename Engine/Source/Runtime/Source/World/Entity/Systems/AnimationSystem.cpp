@@ -18,6 +18,7 @@
 #include "Physics/PhysicsScene.h"
 #include "Renderer/MeshData.h"
 #include "TaskSystem/TaskSystem.h"
+#include "TaskSystem/Fork/ForkRuntime.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
 #include "World/Entity/Components/CharacterComponent.h"
@@ -86,10 +87,16 @@ namespace Lumina
         // A leader that is hidden or culled still animates while a follower is drawn, at the closest follower's detail.
         template<typename TFollowers, typename TLinks, typename TMeshes>
         void RaiseLeaderDemand(const SSystemContext& Context, TFollowers& Followers, const TLinks& Links, const TMeshes& Meshes,
+                               TVector<THashMap<ECS::FEntity, FAnimLeaderDemand>>& DemandBySlot,
                                THashSet<ECS::FEntity>& TakenFromFollowers, double Now)
         {
-            TakenFromFollowers.Reset();
-            Followers.ForEach([&](ECS::FEntity Entity, const SFollowerPoseComponent&, const SSkeletalMeshComponent& Mesh)
+            // Thousands of followers share a handful of leaders, so each worker folds its followers per leader and only the leaders are merged.
+            DemandBySlot.SetNum(Jobs::GetNumThreadSlots());
+            for (THashMap<ECS::FEntity, FAnimLeaderDemand>& Slot : DemandBySlot)
+            {
+                Slot.Reset();
+            }
+            Followers.ParallelForEach([&](ECS::FEntity Entity, const SFollowerPoseComponent&, const SSkeletalMeshComponent& Mesh)
             {
                 if (Now - Mesh.LastRenderedTime > kAnimVisibilityGrace)
                 {
@@ -97,32 +104,56 @@ namespace Lumina
                 }
 
                 const ECS::FEntity LeaderEntity = SkeletalUtils::ResolvePoseLeader(Links, Meshes, Context.GetHierarchy(), [&Context](ECS::FEntity Candidate) { return Context.IsValidEntity(Candidate); }, Entity);
-                SSkeletalMeshComponent* Leader = LeaderEntity != ECS::NullEntity ? Meshes.template TryGet<SSkeletalMeshComponent>(LeaderEntity) : nullptr;
-                if (Leader == nullptr)
+                if (LeaderEntity == ECS::NullEntity)
                 {
                     return;
                 }
 
-                Leader->FollowerRenderedTime = Math::Max(Leader->FollowerRenderedTime, Mesh.LastRenderedTime);
-
-                // A drawn leader's own stamps are current, and the followers sit on it anyway.
-                if (Now - Leader->LastRenderedTime <= kAnimVisibilityGrace)
+                THashMap<ECS::FEntity, FAnimLeaderDemand>& Slot = DemandBySlot[Jobs::GetThreadSlot()];
+                if (FAnimLeaderDemand* Demand = Slot.Find(LeaderEntity))
                 {
-                    return;
-                }
-
-                // Zero means full rate and every bone, so the smaller value is always the more detailed one.
-                if (TakenFromFollowers.TryAdd(LeaderEntity))
-                {
-                    Leader->LastDistanceOverRadius = Mesh.LastDistanceOverRadius;
-                    Leader->LastBoneLODTolerance   = Mesh.LastBoneLODTolerance;
+                    Demand->FollowerRenderedTime = Math::Max(Demand->FollowerRenderedTime, Mesh.LastRenderedTime);
+                    Demand->DistanceOverRadius   = Math::Min(Demand->DistanceOverRadius, Mesh.LastDistanceOverRadius);
+                    Demand->BoneLODTolerance     = Math::Min(Demand->BoneLODTolerance, Mesh.LastBoneLODTolerance);
                 }
                 else
                 {
-                    Leader->LastDistanceOverRadius = Math::Min(Leader->LastDistanceOverRadius, Mesh.LastDistanceOverRadius);
-                    Leader->LastBoneLODTolerance   = Math::Min(Leader->LastBoneLODTolerance, Mesh.LastBoneLODTolerance);
+                    Slot.Add(LeaderEntity, FAnimLeaderDemand{ Mesh.LastRenderedTime, Mesh.LastDistanceOverRadius, Mesh.LastBoneLODTolerance });
                 }
-            });
+            }, 256);
+
+            TakenFromFollowers.Reset();
+            for (const THashMap<ECS::FEntity, FAnimLeaderDemand>& Slot : DemandBySlot)
+            {
+                for (const auto& [LeaderEntity, Demand] : Slot)
+                {
+                    SSkeletalMeshComponent* Leader = Meshes.template TryGet<SSkeletalMeshComponent>(LeaderEntity);
+                    if (Leader == nullptr)
+                    {
+                        continue;
+                    }
+
+                    Leader->FollowerRenderedTime = Math::Max(Leader->FollowerRenderedTime, Demand.FollowerRenderedTime);
+
+                    // A drawn leader's own stamps are current, and the followers sit on it anyway.
+                    if (Now - Leader->LastRenderedTime <= kAnimVisibilityGrace)
+                    {
+                        continue;
+                    }
+
+                    // Zero means full rate and every bone, so the smaller value is always the more detailed one.
+                    if (TakenFromFollowers.TryAdd(LeaderEntity))
+                    {
+                        Leader->LastDistanceOverRadius = Demand.DistanceOverRadius;
+                        Leader->LastBoneLODTolerance   = Demand.BoneLODTolerance;
+                    }
+                    else
+                    {
+                        Leader->LastDistanceOverRadius = Math::Min(Leader->LastDistanceOverRadius, Demand.DistanceOverRadius);
+                        Leader->LastBoneLODTolerance   = Math::Min(Leader->LastBoneLODTolerance, Demand.BoneLODTolerance);
+                    }
+                }
+            }
         }
     }
 
@@ -949,7 +980,7 @@ namespace Lumina
 
         if (bHasFollower)
         {
-            RaiseLeaderDemand(Context, Followers, PoseLinks, LeaderMeshes, TakenFromFollowers, Now);
+            RaiseLeaderDemand(Context, Followers, PoseLinks, LeaderMeshes, LeaderDemandBySlot, TakenFromFollowers, Now);
         }
 
         NotifyQueue.Prepare();

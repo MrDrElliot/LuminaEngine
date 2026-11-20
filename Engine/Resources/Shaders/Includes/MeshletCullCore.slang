@@ -17,11 +17,11 @@ struct FMeshletCullContext
     uint     SkinnedBoundsBase;
     bool     bNoCull;
     bool     bCaster;
-    bool     bFarCaster;
     bool     bFoliage;
     bool     bShadowOnly;
     bool     bTwoSided;
     bool     bCustomDepth;
+    bool     bShadowCached;
     // The views pick this instance's LOD, so a cluster mesh draws its cut rather than the pinned slot whole.
     bool     bSelectsLOD;
     uint     SurfaceDescIndex;
@@ -49,12 +49,12 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     Ctx.bSkinned    = I.HasFlag(EInstanceFlags::Skinned);
     Ctx.bNoCull     = I.HasFlag(EInstanceFlags::NoCull);
     Ctx.bCaster     = I.HasFlag(EInstanceFlags::CastShadow);
-    Ctx.bFarCaster  = I.HasFlag(EInstanceFlags::CastFarShadow);
     Ctx.bFoliage    = I.HasFlag(EInstanceFlags::Foliage);
     Ctx.bShadowOnly = I.HasFlag(EInstanceFlags::ShadowOnly);
     Ctx.bTwoSided   = I.HasFlag(EInstanceFlags::TwoSided);
     Ctx.bCustomDepth = I.bCustomDepth;
-    Ctx.bSelectsLOD = I.SurfaceDescIndex != kNoSurfaceDesc;
+    Ctx.bShadowCached = I.bShadowCached;
+    Ctx.bSelectsLOD =I.SurfaceDescIndex != kNoSurfaceDesc;
     Ctx.SurfaceDescIndex   = I.SurfaceDescIndex;
     Ctx.LODErrorMultiplier = 1.0;
     Ctx.Layers      = I.RenderLayers;
@@ -79,7 +79,7 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     return Ctx;
 }
 
-// Not hoistable out of a view loop since LODs differ per view; keyed on the resolved index so cascades sharing a LOD load once.
+// Not hoistable out of a view loop since LODs differ per view; keyed on the resolved index so views sharing a LOD load once.
 struct FMeshletBoundsCache
 {
     uint           MeshletIdx;
@@ -218,10 +218,10 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
 
     bool bKeep = (View.LayerMask & Ctx.Layers) != 0u
               && !(bShadowView && !Ctx.bCaster)
-              && !(View.HasFlag(CULL_VIEW_FLAG_FAR_CASCADE) && !Ctx.bFarCaster)
               && !(View.HasFlag(CULL_VIEW_FLAG_NO_FOLIAGE) && Ctx.bFoliage)
               && !(View.HasFlag(CULL_VIEW_FLAG_CUSTOM_DEPTH_ONLY) && !Ctx.bCustomDepth)
               && !(!bShadowView && Ctx.bShadowOnly)
+              && !IsShadowCacheSplitRejected(View, Ctx.bShadowCached)
               && !(View.HasFlag(CULL_VIEW_FLAG_DISTANCE) && (Ctx.DistToCamera - Ctx.InstRadius > Ctx.MaxShadowDist));
 
     if (bKeep)
@@ -245,32 +245,11 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
                 bKeep = FrustumContainsSphere(View.FrustumPlanes, Cache.WorldCenter, Cache.WorldRadius);
             }
 
-            // The ortho box above nests across cascades, so everything that actually separates them is here.
-            if (bKeep && !Ctx.bNoCull && View.HasFlag(CULL_VIEW_FLAG_CASCADE))
+            // One compare from the shadow level's own texel pitch, so it leads.
+            if (bKeep && !Ctx.bNoCull && Ctx.bPosedBounds && View.MinBoundsDiameter > 0.0 && View.HasFlag(CULL_VIEW_FLAG_VIRTUAL_SHADOW))
             {
-                // One compare, and it comes from the cascade's own texel pitch, so it leads.
-                if (Ctx.bPosedBounds && View.MinBoundsDiameter > 0.0)
-                {
-                    // Rejects on smallness, so it needs bounds that are tight and not merely valid.
-                    bKeep = (Cache.WorldRadius * 2.0) >= View.MinBoundsDiameter;
-                }
-
-                if (bKeep)
-                {
-                    // Falls back to the instance sphere only when no posed bounds exist for this frame.
-                    const float3 CullCenter = Ctx.bPosedBounds ? Cache.WorldCenter : Ctx.InstCenter;
-                    const float  CullRadius = Ctx.bPosedBounds ? Cache.WorldRadius : Ctx.InstRadius;
-
-                    // The camera slice swept toward the sun, which unlike the ortho box does not nest.
-                    bKeep = FrustumContainsSphere(Scene().CullData.CascadeFrustum[View.CascadeIndex],
-                                                 CullCenter, CullRadius);
-                }
-
-                // The instance test against last frame's cascade depth, repeated per meshlet for the parts a canopy hides.
-                if (bKeep && Ctx.bPosedBounds && Scene().CullData.bShadowOcclusionCull != 0u)
-                {
-                    bKeep = !IsCascadeHZBOccluded(View.CascadeIndex, Cache.WorldCenter, Cache.WorldRadius);
-                }
+                // Rejects on smallness, so it needs bounds that are tight and not merely valid.
+                bKeep = (Cache.WorldRadius * 2.0) >= View.MinBoundsDiameter;
             }
 
             // Sun views test against the sun direction, everything else against the meshlet's own sphere.

@@ -963,7 +963,7 @@ namespace Lumina
     }
 
 #if !defined(LE_SHIPPING)
-    // Its own pass, because SceneDebugView runs before terrain and only owns the deferred lane's pixels.
+    // Its own pass, because SceneDebugView only owns the deferred lane's pixels and velocity covers the sky as well.
     void FDefaultSceneRenderer::VelocityDebugPass(RHI::FCmdListH CL)
     {
         if (RenderFrame == nullptr ||
@@ -1062,22 +1062,6 @@ namespace Lumina
             return;
         }
 
-        // The grass scatter rewrites its whole block every frame, and the CPU never sees which of its slots it used.
-        if (HasGrassScatter(*RenderFrame))
-        {
-            ScenePrimitives.GetGPUWrittenSlotRanges(MotionGrassRangeScratch);
-            for (const FUIntVector2& Range : MotionGrassRangeScratch)
-            {
-                const uint64 First = Math::Min<uint64>((uint64)Range.x * sizeof(FTransform3x4), Bytes);
-                const uint64 Size  = Math::Min<uint64>((uint64)Range.y * sizeof(FTransform3x4), Bytes - First);
-                if (Size != 0)
-                {
-                    RHI::CmdMemcpy(CL, { PrevRetainedTransformBuffer.Gpu + First, Size }, { RetainedTransformBuffer.Gpu + First, Size });
-                }
-            }
-            Barriers::TransferToCompute(CL);
-        }
-
         static_assert(sizeof(FTransform3x4) % 16 == 0, "CopyBufferSlots moves whole 16-byte words.");
         constexpr uint32 kWordsPerTransform = sizeof(FTransform3x4) / 16;
 
@@ -1121,6 +1105,102 @@ namespace Lumina
         }
 
         bPrevMotionStateValid = true;
+    }
+
+    void FDefaultSceneRenderer::SnapshotGrassMotionState(RHI::FCmdListH CL)
+    {
+        if (!bPrevMotionStateValid || !PrevRetainedTransformBuffer || !RetainedTransformBuffer)
+        {
+            return;
+        }
+
+        const uint64 Bytes = Math::Min(PrevRetainedTransformBuffer.Size, RetainedTransformBuffer.Size);
+        ScenePrimitives.GetGPUWrittenSlotRanges(MotionGrassRangeScratch);
+        if (MotionGrassRangeScratch.IsEmpty())
+        {
+            return;
+        }
+
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
+        for (const FUIntVector2& Range : MotionGrassRangeScratch)
+        {
+            const uint64 First = Math::Min<uint64>((uint64)Range.x * sizeof(FTransform3x4), Bytes);
+            const uint64 Size  = Math::Min<uint64>((uint64)Range.y * sizeof(FTransform3x4), Bytes - First);
+            if (Size != 0)
+            {
+                RHI::CmdMemcpy(CL, { PrevRetainedTransformBuffer.Gpu + First, Size }, { RetainedTransformBuffer.Gpu + First, Size });
+            }
+        }
+        Barriers::TransferToCompute(CL);
+    }
+
+    EUpscaler FBuiltInTemporalAA::GetType() const
+    {
+        return EUpscaler::TAA;
+    }
+
+    void FBuiltInTemporalAA::Evaluate(RHI::FCmdListH CL, const FUpscaleInputs& Inputs)
+    {
+        Renderer.TemporalAAPass(CL, Inputs);
+    }
+
+    void FDefaultSceneRenderer::TemporalAAPass(RHI::FCmdListH CL, const FUpscaleInputs& Inputs)
+    {
+        SCENE_GPU_SCOPE(CL, "Temporal AA");
+
+        static const FShaderH Shader = FShaderLibrary::Get("TemporalAA.slang");
+        const uint32 Parity = CurrentView->TemporalFrameIndex & 1u;
+        const FSceneImage& Written = GetNamedImage(Parity == 0u ? ENamedImage::TemporalAAHistoryA : ENamedImage::TemporalAAHistoryB);
+        const FSceneImage& Read    = GetNamedImage(Parity == 0u ? ENamedImage::TemporalAAHistoryB : ENamedImage::TemporalAAHistoryA);
+        const FSceneImage& Output  = GetNamedImage(ENamedImage::UpscaledHDR);
+
+        const int32 OutputSlot  = Output.GetMipUAVIndex(0);
+        const int32 WrittenSlot = Written.GetMipUAVIndex(0);
+        if (!Shader || OutputSlot < 0 || WrittenSlot < 0 || Read.GetResourceID() < 0
+            || Inputs.Color.Index == Constants::kIndexNoneU32 || Inputs.Depth.Index == Constants::kIndexNoneU32
+            || Inputs.Velocity.Index == Constants::kIndexNoneU32)
+        {
+            LOG_ERROR_ONCE("Temporal AA is missing an input or a heap slot; skipping the pass.");
+            return;
+        }
+
+        struct FTemporalAAPC
+        {
+            uint32       Color;
+            uint32       Depth;
+            uint32       Velocity;
+            uint32       History;
+            uint32       Output;
+            uint32       HistoryOut;
+            FUIntVector2 RenderSize;
+            FUIntVector2 DisplaySize;
+            FVector2     JitterUV;
+            uint32       bReset;
+            float        ClipGamma;
+            float        MinCurrentWeight;
+            uint32       _Pad0;
+        } PC = {};
+        static_assert(sizeof(FTemporalAAPC) == 64, "FTemporalAAPC must match TemporalAA.slang.");
+
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        PC.Color            = Inputs.Color.Index;
+        PC.Depth            = Inputs.Depth.Index;
+        PC.Velocity         = Inputs.Velocity.Index;
+        PC.History          = (uint32)Read.GetResourceID();
+        PC.Output           = (uint32)OutputSlot;
+        PC.HistoryOut       = (uint32)WrittenSlot;
+        PC.RenderSize       = Inputs.RenderSize;
+        PC.DisplaySize      = Inputs.DisplaySize;
+        PC.JitterUV         = Inputs.JitterPixels / FVector2(Math::Max(Inputs.RenderSize, FUIntVector2(1)));
+        PC.bReset           = Inputs.bReset ? 1u : 0u;
+        PC.ClipGamma        = Settings != nullptr ? Settings->TemporalAAClipGamma : 1.25f;
+        PC.MinCurrentWeight = Settings != nullptr ? Settings->TemporalAACurrentWeight : 0.04f;
+
+        DispatchCompute(CL, Shader, PC,
+            RenderUtils::GetGroupCount(Inputs.DisplaySize.x, 8u),
+            RenderUtils::GetGroupCount(Inputs.DisplaySize.y, 8u), 1u);
     }
 
     ESMAAMode FDefaultSceneRenderer::GetViewSMAAMode(const FSceneView& View)

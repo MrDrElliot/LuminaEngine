@@ -526,7 +526,39 @@ namespace Lumina
 
         Import::Mesh::GenerateMeshlets(*Resource);
         NewData->Resource = Move(*Resource);
+        PublishBuilt(Move(NewData));
 
+        // Staging is consumed; the next edit re-stages from scratch.
+        BuildData.reset();
+        return true;
+    }
+
+    bool SDynamicMeshComponent::CommitBuiltResource(FMeshResource&& Built, const FVector3& LocalMin, const FVector3& LocalMax)
+    {
+        if (Built.MeshletData.IsEmpty())
+        {
+            return false;
+        }
+
+        LUMINA_PROFILE_SCOPE();
+        LUMINA_MEMORY_SCOPE("Meshes");
+
+        CommittedVertexCount   = Built.MeshletData.VertexPositions.Num();
+        CommittedTriangleCount = Built.MeshletData.MeshletTriangles.Num();
+
+        TSharedPtr<FDynamicMeshRenderData> NewData = MakeShared<FDynamicMeshRenderData>();
+        NewData->LocalMin    = LocalMin;
+        NewData->LocalMax    = LocalMax;
+        NewData->LocalCenter = (LocalMin + LocalMax) * 0.5f;
+        NewData->LocalRadius = Math::Length(LocalMax - NewData->LocalCenter);
+        NewData->Resource    = Move(Built);
+        PublishBuilt(Move(NewData));
+        BuildData.reset();
+        return true;
+    }
+
+    void SDynamicMeshComponent::PublishBuilt(TSharedPtr<FDynamicMeshRenderData> NewData)
+    {
         // A hidden mesh uploads when shown, keeping its meshlets until then.
         const bool bUpload = RenderLayers.Bits != 0;
         if (bUpload)
@@ -567,9 +599,5 @@ namespace Lumina
 
         // Single publish point. The extract later this tick already reads the new addresses
         PublishRenderData(Move(NewData));
-
-        // Staging is consumed; the next edit re-stages from scratch.
-        BuildData.reset();
-        return true;
     }
 }

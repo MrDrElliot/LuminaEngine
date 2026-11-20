@@ -48,6 +48,7 @@ struct FMeshVertexContext
 #ifndef MESHLET_MESH_BASE
     float4x4 ShadowViewProj;
 #endif
+    bool     bApplyWPO;
 };
 
 FMeshVertexContext LoadMeshVertexContext(FMeshletRef Ref, uint DrawIndex)
@@ -65,6 +66,9 @@ FMeshVertexContext LoadMeshVertexContext(FMeshletRef Ref, uint DrawIndex)
 #ifndef MESHLET_MESH_BASE
     const FShadowRasterView ShadowView = ShadowRasterViewForDraw(DrawIndex);
     Ctx.ShadowViewProj = GetShadowViewProjection(ShadowView.ShadowDataIndex, (uint)ShadowView.ViewIndex);
+    Ctx.bApplyWPO      = Ref.Inst.bApplyShadowWPO;
+#else
+    Ctx.bApplyWPO      = Ref.Inst.bApplyWPO;
 #endif
     return Ctx;
 }
@@ -76,10 +80,13 @@ FMeshVertexOutput MeshPassVertex(FMeshletRef Ref, uint LocalVertex, FMeshVertexC
     FMeshletWorldVertex W  = TransformMeshletVertex(VertexData, Ctx.ModelMatrix, Ctx.NormalMatrix);
 
     float4 WorldPos = float4(W.WorldPos, 1.0);
-    const FMaterialVertexInputs Material =
-        EvalMaterialVertex(Ref.Inst, Ctx.ModelMatrix, VertexData, WorldPos,
-                           W.NormalWS, W.TangentWS.xyz, W.TangentWS.w);
-    WorldPos.xyz += Material.WorldPositionOffset;
+    if (Ctx.bApplyWPO)
+    {
+        const FMaterialVertexInputs Material =
+            EvalMaterialVertex(Ref.Inst, Ctx.ModelMatrix, VertexData, WorldPos,
+                               W.NormalWS, W.TangentWS.xyz, W.TangentWS.w);
+        WorldPos.xyz += Material.WorldPositionOffset;
+    }
 
     const float3 FinalWorldPos = WorldPos.xyz;
 

@@ -15,6 +15,14 @@
 namespace Lumina
 {
 
+    // What the drawn followers ask of one leader, the latest time one was drawn and the finest detail any needs.
+    struct FAnimLeaderDemand
+    {
+        double FollowerRenderedTime = 0.0;
+        float  DistanceOverRadius   = 0.0f;
+        float  BoneLODTolerance     = 0.0f;
+    };
+
     REFLECT()
     class CAnimationSystem : public CEntitySystem
     {
@@ -40,6 +48,9 @@ namespace Lumina
         ECS::TEventWriter<SAnimMontageEndedEvent> MontageEnded;
         ECS::TEventWriter<SAnimNotifyFiredEvent> NotifyFired;
         THashSet<ECS::FEntity> TakenFromFollowers;
+
+        // Gathered per worker, so the pass over every follower runs in parallel.
+        TVector<THashMap<ECS::FEntity, FAnimLeaderDemand>> LeaderDemandBySlot;
 
         // Notify handlers never run inside this system, so its declared access only has to cover the passes.
         FAnimNotifyQueue NotifyQueue;

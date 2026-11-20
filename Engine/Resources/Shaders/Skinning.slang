@@ -85,7 +85,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     }
 
     const uint SkinnedVertexBase = Data.SkinnedVertexBase;
-    if (SkinnedVertexBase == kNoPreSkinBase || Data.BoneOffset == kNoBoneSlice)
+    if (!HasPreSkinSlice(SkinnedVertexBase) || Data.BoneOffset == kNoBoneSlice)
     {
         return;   // no pre-skin budget or no bone slice; the draw path skins it inline instead
     }

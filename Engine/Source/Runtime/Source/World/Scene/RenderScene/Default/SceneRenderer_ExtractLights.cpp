@@ -601,6 +601,74 @@ namespace Lumina
         Batch.Lights[Batch.NumLights++] = Light;
     }
 
+    void FDefaultSceneRenderer::ProcessVirtualSunShadow(const SDirectionalLightComponent& DirectionalLight, const FVector3& LightDir,
+                                                        const FVector3& ShadowUp, FLightShadowData* ShadowData, int32 ShadowDataBase, float ShadowFar)
+    {
+        FFrameData& Frame     = *ExtractFrame;
+        auto& LightData       = Frame.Lighting.LightData;
+        auto& Virtual         = Frame.Lighting.VirtualShadow;
+        auto& Placement       = VirtualShadowPlacement;
+        const FViewVolume& ViewVolume = Frame.ViewVolume;
+
+        // World size of one pixel per meter of distance, from the render height the page requests come from.
+        const float RenderHeight       = (float)Math::Max(SceneViews[0].Size.y, 1u);
+        const float PixelWorldPerMeter = 2.0f * std::tan(Math::Radians(ViewVolume.GetFOV()) * 0.5f) / RenderHeight;
+        const float FootprintScale     = SunShadow::VirtualShadowFootprintScale(PixelWorldPerMeter, DirectionalLight.ShadowResolutionBias);
+        constexpr int32 MaxLevel = (int32)VSM_MAX_LEVELS - 1;
+        const int32 FirstLevel = Math::Clamp(SunShadow::VirtualShadowLevelForDistance(Math::Max(ViewVolume.GetNear(), 0.05f), FootprintScale), 0, MaxLevel);
+        const int32 LastLevel  = Math::Clamp(SunShadow::VirtualShadowLevelForDistance(ShadowFar, FootprintScale), FirstLevel, MaxLevel);
+
+        // Pages come in whole pool rows.
+        const uint32 PoolPages = (uint32)Math::Clamp(DirectionalLight.ShadowPoolPages, 256, 4096);
+        const uint32 RoundedPool = (PoolPages + VSM_POOL_PAGES_X - 1u) / VSM_POOL_PAGES_X * VSM_POOL_PAGES_X;
+
+        // Zero means never requested, so the count skips it on wrap.
+        Placement.Frame = Placement.Frame + 1u == 0u ? 1u : Placement.Frame + 1u;
+
+        // Any turn of the sun moves every texel, and a new pool holds nothing.
+        const bool bLightMoved = !Placement.bPlaced || Math::Length(LightDir - Placement.LightDir) > 1e-6f;
+        const bool bPoolMoved  = Placement.PoolPages != RoundedPool;
+        const float MinHalfDepth = Math::Max(DirectionalLight.ShadowCasterReach, 1.0f);
+        const FVector3 Camera = ViewVolume.GetViewPosition();
+        for (int32 Level = 0; Level < (int32)VSM_MAX_LEVELS; ++Level)
+        {
+            const SunShadow::FVirtualShadowLevelBox Box = SunShadow::MakeVirtualShadowLevel(Camera, Level, MinHalfDepth, LightDir, ShadowUp);
+            FVirtualShadowLevelGPU& GPU = Virtual.Levels[Level];
+            GPU.ViewProjection = Box.ViewProjection;
+            GPU.PageOrigin     = Box.PageOrigin;
+            GPU.TexelWorld     = Box.TexelWorld;
+            GPU.DepthRange     = Box.DepthRange;
+            GPU.bActive        = Level >= FirstLevel && Level <= LastLevel ? 1u : 0u;
+            GPU.bInvalidate    = (bLightMoved || bPoolMoved || Placement.DepthKeys[Level] != Box.DepthKey) ? 1u : 0u;
+            Placement.DepthKeys[Level] = Box.DepthKey;
+
+            if (ShadowData != nullptr)
+            {
+                ShadowData[Level / 6].ViewProjection[Level % 6] = Box.ViewProjection;
+            }
+        }
+        Placement.LightDir  = LightDir;
+        Placement.PoolPages = RoundedPool;
+        Placement.bPlaced   = true;
+
+        LightData.SunShadow.FirstLevel     = (uint32)FirstLevel;
+        LightData.SunShadow.LastLevel      = (uint32)LastLevel;
+        LightData.SunShadow.FootprintScale = FootprintScale;
+        LightData.SunShadow.Frame          = Placement.Frame;
+
+        Virtual.bActive        = ShadowData != nullptr;
+        Virtual.FirstLevel     = (uint32)FirstLevel;
+        Virtual.LastLevel      = (uint32)LastLevel;
+        Virtual.PoolPages      = RoundedPool;
+        Virtual.Frame          = Placement.Frame;
+        Virtual.ShadowDataBase = ShadowData != nullptr ? ShadowDataBase : Constants::kIndexNone;
+        Virtual.ViewBase       = Constants::kIndexNoneU32;
+        Virtual.NumLevelViews  = 0u;
+        Virtual.LODTexels      = Math::Max(DirectionalLight.ShadowLODTexels, 0.25f);
+
+        SunShadowCache.SetEnabled(DirectionalLight.bCacheStaticShadows && ShadowData != nullptr);
+    }
+
     void FDefaultSceneRenderer::ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight)
     {
         using namespace SceneRendererExtractLightsInternal;
@@ -641,19 +709,23 @@ namespace Lumina
             Light.VolumetricIntensity = DirectionalLight.VolumetricIntensity;
         }
 
-        uint32 ShadowSlot                  = 0u;
-        FLightShadowData* CascadeShadowData = nullptr;
+        // One projection per shadow level, six to a shadow data slot.
+        constexpr uint32 SlotsWanted = (VSM_MAX_LEVELS + 5u) / 6u;
+
+        uint32 ShadowSlot             = 0u;
+        FLightShadowData* ShadowData  = nullptr;
         if (DirectionalLight.bCastShadows)
         {
-            ShadowSlot = ShadowDataCount.fetch_add(1, std::memory_order_acquire);
-            if (ShadowSlot < (uint32)MAX_SHADOWS)
+            ShadowSlot = ShadowDataCount.fetch_add(SlotsWanted, std::memory_order_acquire);
+            if (ShadowSlot + SlotsWanted <= (uint32)MAX_SHADOWS)
             {
                 Light.ShadowDataIndex = (int32)ShadowSlot;
-                CascadeShadowData     = &Frame.Lighting.Shadows[ShadowSlot];
+                ShadowData            = &Frame.Lighting.Shadows[ShadowSlot];
             }
         }
 
         SceneGlobalData.CullData.ShadowMaxDistance = DirectionalLight.ShadowMaxDistance;
+        const float ShadowFar = Math::Min(FarClip, DirectionalLight.ShadowMaxDistance);
 
         auto& SunFarShadow           = Frame.Lighting.SunFarShadow;
         SunFarShadow.bTerrain        = DirectionalLight.bCastShadows && DirectionalLight.bTerrainShadows;
@@ -661,9 +733,8 @@ namespace Lumina
         SunFarShadow.TanHalfAngle    = std::tan(Math::Radians(Math::Clamp(DirectionalLight.SourceAngle, 0.0f, 10.0f)) * 0.5f);
         SunFarShadow.TerrainDistance = Math::Max(DirectionalLight.TerrainShadowDistance, 1.0f);
 
-        // Starts where the cascades begin to fade, so the hand-off has no gap.
-        const float CascadeEnd = Math::Min(FarClip, DirectionalLight.ShadowMaxDistance);
-        SunFarShadow.DFNear         = CascadeEnd * (1.0f - Math::Clamp(DirectionalLight.ShadowDistanceFade, 0.0f, 1.0f));
+        // Starts where the shadow pages begin to fade, so the hand-off has no gap.
+        SunFarShadow.DFNear         = ShadowFar * (1.0f - Math::Clamp(DirectionalLight.ShadowDistanceFade, 0.0f, 1.0f));
         SunFarShadow.DFFar          = Math::Min(FarClip, DirectionalLight.DistanceFieldShadowDistance);
         SunFarShadow.bDistanceField = DirectionalLight.bCastShadows && DirectionalLight.bDistanceFieldShadows
                                    && SunFarShadow.DFFar > SunFarShadow.DFNear;
@@ -683,191 +754,29 @@ namespace Lumina
             SunFarShadow.GridCellSize = Grid.CellSize;
         }
 
-        if (!DirectionalLight.bCascadeOcclusionCull)
-        {
-            SceneGlobalData.CullData.bShadowOcclusionCull = 0u;
-        }
-        CascadeMinTexels      = Math::Max(DirectionalLight.CascadeMinTexels, 0.0f);
-        CasterMinScreenRadius = Math::Max(DirectionalLight.CasterMinScreenRadius, 0.0f);
-
-        constexpr float ShadowMinDistance = 1.0f;
-
-        const float ShadowFar  = Math::Min(FarClip, DirectionalLight.ShadowMaxDistance);
-        const float ShadowNear = Math::Max(NearClip, ShadowMinDistance);
-
-        // The far cascade takes the last atlas tile, so it costs the near split one cascade when all four are asked for.
-        const float FarCascadeDistance = Math::Min(FarClip, DirectionalLight.FarShadowDistance);
-        const bool  bFarCascade        = DirectionalLight.bFarShadowCascade && FarCascadeDistance > ShadowFar;
-        NearCascadeCount   = Math::Clamp(DirectionalLight.CascadeCount, 1, bFarCascade ? NumCascades - 1 : NumCascades);
-        ActiveCascadeCount = NearCascadeCount + (bFarCascade ? 1 : 0);
+        ShadowMinTexels       = Math::Max(DirectionalLight.ShadowMinTexels, 0.0f);
 
         // A hard edge needs only the center tap, so a blur of zero drops the rest.
-        const FSunShadowFilter Filter       = GetSunShadowFilter();
-        const float            FilterRadius = Filter.RadiusTexels * Math::Max(DirectionalLight.ShadowBlur, 0.0f);
-        const uint32           FilterTaps   = FilterRadius > 0.0f ? Filter.Taps : 1u;
-
+        const FSunShadowFilter Filter = GetSunShadowFilter();
         SunFarShadow.ContactSteps  = DirectionalLight.bCastShadows && DirectionalLight.bContactShadows ? Filter.ContactSteps : 0u;
         SunFarShadow.ContactLength = Math::Clamp(DirectionalLight.ContactShadowLength, 0.01f, 2.0f);
 
-        // Shadow tuning forwarded to the lit pixel shaders via the light buffer.
         LightData.SunShadow = FSunShadowParams
         {
             .NormalBias         = DirectionalLight.ShadowNormalBias,
             .DepthBias          = DirectionalLight.ShadowDepthBias,
-            .FilterRadiusTexels = FilterRadius,
-            .CascadeBlend       = DirectionalLight.CascadeBlend,
+            .FilterRadiusTexels = Filter.RadiusTexels * Math::Max(DirectionalLight.ShadowBlur, 0.0f),
             .DistanceFade       = DirectionalLight.ShadowDistanceFade,
-            .FilterTaps         = FilterTaps,
-            .ActiveCascadeCount = uint32(ActiveCascadeCount),
-            .bFarCascade        = bFarCascade ? 1u : 0u,
             .TanSunRadius       = SunFarShadow.TanHalfAngle,
-            .BlockerTaps        = FilterTaps > 1u ? Filter.BlockerTaps : 0u,
-            .MinFilterRadiusTexels = Math::Min(GSunShadowMinFilterRadiusTexels, FilterRadius),
+            .ShadowFar          = ShadowFar,
         };
 
-        const float DistributionExponent = Math::Clamp(DirectionalLight.CascadeDistributionExponent, 1.0f, 10.0f);
-
-        float CascadeFarDistances[NumCascades];
-        SunShadow::ComputeCascadeSplits(ShadowNear, ShadowFar, NearCascadeCount, DistributionExponent, bFarCascade,
-                                        FarCascadeDistance, CascadeFarDistances);
-        for (int i = 0; i < NumCascades; ++i)
-        {
-            // World distance, measured as view-space Z.
-            LightData.CascadeSplits[i] = CascadeFarDistances[i];
-        }
-
-        const FMatrix4& CamView   = ViewVolume.GetViewMatrix();
-        const float      CamFOV    = ViewVolume.GetFOV();
-        const float      CamAspect = ViewVolume.GetAspectRatio();
-        const FVector3  LightDir  = Light.Direction;
-
         // LookAt degenerates when the light runs along the up axis, as a noon sun overhead does.
+        const FVector3 LightDir = Light.Direction;
         const FVector3 ShadowUp = Math::Abs(Math::Dot(Math::Normalize(LightDir), FViewVolume::UpAxis)) > 0.9f
             ? FVector3(1.0f, 0.0f, 0.0f)
             : FViewVolume::UpAxis;
-
-        if (bCascadeHZBTransformsValid)
-        {
-            for (int i = 0; i < NumCascades; ++i)
-            {
-                SceneGlobalData.CullData.CascadeHZBViewProjection[i] = CascadeHZBViewProjection[i];
-                SceneGlobalData.CullData.CascadeHZBNdcScale[i]       = CascadeHZBNdcScale[i];
-            }
-            SceneGlobalData.CullData.bCascadeHZBValid = 1u;
-        }
-
-        const float CascadeBlendFraction = Math::Clamp(DirectionalLight.CascadeBlend, 0.0f, 1.0f);
-
-        float LastSplitDistance = ShadowNear;
-        for (int i = 0; i < ActiveCascadeCount; ++i)
-        {
-            const float SplitNear = LastSplitDistance;
-            const float SplitFar  = CascadeFarDistances[i];
-
-            const int   CascadeRes        = GCSMCascadeSize;
-            const float CascadeResFloat   = (float)CascadeRes;
-            LightData.CascadeResolutions[i] = CascadeResFloat;
-
-            const FMatrix4 SliceProj = Math::Perspective(Math::Radians(CamFOV), CamAspect, SplitNear, SplitFar);
-            const FMatrix4 SliceVP   = SliceProj * CamView;
-
-            FVector3 Corners[8];
-            FFrustum::ComputeFrustumCorners(SliceVP, Corners);
-
-            FVector3 SphereCenter(0.0f);
-            for (int j = 0; j < 8; ++j)
-            {
-                SphereCenter += Corners[j];
-            }
-            SphereCenter /= 8.0f;
-
-            float Radius = 0.0f;
-            for (int j = 0; j < 8; ++j)
-            {
-                Radius = Math::Max(Radius, Math::Length(Corners[j] - SphereCenter));
-            }
-
-            const float Octave    = std::exp2(std::floor(std::log2(Math::Max(Radius, 1e-4f))));
-            const float QuantStep = Octave / 8.0f;
-            Radius = std::ceil(Radius / QuantStep) * QuantStep;
-            const float TexelSize = (Radius * 2.0f) / CascadeResFloat;
-
-            const float BackDistance = Math::Max(DirectionalLight.CascadeBackDistance, 1.0f);
-            const float OrthoRange   = Radius * 2.0f + BackDistance;
-
-            const FMatrix4 LightRotation = Math::LookAt(
-                LightDir * (Radius + BackDistance),
-                FVector3(0.0f),
-                ShadowUp);
-
-            FVector4 CenterLS = LightRotation * FVector4(SphereCenter, 1.0f);
-            CenterLS.x = std::round(CenterLS.x / TexelSize) * TexelSize;
-            CenterLS.y = std::round(CenterLS.y / TexelSize) * TexelSize;
-            const FVector3 SnappedCenter = FVector3(Math::Inverse(LightRotation) * CenterLS);
-
-            const FMatrix4 LightView = Math::LookAt(
-                SnappedCenter + LightDir * (Radius + BackDistance),
-                SnappedCenter,
-                ShadowUp);
-
-            FMatrix4 LightProjection = Math::Ortho(
-                -Radius, +Radius,
-                -Radius, +Radius,
-                0.0f, OrthoRange);
-            LightProjection[1][1] *= -1.0f;
-
-            const FMatrix4 CascadeVP = LightProjection * LightView;
-            if (CascadeShadowData)
-            {
-                CascadeShadowData->ViewProjection[i] = CascadeVP;
-
-                FLightShadow& CascadeTile = CascadeShadowData->Shadow[i];
-                // The same count PrepareRender sizes the atlas from, so these UVs match the image this frame draws into.
-                const float AtlasW = (float)GCSMAtlasWidth(ActiveCascadeCount);
-                CascadeTile.AtlasUVOffset = FVector2(
-                    (float)GCSMCascadeOriginX(i) / AtlasW,
-                    (float)GCSMCascadeOriginY(i) / (float)GCSMAtlasHeight);
-                CascadeTile.AtlasUVScale = FVector2(
-                    (float)GCSMCascadeSize / AtlasW,
-                    (float)GCSMCascadeSize / (float)GCSMAtlasHeight);
-                CascadeTile.ShadowMapIndex  = Constants::kIndexNone;
-                CascadeTile.LightIndex      = 0;
-                CascadeTile.ShadowDataIndex = (int32)ShadowSlot;
-                CascadeTile._Padding        = 0;
-            }
-
-            LightData.CascadeRadii[i]       = Radius;
-            LightData.CascadeDepthRanges[i] = OrthoRange;
-
-            {
-                const float PrevBandNear = (i >= 2) ? CascadeFarDistances[i - 2] : 0.0f;
-                // The shader fades near shadows into the far cascade over the larger of the two fractions.
-                const float BandFraction = (bFarCascade && i == NearCascadeCount)
-                    ? Math::Max(CascadeBlendFraction, Math::Clamp(DirectionalLight.ShadowDistanceFade, 0.0f, 1.0f))
-                    : CascadeBlendFraction;
-                const float BlendBack    = (i == 0) ? 0.0f : BandFraction * (SplitNear - PrevBandNear);
-
-                const float MinCullNear = Math::Max(NearClip, 0.01f);
-                const float CullNear    = (i == 0) ? MinCullNear : Math::Max(SplitNear - BlendBack, MinCullNear);
-                const FMatrix4 CullProj = Math::Perspective(Math::Radians(CamFOV), CamAspect, CullNear, SplitFar);
-
-                const FFrustum SliceFrustum = FFrustum::FromViewProjection(CullProj * CamView);
-                SceneGlobalData.CullData.CascadeFrustum[i] = AsGPU(SliceFrustum.Extruded(LightDir, OrthoRange));
-            }
-
-            CascadeHZBViewProjection[i] = CascadeVP;
-            CascadeHZBNdcScale[i]       = FVector4(1.0f / Radius, 1.0f / Radius, 1.0f / OrthoRange, 0.0f);
-
-            SceneGlobalData.CullData.CascadeHZBViewProjectionMid[i] = CascadeVP;
-            SceneGlobalData.CullData.CascadeHZBNdcScaleMid[i]       = CascadeHZBNdcScale[i];
-
-            LastSplitDistance = SplitFar;
-        }
-
-        // Only true once the loop above has run at least once; the republish at the top reads it.
-        bCascadeHZBTransformsValid = true;
-
-        SceneGlobalData.CullData.bCascadeHZBMidValid = 1u;
+        ProcessVirtualSunShadow(DirectionalLight, LightDir, ShadowUp, ShadowData, (int32)ShadowSlot, ShadowFar);
 
         // The commit appends the local lights' requests after this one, and runs only once this node is done.
         if (DirectionalLight.LightFunctionMaterial.Get() != nullptr)
@@ -957,8 +866,9 @@ namespace Lumina
         }
 
         {
-            const uint32 SunViews        = LightData.bHasSun ? (uint32)ActiveCascadeCount : 0u;
-            // The camera early and late, the cascades in both phases, then every other view.
+            const auto&  Virtual         = Frame.Lighting.VirtualShadow;
+            const uint32 SunViews        = LightData.bHasSun && Virtual.bActive ? Virtual.LastLevel - Virtual.FirstLevel + 1u : 0u;
+            // The camera early and late, each shadow level's static and dynamic view, then every other view.
             const uint32 ReservedViews   = 1u
                                          + SunViews
                                          + SunViews

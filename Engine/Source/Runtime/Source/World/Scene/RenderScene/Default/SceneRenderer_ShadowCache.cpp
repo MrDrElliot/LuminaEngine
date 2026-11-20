@@ -1,0 +1,52 @@
+#include "RuntimePCH.h"
+#include "SceneRendererInternal.h"
+
+namespace Lumina
+{
+    void FDefaultSceneRenderer::UpdateSunShadowCache(FFrameData& Frame)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const FFrameData::FGeometry::FRetainedUpload& Upload = Frame.Geometry.RetainedUpload;
+        const TVector<uint32>& StreamedBlocks = ScenePrimitives.GetStreamedBlocks();
+
+        FSunShadowCache::FSlotChanges Changes;
+        Changes.Dirty          = TSpan<const uint32>(Upload.DirtySlots.GetData(), Upload.DirtySlots.Num());
+        Changes.DirtyStatic    = TSpan<const uint32>(Upload.DirtyStaticSlots.GetData(), Upload.DirtyStaticSlots.Num());
+        Changes.Deactivated    = TSpan<const uint32>(Upload.DeactivatedSlots.GetData(), Upload.DeactivatedSlots.Num());
+        Changes.StreamedBlocks = TSpan<const uint32>(StreamedBlocks.GetData(), StreamedBlocks.Num());
+        Changes.bFull          = Upload.bFull || Upload.bFullStatic;
+
+        auto& Virtual = Frame.Lighting.VirtualShadow;
+        SunShadowCache.Update(Changes, ScenePrimitives, Virtual.bActive, Frame.ViewVolume.GetViewPosition());
+
+        auto& Cache = Frame.Lighting.ShadowCache;
+        if (SunShadowCache.IsActive())
+        {
+            Cache.SlotBits = SunShadowCache.GetSlotBits();
+        }
+        else
+        {
+            Cache.SlotBits.Reset();
+        }
+
+        // The pages under what changed draw again, and a rebuilt cache redraws every page.
+        if (Virtual.bActive)
+        {
+            bool bAll = false;
+            SunShadowCache.TakeTouches(Virtual.InvalidSpheres, bAll);
+            Virtual.bInvalidateAll = bAll;
+            LUMINA_PROFILE_VALUE("Shadows/VirtualInvalidSpheres", (int64)Virtual.InvalidSpheres.Num());
+            LUMINA_PROFILE_VALUE("Shadows/VirtualInvalidAll", bAll ? 1 : 0);
+            LUMINA_PROFILE_VALUE("Shadows/CacheHeldSlots", (int64)SunShadowCache.GetHeldCount());
+            if (bAll)
+            {
+                Virtual.InvalidSpheres.Reset();
+                for (FVirtualShadowLevelGPU& Level : Virtual.Levels)
+                {
+                    Level.bInvalidate = 1u;
+                }
+            }
+        }
+    }
+}

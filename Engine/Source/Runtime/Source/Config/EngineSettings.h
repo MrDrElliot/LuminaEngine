@@ -306,6 +306,8 @@ namespace Lumina
         None,
         DLSS,
         FSR,
+        // The engine's own temporal anti-aliasing, which also upscales when the render resolution is below the display.
+        TAA,
     };
 
     // The standard upscaler quality modes, which each upscaler maps onto its own, plus a free percentage.
@@ -481,7 +483,7 @@ namespace Lumina
         float ScreenPercentage = 100.0f;
 
         PROPERTY(Editable, Category = "Resolution")
-        EUpscaler Upscaler = EUpscaler::None;
+        EUpscaler Upscaler = EUpscaler::TAA;
 
         // Sharpening on the built-in spatial upscale, which softens the image it enlarges.
         PROPERTY(Editable, Category = "Resolution", ClampMin = 0.0f, ClampMax = 1.0f)
@@ -534,6 +536,14 @@ namespace Lumina
         // Screen fraction a pixel may reproject across before its history is refused outright.
         PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.01f, ClampMax = 1.0f)
         float TemporalMaxReprojection = 0.25f;
+
+        // TAA's share of the new frame on a still pixel. Lower resolves finer and smooths more, higher keeps it sharper and less stable.
+        PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.02f, ClampMax = 0.5f)
+        float TemporalAACurrentWeight = 0.04f;
+
+        // Standard deviations of the local color range TAA keeps its history inside. Larger ghosts more, smaller flickers more.
+        PROPERTY(Editable, Category = "Anti-Aliasing", ClampMin = 0.5f, ClampMax = 3.0f)
+        float TemporalAAClipGamma = 1.25f;
 
         // VRS rate for opted-in passes; coarser is fewer PS invocations but softer, and a no-op without pipeline FSR.
         PROPERTY(ReadOnly, Category = "Variable Rate Shading")

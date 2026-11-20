@@ -1,16 +1,13 @@
 #include "FoliageEditMode.h"
-#include "World/ECS/Registry.h"
-#include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 
-#include <algorithm>
 #include <cmath>
-#include <cstring>
+#include "Containers/Algorithm.h"
 #include "Core/Math/Math.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
-#include "Tools/UI/ImGui/ImGuiDragDrop.h"
-#include "Tools/UI/ImGui/ImGuiX.h"
 #include "World/Entity/Components/CameraComponent.h"
+#include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/FoliageComponent.h"
+#include "World/Entity/Components/ForestComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Subsystems/TerrainSculptSystem.h"
@@ -57,28 +54,6 @@ namespace Lumina
             OutHit = Origin + Dir * T;
             return true;
         }
-
-        // Shortest-arc rotation taking From onto To (both assumed unit length).
-        FQuat QuatFromTo(const FVector3& From, const FVector3& To)
-        {
-            const float D = Math::Clamp(Math::Dot(From, To), -1.0f, 1.0f);
-            if (D > 0.9999f)
-            {
-                return FQuat::Identity();
-            }
-            if (D < -0.9999f)
-            {
-                // Opposite, so rotate 180 about any orthogonal axis.
-                FVector3 Axis = Math::Cross(FVector3(1.0f, 0.0f, 0.0f), From);
-                if (Math::Length(Axis) < 1e-3f)
-                {
-                    Axis = Math::Cross(FVector3(0.0f, 0.0f, 1.0f), From);
-                }
-                return Math::FromAxisAngle(Math::Normalize(Axis), Math::Pi<float>());
-            }
-            const FVector3 Axis = Math::Normalize(Math::Cross(From, To));
-            return Math::FromAxisAngle(Axis, std::acos(D));
-        }
     }
 
     float FFoliageEditMode::RandFloat()
@@ -89,148 +64,239 @@ namespace Lumina
         return float(RngState & 0xFFFFFFu) / float(0x1000000);
     }
 
-    SFoliageComponent* FFoliageEditMode::FindFoliage(CWorld* World, ECS::FEntity* OutEntity)
+    TVector<FFoliageEditMode::FGround> FFoliageEditMode::GatherGround(CWorld* World)
     {
-        if (!World)
+        TVector<FGround> Ground;
+        for (ECS::FEntity Entity : World->View<STerrainComponent, STransformComponent>())
         {
-            return nullptr;
+            const STerrainComponent& Terrain = World->GetComponent<STerrainComponent>(Entity);
+            Ground.Add({ &Terrain, World->GetComponent<STransformComponent>(Entity).GetWorldLocation(), Terrain.TileWorldSize / (float)Math::Max(Terrain.Resolution - 1, 1) });
         }
-        auto View = World->View<SFoliageComponent>();
-        for (auto Entity : View)
-        {
-            if (OutEntity != nullptr)
-            {
-                *OutEntity = Entity;
-            }
-            return &View.Get<SFoliageComponent>(Entity);
-        }
-        return nullptr;
+        Algo::Sort(Ground, [](const FGround& A, const FGround& B) { return A.Spacing < B.Spacing; });
+        return Ground;
     }
 
-    SFoliageComponent* FFoliageEditMode::FindOrCreateFoliage(CWorld* World)
+    bool FFoliageEditMode::ProjectToGround(const TVector<FGround>& Ground, float WorldX, float WorldZ, FVector3& OutPosition, FVector3& OutNormal)
     {
-        if (SFoliageComponent* Existing = FindFoliage(World))
-        {
-            return Existing;
-        }
-        return &World->EmplaceComponent<SFoliageComponent>(World->ConstructEntity("Foliage"));
-    }
-
-    void FFoliageEditMode::MarkFoliageDirty(CWorld* World)
-    {
-        ECS::FEntity Entity = ECS::NullEntity;
-        if (SFoliageComponent* Foliage = FindFoliage(World, &Entity))
-        {
-            MarkFoliageChanged(*World, Entity, *Foliage);
-        }
-    }
-
-    STerrainComponent* FFoliageEditMode::FindTerrain(CWorld* World, FVector3& OutOrigin) const
-    {
-        if (!World)
-        {
-            return nullptr;
-        }
-        auto View = World->View<STerrainComponent, STransformComponent>();
-        for (auto Entity : View)
-        {
-            OutOrigin = View.Get<STransformComponent>(Entity).GetWorldLocation();
-            return &View.Get<STerrainComponent>(Entity);
-        }
-        return nullptr;
-    }
-
-    bool FFoliageEditMode::ProjectToSurface(CWorld* World, STerrainComponent* Terrain, const FVector3& TerrainOrigin, float WorldX, float WorldZ, FVector3& OutPos, FVector3& OutNormal) const
-    {
-        (void)World;
-        if (Terrain)
+        for (const FGround& Terrain : Ground)
         {
             float Height = 0.0f;
-            if (FTerrainSculptSystem::SampleHeight(*Terrain, TerrainOrigin, WorldX, WorldZ, Height))
+            if (FTerrainSculptSystem::SampleHeight(*Terrain.Terrain, Terrain.Origin, WorldX, WorldZ, Height))
             {
-                OutPos    = FVector3(WorldX, Height, WorldZ);
-                OutNormal = FTerrainSculptSystem::SampleNormal(*Terrain, TerrainOrigin, WorldX, WorldZ);
+                OutPosition = FVector3(WorldX, Height, WorldZ);
+                OutNormal   = FTerrainSculptSystem::SampleNormal(*Terrain.Terrain, Terrain.Origin, WorldX, WorldZ);
                 return true;
             }
-            return false; // off the terrain footprint
         }
-
-        OutPos    = FVector3(WorldX, 0.0f, WorldZ);
-        OutNormal = FVector3(0.0f, 1.0f, 0.0f);
+        if (!Ground.IsEmpty())
+        {
+            return false;
+        }
+        OutPosition = FVector3(WorldX, 0.0f, WorldZ);
+        OutNormal   = FVector3(0.0f, 1.0f, 0.0f);
         return true;
     }
 
-    void FFoliageEditMode::PaintDab(CWorld* World, SFoliageComponent& Foliage, STerrainComponent* Terrain, const FVector3& TerrainOrigin, const FVector3& Center, float DeltaSeconds)
+    bool FFoliageEditMode::RaycastGround(const TVector<FGround>& Ground, const FVector3& RayOrigin, const FVector3& RayDir, FVector3& OutHit)
     {
-        if (!Foliage.IsValidType(ActiveType))
+        float Nearest = FLT_MAX;
+        for (const FGround& Terrain : Ground)
+        {
+            FVector3 Hit;
+            if (FTerrainSculptSystem::Raycast(*Terrain.Terrain, Terrain.Origin, RayOrigin, RayDir, Hit) && Math::Length(Hit - RayOrigin) < Nearest)
+            {
+                Nearest = Math::Length(Hit - RayOrigin);
+                OutHit  = Hit;
+            }
+        }
+        return Nearest < FLT_MAX || RaycastGroundPlane(RayOrigin, RayDir, OutHit);
+    }
+
+    FFoliageEditMode::FTarget FFoliageEditMode::FindForest(CWorld* World, const FVector3& Near)
+    {
+        FTarget First;
+        for (ECS::FEntity Entity : World->View<SForestComponent, STransformComponent>())
+        {
+            FTarget Target{ &World->GetComponent<SForestComponent>(Entity), World->GetComponent<STransformComponent>(Entity).GetWorldLocation() };
+            const float Half = Target.Forest->Extent * 0.5f;
+            if (Math::Abs(Near.x - Target.Center.x) <= Half && Math::Abs(Near.z - Target.Center.z) <= Half)
+            {
+                return Target;
+            }
+            if (First.Forest == nullptr)
+            {
+                First = Target;
+            }
+        }
+        return First;
+    }
+
+    FFoliageEditMode::FTarget FFoliageEditMode::CreateForest(CWorld* World, const TVector<FGround>& Ground)
+    {
+        // Sized to the coarsest terrain, so a backdrop around the playable one can be painted too.
+        FVector3 Center(0.0f);
+        float    Extent = 2048.0f;
+        if (!Ground.IsEmpty())
+        {
+            Center = Ground.Last().Origin;
+            Extent = Ground.Last().Terrain->TileWorldSize;
+        }
+        const ECS::FEntity Entity = World->ConstructEntity("Forest", FTransform(Center));
+        SForestComponent& Forest = World->EmplaceComponent<SForestComponent>(Entity);
+        Forest.Extent = Extent;
+        return { &Forest, Center };
+    }
+
+    ECS::FEntity FFoliageEditMode::FindLegacyFoliage(CWorld* World)
+    {
+        for (ECS::FEntity Entity : World->View<SFoliageComponent>())
+        {
+            if (!World->HasComponent<FTransientEntityTag>(Entity))
+            {
+                return Entity;
+            }
+        }
+        return ECS::NullEntity;
+    }
+
+    float FFoliageEditMode::BrushWeight(float Distance) const
+    {
+        const float T = Math::Clamp(Distance / Math::Max(Radius, 1e-3f), 0.0f, 1.0f);
+        if (T >= 1.0f)
+        {
+            return 0.0f;
+        }
+        const float Soft = 1.0f - T * T * (3.0f - 2.0f * T);
+        return Math::Mix(1.0f, Soft, Falloff);
+    }
+
+    void FFoliageEditMode::PaintDab(const FTarget& Target, const FVector3& Hit, float DeltaSeconds, float Sign)
+    {
+        // Full strength takes a cell from neutral to either limit in half a second.
+        constexpr float kWeightPerSecond = 255.0f;
+        constexpr int32 Cells    = SForestPaintChunk::kCells;
+        constexpr float CellSize = SForestPaintChunk::kCellSize;
+        SForestComponent& Forest = *Target.Forest;
+        if (ActiveSpecies < 0 || ActiveSpecies >= Forest.Species.Num())
         {
             return;
         }
-        const SFoliageType& Type = Foliage.Types[ActiveType];
+
+        const float Rate = kWeightPerSecond * Strength * DeltaSeconds * Sign;
+        const FIntVector2 Lo = SForestComponent::GetChunkCoord(Target.Center, Hit.x - Radius, Hit.z - Radius);
+        const FIntVector2 Hi = SForestComponent::GetChunkCoord(Target.Center, Hit.x + Radius, Hit.z + Radius);
+        for (int32 CZ = Lo.y; CZ <= Hi.y; ++CZ)
+        {
+            for (int32 CX = Lo.x; CX <= Hi.x; ++CX)
+            {
+                const FVector2 ChunkMin(Target.Center.x + (float)CX * SForestPaintChunk::kSize, Target.Center.z + (float)CZ * SForestPaintChunk::kSize);
+                SForestPaintChunk* Chunk = Forest.FindPaint(CX, CZ, ActiveSpecies);
+                for (int32 IZ = 0; IZ < Cells; ++IZ)
+                {
+                    for (int32 IX = 0; IX < Cells; ++IX)
+                    {
+                        const float X = ChunkMin.x + ((float)IX + 0.5f) * CellSize;
+                        const float Z = ChunkMin.y + ((float)IZ + 0.5f) * CellSize;
+                        const float Weight = BrushWeight(Math::Length(FVector2(X - Hit.x, Z - Hit.z)));
+                        if (Weight <= 0.0f)
+                        {
+                            continue;
+                        }
+                        // Rounded at random, so a slow brush still moves cells a fraction of a step each frame.
+                        const float Delta = Rate * Weight;
+                        const int32 Step = (int32)Math::Floor(Math::Abs(Delta) + RandFloat()) * (Delta < 0.0f ? -1 : 1);
+                        if (Step == 0)
+                        {
+                            continue;
+                        }
+                        if (Chunk == nullptr)
+                        {
+                            Chunk = &Forest.FindOrAddPaint(CX, CZ, ActiveSpecies);
+                        }
+                        uint8& Cell = Chunk->Weights[IZ * Cells + IX];
+                        Cell = (uint8)Math::Clamp((int32)Cell + Step, 0, 255);
+                    }
+                }
+            }
+        }
+    }
+
+    void FFoliageEditMode::PlaceDab(const FTarget& Target, const TVector<FGround>& Ground, const FVector3& Hit, float DeltaSeconds)
+    {
+        SForestComponent& Forest = *Target.Forest;
+        if (ActiveSpecies < 0 || ActiveSpecies >= Forest.Species.Num())
+        {
+            return;
+        }
+        const SFoliageType& Type = Forest.Species[ActiveSpecies].Type;
         if (!Type.Mesh.IsValid())
         {
             return;
         }
 
-        // Fractional leftovers accumulate, so even a sparse density places instances over a stroke.
-        const float AreaUnits   = Math::Pi<float>() * Radius * Radius;
-        const float TargetPerSec = Type.Density * (AreaUnits / 10000.0f);
-        PaintAccumulator += TargetPerSec * DeltaSeconds;
+        // The species' own density over the brush, scaled by strength, so a full-strength stroke matches what the rules would grow.
+        const float Area = Math::Pi<float>() * Radius * Radius;
+        PlaceAccumulator += Type.Density * Area * Strength * DeltaSeconds;
+        const int32 Attempts = Math::Min((int32)PlaceAccumulator, 256);
+        PlaceAccumulator -= (float)Attempts;
 
-        int32 Attempts = (int32)PaintAccumulator;
-        Attempts = Math::Min(Attempts, 256);
-        PaintAccumulator -= (float)Attempts;
-        if (Attempts <= 0)
-        {
-            return;
-        }
-
-        const FVector3 WorldUp(0.0f, 1.0f, 0.0f);
-
+        const FVector3 Up(0.0f, 1.0f, 0.0f);
         for (int32 i = 0; i < Attempts; ++i)
         {
-            // Uniform point in the brush disk, with falloff biasing density toward the center.
             const float Angle = RandFloat() * Math::TwoPi<float>();
-            float       R     = Radius * std::sqrt(RandFloat());
-            if (RandFloat() > (1.0f - Falloff) + Falloff * (1.0f - R / Radius))
-            {
-                continue;
-            }
-            const float Px = Center.x + std::cos(Angle) * R;
-            const float Pz = Center.z + std::sin(Angle) * R;
-
-            FVector3 SurfacePos, SurfaceNormal;
-            if (!ProjectToSurface(World, Terrain, TerrainOrigin, Px, Pz, SurfacePos, SurfaceNormal))
+            const float R     = Radius * std::sqrt(RandFloat());
+            if (RandFloat() > BrushWeight(R))
             {
                 continue;
             }
 
-            // Blends up toward the surface normal, then applies a random yaw about that axis.
-            const FVector3 AlignedUp = Math::Normalize(Math::Mix(WorldUp, SurfaceNormal, Math::Clamp(Type.AlignToNormal, 0.0f, 1.0f)));
-            FQuat Rotation = QuatFromTo(WorldUp, AlignedUp);
-            if (Type.bRandomYaw)
+            FVector3 Position, Normal;
+            if (!ProjectToGround(Ground, Hit.x + std::cos(Angle) * R, Hit.z + std::sin(Angle) * R, Position, Normal))
             {
-                Rotation = Math::FromAxisAngle(AlignedUp, RandFloat() * Math::TwoPi<float>()) * Rotation;
+                continue;
             }
 
-            const float ScaleT = RandFloat();
-            const float Scale  = Math::Mix(Type.ScaleMin, Type.ScaleMax, ScaleT);
+            const FVector3 PlantUp = Math::Normalize(Math::Mix(Up, Normal, Math::Clamp(Type.AlignToNormal, 0.0f, 1.0f)));
+            const float    Yaw     = Type.bRandomYaw ? RandFloat() * Math::TwoPi<float>() : 0.0f;
 
-            SFoliageInstance Inst;
-            Inst.Position  = SurfacePos + AlignedUp * Type.ZOffset;
-            Inst.Scale     = FVector3(Scale);
-            Inst.TypeIndex = ActiveType;
-            Inst.SetRotationQuat(Rotation);
-
-            Foliage.AddInstance(Inst);
+            SFoliageInstance& Plant = Forest.Placed.EmplaceGetRef();
+            Plant.Position  = Position + PlantUp * Type.ZOffset;
+            Plant.Scale     = FVector3(Math::Mix(Type.ScaleMin, Type.ScaleMax, RandFloat()));
+            Plant.TypeIndex = ActiveSpecies;
+            Plant.SetRotationQuat(Math::RotationBetween(Up, PlantUp) * Math::AngleAxis(Yaw, Up));
         }
     }
 
-    void FFoliageEditMode::EraseDab(SFoliageComponent& Foliage, const FVector3& Center)
+    void FFoliageEditMode::ConvertLegacyFoliage(CWorld* World, ECS::FEntity Legacy)
     {
-        // Erase only the active type, so brushing doesn't wipe other species the user wants kept.
-        const int32 Filter = Foliage.IsValidType(ActiveType) ? ActiveType : -1;
-        Foliage.RemoveInRadius(Center, Radius, Filter);
+        RunModeTransaction("Move Foliage Into Forest", [&]
+        {
+            const SFoliageComponent& Foliage = World->GetComponent<SFoliageComponent>(Legacy);
+            FTarget Target = FindForest(World, Foliage.Instances.IsEmpty() ? FVector3(0.0f) : Foliage.Instances[0].Position);
+            if (Target.Forest == nullptr)
+            {
+                Target = CreateForest(World, GatherGround(World));
+            }
+
+            // Painted types arrive as species the rules leave out, so only the plants that were painted show.
+            const int32 First = Target.Forest->Species.Num();
+            for (const SFoliageType& Type : Foliage.Types)
+            {
+                SForestSpecies& Species = Target.Forest->Species.EmplaceGetRef();
+                Species.Type     = Type;
+                Species.Coverage = 0.0f;
+            }
+            for (SFoliageInstance Plant : Foliage.Instances)
+            {
+                if (Foliage.IsValidType(Plant.TypeIndex))
+                {
+                    Plant.TypeIndex += First;
+                    Target.Forest->Placed.Add(Plant);
+                }
+            }
+            World->DestroyEntity(Legacy);
+        });
+        BoundSpeciesData = nullptr;
     }
 
     void FFoliageEditMode::OnExit(CWorld* World)
@@ -241,7 +307,7 @@ namespace Lumina
         }
         bTransactionOpen = false;
         bHitValid        = false;
-        PaintAccumulator = 0.0f;
+        PlaceAccumulator = 0.0f;
     }
 
     void FFoliageEditMode::DrawToolbar(CWorld* World, float ButtonSize)
@@ -276,111 +342,138 @@ namespace Lumina
 
         ImGui::SeparatorText("Brush");
 
-        // A pair of toggles, since a combo costs two clicks and hides the current state behind a label.
-        const float HalfWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-        const bool  bPainting = (Mode == EFoliageBrushMode::Paint);
-
-        ImGui::PushStyleColor(ImGuiCol_Button, bPainting ? IM_COL32(70, 130, 80, 255) : ImGui::GetColorU32(ImGuiCol_Button));
-        if (ImGui::Button(LE_ICON_BRUSH" Paint", ImVec2(HalfWidth, 0.0f)))
+        // Toggles, since a combo costs two clicks and hides the current state behind a label.
+        struct FModeButton
         {
-            Mode = EFoliageBrushMode::Paint;
-        }
-        ImGui::PopStyleColor();
-        ImGui::SameLine();
-
-        ImGui::PushStyleColor(ImGuiCol_Button, !bPainting ? IM_COL32(150, 70, 70, 255) : ImGui::GetColorU32(ImGuiCol_Button));
-        if (ImGui::Button(LE_ICON_ERASER" Erase", ImVec2(HalfWidth, 0.0f)))
+            EBrushMode  Mode;
+            const char* Label;
+            ImU32       Color;
+        };
+        const FModeButton Buttons[] =
         {
-            Mode = EFoliageBrushMode::Erase;
+            { EBrushMode::Paint, LE_ICON_BRUSH" Paint",  IM_COL32(70, 130, 80, 255) },
+            { EBrushMode::Erase, LE_ICON_ERASER" Erase", IM_COL32(150, 70, 70, 255) },
+            { EBrushMode::Place, LE_ICON_FOREST" Place", IM_COL32(70, 100, 150, 255) },
+        };
+        const float ButtonWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+        for (const FModeButton& Button : Buttons)
+        {
+            if (&Button != &Buttons[0])
+            {
+                ImGui::SameLine();
+            }
+            ImGui::PushStyleColor(ImGuiCol_Button, Mode == Button.Mode ? Button.Color : ImGui::GetColorU32(ImGuiCol_Button));
+            if (ImGui::Button(Button.Label, ImVec2(ButtonWidth, 0.0f)))
+            {
+                Mode = Button.Mode;
+            }
+            ImGui::PopStyleColor();
         }
-        ImGui::PopStyleColor();
 
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::SliderFloat("##Radius",  &Radius,  16.0f, 4096.0f, "Radius  %.0f");
+        ImGui::SliderFloat("##Radius",   &Radius,   1.0f, 1024.0f, "Radius  %.1f m", ImGuiSliderFlags_Logarithmic);
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::SliderFloat("##Falloff", &Falloff, 0.0f, 1.0f, "Falloff  %.2f");
+        ImGui::SliderFloat("##Strength", &Strength, 0.01f, 1.0f, "Strength  %.2f");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SliderFloat("##Falloff",  &Falloff,  0.0f, 1.0f, "Falloff  %.2f");
 
-        DrawTypePanel(World, FindFoliage(World));
+        const FTarget Target = FindForest(World, LastHit);
+        DrawSpeciesPanel(World, Target);
+
+        const ECS::FEntity Legacy = FindLegacyFoliage(World);
+        if (Legacy != ECS::NullEntity)
+        {
+            ImGui::Separator();
+            ImGui::TextWrapped("This level has painted foliage outside any forest.");
+            if (ImGui::Button("Move It Into The Forest"))
+            {
+                ConvertLegacyFoliage(World, Legacy);
+            }
+        }
 
         ImGui::TextDisabled("[ / ] resize brush");
         ImGui::End();
     }
 
-    void FFoliageEditMode::RebindTypeSettings(CWorld* World, SFoliageComponent* Foliage)
+    void FFoliageEditMode::RebindSpeciesSettings(SForestComponent* Forest)
     {
-        void* Desired = (Foliage != nullptr && Foliage->IsValidType(ActiveType)) ? (void*)&Foliage->Types[ActiveType] : nullptr;
-        if (Desired == BoundTypeData)
+        void* Desired = (Forest != nullptr && ActiveSpecies >= 0 && ActiveSpecies < Forest->Species.Num()) ? (void*)&Forest->Species[ActiveSpecies] : nullptr;
+        if (Desired == BoundSpeciesData)
         {
             return;
         }
 
-        BoundTypeData = Desired;
-        if (Desired != nullptr)
+        BoundSpeciesData = Desired;
+        if (Desired == nullptr)
         {
-            TypeSettings.SetObject(Desired, SFoliageType::StaticStruct());
-            TypeSettings.SetShowSearchBar(false);   // a search box inside a viewport overlay is noise
-
-            // Cheap, since the bake is skipped when the version matches, and missing one culls wrongly.
-            TypeSettings.SetPostEditCallback([World](const FPropertyChangedEvent&) { MarkFoliageDirty(World); });
-            TypeSettings.SetStartEditCallback([this](const FPropertyChangedEvent&)
-            {
-                if (Context)
-                {
-                    Context->BeginModeTransaction();
-                }
-            });
-            TypeSettings.SetFinishEditCallback([this](const FPropertyChangedEvent&)
-            {
-                if (Context)
-                {
-                    Context->EndModeTransaction("Edit Foliage Type");
-                }
-            });
+            SpeciesSettings.SetObject(nullptr, nullptr);
+            return;
         }
-        else
+        SpeciesSettings.SetObject(Desired, SForestSpecies::StaticStruct());
+        SpeciesSettings.SetShowSearchBar(false);
+        SpeciesSettings.SetStartEditCallback([this](const FPropertyChangedEvent&)
         {
-            TypeSettings.SetObject(nullptr, nullptr);
-        }
+            if (Context)
+            {
+                Context->BeginModeTransaction();
+            }
+        });
+        SpeciesSettings.SetFinishEditCallback([this](const FPropertyChangedEvent&)
+        {
+            if (Context)
+            {
+                Context->EndModeTransaction("Edit Forest Species");
+            }
+        });
     }
 
-    void FFoliageEditMode::DrawTypePanel(CWorld* World, SFoliageComponent* Foliage)
+    void FFoliageEditMode::DrawSpeciesPanel(CWorld* World, const FTarget& Target)
     {
-        ImGui::SeparatorText("Foliage Types");
+        ImGui::SeparatorText("Species");
 
-        const int32 TypeCount = Foliage != nullptr ? Foliage->Types.Num() : 0;
+        SForestComponent* Forest = Target.Forest;
+        const int32 SpeciesCount = Forest != nullptr ? Forest->Species.Num() : 0;
 
-        // One pass rather than a scan per type, and this is the only place painted counts are visible.
-        TVector<int32> Counts;
-        Counts.SetNum(Math::Max(TypeCount, 1), 0);
-        if (TypeCount > 0)
+        TVector<int32> PlacedCounts;
+        TVector<int32> PaintedChunks;
+        PlacedCounts.SetNum(Math::Max(SpeciesCount, 1), 0);
+        PaintedChunks.SetNum(Math::Max(SpeciesCount, 1), 0);
+        if (Forest != nullptr)
         {
-            for (const SFoliageInstance& Inst : Foliage->Instances)
+            for (const SFoliageInstance& Plant : Forest->Placed)
             {
-                if (Inst.TypeIndex >= 0 && Inst.TypeIndex < TypeCount)
+                if (Plant.TypeIndex >= 0 && Plant.TypeIndex < SpeciesCount)
                 {
-                    ++Counts[Inst.TypeIndex];
+                    ++PlacedCounts[Plant.TypeIndex];
+                }
+            }
+            for (const SForestPaintChunk& Chunk : Forest->Paint)
+            {
+                if (Chunk.Species >= 0 && Chunk.Species < SpeciesCount)
+                {
+                    ++PaintedChunks[Chunk.Species];
                 }
             }
         }
 
-        const float RowHeight = ImGui::GetTextLineHeightWithSpacing();
-        const float ListHeight = Math::Clamp(RowHeight * (float)Math::Max(TypeCount, 1) + 8.0f, RowHeight + 8.0f, RowHeight * 6.0f);
-        ImGui::BeginChild("##foliagetypes", ImVec2(-FLT_MIN, ListHeight), ImGuiChildFlags_Borders);
+        const float RowHeight  = ImGui::GetTextLineHeightWithSpacing();
+        const float ListHeight = Math::Clamp(RowHeight * (float)Math::Max(SpeciesCount, 1) + 8.0f, RowHeight + 8.0f, RowHeight * 8.0f);
+        ImGui::BeginChild("##forestspecies", ImVec2(-FLT_MIN, ListHeight), ImGuiChildFlags_Borders);
 
-        if (TypeCount == 0)
+        if (SpeciesCount == 0)
         {
-            ImGui::TextDisabled("No foliage types yet.");
+            ImGui::TextDisabled(Forest == nullptr ? "No forest yet. Add a species to make one." : "No species yet.");
         }
 
-        for (int32 i = 0; i < TypeCount; ++i)
+        for (int32 i = 0; i < SpeciesCount; ++i)
         {
-            SFoliageType& Type = Foliage->Types[i];
+            const SFoliageType& Type = Forest->Species[i].Type;
             ImGui::PushID(i);
 
-            // A type with no mesh cannot paint anything, so it is called out rather than looking ready.
-            const bool bPaintable = Type.Mesh.IsValid();
+            // A species with no mesh grows nothing, so it is called out rather than looking ready.
+            const bool bReady = Type.Mesh.IsValid();
             FString Label = Type.Name.IsEmpty() ? FString("Unnamed") : Type.Name;
-            if (bPaintable)
+            if (bReady)
             {
                 Label += "  (";
                 Label += *Type.Mesh->GetName();
@@ -391,19 +484,16 @@ namespace Lumina
                 Label += "  (no mesh)";
             }
 
-            ImGui::PushStyleColor(ImGuiCol_Text, bPaintable ? IM_COL32(225, 225, 230, 255)
-                                                            : IM_COL32(210, 150, 110, 255));
-            if (ImGui::Selectable(*Label, ActiveType == i))
+            ImGui::PushStyleColor(ImGuiCol_Text, bReady ? IM_COL32(225, 225, 230, 255) : IM_COL32(210, 150, 110, 255));
+            if (ImGui::Selectable(*Label, ActiveSpecies == i))
             {
-                ActiveType = i;
+                ActiveSpecies = i;
             }
             ImGui::PopStyleColor();
 
-            // Right-aligned instance count.
-            const FString CountText = *Format("{}", Counts[i]);
-            const float   CountW    = ImGui::CalcTextSize(*CountText).x;
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - CountW);
-            ImGui::TextDisabled("%s", *CountText);
+            const FString Counts = *Format("{} placed, {} painted", PlacedCounts[i], PaintedChunks[i]);
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(*Counts).x);
+            ImGui::TextDisabled("%s", *Counts);
 
             ImGui::PopID();
         }
@@ -412,72 +502,64 @@ namespace Lumina
 
         if (ImGui::Button("Add"))
         {
-            RunModeTransaction("Add Foliage Type", [&]
+            RunModeTransaction("Add Forest Species", [&]
             {
-                Foliage = FindOrCreateFoliage(World);
-                SFoliageType& NewType = Foliage->Types.EmplaceGetRef();
-                NewType.Name = Format("Type{}", TypeCount);
-                ActiveType = Foliage->Types.Num() - 1;
-                MarkFoliageDirty(World);
+                SForestComponent& Owner = Forest != nullptr ? *Forest : *CreateForest(World, GatherGround(World)).Forest;
+                SForestSpecies& Species = Owner.Species.EmplaceGetRef();
+                Species.Type.Name = Format("Species{}", Owner.Species.Num() - 1);
+                // Painted in by hand, so it grows nowhere until a stroke says otherwise.
+                Species.Coverage = 0.0f;
+                ActiveSpecies = Owner.Species.Num() - 1;
             });
+            BoundSpeciesData = nullptr;
+            return;
         }
         ImGui::SameLine();
 
-        ImGui::BeginDisabled(Foliage == nullptr || !Foliage->IsValidType(ActiveType));
+        ImGui::BeginDisabled(Forest == nullptr || ActiveSpecies < 0 || ActiveSpecies >= SpeciesCount);
         if (ImGui::Button("Duplicate"))
         {
-            RunModeTransaction("Duplicate Foliage Type", [&]
+            RunModeTransaction("Duplicate Forest Species", [&]
             {
-                // Copied by value first, since Emplace can reallocate and dangle the reference.
-                const SFoliageType Source = Foliage->Types[ActiveType];
-                Foliage->Types.Add(Source);
-                Foliage->Types.Last().Name = Source.Name + " Copy";
-                ActiveType = Foliage->Types.Num() - 1;
-                // The copy carries an unstamped resolve, so without this it paints instances with no mesh.
-                MarkFoliageDirty(World);
+                // Copied by value first, since adding can reallocate and dangle the reference.
+                const SForestSpecies Source = Forest->Species[ActiveSpecies];
+                Forest->Species.Add(Source);
+                Forest->Species.Last().Type.Name = Source.Type.Name + " Copy";
+                ActiveSpecies = Forest->Species.Num() - 1;
             });
+            BoundSpeciesData = nullptr;
         }
         ImGui::SameLine();
 
         if (ImGui::Button("Remove"))
         {
-            RunModeTransaction("Remove Foliage Type", [&]
+            RunModeTransaction("Remove Forest Species", [&]
             {
-                Foliage->Instances.RemoveAll([this](const SFoliageInstance& Inst) { return Inst.TypeIndex == ActiveType; });
-                // Re-index instances that pointed past the removed type.
-                for (SFoliageInstance& Inst : Foliage->Instances)
-                {
-                    if (Inst.TypeIndex > ActiveType)
-                    {
-                        --Inst.TypeIndex;
-                    }
-                }
-                Foliage->Types.RemoveAt(ActiveType);
-                ActiveType = Math::Min(ActiveType, Foliage->Types.Num() - 1);
-                // Instances were removed and re-indexed, so the cache would keep drawing the deleted type.
-                MarkFoliageDirty(World);
+                Forest->RemoveSpecies(ActiveSpecies);
+                ActiveSpecies = Math::Min(ActiveSpecies, Forest->Species.Num() - 1);
             });
+            BoundSpeciesData = nullptr;
         }
         ImGui::EndDisabled();
 
-        ActiveType = Math::Clamp(ActiveType, 0, Math::Max((Foliage != nullptr ? Foliage->Types.Num() : 0) - 1, 0));
-        RebindTypeSettings(World, Foliage);
+        ActiveSpecies = Math::Clamp(ActiveSpecies, 0, Math::Max(SpeciesCount - 1, 0));
+        RebindSpeciesSettings(Forest);
 
-        if (Foliage == nullptr || !Foliage->IsValidType(ActiveType))
+        if (Forest == nullptr || ActiveSpecies >= Forest->Species.Num())
         {
-            ImGui::TextDisabled("Add a type to start painting.");
+            ImGui::TextDisabled("Add a species to start painting.");
             return;
         }
 
-        ImGui::SeparatorText("Type Settings");
-        TypeSettings.DrawTree();
+        ImGui::SeparatorText("Species Settings");
+        SpeciesSettings.DrawTree();
     }
 
     void FFoliageEditMode::Tick(CWorld* World, const SCameraComponent& Camera, bool bViewportHovered, ImVec2 ViewportScreenOrigin, ImVec2 ViewportSize)
     {
         bHitValid = false;
 
-        // Close a stroke transaction the moment the button is released.
+        // Closes the stroke's transaction the moment the button is released.
         if (bTransactionOpen && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
         {
             if (Context)
@@ -485,7 +567,7 @@ namespace Lumina
                 Context->EndModeTransaction("Foliage Edit");
             }
             bTransactionOpen = false;
-            PaintAccumulator = 0.0f;
+            PlaceAccumulator = 0.0f;
         }
 
         if (!World || !bViewportHovered)
@@ -493,9 +575,8 @@ namespace Lumina
             return;
         }
 
-        // Bracket keys resize the brush.
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true))  { Radius = Math::Max(16.0f, Radius / 1.1f); }
-        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true)) { Radius = Math::Min(8192.0f, Radius * 1.1f); }
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true))  { Radius = Math::Max(1.0f, Radius / 1.1f); }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true)) { Radius = Math::Min(1024.0f, Radius * 1.1f); }
 
         const ImVec2 MousePos = ImGui::GetMousePos();
         const ImVec2 Local    = ImVec2(MousePos.x - ViewportScreenOrigin.x, MousePos.y - ViewportScreenOrigin.y);
@@ -507,22 +588,9 @@ namespace Lumina
         FVector3 RayOrigin, RayDir;
         BuildRayFromScreen(Camera, Local, ViewportSize, RayOrigin, RayDir);
 
-        FVector3 TerrainOrigin(0.0f);
-        STerrainComponent* Terrain = FindTerrain(World, TerrainOrigin);
-
-        // Prefers the terrain surface for the cursor hit and falls back to the ground plane.
+        const TVector<FGround> Ground = GatherGround(World);
         FVector3 Hit;
-        bool bHit = false;
-        if (Terrain && FTerrainSculptSystem::Raycast(*Terrain, TerrainOrigin, RayOrigin, RayDir, Hit))
-        {
-            bHit = true;
-        }
-        else if (RaycastGroundPlane(RayOrigin, RayDir, Hit))
-        {
-            bHit = true;
-        }
-
-        if (!bHit)
+        if (!RaycastGround(Ground, RayOrigin, RayDir, Hit))
         {
             return;
         }
@@ -535,9 +603,8 @@ namespace Lumina
             return;
         }
 
-        ECS::FEntity FoliageEntity = ECS::NullEntity;
-        SFoliageComponent* Foliage = FindFoliage(World, &FoliageEntity);
-        if (!Foliage)
+        const FTarget Target = FindForest(World, Hit);
+        if (Target.Forest == nullptr)
         {
             return;
         }
@@ -548,23 +615,22 @@ namespace Lumina
             bTransactionOpen = true;
         }
 
-        const float RealDelta = Math::Max(ImGui::GetIO().DeltaTime, 1.0f / 240.0f);
-
-        const uint32 VersionBefore = Foliage->InstancesVersion;
-
-        if (Mode == EFoliageBrushMode::Paint)
+        const float DeltaSeconds = Math::Max(ImGui::GetIO().DeltaTime, 1.0f / 240.0f);
+        switch (Mode)
         {
-            PaintDab(World, *Foliage, Terrain, TerrainOrigin, Hit, RealDelta);
-        }
-        else
-        {
-            EraseDab(*Foliage, Hit);
-        }
-
-        // Gated on the version, so a dab that placed nothing does not resync every held frame.
-        if (Foliage->InstancesVersion != VersionBefore && FoliageEntity != ECS::NullEntity)
-        {
-            MarkFoliageChanged(*World, FoliageEntity, *Foliage);
+        case EBrushMode::Paint:
+            PaintDab(Target, Hit, DeltaSeconds, 1.0f);
+            break;
+        case EBrushMode::Erase:
+            PaintDab(Target, Hit, DeltaSeconds, -1.0f);
+            Target.Forest->Placed.RemoveAll([&](const SFoliageInstance& Plant)
+            {
+                return Plant.TypeIndex == ActiveSpecies && Math::Length(FVector2(Plant.Position.x - Hit.x, Plant.Position.z - Hit.z)) <= Radius;
+            });
+            break;
+        case EBrushMode::Place:
+            PlaceDab(Target, Ground, Hit, DeltaSeconds);
+            break;
         }
     }
 
@@ -589,34 +655,34 @@ namespace Lumina
             return true;
         };
 
-        ImDrawList* Draw = ImGui::GetWindowDrawList();
-        const ImU32 Color = (Mode == EFoliageBrushMode::Erase) ? IM_COL32(230, 120, 120, 220) : IM_COL32(120, 230, 120, 220);
+        const ImU32 Colors[] = { IM_COL32(120, 230, 120, 220), IM_COL32(230, 120, 120, 220), IM_COL32(120, 170, 240, 220) };
+        const ImU32 Color = Colors[(int32)Mode];
 
-        auto AddWorldRing = [&](float WorldRadius, ImU32 RingColor, float Thickness)
+        // Follows the ground, so the ring reads true on a slope instead of cutting through the hill.
+        const TVector<FGround> Ground = GatherGround(World);
+        constexpr int Segments = 64;
+        ImVec2 Points[Segments];
+        int Count = 0;
+        for (int i = 0; i < Segments; ++i)
         {
-            constexpr int Segments = 64;
-            ImVec2 Points[Segments];
-            int Count = 0;
-            for (int i = 0; i < Segments; ++i)
+            const float A = (static_cast<float>(i) / static_cast<float>(Segments)) * Math::TwoPi<float>();
+            FVector3 P = LastHit + FVector3(std::cos(A) * Radius, 0.0f, std::sin(A) * Radius);
+            FVector3 Normal;
+            ProjectToGround(Ground, P.x, P.z, P, Normal);
+            ImVec2 S;
+            if (ProjectToScreen(P + FVector3(0.0f, 0.1f, 0.0f), S))
             {
-                const float A = (static_cast<float>(i) / static_cast<float>(Segments)) * Math::TwoPi<float>();
-                const FVector3 P = LastHit + FVector3(std::cos(A) * WorldRadius, 0.0f, std::sin(A) * WorldRadius);
-                ImVec2 S;
-                if (ProjectToScreen(P, S))
-                {
-                    Points[Count++] = S;
-                }
+                Points[Count++] = S;
             }
-            if (Count >= 2)
-            {
-                Draw->AddPolyline(Points, Count, RingColor, Thickness, ImDrawFlags_Closed);
-            }
-        };
+        }
 
+        ImDrawList* Draw = ImGui::GetWindowDrawList();
+        if (Count >= 2)
+        {
+            Draw->AddPolyline(Points, Count, Color, 2.0f, ImDrawFlags_Closed);
+        }
         ImVec2 Center;
-        const bool bCenter = ProjectToScreen(LastHit, Center);
-        AddWorldRing(Radius, Color, 2.0f);
-        if (bCenter)
+        if (ProjectToScreen(LastHit, Center))
         {
             Draw->AddCircleFilled(Center, 3.0f, IM_COL32(255, 255, 255, 220));
         }

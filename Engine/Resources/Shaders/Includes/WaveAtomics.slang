@@ -48,3 +48,62 @@ uint WaveInterlockedAddKeyed(uint Key, uint* Counter, uint Value)
     }
     return Result;
 }
+
+// Every active lane must name the same Counter and Capacity. Lanes fit in lane order, so the claimed units stay contiguous and a refused lane never moves the counter.
+bool WaveClaimWithin(uint* Counter, uint Capacity, uint Count, out uint Old)
+{
+    const uint Exclusive = WavePrefixSum(Count);
+    const uint Inclusive = Exclusive + Count;
+    const uint Leader    = WaveActiveMin(WaveGetLaneIndex());
+
+    uint Current = 0u;
+    if (WaveGetLaneIndex() == Leader)
+    {
+        InterlockedAdd(Counter[0], 0u, Current);
+    }
+    Current = WaveReadLaneAt(Current, Leader);
+
+    // Wave-uniform exit, and only another wave's claim can fail the exchange, so the counter rises until it succeeds or nothing fits.
+    bool bFits    = false;
+    bool bPending = true;
+    [loop]
+    while (bPending)
+    {
+        const uint Room  = Current < Capacity ? Capacity - Current : 0u;
+        bFits            = Inclusive <= Room;
+        const uint Claim = WaveActiveMax(bFits ? Inclusive : 0u);
+
+        uint Seen = Current;
+        if (Claim != 0u && WaveGetLaneIndex() == Leader)
+        {
+            InterlockedCompareExchange(Counter[0], Current, Current + Claim, Seen);
+        }
+        Seen     = WaveReadLaneAt(Seen, Leader);
+        bPending = Claim != 0u && Seen != Current;
+        Current  = Seen;
+    }
+
+    Old = Current + Exclusive;
+    return bFits;
+}
+
+// Lanes may name different counters, each picked by Key, with one capacity per key.
+bool WaveClaimWithinKeyed(uint Key, uint* Counter, uint Capacity, uint Count, out uint Old)
+{
+    Old = 0u;
+    bool bResult  = false;
+    bool bPending = true;
+    [loop]
+    while (WaveActiveAnyTrue(bPending))
+    {
+        if (bPending)
+        {
+            if (Key == WaveReadLaneFirst(Key))
+            {
+                bResult  = WaveClaimWithin(Counter, Capacity, Count, Old);
+                bPending = false;
+            }
+        }
+    }
+    return bResult;
+}

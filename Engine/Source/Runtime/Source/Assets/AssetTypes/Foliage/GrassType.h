@@ -4,10 +4,13 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
+#include "Memory/SmartPtr.h"
 #include "GrassType.generated.h"
 
 namespace Lumina
 {
+    struct FGrassPatchBuild;
+
     /**
      * One procedurally scattered grass species, referenced by a terrain material's GrassOutput node.
      * Unlike SFoliageType, nothing here is painted: the terrain layer the node binds it to decides where
@@ -63,6 +66,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering", ClampMin = 0.0f, Units = "m")
         float FullDensityDistance = 0.0f;
 
+        // Past this the blades give way to patches, many blades merged with voxel levels of their own, so far grass costs a few instances per patch. Zero keeps blades all the way out.
+        PROPERTY(Editable, Category = "Rendering", ClampMin = 0.0f, Units = "m")
+        float PatchDistance = 25.0f;
+
         // Blades shade with the terrain normal by this distance, so subpixel blades stop sparkling and the far field matches the ground. Zero keeps blade normals.
         PROPERTY(Editable, Category = "Shading", ClampMin = 0.0f, Units = "m")
         float TerrainNormalDistance = 30.0f;
@@ -84,5 +91,15 @@ namespace Lumina
         /** Deterministic per-type seed, so two types on one layer do not land on identical points. */
         PROPERTY(Editable, Category = "Scatter")
         uint32 Seed = 0;
+
+        // Game thread. Starts the build on first ask and after an edit, and is null until a patch has built.
+        CStaticMesh* GetPatchMesh();
+
+    private:
+
+        TStrongObjectPtr<CStaticMesh> PatchMesh;
+        TSharedPtr<FGrassPatchBuild>  PatchBuild;
+        // What the current patch or build was made from, so an edit to the blade or the scatter starts another.
+        uint64                        PatchKey = 0;
     };
 }

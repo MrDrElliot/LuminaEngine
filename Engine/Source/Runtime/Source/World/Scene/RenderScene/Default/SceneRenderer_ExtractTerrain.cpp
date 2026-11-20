@@ -1,10 +1,14 @@
 ﻿#include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
+#include "Assets/AssetTypes/Foliage/GrassPatch.h"
 
 namespace Lumina
 {
     namespace SceneRendererExtractTerrainInternal
     {
+        // The share of PatchDistance over which blades hand over to patches.
+        constexpr float kPatchBlendShare = 0.3f;
+
         using FTerrainExtract       = FDefaultSceneRenderer::FFrameData::FTerrainExtract;
         using FGrassSpeciesExtract  = FDefaultSceneRenderer::FFrameData::FGrassSpeciesExtract;
 
@@ -113,7 +117,7 @@ namespace Lumina
 
             for (const SGrassOutput& Output : Material->GrassOutputs)
             {
-                const CGrassType* Type = Output.GrassType.Get();
+                CGrassType* Type = Output.GrassType.Get();
                 if (Type == nullptr || Type->Mesh == nullptr)
                 {
                     continue;
@@ -143,7 +147,6 @@ namespace Lumina
                 Species.Mesh          = Type->Mesh.Get();
                 // On the main thread, since resolving can grow the cache's maps.
                 Species.ResolveHandle = FMeshResolveCache::Get().Resolve(Species.Mesh, {});
-                Species.TypeName      = Type->GetName();
                 Species.LayerIndex    = Output.LayerIndex;
 
                 // Density is instances per square meter and a world unit is a meter, so the spacing is its inverse root.
@@ -163,30 +166,62 @@ namespace Lumina
                 Species.TerrainNormalDistance = Type->TerrainNormalDistance;
                 Species.RootDarkening = Type->RootDarkening;
                 Species.bRandomYaw    = Type->bRandomYaw;
+
+                // Patches take over past PatchDistance, blades thinning out as patches thin in across one band, so the seam is a blend.
+                CStaticMesh* PatchMesh = Type->GetPatchMesh();
+                if (PatchMesh == nullptr || !PatchMesh->IsReadyForRender() || Type->PatchDistance >= Type->CullDistance)
+                {
+                    continue;
+                }
+                const float BandHalf = Type->PatchDistance * kPatchBlendShare * 0.5f;
+                Species.CullDistance = Type->PatchDistance + BandHalf;
+                Species.FadeOutStart = Type->PatchDistance - BandHalf;
+
+                FGrassSpeciesExtract Patch = Species;
+                Patch.bPatch        = true;
+                Patch.Mesh          = PatchMesh;
+                Patch.ResolveHandle = FMeshResolveCache::Get().Resolve(PatchMesh, {});
+                Patch.CellSize      = GrassPatch::GetPatchSize(Type->Density);
+                Patch.ScaleMin      = 1.0f;
+                Patch.ScaleMax      = 1.0f;
+                // A patch is meters wide, so it lies along a slope rather than poking out of it.
+                Patch.AlignToNormal = 1.0f;
+                Patch.CullDistance  = Type->CullDistance;
+                Patch.FadeInStart   = Species.FadeOutStart;
+                Patch.FadeInEnd     = Species.CullDistance;
+                Patch.FadeOutStart  = 0.0f;
+                Patch.KeepScale     = Math::Min(Output.DensityScale, 1.0f);
+                Out.Grass.Add(Patch);
             }
         }
 
         void PrepareTerrainMaterial(STerrainComponent& Terrain, FTerrainExtract& Out)
         {
             // Cleared up front because the element is reused across frames and these are written conditionally.
-            Out.Shaders       = FRenderMaterialShaders{};
-            Out.MaterialIndex = 0u;
-            Out.bMasked       = false;
+            Out.VisBufferShader = {};
+            Out.DeferredShader  = {};
+            Out.MaterialIndex   = 0u;
+
+            const auto ResolveStages = [&Out](const CMaterialInterface* Material)
+            {
+                if (Material == nullptr || !Material->IsUsableInDomain(EMaterialType::Terrain))
+                {
+                    return false;
+                }
+                Out.VisBufferShader = Material->GetShader(ActiveMeshletStage(EMaterialShaderStage::VisBufferMesh));
+                Out.DeferredShader  = Material->GetShader(EMaterialShaderStage::Deferred);
+                return Out.VisBufferShader != nullptr && Out.DeferredShader != nullptr;
+            };
 
             // Anything that is not a ready terrain material, wrong domain included, falls back to the default.
             CMaterialInterface* TerrainMaterial = Terrain.Material.Get();
-            FShaderH TerrainVS;
-            FShaderH TerrainPS;
-            if (TerrainMaterial == nullptr || !TerrainMaterial->ResolveDomainShaders(EMaterialType::Terrain, TerrainVS, TerrainPS))
+            if (!ResolveStages(TerrainMaterial))
             {
                 TerrainMaterial = CMaterial::GetDefaultTerrainMaterial();
             }
-            if (TerrainMaterial != nullptr && TerrainMaterial->ResolveDomainShaders(EMaterialType::Terrain, TerrainVS, TerrainPS))
+            if (ResolveStages(TerrainMaterial))
             {
-                Out.Shaders.VertexShader = TerrainVS;
-                Out.Shaders.PixelShader  = TerrainPS;
                 Out.MaterialIndex        = (uint32)Math::Max(TerrainMaterial->GetMaterialIndex(), 0);
-                Out.bMasked              = TerrainMaterial->GetBlendMode() == EBlendMode::Masked;
 
                 // Demand only, like particles, since terrain cannot simply disappear while its textures load.
                 TerrainMaterial->RequestTexturesResolved();

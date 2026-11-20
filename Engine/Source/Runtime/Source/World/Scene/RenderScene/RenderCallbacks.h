@@ -27,7 +27,7 @@ namespace Lumina
         // Inside the engine's depth pass before occlusion culling, so custom geometry occludes the scene.
         Depth             = BIT(1),
 
-        // Inside each shadow map pass, once per cascade, spot light and point light face.
+        // Inside each shadow map pass, once per spot light and point light face.
         ShadowDepth       = BIT(2),
 
         // Opaque lighting and depth are complete, and fog, water and translucency have not run.
@@ -47,7 +47,6 @@ namespace Lumina
     enum class EShadowViewType : uint8
     {
         None,
-        Cascade,
         Spot,
         PointFace,
     };

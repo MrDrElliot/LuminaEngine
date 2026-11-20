@@ -19,7 +19,8 @@ namespace Lumina
             Prim.BoundsScale        = Component.BoundsScale;
             Prim.ForcedLODIndex     = Component.ForcedLODIndex;
             Prim.bCastShadow        = Component.bCastShadow;
-            Prim.bCastFarShadow     = Component.bCastFarShadow;
+            Prim.bShadowWPO         = Component.bShadowWorldPositionOffset;
+            Prim.WPODisableDistance = Component.WorldPositionOffsetDisableDistance;
             Prim.RenderLayers       = Component.RenderLayers.Bits;
             Prim.CustomDepthStencil = PackCustomDepthStencil(Component.bRenderCustomDepth, Component.CustomDepthStencilValue);
 
@@ -392,6 +393,7 @@ namespace Lumina
         DirtyInstanceSlots.Reset();
         DeactivatedSlots.Reset();
         DirtyStaticSlots.Reset();
+        ZeroedSlotRanges.Reset();
         bFullInstanceUpload = true;
         bFullStaticUpload   = true;
         SkinnedIndexFreeList.Reset();
@@ -407,7 +409,7 @@ namespace Lumina
 
         // The blocks lived in the retained arrays just dropped, so a species re-acquires one rather than scattering over other slots.
         GrassSpecies.Reset();
-        GrassFreeBlocks.Reset();
+        FreeSlotBlocks.Reset();
         GrassSlotCount = 0;
 
         ResetEntityRecords();
@@ -1059,5 +1061,8 @@ namespace Lumina
         LUMINA_PROFILE_VALUE("Sync/Primitives",       Primitives.Num());
         LUMINA_PROFILE_VALUE("Sync/FoliageInstances", FoliageInstanceCount);
         LUMINA_PROFILE_VALUE("Sync/GrassSlots",       GrassSlotCount);
+        LUMINA_PROFILE_VALUE("Sync/RetainedSlots",    RetainedCullEntries.Num());
+        LUMINA_PROFILE_VALUE("Sync/FreeSlots",        InstanceFreeSlots.Num());
+        LUMINA_PROFILE_VALUE("Sync/Bindings",         Bindings.Num());
     }
 }

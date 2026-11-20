@@ -1314,7 +1314,7 @@ namespace Lumina
                 {
                     { ERenderSceneDebugFlags::LightComplexity, "Light Complexity" },
                     { ERenderSceneDebugFlags::ClusterGrid,     "Light Clusters"   },
-                    { ERenderSceneDebugFlags::ShadowCascades,  "Shadow Cascades"  },
+                    { ERenderSceneDebugFlags::ShadowLevels,    "Shadow Levels"    },
                     { ERenderSceneDebugFlags::SunFarShadow,    "Sun Far Shadow"   },
                     { ERenderSceneDebugFlags::GTAO,            "GTAO"             },
                     { ERenderSceneDebugFlags::ScreenSpaceGI,   "Screen Space GI"  },
@@ -1368,7 +1368,6 @@ namespace Lumina
                     "Cone Cull",
                     "Occlusion Cull (Instances)",
                     "Occlusion Cull (Meshlets, 2-phase)",
-                    "Occlusion Cull (Shadows)",
                     "CPU Instance Cull",
                     "Level of Detail",
                 };
@@ -1378,7 +1377,6 @@ namespace Lumina
                     "Rejects meshlets whose normal cone faces away from the view.\nOff: backfacing clusters are submitted. The only cull besides occlusion that removes PARTS of a mesh.",
                     "Whole instances hidden by last frame's depth pyramid are rejected outright. Single-phase and\nexact enough at this granularity: an object is hidden or it is not.\nOff: no instance-level occlusion culling.",
                     "Per-meshlet Hi-Z, resolved across two VisBuffer phases: the early pass defers what last frame's\npyramid hid, the pyramid is rebuilt from this frame's own depth, and the late pass re-tests exactly\nthose. No frame latency -- disoccluded meshlets still draw the same frame.\nOff: the frame collapses to a single geometry phase and meshlets are frustum-culled only.",
-                    "The same test for shadow cascades, against the cascade pyramid.",
                     "Pre-upload reject of instances outside every contributing view, on the CPU.\nOff: the whole retained set is uploaded each frame.",
                     "Distance-based LOD selection.\nOff: always LOD 0, full detail.",
                 };
@@ -1389,7 +1387,6 @@ namespace Lumina
                     &Settings.bConeCull,
                     &Settings.bOcclusionCull,
                     &Settings.bMeshletOcclusionCull,
-                    &Settings.bShadowOcclusionCull,
                     &Settings.bCPUInstanceCull,
                     &Settings.bUseLODs,
                 };

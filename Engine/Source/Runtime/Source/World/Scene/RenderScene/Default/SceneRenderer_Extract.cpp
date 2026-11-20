@@ -275,7 +275,6 @@ namespace Lumina
         SceneGlobalData.CullData.CullNearPlane          = SceneGlobalData.NearPlane;
         SceneGlobalData.CullData.CullFarPlane           = SceneGlobalData.FarPlane;
         SceneGlobalData.CullData.ShadowMaxDistance      = 5000.0f;
-        SceneGlobalData.CullData.bShadowOcclusionCull   = FrameSettings.bShadowOcclusionCull;
         {
             // Read live from the project settings, like the other quality toggles; there is no per-world copy.
             const CRendererSettings* Renderer = GetDefault<CRendererSettings>();
@@ -284,9 +283,10 @@ namespace Lumina
             SceneGlobalData.CullData.VirtualGeometryFlags = (bVoxelFar ? VG_FLAG_VOXEL_FAR : 0u) | (bProxies ? VG_FLAG_PROXIES : 0u);
             SceneGlobalData.CullData.ProxyTransitionPixels = Renderer != nullptr ? Math::Clamp(Renderer->ProxyTransitionPixels, 0.0f, 16.0f) : 2.0f;
         }
-        CascadeMinTexels                                = 1.0f;
+        ShadowMinTexels                                 = 0.0f;
         // Built here because the skinned gather picks against it on workers before the cull views exist.
         Frame.Views.CameraLODView                       = MakeCameraLODView(ViewVolume, (float)DisplaySize.y);
+        Frame.Views.CameraLODView.LODErrorScale        /= DrawPressureLODDivisor.load(std::memory_order_relaxed);
         SceneGlobalData.CullData.DebugMode              = (uint32)FrameSettings.Flags;
         #if !defined(LE_SHIPPING)
         if (const int32 Override = CVarDebugViewOverride.GetValue(); Override >= 0)
@@ -294,8 +294,6 @@ namespace Lumina
             SceneGlobalData.CullData.DebugMode = (uint32)Override;
         }
         #endif
-        SceneGlobalData.CullData.bCascadeHZBValid       = 0u;
-        SceneGlobalData.CullData.bCascadeHZBMidValid    = 0u;
     }
 
     // A frame or two at startup is normal; a default material that never compiled never recovers.
@@ -450,6 +448,7 @@ namespace Lumina
             SceneGlobalData.CullData.bHasDirectional = 0u;
         }
 
+        UpdateSunShadowCache(Frame);
         BuildCullViews(Frame.ViewVolume);
 
         // Last extract write, and on this thread, because Extract snapshots ImmediateLines a few lines later.
@@ -578,19 +577,9 @@ namespace Lumina
             FrozenCull.FarPlane         = Cull.CullFarPlane;
             FrozenCull.Frustum          = Cull.Frustum;
             FrozenCull.ShadowFrustum    = Cull.ShadowFrustum;
-            for (int32 c = 0; c < NumCascades; ++c)
-            {
-                FrozenCull.CascadeFrustum[c]              = Cull.CascadeFrustum[c];
-                FrozenCull.CascadeHZBViewProjection[c]    = Cull.CascadeHZBViewProjection[c];
-                FrozenCull.CascadeHZBNdcScale[c]          = Cull.CascadeHZBNdcScale[c];
-                FrozenCull.CascadeHZBViewProjectionMid[c] = Cull.CascadeHZBViewProjectionMid[c];
-                FrozenCull.CascadeHZBNdcScaleMid[c]       = Cull.CascadeHZBNdcScaleMid[c];
-            }
-
-            FrozenCull.bHasCascadeShadow = CaptureCascadeShadowFit(Frame);
-            FrozenCull.CascadeViewBase   = Frame.Views.CascadeViewBase;
-            FrozenCull.NumCascadeViews   = Frame.Views.NumCascadeViews;
-            FrozenCull.NumNearCascadeViews = Frame.Views.NumNearCascadeViews;
+            FrozenCull.ShadowViewBase      = Frame.Lighting.VirtualShadow.ViewBase;
+            FrozenCull.ShadowFirstLevel    = Frame.Lighting.VirtualShadow.FirstLevel;
+            FrozenCull.ShadowLastLevel     = Frame.Lighting.VirtualShadow.LastLevel;
             FrozenCull.CustomDepthCullView = Frame.Views.CustomDepthCullView;
             FrozenCull.bValid            = true;
             return;
@@ -598,10 +587,13 @@ namespace Lumina
 
         // The view COUNT freezes too, since bucket indices and the dispatch grid all derive from it.
         Frame.Views.CullViews       = FrozenCull.Views;
-        Frame.Views.CascadeViewBase = FrozenCull.CascadeViewBase;
-        Frame.Views.NumCascadeViews = FrozenCull.NumCascadeViews;
-        Frame.Views.NumNearCascadeViews = FrozenCull.NumNearCascadeViews;
         Frame.Views.CustomDepthCullView = FrozenCull.CustomDepthCullView;
+        // The level views keep the range they were frozen with, so the raster walks the views that exist.
+        auto& Virtual = Frame.Lighting.VirtualShadow;
+        Virtual.ViewBase      = FrozenCull.ShadowViewBase;
+        Virtual.FirstLevel    = FrozenCull.ShadowFirstLevel;
+        Virtual.LastLevel     = FrozenCull.ShadowLastLevel;
+        Virtual.NumLevelViews = FrozenCull.ShadowLastLevel - FrozenCull.ShadowFirstLevel + 1u;
 
         Cull.CullCameraPosition   = FrozenCull.CameraPosition;
         Cull.CullCameraView       = FrozenCull.CameraView;
@@ -610,58 +602,7 @@ namespace Lumina
         Cull.CullFarPlane         = FrozenCull.FarPlane;
         Cull.Frustum              = FrozenCull.Frustum;
         Cull.ShadowFrustum        = FrozenCull.ShadowFrustum;
-        for (int32 c = 0; c < NumCascades; ++c)
-        {
-            Cull.CascadeFrustum[c]              = FrozenCull.CascadeFrustum[c];
-            Cull.CascadeHZBViewProjection[c]    = FrozenCull.CascadeHZBViewProjection[c];
-            Cull.CascadeHZBNdcScale[c]          = FrozenCull.CascadeHZBNdcScale[c];
-            Cull.CascadeHZBViewProjectionMid[c] = FrozenCull.CascadeHZBViewProjectionMid[c];
-            Cull.CascadeHZBNdcScaleMid[c]       = FrozenCull.CascadeHZBNdcScaleMid[c];
-        }
-
-        RestoreCascadeShadowFit(Frame);
-
         DrawFrozenCullFrustum(Frame);
-    }
-
-    // The sun's cascade fit, which the shadow raster and the shading both read but the freeze did not reach.
-    bool FDefaultSceneRenderer::CaptureCascadeShadowFit(const FFrameData& Frame)
-    {
-        // Same two gates CascadedShowPass uses, since the sun is what owns slot 0 and the cascade tiles.
-        const int32 Slot = Frame.Lighting.LightData.bHasSun ? Frame.Lighting.Lights[0].ShadowDataIndex : Constants::kIndexNone;
-        if (Slot == Constants::kIndexNone || Slot >= MAX_SHADOWS)
-        {
-            return false;
-        }
-
-        const FLightShadowData& Sun = Frame.Lighting.Shadows[Slot];
-        for (int32 c = 0; c < NumCascades; ++c)
-        {
-            FrozenCull.CascadeShadowViewProjection[c] = Sun.ViewProjection[c];
-        }
-
-        FrozenCull.CascadeRadii        = Frame.Lighting.LightData.CascadeRadii;
-        FrozenCull.CascadeDepthRanges  = Frame.Lighting.LightData.CascadeDepthRanges;
-        return true;
-    }
-
-    // Written into whatever slot this frame assigned the sun, since the slot order is not itself frozen.
-    void FDefaultSceneRenderer::RestoreCascadeShadowFit(FFrameData& Frame) const
-    {
-        const int32 Slot = Frame.Lighting.LightData.bHasSun ? Frame.Lighting.Lights[0].ShadowDataIndex : Constants::kIndexNone;
-        if (!FrozenCull.bHasCascadeShadow || Slot == Constants::kIndexNone || Slot >= MAX_SHADOWS)
-        {
-            return;
-        }
-
-        FLightShadowData& Sun = Frame.Lighting.Shadows[Slot];
-        for (int32 c = 0; c < NumCascades; ++c)
-        {
-            Sun.ViewProjection[c] = FrozenCull.CascadeShadowViewProjection[c];
-        }
-
-        Frame.Lighting.LightData.CascadeRadii       = FrozenCull.CascadeRadii;
-        Frame.Lighting.LightData.CascadeDepthRanges = FrozenCull.CascadeDepthRanges;
     }
 
     // Retracted here, because a resize discarding the pyramid is only known after the render thread rebuilds.
@@ -722,9 +663,6 @@ namespace Lumina
         auto& PackedShadows            = Frame.Lighting.PackedShadows;
         auto& PointShadowCullViewBases = Frame.Views.PointShadowCullViewBases;
         auto& SpotShadowCullViewBases  = Frame.Views.SpotShadowCullViewBases;
-        uint32& CascadeViewBase        = Frame.Views.CascadeViewBase;
-        Frame.Views.NumCascadeViews    = 0;
-        Frame.Views.NumNearCascadeViews = 0;
         Frame.Views.CustomDepthCullView = Constants::kIndexNoneU32;
         const bool bCustomDepthView    = HasCustomDepthPrimitives();
 
@@ -737,8 +675,9 @@ namespace Lumina
         const uint32 OtherViewLayers = Layers.IsForegroundActive() ? ~RenderLayers::kForegroundMask : RenderLayers::kAllMask;
         uint32 PushLayers = Layers.CullMask;
 
+        const float DrawPressureDivisor = DrawPressureLODDivisor.load(std::memory_order_relaxed);
         auto PushView = [&](const FMatrix4& ViewProjection, const FVector3& Origin, uint32 Flags, float LODErrorScale,
-                            uint32 CascadeIndex = Constants::kIndexNoneU32, float MinBoundsDiameter = 0.0f)
+                            uint32 ShadowLevel = Constants::kIndexNoneU32, float MinBoundsDiameter = 0.0f)
         {
             const uint32 ViewIndex = (uint32)CullViews.Num();
             FFrustum Frustum = FFrustum::FromViewProjection(ViewProjection);
@@ -749,9 +688,9 @@ namespace Lumina
                 View.FrustumPlanes[p] = Frustum.Planes[p];
             }
             View.ViewOriginAndFlags = FVector4(Origin, std::bit_cast<float>(Flags));
-            View.CascadeIndex       = CascadeIndex;
+            View.ShadowLevel        = ShadowLevel;
             View.MinBoundsDiameter  = MinBoundsDiameter;
-            View.LODErrorScale      = LODErrorScale;
+            View.LODErrorScale      = LODErrorScale / DrawPressureDivisor;
             View.LayerMask          = PushLayers;
             CullViews.Add(View);
 
@@ -772,9 +711,11 @@ namespace Lumina
         }
 
         // Both VisBuffer phases rasterize the SAME camera view, so it contributes one entry.
+        auto& Virtual     = Frame.Lighting.VirtualShadow;
+        const uint32 NumVirtualViews = Virtual.bActive ? 2u * (Virtual.LastLevel - Virtual.FirstLevel + 1u) : 0u;
         const uint32 NumViews =
             1u +
-            (LightData.bHasSun ? (uint32)ActiveCascadeCount : 0u) +
+            NumVirtualViews +
             NumPointFaceViews +
             (uint32)PackedShadows[(uint32)ELightType::Spot].Num() +
             (uint32)Frame.Views.CaptureViews.Num() +
@@ -788,7 +729,6 @@ namespace Lumina
 
         CullViews.Reserve(NumViews);
 
-        CascadeViewBase = Constants::kIndexNoneU32;
         PointShadowCullViewBases.Reset();
         PointShadowCullViewBases.Reserve(PackedShadows[(uint32)ELightType::Point].Num());
         SpotShadowCullViewBases.Reset();
@@ -818,47 +758,30 @@ namespace Lumina
             PushView(CameraVP, ViewVolume.GetViewPosition(), CameraFlags, CameraLOD.LODErrorScale);
         }
 
-        if (LightData.bHasSun)
+        // Every level culls its still casters for its static pages and its movers for all its requested pages, static views first.
+        if (Virtual.bActive)
         {
-            const int32 SunShadowIndex = Frame.Lighting.Lights[0].ShadowDataIndex;
-            if (SunShadowIndex != Constants::kIndexNone)
+            const uint32 LevelFlags =
+                (FrameSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
+                ConeFlag |
+                ECullViewFlags::SunAligned |
+                ECullViewFlags::CastShadowOnly |
+                ECullViewFlags::Distance |
+                ECullViewFlags::OrthographicLOD |
+                ECullViewFlags::VirtualShadow;
+
+            Virtual.ViewBase      = (uint32)CullViews.Num();
+            Virtual.NumLevelViews = Virtual.LastLevel - Virtual.FirstLevel + 1u;
+            for (const uint32 Split : { (uint32)ECullViewFlags::ShadowCacheStatic, (uint32)ECullViewFlags::ShadowCacheDynamic })
             {
-                const FLightShadowData& SunShadow = Frame.Lighting.Shadows[SunShadowIndex];
-                const uint32 CascadeFlags =
-                    (FrameSettings.bFrustumCull ? (uint32)ECullViewFlags::Frustum : 0u) |
-                    ConeFlag |
-                    ECullViewFlags::SunAligned |
-                    ECullViewFlags::CastShadowOnly |
-                    ECullViewFlags::Distance |
-                    ECullViewFlags::Cascade |
-                    ECullViewFlags::OrthographicLOD;
-
-                // Published by ProcessDirectionalLight from the active sun, already clamped.
-                const float MinTexels = CascadeMinTexels;
-
-                CascadeViewBase = (uint32)CullViews.Num();
-                for (int32 c = 0; c < ActiveCascadeCount; ++c)
+                for (uint32 Level = Virtual.FirstLevel; Level <= Virtual.LastLevel; ++Level)
                 {
-                    // Micro-poly threshold in world units, from this cascade's own texel pitch.
-                    const float Radius     = LightData.CascadeRadii[c];
-                    const float Resolution = Math::Max(LightData.CascadeResolutions[c], 1.0f);
-                    const float TexelWorld = (Radius * 2.0f) / Resolution;
-
-                    // Unreal's screen-size rule taken at the cascade's near edge, so it never drops a caster Unreal would keep.
-                    const float CascadeNear    = (c == 0) ? 0.0f : LightData.CascadeSplits[c - 1];
-                    const float ScreenDiameter = 2.0f * CasterMinScreenRadius * CascadeNear;
-
-                    // The far cascade lies wholly past ShadowMaxDistance, which the distance reject would empty.
-                    const uint32 Flags = (c < NearCascadeCount)
-                        ? CascadeFlags
-                        : ((CascadeFlags & ~(uint32)ECullViewFlags::Distance) | ECullViewFlags::FarCascade);
-
-                    PushView(SunShadow.ViewProjection[c], ViewVolume.GetViewPosition(), Flags,
-                             MakeLODErrorScale(SunShadow.ViewProjection[c], Resolution, ShadowTolerance),
-                             (uint32)c, Math::Max(MinTexels * TexelWorld, ScreenDiameter));
+                    const FVirtualShadowLevelGPU& Lv = Virtual.Levels[Level];
+                    // Only a texel rule, since a screen-size rule taken per level drops canopy meshlets past one level and not the next, which shows as a ring.
+                    PushView(Lv.ViewProjection, ViewVolume.GetViewPosition(), LevelFlags | Split,
+                             MakeLODErrorScale(Lv.ViewProjection, (float)VSM_VIRTUAL_SIZE, ShadowTolerance * Virtual.LODTexels),
+                             Level, ShadowMinTexels * Lv.TexelWorld);
                 }
-                Frame.Views.NumCascadeViews     = (uint32)ActiveCascadeCount;
-                Frame.Views.NumNearCascadeViews = (uint32)NearCascadeCount;
             }
         }
 
@@ -1290,6 +1213,11 @@ namespace Lumina
         Frame.Views.CaptureViews.Reset();
         Memory::Memzero(&Frame.Lighting.LightData, sizeof(Frame.Lighting.LightData));
         Frame.Lighting.ShadowDataCount.store(0, std::memory_order_release);
+        Frame.Lighting.VirtualShadow.bActive        = false;
+        Frame.Lighting.VirtualShadow.bInvalidateAll = false;
+        Frame.Lighting.VirtualShadow.ViewBase       = Constants::kIndexNoneU32;
+        Frame.Lighting.VirtualShadow.NumLevelViews  = 0u;
+        Frame.Lighting.VirtualShadow.InvalidSpheres.Reset();
         ShadowAtlas.FreeTiles();
         Frame.Lighting.ShadowRequests.Reset();
         Frame.Lighting.AtlasTiles.Reset();

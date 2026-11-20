@@ -27,7 +27,7 @@ FBuildSkinWorkArgs* Pass() { return GetPassArgs<FBuildSkinWorkArgs>(); }
 // A slot granted no slice skins inline in the draw path, so it pre-skins nothing.
 uint SkinMeshletCount(FSkinnedFrameData Data)
 {
-    if (Data.SkinnedVertexBase == kNoPreSkinBase)
+    if (!HasPreSkinSlice(Data.SkinnedVertexBase))
     {
         return 0u;
     }

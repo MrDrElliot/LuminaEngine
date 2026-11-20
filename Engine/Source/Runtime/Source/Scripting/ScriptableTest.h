@@ -507,6 +507,9 @@ namespace Lumina
         // Nudges this peer's state at one tick, so a test can prove the checksums catch a desync.
         int32 CorruptAtTick = -1;
 
+        // Runs a C# port of this system's tick instead, so a test can hold the two languages to the same state.
+        void (*ManagedTick)(const SExclusiveContext*) = nullptr;
+
         int32 ProjectilesSpawned = 0;
     };
 }

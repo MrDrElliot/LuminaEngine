@@ -2,6 +2,7 @@
 #include "SceneGlobals.slang"
 #include "MeshletGeometry.slang"
 #include "Culling.slang"
+#include "TerrainData.slang"
 
 // Every VisID decode lives here, since the five shaders that read it must agree bit for bit.
 
@@ -59,7 +60,7 @@ float QuadLaneEfficiency(FTexture2DUInt VisBuffer, int2 Texel)
 // A far proxy stamps its draw index rather than a meshlet slot, so everything below reads it off the retained arrays.
 bool IsVisProxy(uint VisRaw)
 {
-    return (VisRaw & VISBUFFER_PROXY_BIT) != 0u;
+    return (VisRaw & VISBUFFER_FLAG_MASK) == VISBUFFER_PROXY_BIT;
 }
 
 struct FVisProxy
@@ -78,7 +79,7 @@ FVisProxy ResolveVisProxy(uint VisRaw)
     Out.Slot   = 0u;
     Out.bValid = false;
 
-    const uint Index = (VisRaw & ~VISBUFFER_PROXY_BIT) - 1u;
+    const uint Index = (VisRaw & ~VISBUFFER_FLAG_MASK) - 1u;
     bool bValid = IsVisProxy(VisRaw) && ProxyList().Contains(Index);
     const uint Slot = bValid ? ProxyList().Get(Index) : 0u;
     bValid = bValid && RetainedProxies().Contains(Slot) && RetainedStatic().Contains(Slot) && RetainedTransforms().Contains(Slot);
@@ -106,7 +107,7 @@ float3 ProxyWidenedCenter(float4x4 Model, FInstanceProxy Proxy, out float3 Groun
 // Returns ~0u for background, for a far proxy, and for any entry this frame did not write.
 uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
 {
-    if (VisRaw == 0u || DrawListCount == 0u || IsVisProxy(VisRaw))
+    if (VisRaw == 0u || DrawListCount == 0u || IsVisProxy(VisRaw) || IsVisTerrain(VisRaw))
     {
         return ~0u;
     }
@@ -134,11 +135,15 @@ uint ResolveVisEntityID(uint VisRaw, uint DrawListCount)
         const FVisProxy P = ResolveVisProxy(VisRaw);
         return P.bValid ? P.Static.EntityID : 0u;
     }
+    if (IsVisTerrain(VisRaw))
+    {
+        return ResolveTerrainVisTriangle(VisRaw).bValid ? GetTerrainParams().EntityID : 0u;
+    }
     const uint InstanceID = ResolveVisInstance(VisRaw, DrawListCount);
     return InstanceID == ~0u ? 0u : GetInstanceEntityID(InstanceID);
 }
 
-// Dense deferred slot for the pixel, or ~0u for background, terrain's 0 stamp and unbinned materials.
+// Dense deferred slot for the pixel, or ~0u for background and unbinned materials.
 uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, GPUSpan<uint> SlotByMaterial)
 {
     uint MaterialIndex;
@@ -150,6 +155,14 @@ uint ResolveVisMaterialSlot(uint VisRaw, uint DrawListCount, GPUSpan<uint> SlotB
             return ~0u;
         }
         MaterialIndex = P.Static.MaterialIndex;
+    }
+    else if (IsVisTerrain(VisRaw))
+    {
+        if (!ResolveTerrainVisTriangle(VisRaw).bValid)
+        {
+            return ~0u;
+        }
+        MaterialIndex = GetTerrainParams().MaterialIndex;
     }
     else
     {
@@ -179,8 +192,8 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
     const uint MeshletSlot = VisID >> VISBUFFER_TRI_BITS;
     const uint TriId       = VisID & VISBUFFER_TRI_MASK;
 
-    // A proxy pixel or an empty draw list has no meshlet draw array to index, so bail before any BDA load touches it.
-    if (VisRaw == 0u || DrawListCount == 0u || IsVisProxy(VisRaw) || MeshletSlot >= DrawListCount)
+    // A proxy or terrain pixel or an empty draw list has no meshlet draw array to index, so bail before any BDA load touches it.
+    if (VisRaw == 0u || DrawListCount == 0u || IsVisProxy(VisRaw) || IsVisTerrain(VisRaw) || MeshletSlot >= DrawListCount)
     {
         return Out;
     }
@@ -193,7 +206,7 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
 
     FMeshletRef Ref;
     Ref.InstanceID        = Draw.InstanceID;
-    Ref.SkinnedVertexBase = Ref.Inst.SkinnedVertexBase;   // camera-side only; shadows never reach here
+    Ref.SkinnedVertexBase = ResolvePreSkinBase(Ref.Inst.SkinnedVertexBase);
     // Clamping by both counts sends a stale instance on the null header to slot 0 rather than into a live mesh's array.
     const uint MeshletCount = max(min(Ref.Inst.MeshletTotalCount, Ref.Header.MeshletCount), 1u);
     Ref.GlobalMeshletIdx  = min(Draw.MeshletIndex, MeshletCount - 1u);
@@ -373,7 +386,7 @@ float3 OrientVisNormal(FMeshletRef Ref, float3 NormalWS, float3 WorldPosition)
 }
 
 // Decodes the terrain normal, distance blend and root darkening GrassScatter.slang packs; painted foliage carries zero and keeps its surface.
-void ApplyGrassShading(FMeshletRef Ref, float4x4 Model, float3 WorldPositionNoOffset, inout float3 Normal, inout float AmbientOcclusion)
+void ApplyGrassShading(FMeshletRef Ref, float4x4 Model, float3 WorldPositionNoOffset, inout float3 Normal, inout float Roughness, inout float AmbientOcclusion)
 {
     if (!Ref.InstHasFlag(EInstanceFlags::Foliage))
     {
@@ -385,6 +398,8 @@ void ApplyGrassShading(FMeshletRef Ref, float4x4 Model, float3 WorldPositionNoOf
     const float3 TerrainNormal = float3(TerrainXZ.x, sqrt(saturate(1.0 - dot(TerrainXZ, TerrainXZ))), TerrainXZ.y);
     const float3 Blended       = lerp(Normal, TerrainNormal, Shading.z);
     Normal = dot(Blended, Blended) > 1e-8 ? normalize(Blended) : TerrainNormal;
+    // One ground normal stands in for blades facing every way, so their spread moves into roughness instead of a sheen.
+    Roughness = lerp(Roughness, 1.0, Shading.z);
 
     // Blades scatter with uniform scale, so projecting onto the up column recovers the mesh-local height.
     const float3 Up     = float3(Model[0].y, Model[1].y, Model[2].y);

@@ -2,8 +2,11 @@
 
 // The compiler substitutes the first material-inputs token, so never name it in a comment above its use.
 
+// One texel in sixteen asks, which is plenty of coverage and keeps the atomics off every discarded leaf.
+static const uint kMaskedFeedbackStrideMask = 3u;
+
 // Returns true when the texel should be kept, its opacity at or above the material's cutoff.
-bool MaskedVisKeep(FMaskedVertexOutput Input, bool bVoxelSplat)
+bool MaskedVisKeep(FMaskedVertexOutput Input)
 {
     uint EntityID           = MaskedEntityID(Input);
     uint MaterialIndex      = Input.MaterialIndex;
@@ -29,16 +32,23 @@ bool MaskedVisKeep(FMaskedVertexOutput Input, bool bVoxelSplat)
 
     $MATERIAL_INPUTS
 
-    // A splat's mipped opacity is the share of its cards that block the view, so it takes the fully faded uniform threshold.
-    const float  ViewDistance = bVoxelSplat ? max(length(ViewPosition), kHashFadeEnd) : length(ViewPosition);
     // Anchored in world space so the dithered edge holds still as the camera moves.
-    return MaskedAlphaKeep(WorldPosition, ViewDistance, Material.Opacity, GetMaterialOpacityClip(MaterialIndex), !bVoxelSplat);
+    const bool bKeep = MaskedAlphaKeep(WorldPosition, length(ViewPosition), Material.Opacity, GetMaterialOpacityClip(MaterialIndex), true);
+
+    // A discarded texel never reaches shading, so a mask too blurry to pass its cutoff asks for sharper mips here or never would.
+    const uint2 Pixel = uint2(Input.Position.xy);
+    if (!bKeep && ((Pixel.x | Pixel.y) & kMaskedFeedbackStrideMask) == 0u)
+    {
+        RequestMaterialResolution(MaterialIndex, UV0_DDX, UV0_DDY, UV1_DDX, UV1_DDY);
+    }
+    return bKeep;
 }
 
 [shader("fragment")]
 uint FragmentMain(FMaskedVertexOutput Input, VIS_ID_INPUT) : SV_Target0
 {
-    if (!MaskedVisKeep(Input, MaskedIsVoxelSplat(Input)))
+    // The splat builder kept each voxel by its coverage, so testing the mipped opacity again thins leaves twice and leaves only bark.
+    if (!MaskedIsVoxelSplat(Input) && !MaskedVisKeep(Input))
     {
         discard;
     }

@@ -114,7 +114,7 @@ namespace Lumina
         int32 SSRStepCount = 32;
 
 
-        /** Strength of the sun glint on the wave normals (cascade-shadowed). */
+        // Strength of the sun glint on the wave normals, which the sun's shadow darkens.
         PROPERTY(Editable, Category = "Water|Specular", ClampMin = 0.0f)
         float SpecularIntensity = 1.0f;
 

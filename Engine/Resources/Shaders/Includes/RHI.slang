@@ -253,6 +253,11 @@ public struct FRWTexture2DUInt
         get { return RWTexture2DUIntHeap[NonUniformResourceIndex(Index)][Texel]; }
         [nonmutating] set { RWTexture2DUIntHeap[NonUniformResourceIndex(Index)][Texel] = newValue; }
     }
+
+    public void InterlockedMin(uint2 Texel, uint Value)
+    {
+        ::InterlockedMin(RWTexture2DUIntHeap[NonUniformResourceIndex(Index)][Texel], Value);
+    }
 }
 
 // Coherent across workgroups, for single-pass reductions that hand results from one group to the next.

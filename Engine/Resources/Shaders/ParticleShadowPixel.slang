@@ -1,6 +1,6 @@
 #include "Includes/ParticleLighting.slang"
 
-// Depth-only caster stage for the sun cascades, keeping a fraction of pixels equal to the particle's opacity.
+// The caster stage for the sun's shadow levels, keeping a fraction of pixels equal to the particle's opacity.
 
 [shader("pixel")]
 void PixelMain(FParticleVertexOutput In)
@@ -22,4 +22,7 @@ void PixelMain(FParticleVertexOutput In)
     {
         discard;
     }
+
+    // Particles move every frame, so they only ever land in the dynamic layer.
+    WriteVirtualShadowLevelDepth(Pass().ShadowLevel, false, In.Position);
 }

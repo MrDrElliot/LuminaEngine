@@ -5,33 +5,7 @@
 #include "Includes/VisBufferSurface.slang"
 #include "Includes/GlobalRHI.slang"
 #include "Includes/Wind.slang"   // this template substitutes the material vertex token too (WPO reconstruction)
-
-// Must match FDeferredMaterialPC in SceneRenderer_Lighting.cpp.
-struct FDeferredMaterialArgs
-{
-    FTexture2DUInt VisBuffer;   // 0
-    uint           FeedbackPhase;    // 4   which 1/STREAMING_FEEDBACK_WINDOW of the groups report streaming feedback this frame
-    uint           NumSlots;         // 8   where the sparse half of Counts and Offsets starts
-    FTexture2DUInt SlotImage;   // 12  slot + 1 per pixel from classify
-    uint           DrawListCount;    // 16  MeshletDrawList slot bound
-    uint           SlotIndex;        // 20
-    uint           ScreenW;          // 24
-    uint           ScreenH;          // 28
-    FRWTexture2D   GBufferA;      // 32  storage-heap slots, channel order per Includes/GBuffer.slang
-    FRWTexture2D   GBufferB;      // 36
-    FRWTexture2D   GBufferC;      // 40
-    FRWTexture2D   GBufferD;      // 44
-    FRWTexture2D   Velocity;      // 48  0xFFFFFFFF when temporal AA is off
-    uint           _PadVelocity;     // 52
-    GPUSpan<uint>  PairList;   // 56  packed tile coordinates grouped by slot, each run starting at Offsets[slot]
-    GPUSpan<uint>  Counts;     // 72  dense tiles per slot, then sparse pixels per slot
-    GPUSpan<uint>  Offsets;    // 88  run starts in PairList, then in PixelList
-    GPUSpan<uint>  PixelList;  // 104 packed pixel coordinates of the pairs too thin to shade as a tile
-};
-FDeferredMaterialArgs* Pass() { return GetPassArgs<FDeferredMaterialArgs>(); }
-
-// Off without a velocity target, so the motion-vector path and its second vertex-graph run drop out of the register budget.
-[vk::constant_id(9)] const uint SPEC_DEFERRED_VELOCITY = 1;
+#include "Includes/DeferredMaterialCommon.slang"
 
 // Object space at the previous frame's pose, so the caller only has to apply the previous model matrix.
 float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Current)
@@ -89,37 +63,11 @@ float4x4 PrevModelMatrixOf(FGPUInstance* Inst, float4x4 Fallback)
 [numthreads(MATERIAL_PIXEL_GROUP_SIZE, 1, 1)]
 void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
 {
-    const uint Slot = Pass().SlotIndex;
-
-    // Folded across Y with the matching unfold in VisBufferMaterialArgs, the slot's dense tiles then its listed pixels 64 to a group.
-    const uint LinearGroup = GroupID.y * MAX_DISPATCH_AXIS + GroupID.x;
-    const uint DenseTiles  = Pass().Counts.Get(Slot);
-
     uint2 Texel;
-    if (LinearGroup >= DenseTiles)
+    uint  LinearGroup;
+    if (!FindDeferredTexel(GroupID, Lane, Texel, LinearGroup))
     {
-        const uint SparseRun = Pass().NumSlots + Slot;
-        const uint Entry     = (LinearGroup - DenseTiles) * MATERIAL_PIXEL_GROUP_SIZE + Lane;
-        if (Entry >= Pass().Counts.Get(SparseRun))
-        {
-            return;
-        }
-        Texel = UnpackVisPixel(Pass().PixelList.Get(Pass().Offsets.Get(SparseRun) + Entry));
-    }
-    else
-    {
-        const uint2 Tile = UnpackVisPixel(Pass().PairList.Get(Pass().Offsets.Get(Slot) + LinearGroup));
-        Texel = Tile * MATERIAL_CLASSIFY_TILE + uint2(Lane % MATERIAL_CLASSIFY_TILE, Lane / MATERIAL_CLASSIFY_TILE);
-        if (Texel.x >= Pass().ScreenW || Texel.y >= Pass().ScreenH)
-        {
-            return;
-        }
-
-        // A tile is shared with other materials, so the slot classify stored keeps only this one's pixels.
-        if (Pass().SlotImage.Load(int2(Texel)) != Slot + 1u)
-        {
-            return;
-        }
+        return;
     }
 
     const uint   Raw = Pass().VisBuffer.Load(int2(Texel));
@@ -209,6 +157,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         FGPUInstance* Inst = T.Ref.Inst;   // reached, not stored, see FMeshletRef
         const bool bWantVelocity = SPEC_DEFERRED_VELOCITY != 0u && Pass().Velocity.IsValid();
         const float4x4 PrevModel = bWantVelocity ? PrevModelMatrixOf(T.Ref.Inst, ModelMatrix) : ModelMatrix;
+        // The same bit the visbuffer raster read, or the rebuilt triangle would not be the one on screen.
+        const bool bApplyWPO = Inst.bApplyWPO;
 
         FMeshletWorldVertex W[3];
         float3 FinalWorldPos[3];
@@ -229,12 +179,16 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             float3 TangentWS     = W[k].TangentWS.xyz;
             float  TangentSignWS = W[k].TangentWS.w;   // handedness; the graph's WorldTangent alias needs it
 
-            FMaterialVertexInputs Material;
-            $MATERIAL_VERTEX_INPUTS
-            FinalWorldPos[k] = W[k].WorldPos + Material.WorldPositionOffset;
+            FinalWorldPos[k] = W[k].WorldPos;
+            if (bApplyWPO)
+            {
+                FMaterialVertexInputs Material;
+                $MATERIAL_VERTEX_INPUTS
+                FinalWorldPos[k] += Material.WorldPositionOffset;
+            }
 
             // A constant offset folds away here, so only a graph with real WPO pays for this second pass.
-            if (bWantVelocity)
+            if (bWantVelocity && bApplyWPO)
             {
                 MaterialTimeOverride = GetPrevTime();
 
@@ -329,16 +283,12 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         $MATERIAL_INPUTS
 
         G = BuildGBufferData(Input, Material);
-        ApplyGrassShading(T.Ref, ModelMatrix, S.WorldPositionNoOffset, G.WorldNormal, G.AmbientOcclusion);
+        ApplyGrassShading(T.Ref, ModelMatrix, S.WorldPositionNoOffset, G.WorldNormal, G.Roughness, G.AmbientOcclusion);
 
         // No quad in this lane, so the widening comes from surface curvature rather than the normal map.
         G.Roughness = ApplyGeometricSpecularAA(G.Roughness, GeoNormalDDX, GeoNormalDDY);
         G.ClearcoatRoughness = ApplyGeometricSpecularAA(G.ClearcoatRoughness, GeoNormalDDX, GeoNormalDDY);
     }
 
-    const FGBufferPacked P = PackGBuffer(G);
-    Pass().GBufferA[int2(Texel)] = P.A;
-    Pass().GBufferB[int2(Texel)] = P.B;
-    Pass().GBufferC[int2(Texel)] = P.C;
-    Pass().GBufferD[int2(Texel)] = P.D;
+    WriteDeferredGBuffer(Texel, G);
 }

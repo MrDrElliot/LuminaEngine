@@ -99,7 +99,6 @@ namespace Lumina
         EntitiesBySimId.Reset();
 
         PendingLocalInput.SetNumZeroed(InputSize);
-        bHasPendingLocalInput = false;
 
         Inputs.Reset();
         Inputs.SetNum(Desc.NumPlayers);
@@ -179,7 +178,6 @@ namespace Lumina
             return;
         }
         Memory::Memcpy(PendingLocalInput.GetData(), Input, InputSize);
-        bHasPendingLocalInput = true;
     }
 
     void FSimulation::StampLocalInput(int64 Tick)

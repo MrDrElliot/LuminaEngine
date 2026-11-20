@@ -32,6 +32,9 @@ namespace Lumina
         RUNTIME_API void RefreshDistanceField(FMeshResource& Resource);
     }
 
+    // Reads Source's finest baked level back into build streams on Resource, false when Source kept no CPU meshlets.
+    RUNTIME_API bool RestoreSourceStreamsFromMeshlets(const FMeshResource& Source, FMeshResource& Resource);
+
     REFLECT()
     class RUNTIME_API CMesh : public CObject
     {

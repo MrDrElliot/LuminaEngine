@@ -15,8 +15,6 @@ namespace Lumina::TerrainMeshletBuilder
             int32 QuadsPerChunk;
             int32 ChunksPerSide;
             int32 MeshletQuadSide;
-            int32 MeshletsPerChunkSide;
-            int32 MeshletsPerChunk;
             int32 NumChunks;
             int32 NumMeshlets;
             float HalfSize;
@@ -26,7 +24,19 @@ namespace Lumina::TerrainMeshletBuilder
             float MaxHeight;
             float DilateXZ;
             float DilateY;
+            // Prefix sums over chunks, since a chunk on the far edge has fewer quads and so fewer meshlets per level.
+            TVector<uint32> ChunkMeshletOffsets;
         };
+
+        uint32 CountChunkMeshlets(const FIntVector2& Extent)
+        {
+            uint32 Count = 0;
+            for (uint32 Level = 0; Level < GTerrainLODLevels; ++Level)
+            {
+                Count += (uint32)(GetTerrainLevelMeshletsSide(Extent.x, Level) * GetTerrainLevelMeshletsSide(Extent.y, Level));
+            }
+            return Count;
+        }
 
         bool ComputeLayout(const STerrainComponent& Terrain, const FVector3& WorldOrigin, FLayout& Out)
         {
@@ -45,10 +55,15 @@ namespace Lumina::TerrainMeshletBuilder
             Out.QuadsPerChunk        = ChunkRes - 1;
             Out.ChunksPerSide        = GetTerrainChunksPerSide(Resolution, Out.QuadsPerChunk);
             Out.MeshletQuadSide      = GTerrainMeshletQuads;
-            Out.MeshletsPerChunkSide = (Out.QuadsPerChunk + Out.MeshletQuadSide - 1) / Out.MeshletQuadSide;
-            Out.MeshletsPerChunk     = Out.MeshletsPerChunkSide * Out.MeshletsPerChunkSide;
             Out.NumChunks            = Out.ChunksPerSide * Out.ChunksPerSide;
-            Out.NumMeshlets          = Out.NumChunks * Out.MeshletsPerChunk;
+            Out.ChunkMeshletOffsets.SetNum(Out.NumChunks + 1);
+            Out.ChunkMeshletOffsets[0] = 0u;
+            for (int32 Chunk = 0; Chunk < Out.NumChunks; ++Chunk)
+            {
+                const FIntVector2 Origin((Chunk % Out.ChunksPerSide) * Out.QuadsPerChunk, (Chunk / Out.ChunksPerSide) * Out.QuadsPerChunk);
+                Out.ChunkMeshletOffsets[Chunk + 1] = Out.ChunkMeshletOffsets[Chunk] + CountChunkMeshlets(GetTerrainChunkExtent(Origin, Out.QuadsPerChunk, Resolution));
+            }
+            Out.NumMeshlets          = (int32)Out.ChunkMeshletOffsets[Out.NumChunks];
 
             Out.HalfSize     = Terrain.TileWorldSize * 0.5f;
             Out.Stride       = Terrain.TileWorldSize / float(Resolution - 1);
@@ -61,13 +76,14 @@ namespace Lumina::TerrainMeshletBuilder
             return true;
         }
 
-        FVector2 ComputeMeshletBounds(FTerrainMeshletInfo& Meshlet, const FTerrainChunkInfo& Chunk,
-                                       const TVector<float>& Heightmap, const FLayout& L)
+        // Over every heightmap sample the meshlet spans, so a coarse level's box still holds the fine surface it skips.
+        FVector2 ComputeMeshletBounds(FTerrainMeshletInfo& Meshlet, const FTerrainChunkInfo& Chunk, const FIntVector2& FineOrigin,
+                                       const FIntVector2& FineVerts, const TVector<float>& Heightmap, const FLayout& L)
         {
-            const int32 SampleX0 = Chunk.QuadOrigin.x + Meshlet.ChunkLocalQuadOrigin.x;
-            const int32 SampleY0 = Chunk.QuadOrigin.y + Meshlet.ChunkLocalQuadOrigin.y;
-            const int32 NVertsX  = Meshlet.QuadExtent.x + 1;
-            const int32 NVertsY  = Meshlet.QuadExtent.y + 1;
+            const int32 SampleX0 = Chunk.QuadOrigin.x + FineOrigin.x;
+            const int32 SampleY0 = Chunk.QuadOrigin.y + FineOrigin.y;
+            const int32 NVertsX  = FineVerts.x;
+            const int32 NVertsY  = FineVerts.y;
 
             // Clamped samples only repeat an endpoint, so extremes over the clamped span match per-sample clamping and each row is one read.
             const int32 X0 = Math::Clamp(SampleX0, 0, L.Resolution - 1);
@@ -123,39 +139,45 @@ namespace Lumina::TerrainMeshletBuilder
             FTerrainChunkInfo& Chunk = State.Chunks[ChunkIndex];
             Chunk.ChunkCoord    = FIntVector2(cx, cy);
             Chunk.QuadOrigin    = FIntVector2(cx * L.QuadsPerChunk, cy * L.QuadsPerChunk);
-            Chunk.MeshletOffset = (uint32)(ChunkIndex * L.MeshletsPerChunk);
-            Chunk.MeshletCount  = (uint32)L.MeshletsPerChunk;
+            Chunk.MeshletOffset = L.ChunkMeshletOffsets[ChunkIndex];
+            Chunk.MeshletCount  = L.ChunkMeshletOffsets[ChunkIndex + 1] - Chunk.MeshletOffset;
+            const FIntVector2 Extent = GetTerrainChunkExtent(Chunk.QuadOrigin, L.QuadsPerChunk, L.Resolution);
 
             float ChunkHeightMin =  TNumericLimits<float>::Infinity();
             float ChunkHeightMax = -TNumericLimits<float>::Infinity();
 
-            for (int32 my = 0; my < L.MeshletsPerChunkSide; ++my)
+            uint32 Cursor = Chunk.MeshletOffset;
+            for (uint32 Level = 0; Level < GTerrainLODLevels; ++Level)
             {
-                for (int32 mx = 0; mx < L.MeshletsPerChunkSide; ++mx)
+                const FIntVector2 LevelQuads(GetTerrainLevelQuads(Extent.x, Level), GetTerrainLevelQuads(Extent.y, Level));
+                const int32 SideX = GetTerrainLevelMeshletsSide(Extent.x, Level);
+                const int32 SideY = GetTerrainLevelMeshletsSide(Extent.y, Level);
+                for (int32 my = 0; my < SideY; ++my)
                 {
-                    const int32 LocalMeshletIndex  = my * L.MeshletsPerChunkSide + mx;
-                    const int32 MeshletGlobalIndex = ChunkIndex * L.MeshletsPerChunk + LocalMeshletIndex;
+                    for (int32 mx = 0; mx < SideX; ++mx)
+                    {
+                        FTerrainMeshletInfo& Meshlet = State.Meshlets[Cursor++];
+                        Meshlet.ChunkIndex           = (uint32)ChunkIndex;
+                        Meshlet.Level                = Level;
+                        Meshlet.ChunkLocalQuadOrigin = FIntVector2(mx * L.MeshletQuadSide, my * L.MeshletQuadSide);
+                        Meshlet.QuadExtent = FIntVector2(
+                            Math::Min(L.MeshletQuadSide, LevelQuads.x - Meshlet.ChunkLocalQuadOrigin.x),
+                            Math::Min(L.MeshletQuadSide, LevelQuads.y - Meshlet.ChunkLocalQuadOrigin.y));
 
-                    FTerrainMeshletInfo& Meshlet = State.Meshlets[MeshletGlobalIndex];
-                    Meshlet.ChunkIndex           = (uint32)ChunkIndex;
-                    Meshlet.ChunkLocalQuadOrigin = FIntVector2(mx * L.MeshletQuadSide, my * L.MeshletQuadSide);
-
-                    const int32 RemainingX = L.QuadsPerChunk - Meshlet.ChunkLocalQuadOrigin.x;
-                    const int32 RemainingY = L.QuadsPerChunk - Meshlet.ChunkLocalQuadOrigin.y;
-                    Meshlet.QuadExtent = FIntVector2(
-                        Math::Min(L.MeshletQuadSide, RemainingX),
-                        Math::Min(L.MeshletQuadSide, RemainingY));
-
-                    const FVector2 HRange = ComputeMeshletBounds(Meshlet, Chunk, Heightmap, L);
-                    ChunkHeightMin = Math::Min(ChunkHeightMin, HRange.x);
-                    ChunkHeightMax = Math::Max(ChunkHeightMax, HRange.y);
+                        const FIntVector2 FineOrigin(Meshlet.ChunkLocalQuadOrigin.x << Level, Meshlet.ChunkLocalQuadOrigin.y << Level);
+                        const FIntVector2 FineEnd(Math::Min((Meshlet.ChunkLocalQuadOrigin.x + Meshlet.QuadExtent.x) << Level, Extent.x),
+                                                  Math::Min((Meshlet.ChunkLocalQuadOrigin.y + Meshlet.QuadExtent.y) << Level, Extent.y));
+                        const FVector2 HRange = ComputeMeshletBounds(Meshlet, Chunk, FineOrigin, FineEnd - FineOrigin + FIntVector2(1), Heightmap, L);
+                        ChunkHeightMin = Math::Min(ChunkHeightMin, HRange.x);
+                        ChunkHeightMax = Math::Max(ChunkHeightMax, HRange.y);
+                    }
                 }
             }
 
             const float ChunkXMin = L.OriginXZ.x + float(Chunk.QuadOrigin.x) * L.Stride - L.DilateXZ;
-            const float ChunkXMax = L.OriginXZ.x + float(Chunk.QuadOrigin.x + L.QuadsPerChunk) * L.Stride + L.DilateXZ;
+            const float ChunkXMax = L.OriginXZ.x + float(Chunk.QuadOrigin.x + Extent.x) * L.Stride + L.DilateXZ;
             const float ChunkZMin = L.OriginXZ.y + float(Chunk.QuadOrigin.y) * L.Stride - L.DilateXZ;
-            const float ChunkZMax = L.OriginXZ.y + float(Chunk.QuadOrigin.y + L.QuadsPerChunk) * L.Stride + L.DilateXZ;
+            const float ChunkZMax = L.OriginXZ.y + float(Chunk.QuadOrigin.y + Extent.y) * L.Stride + L.DilateXZ;
 
             Chunk.BoundsMin = FVector3(ChunkXMin, L.WorldOriginY + ChunkHeightMin - L.DilateY, ChunkZMin);
             Chunk.BoundsMax = FVector3(ChunkXMax, L.WorldOriginY + ChunkHeightMax + L.DilateY, ChunkZMax);

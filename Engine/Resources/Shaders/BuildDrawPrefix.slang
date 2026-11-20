@@ -43,10 +43,19 @@ uint ShareOfArena(uint Offset, uint TotalDemand, uint Capacity)
     return (uint)min(uint64_t(Offset) * Capacity / TotalDemand, uint64_t(Capacity));
 }
 
+// Where the last view that writes visibility IDs ends, since only those slots have to fit the ID range.
+groupshared uint gsVisIDEnd;
+
 [shader("compute")]
 [numthreads(DRAW_PREFIX_THREADS, 1, 1)]
 void ComputeMain(uint ThreadIndex : SV_GroupIndex)
 {
+    if (ThreadIndex == 0u)
+    {
+        gsVisIDEnd = 0u;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
     const uint NumBuckets = Pass().NumViews * Pass().NumDraws;
     const uint PerThread  = (NumBuckets + DRAW_PREFIX_THREADS - 1u) / DRAW_PREFIX_THREADS;
     const uint First      = min(ThreadIndex * PerThread, NumBuckets);
@@ -67,11 +76,16 @@ void ComputeMain(uint ThreadIndex : SV_GroupIndex)
     uint DrawRunning  = Running.x;
     uint BlockRunning = Running.y;
 
+    uint VisIDEnd = 0u;
     for (uint i = First; i < Last; ++i)
     {
         FRenderBucket* Bucket = Pass().Buckets.At(i);
 
         const uint DrawCount  = Bucket.DrawCapacity;
+        if (!CullViewHasFlag(i / Pass().NumDraws, CULL_VIEW_FLAG_CAST_SHADOW_ONLY))
+        {
+            VisIDEnd = max(VisIDEnd, DrawRunning + DrawCount);
+        }
         const uint BlockCount = Bucket.BlockCapacity;
 
         // Every bucket keeps a share of a short arena, so a batch drops to coarse LODs instead of vanishing.
@@ -91,10 +105,13 @@ void ComputeMain(uint ThreadIndex : SV_GroupIndex)
         BlockRunning += BlockCount;
     }
 
+    InterlockedMax(gsVisIDEnd, VisIDEnd);
+    GroupMemoryBarrierWithGroupSync();
     if (ThreadIndex != 0u)
     {
         return;
     }
+    Pass().OutTotals.Set(9u, gsVisIDEnd);
 
     // Demand, from the unclamped counts, since the CPU sizes the next allocation from what was needed.
     DrawRunning  = Demand.x;

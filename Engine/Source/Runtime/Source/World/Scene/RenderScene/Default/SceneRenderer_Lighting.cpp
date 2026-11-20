@@ -35,7 +35,16 @@ namespace Lumina
             return false;
         }
 
-        const auto& DeferredMaterials = Frame.Geometry.DeferredMaterials;
+        DeferredBinScratch.Reset();
+        DeferredBinScratch.Append(Frame.Geometry.DeferredMaterials);
+        for (const FFrameData::FTerrainExtract& Terrain : Frame.Extracts.TerrainExtracts)
+        {
+            if (Terrain.DeferredShader)
+            {
+                DeferredBinScratch.Add({ Terrain.MaterialIndex, Terrain.DeferredShader, (uint8)1u });
+            }
+        }
+        const auto& DeferredMaterials = DeferredBinScratch;
 
         BinnedDeferredSlotShaders.Reset();
         BinnedDeferredSlotKinds.Reset();
@@ -201,7 +210,7 @@ namespace Lumina
     {
         MaterialClassifyLayout = FMaterialClassifyLayout{};
 
-        if (RenderFrame->Geometry.DrawCommands.IsEmpty())
+        if (!HasVisBufferGeometry())
         {
             return;
         }

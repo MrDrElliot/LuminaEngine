@@ -1,8 +1,6 @@
 #pragma once
 
 #include "World/ECS/Registry.h"
-
-
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
 #include "Containers/Vector.h"
 #include "Core/Math/Math.h"
@@ -21,7 +19,7 @@ namespace Lumina
     struct SMeshCollision;
     class CPhysicsMaterial;
 
-    // One painted foliage instance in WORLD space, with Rotation a quaternion laid out as (x, y, z, w).
+    // One foliage instance in world space, with Rotation a quaternion laid out as (x, y, z, w).
     REFLECT()
     struct RUNTIME_API SFoliageInstance
     {
@@ -36,7 +34,7 @@ namespace Lumina
         PROPERTY(Hidden)
         FVector3 Scale = FVector3(1.0f);
 
-        /** Index into the owning component's Types array. */
+        // Into the owning component's Types.
         PROPERTY(Hidden)
         int32 TypeIndex = 0;
 
@@ -53,8 +51,7 @@ namespace Lumina
         }
     };
 
-    // A paintable foliage species: the mesh to instance plus the scatter/instancing settings the tool uses
-    // when painting and the renderer uses when drawing.
+    // One kind of plant, the mesh every instance draws plus how it scatters and renders.
     REFLECT()
     struct RUNTIME_API SFoliageType
     {
@@ -63,11 +60,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Foliage Type")
         FString Name;
 
-        /** Mesh drawn for every instance of this type. */
         PROPERTY(Editable, Category = "Foliage Type")
         TStrongObjectPtr<CStaticMesh> Mesh;
 
-        /** Painted instances per square meter at full brush strength. */
+        // Plants per square meter at full brush strength or full forest cover.
         PROPERTY(Editable, Category = "Scatter", ClampMin = 0.0001f)
         float Density = 0.05f;
 
@@ -77,40 +73,44 @@ namespace Lumina
         PROPERTY(Editable, Category = "Scatter", ClampMin = 0.001f)
         float ScaleMax = 1.25f;
 
-        /** Offset along the surface normal (world units), to sink/raise instances into the ground. */
+        // Along the surface normal, to sink plants into the ground or raise them out of it.
         PROPERTY(Editable, Category = "Scatter")
         float ZOffset = 0.0f;
 
-        /** 0 = keep upright, 1 = fully align the up-axis to the surface normal. */
+        // From 0 for upright to 1 for the up axis on the surface normal.
         PROPERTY(Editable, Category = "Scatter", ClampMin = 0.0f, ClampMax = 1.0f)
         float AlignToNormal = 0.6f;
 
         PROPERTY(Editable, Category = "Scatter")
         bool bRandomYaw = true;
 
-        /** Re-project these instances' height (and re-align) when the terrain underneath is sculpted. */
+        // Regrounds and realigns the plants when the terrain under them is sculpted.
         PROPERTY(Editable, Category = "Scatter")
         bool bFollowTerrain = true;
 
-        /** Beyond this distance (world units) instances are culled (0 = never). */
+        // Plants past this view distance are culled, 0 for never.
         PROPERTY(Editable, Category = "Rendering", ClampMin = 0.0f)
         float CullDistance = 0.0f;
 
         PROPERTY(Editable, Category = "Rendering")
         bool bCastShadow = true;
 
-        // Also casts into the sun's far cascade, for trees that should shade distant hills.
-        PROPERTY(Editable, Category = "Rendering")
-        bool bCastFarShadow = false;
-
         // Past this view distance instances thin out so the count on screen stays level, and the survivors widen to keep the coverage. 0 keeps every instance.
         PROPERTY(Editable, Category = "Rendering", ClampMin = 0.0f, Units = "m")
         float ThinningStartDistance = 0.0f;
 
+        // Shadows follow the material's world position offset. Off casts from the still mesh, which is cheaper and keeps the shadow cacheable.
+        PROPERTY(Editable, Category = "Rendering")
+        bool bShadowWorldPositionOffset = true;
+
+        // Past this camera distance the material's world position offset is skipped in every pass. 0 always applies it.
+        PROPERTY(Editable, Category = "Rendering", ClampMin = 0.0f, Units = "m")
+        float WorldPositionOffsetDisableDistance = 0.0f;
+
         PROPERTY(Editable, Category = "Rendering")
         bool bReceiveShadow = true;
 
-        /** Build static collision for this type's instances while the world simulates (merged into compound bodies). */
+        // Builds static collision for these plants while the world simulates, merged into compound bodies.
         PROPERTY(Editable, Category = "Collision")
         bool bEnableCollision = false;
 
@@ -118,42 +118,36 @@ namespace Lumina
         PROPERTY(Editable, Category = "Collision")
         bool bConvexCollision = true;
 
-        /** Physics material for this type's bodies; null uses the engine defaults. */
+        // Null uses the engine's default physics material.
         PROPERTY(Editable, Category = "Collision")
         TStrongObjectPtr<CPhysicsMaterial> PhysicsMaterial;
 
-        /** Layer this type's bodies sit on, and the layers they collide with. */
         PROPERTY(Editable, Category = "Collision")
         SCollisionProfile CollisionProfile = { .Layer = ECollisionProfiles::Static };
 
         // The mesh's own collision when it has any, else null so the render mesh is used.
         const SMeshCollision* GetCollision() const;
 
-        // Transient resolve cache (not serialized); refreshed by ResolveDirtyMeshComponents.
+        // Transient resolve cache, refreshed by ResolveDirtyMeshComponents and never serialized.
         uint32          CachedMeshletHeaderSlot = 0;
         EInstanceFlags  CachedBaseFlags = EInstanceFlags::None;
         uint32          ResolveHandle = Constants::kIndexNoneU32;
-        // Staleness token of the resolve entry this type last copied from. See SMeshComponent for why
-        // this is per-entry rather than a stamp of the cache's global epoch.
+        // Staleness token of the resolve entry this type last copied from, per entry for the reason SMeshComponent gives.
         mutable uint32  CachedEntryState = MESH_RESOLVE_STATE_STALE;
         const void*     CachedMeshKey = nullptr;
     };
 
-    // Render-ready instance, baked once when the foliage changes (not per frame). Holds the composed world
-    // transform + world-space cull sphere, so the per-frame render path does no matrix/quat/AABB math.
+    // An instance's world transform and cull sphere, baked when the foliage changes so drawing does no transform math.
     struct FFoliageBakedInstance
     {
         FMatrix4 Transform;
-        FVector4 SphereBounds;   // xyz = center, w = radius
-        int32    TypeIndex;      // -1 for an instance the bake skipped, so a baked index is the painted index
+        // Center in xyz and radius in w.
+        FVector4 SphereBounds;
+        // Negative for an instance the bake skipped, so a baked index is the painted index.
+        int32    TypeIndex;
     };
 
-    // Holds every foliage instance in the world in one flat array (grouped logically by TypeIndex). Painted
-    // and erased by the editor's Foliage mode; drawn through the standard instanced meshlet pipeline.
-    //
-    // Foliage is mostly static, so the heavy per-instance precompute (transform + bounds) is cached in
-    // BakedInstances and only rebuilt when InstancesVersion changes (paint / erase / terrain follow). Static
-    // foliage then costs nothing to "keep" frame to frame beyond the GPU cull it already rides.
+    // Plants as one flat instance list, the renderer a forest streams its tiles through, rebaked only when InstancesVersion moves.
     REFLECT(Component, Category = "Foliage", HideInComponentList)
     struct RUNTIME_API SFoliageComponent
     {
@@ -165,12 +159,13 @@ namespace Lumina
         PROPERTY(Hidden, Category = "Foliage")
         TVector<SFoliageInstance> Instances;
 
-
         // Transient render cache, rebuilt when BakedVersion trails InstancesVersion or a bake hit a mesh still loading.
         TVector<FFoliageBakedInstance> BakedInstances;
-        uint32 InstancesVersion = 1;            // bumped whenever Instances/Types change
-        uint32 BakedVersion     = 0;            // version BakedInstances was built from
-        bool   bBakeIncomplete  = false;        // a type's mesh wasn't ready; rebake next frame
+        // Bumped whenever Instances or Types change.
+        uint32 InstancesVersion = 1;
+        uint32 BakedVersion     = 0;
+        // A type's mesh was still loading, so the next frame bakes again.
+        bool   bBakeIncomplete  = false;
         // Separate from BakedVersion, so a released bake rebuilds on the next EnsureRenderCache without a version bump.
         bool   bBakeReleased    = false;
         // Per type, the local bounds a bake places instances with, or an inverted box for a type whose mesh is not ready.
@@ -183,14 +178,15 @@ namespace Lumina
         bool bRendered = true;
 
         // Transient physics bake, owned by CFoliageCollisionSystem. Never serialized.
-        uint32 CollisionGroupID     = 0;        // static body group handle, 0 = none
-        uint32 CollisionBakedVersion = 0;       // InstancesVersion the bodies were built from
+        // Static body group handle, 0 for none.
+        uint32 CollisionGroupID     = 0;
+        uint32 CollisionBakedVersion = 0;
 
         bool IsValidType(int32 Index) const { return Index >= 0 && Index < Types.Num(); }
 
         bool IsInstanceHidden(uint32 Index) const { return Index < (uint32)HiddenInstances.Num() && HiddenInstances[Index] != 0; }
 
-        /** Marks the render cache stale so the next frame rebakes. Call after any edit to Instances/Types. */
+        // Stales the render cache so the next frame rebakes, after any edit to Instances or Types.
         void MarkInstancesChanged() { ++InstancesVersion; }
 
         // A details panel or tool edit rebakes like a paint stroke. With no entity to name, it stales the types so the resolve sweep re-marks the render scene.
@@ -202,7 +198,7 @@ namespace Lumina
             MarkInstancesChanged();
         }
 
-        /** Erase instances of a given type within Radius of WorldCenter (XZ distance). Returns the count removed. */
+        // Erases the type's plants within Radius of WorldCenter on the ground plane and returns how many went.
         int32 RemoveInRadius(const FVector3& WorldCenter, float Radius, int32 TypeFilter);
 
         // Rebuilds BakedInstances from Instances and Types when stale, a no-op when current. Game thread.

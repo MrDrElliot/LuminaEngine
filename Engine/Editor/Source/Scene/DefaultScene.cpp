@@ -424,12 +424,10 @@ namespace Lumina::DefaultScene
         }
 
         ECS::FEntity SpawnOnGround(CWorld* World, const char* Name, CStaticMesh* Mesh, float X, float Z, float BaseY,
-                                   const FVector3& Scale, CMaterialInterface* Material, bool bCastFarShadow)
+                                   const FVector3& Scale, CMaterialInterface* Material)
         {
             const float Y = RangeHeight(X, Z) + BaseY + Scale.y * 0.5f;
-            const ECS::FEntity Entity = SpawnMesh(World, Name, Mesh, FVector3(X, Y, Z), Scale, Material);
-            World->GetComponent<SStaticMeshComponent>(Entity).bCastFarShadow = bCastFarShadow;
-            return Entity;
+            return SpawnMesh(World, Name, Mesh, FVector3(X, Y, Z), Scale, Material);
         }
 
         void SpawnLabel(CWorld* World, const char* Text, const FVector3& Location, float Size)
@@ -446,12 +444,12 @@ namespace Lumina::DefaultScene
             Label.bDepthTest      = true;
         }
 
-        // Each distance gets a warm tower that casts into the far cascade and a cool one that does not.
+        // Each distance gets a warm and a cool tower, so the shadow range reads against two surface tints.
         void BuildRangeTowers(CWorld* World)
         {
             CStaticMesh* Cube = CPrimitiveManager::Get().CubeMesh.Get();
-            CMaterialInterface* FarCaster  = MakeSurface({ FVector3(0.72f, 0.55f, 0.38f), 0.0f, 0.8f });
-            CMaterialInterface* NearCaster = MakeSurface({ FVector3(0.36f, 0.42f, 0.50f), 0.0f, 0.8f });
+            CMaterialInterface* WarmSurface  = MakeSurface({ FVector3(0.72f, 0.55f, 0.38f), 0.0f, 0.8f });
+            CMaterialInterface* CoolSurface = MakeSurface({ FVector3(0.36f, 0.42f, 0.50f), 0.0f, 0.8f });
 
             for (const float Distance : kRangeTowerDistances)
             {
@@ -460,8 +458,8 @@ namespace Lumina::DefaultScene
                 const float Width  = Height * 0.18f;
                 const float Offset = 25.0f + Distance * 0.06f;
 
-                SpawnOnGround(World, "Far Caster Tower", Cube, -Offset, Z, -2.0f, FVector3(Width, Height, Width), FarCaster, true);
-                SpawnOnGround(World, "Near Caster Tower", Cube, Offset, Z, -2.0f, FVector3(Width, Height, Width), NearCaster, false);
+                SpawnOnGround(World, "Warm Tower", Cube, -Offset, Z, -2.0f, FVector3(Width, Height, Width), WarmSurface);
+                SpawnOnGround(World, "Cool Tower", Cube, Offset, Z, -2.0f, FVector3(Width, Height, Width), CoolSurface);
 
                 const FString Text = Lumina::Format("{:.0f} m", Distance);
                 const float   Size = 3.0f + Distance * 0.02f;
@@ -469,7 +467,7 @@ namespace Lumina::DefaultScene
             }
         }
 
-        // Two blocks of simple trees on the valley walls, the left one marked as far casters.
+        // Two blocks of simple trees on the valley walls.
         void BuildRangeForests(CWorld* World)
         {
             CStaticMesh* Cylinder = CPrimitiveManager::Get().CylinderMesh.Get();
@@ -482,7 +480,6 @@ namespace Lumina::DefaultScene
             constexpr float Spacing = 26.0f;
             for (const float Side : { -1.0f, 1.0f })
             {
-                const bool bFar = Side < 0.0f;
                 for (int32 Row = 0; Row < Rows; ++Row)
                 {
                     for (int32 Col = 0; Col < Columns; ++Col)
@@ -494,8 +491,8 @@ namespace Lumina::DefaultScene
                         const float Trunk   = 9.0f * Size;
                         const float CrownD  = 10.0f * Size;
 
-                        SpawnOnGround(World, "Tree Trunk", Cylinder, X, Z, -1.0f, FVector3(1.2f * Size, Trunk, 1.2f * Size), Bark, bFar);
-                        SpawnOnGround(World, "Tree Crown", Sphere, X, Z, Trunk - 2.0f, FVector3(CrownD), Crown, bFar);
+                        SpawnOnGround(World, "Tree Trunk", Cylinder, X, Z, -1.0f, FVector3(1.2f * Size, Trunk, 1.2f * Size), Bark);
+                        SpawnOnGround(World, "Tree Crown", Sphere, X, Z, Trunk - 2.0f, FVector3(CrownD), Crown);
                     }
                 }
             }
@@ -514,8 +511,7 @@ namespace Lumina::DefaultScene
 
         // Low from the side and behind the camera, so every shadow runs across the valley and away from the viewer.
         SDirectionalLightComponent& Light = World->GetComponent<SDirectionalLightComponent>(Sun);
-        Light.Direction         = Math::Normalize(FVector3(0.9f, 0.45f, -0.35f));
-        Light.bFarShadowCascade = true;
+        Light.Direction = Math::Normalize(FVector3(0.9f, 0.45f, -0.35f));
 
         BuildRangeTerrain(World);
         BuildRangeTowers(World);

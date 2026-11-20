@@ -120,7 +120,7 @@ namespace Lumina
         };
         static_assert(sizeof(FSunContactShadowArgs) == 64);
 
-        // Past this distance the reach covers too few pixels for the march to find a gap the cascades miss.
+        // Past this distance the reach covers too few pixels for the march to find a gap the shadow map misses.
         constexpr float kSunContactMinPixels = 2.0f;
 
         // Matches kTile in SunContactShadow.slang, whose groups resolve their ordered jitter in shared memory.

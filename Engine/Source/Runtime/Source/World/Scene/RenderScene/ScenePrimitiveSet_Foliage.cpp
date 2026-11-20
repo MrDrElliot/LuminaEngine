@@ -6,7 +6,7 @@ namespace Lumina
 {
     FInstanceCullEntry FScenePrimitiveSet::MakeFoliageCull(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type, const FVector4& WorldSphere, bool bHidden)
     {
-        const EInstanceFlags Flags = ScenePrimitiveSetInternal::ComposeInstanceFlags(Type.BaseFlags, Binding, Type.bCastShadow, Type.bCastFarShadow,
+        const EInstanceFlags Flags = ScenePrimitiveSetInternal::ComposeInstanceFlags(Type.BaseFlags, Binding, Type.bCastShadow,
                                                                                      Type.Surfaces != nullptr && !bHidden,
                                                                                      Type.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot);
         FInstanceCullEntry Cull = {};
@@ -15,7 +15,8 @@ namespace Lumina
         Cull.DrawIDAndFlags   = PackDrawIDAndFlags(Binding.BatchIndex, Flags);
         Cull.SurfaceDescIndex = Binding.SurfaceDescIndex;
         Cull.MaxDrawDistance  = Type.MaxDrawDistance;
-        Cull.LODAndThinning   = PackLODAndThinning(-1, Type.ThinningStartDistance);
+        Cull.LODAndThinning   = PackLODAndThinning(-1, Type.ThinningStartDistance, RENDER_LAYER_DEFAULT_MASK, 0u, Type.bShadowWPO,
+                                                   ScenePrimitiveSetInternal::IsShadowCacheable(Binding, Type.bShadowWPO));
         return Cull;
     }
 
@@ -38,6 +39,7 @@ namespace Lumina
         Static.EntityID              = EntityID;
         Static.SkinnedIndex          = kNoSkinnedIndex;
         Static.MeshletVisibilityBase = MeshletVisibilityBase;
+        Static.WPODisableDistance    = Type.WPODisableDistance;
         return Static;
     }
 
@@ -169,9 +171,10 @@ namespace Lumina
             Out.BaseFlags             = Type.CachedBaseFlags;
             Out.ResolveHandle         = Type.ResolveHandle;
             Out.bCastShadow           = Type.bCastShadow;
-            Out.bCastFarShadow        = Type.bCastFarShadow;
             Out.ThinningStartDistance = Type.ThinningStartDistance;
             Out.MaxDrawDistance       = Type.CullDistance;
+            Out.bShadowWPO            = Type.bShadowWorldPositionOffset;
+            Out.WPODisableDistance    = Type.WorldPositionOffsetDisableDistance;
 
             if (Type.ResolveHandle != INVALID_MESH_RESOLVE_HANDLE
                 && Cache.IsValidHandle(Type.ResolveHandle)

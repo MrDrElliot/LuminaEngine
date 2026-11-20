@@ -19,7 +19,7 @@ FParticleLight ParticleLightAt(float3 WorldPos)
     if (GetNumLights() > 0u && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional))
     {
         const FLight Sun = GetLightAt(0);
-        Light.Sun = UnpackColor(Sun.Color).rgb * Sun.Intensity * SampleSunCascadeByContainment(Sun, WorldPos)
+        Light.Sun = UnpackColor(Sun.Color).rgb * Sun.Intensity * SampleSunShadowPoint(Sun, WorldPos)
                   * SampleDirectionalCloudShadow(WorldPos);
     }
     return Light;

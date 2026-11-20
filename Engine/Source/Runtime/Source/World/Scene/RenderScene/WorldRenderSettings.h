@@ -26,9 +26,6 @@ namespace Lumina
         bool bMeshletOcclusionCull = true;
 
         PROPERTY(Editable, Category = "Culling")
-        bool bShadowOcclusionCull = true;
-
-        PROPERTY(Editable, Category = "Culling")
         bool bCPUInstanceCull = true;
 
         // Rejects a local light whose attenuation sphere reaches no shading volume, before it takes a slot.

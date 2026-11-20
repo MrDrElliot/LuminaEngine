@@ -39,7 +39,7 @@ namespace Lumina
     bool FDefaultSceneRenderer::GTAOPass(RHI::FCmdListH CL, EGTAOStage Stage)
     {
         FFrameData& Frame = *RenderFrame;
-        if (Frame.Geometry.DrawCommands.IsEmpty() || !IsGTAOEnabled())
+        if (!HasVisBufferGeometry() || !IsGTAOEnabled())
         {
             return false;
         }
@@ -357,7 +357,7 @@ namespace Lumina
     bool FDefaultSceneRenderer::IsScreenSpaceGITraced() const
     {
         return WantsScreenSpaceGI(*CurrentView) && CurrentView->bScreenSpaceGIHistoryValid && CameraCutFramesLeft == 0u
-            && !RenderFrame->Geometry.DrawCommands.IsEmpty();
+            && HasVisBufferGeometry();
     }
 
     void FDefaultSceneRenderer::ScreenSpaceGIPass(RHI::FCmdListH CL)
@@ -516,7 +516,7 @@ namespace Lumina
             return;
         }
 
-        if (RenderFrame->Geometry.DrawCommands.IsEmpty())
+        if (!HasVisBufferGeometry())
         {
             return;
         }

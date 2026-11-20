@@ -471,6 +471,23 @@ namespace Lumina
             ShaderCompiler->CompileShaderRawEntries(Source, StageOptions, Move(Entries));
         };
 
+        // Terrain rasters its heightmap meshlets into the VisBuffer and shades them in the deferred pass like a mesh.
+        if (Material->GetMaterialType() == EMaterialType::Terrain)
+        {
+            const FString TerrainShaderDir = Paths::GetEngineResourceDirectory() + "/Shaders/MaterialShader/";
+            if (IsStageRequired(Material, EMaterialShaderStage::Deferred))
+            {
+                const FString DeferredSource = Compiler.BuildDeferredShaderFromTemplate(TerrainShaderDir + "TerrainDeferredMaterial.slang", EMaterialType::Terrain);
+                FShaderCompileOptions DeferredOptions; DeferredOptions.DebugName = MatName + " [TDM]";
+                DispatchStage(DeferredSource, Move(DeferredOptions), EMaterialShaderStage::Deferred);
+            }
+            if (IsStageRequired(Material, EMaterialShaderStage::VisBufferMesh))
+            {
+                FShaderCompileOptions VisOptions; VisOptions.DebugName = MatName + " [TVB]";
+                DispatchGeometryStage(Result.VertexSource, VisOptions, EMaterialShaderStage::VisBufferMesh);
+            }
+        }
+
         // Separate compiles rather than spec-constant variants, since they declare different OUTPUT types.
         if (MaterialDomain::IsMeshlet(Material->GetMaterialType()))
         {

@@ -19,6 +19,12 @@ namespace Lumina::Import::VoxelFar
         // Circumradius over half width of the equilateral triangle whose area matches a square of that half width.
         constexpr float kSplatTriangleRadius = 1.7548f;
 
+        // Voxels' worth of surface between a voxel and the outside, on every axis, that hides it from any view.
+        constexpr float kOccludingCoverage = 2.0f;
+
+        // Share of a canopy splat's normal that comes from the open side of its neighborhood rather than its own surfaces.
+        constexpr float kCanopyNormalWeight = 0.75f;
+
         // Below this length of the area weighted mean normal, the voxel's surfaces face both ways, like a leaf's two sides.
         constexpr float kMinNormalCoherence = 0.1f;
 
@@ -31,33 +37,6 @@ namespace Lumina::Import::VoxelFar
             H ^= H >> 13u;
             return (float)(H >> 8u) * (1.0f / 16777216.0f);
         }
-
-        struct FVoxelAccumulator
-        {
-            FVector3 NormalSum = FVector3(0.0f);
-            // Surface area inside the voxel, which is what the splat's size stands for.
-            float    Area      = 0.0f;
-            // The largest triangle's UV box, which the material pass averages over rather than one texel of the atlas.
-            FVector2 UVMin     = FVector2(0.0f);
-            FVector2 UVMax     = FVector2(0.0f);
-            FVector3 BestNormal = FVector3(0.0f);
-            float    BestArea  = 0.0f;
-            uint32   Source    = 0;
-
-            void Merge(const FVoxelAccumulator& Other)
-            {
-                NormalSum += Other.NormalSum;
-                Area      += Other.Area;
-                if (Other.BestArea > BestArea)
-                {
-                    UVMin      = Other.UVMin;
-                    UVMax      = Other.UVMax;
-                    BestNormal = Other.BestNormal;
-                    BestArea   = Other.BestArea;
-                    Source     = Other.Source;
-                }
-            }
-        };
 
         FORCEINLINE uint32 VoxelKey(uint32 X, uint32 Y, uint32 Z)
         {
@@ -119,7 +98,7 @@ namespace Lumina::Import::VoxelFar
             return AxisTest(Normal);
         }
 
-        void VoxelizeLevel(const FBuildInput& In, uint32 Resolution, float VoxelSize, THashMap<uint32, FVoxelAccumulator>& Out)
+        void VoxelizeLevel(const FBuildInput& In, uint32 Resolution, float VoxelSize, THashMap<uint32, FVoxelCell>& Out)
         {
             const uint32 NumTriangles = (uint32)In.Indices.Num() / 3u;
             const float  HalfSize     = VoxelSize * 0.5f;
@@ -190,7 +169,7 @@ namespace Lumina::Import::VoxelFar
         }
 
         // Each coarse voxel is exactly its eight children, so merging them stands in for testing every triangle again.
-        void CoarsenLevel(const THashMap<uint32, FVoxelAccumulator>& Fine, uint32 Resolution, THashMap<uint32, FVoxelAccumulator>& Out)
+        void CoarsenLevel(const THashMap<uint32, FVoxelCell>& Fine, uint32 Resolution, THashMap<uint32, FVoxelCell>& Out)
         {
             const uint32 MaxIndex = Resolution - 1u;
             for (const auto& [Key, Acc] : Fine)
@@ -201,16 +180,103 @@ namespace Lumina::Import::VoxelFar
             }
         }
 
-        void EmitLevel(const FBuildInput& In, const THashMap<uint32, FVoxelAccumulator>& Voxels, float VoxelSize, FLevel& Out)
+        // Per voxel, the least surface coverage lying between it and the grid's edge along any of the six axis directions.
+        template<typename TCoverage>
+        void ComputeBurial(const TVector<uint32>& Keys, TCoverage&& CoverageAt, THashMap<uint32, float>& OutBurial)
+        {
+            const int32 Num = Keys.Num();
+            TVector<float> Coverage(Num);
+            TVector<float> Burial(Num, FLT_MAX);
+            for (int32 i = 0; i < Num; ++i)
+            {
+                Coverage[i] = CoverageAt(Keys[i]);
+            }
+
+            TVector<int32> Order(Num);
+            for (int32 Axis = 0; Axis < 3; ++Axis)
+            {
+                // Rows run along Axis, so sorting by the other two coordinates first puts each row together in order.
+                auto RowKey = [&](uint32 Key)
+                {
+                    uint32 C[3];
+                    KeyToVoxel(Key, C[0], C[1], C[2]);
+                    return ((uint64)C[(Axis + 1) % 3] << 40) | ((uint64)C[(Axis + 2) % 3] << 20) | C[Axis];
+                };
+                for (int32 i = 0; i < Num; ++i)
+                {
+                    Order[i] = i;
+                }
+                Algo::Sort(Order, [&](int32 A, int32 B) { return RowKey(Keys[A]) < RowKey(Keys[B]); });
+
+                for (int32 Begin = 0; Begin < Num;)
+                {
+                    const uint64 Row = RowKey(Keys[Order[Begin]]) >> 20;
+                    int32 End = Begin + 1;
+                    while (End < Num && (RowKey(Keys[Order[End]]) >> 20) == Row)
+                    {
+                        ++End;
+                    }
+                    float Before = 0.0f;
+                    for (int32 i = Begin; i < End; ++i)
+                    {
+                        Burial[Order[i]] = Math::Min(Burial[Order[i]], Before);
+                        Before += Coverage[Order[i]];
+                    }
+                    float After = 0.0f;
+                    for (int32 i = End - 1; i >= Begin; --i)
+                    {
+                        Burial[Order[i]] = Math::Min(Burial[Order[i]], After);
+                        After += Coverage[Order[i]];
+                    }
+                    Begin = End;
+                }
+            }
+
+            for (int32 i = 0; i < Num; ++i)
+            {
+                OutBurial.Add(Keys[i], Burial[i]);
+            }
+        }
+
+        void EmitLevel(const FBuildInput& In, const THashMap<uint32, FVoxelCell>& Voxels, const THashMap<uint32, FVoxelOwner>* Shared, uint32 SurfaceIndex,
+                       float VoxelSize, FLevel& Out)
         {
             // Sorted so neighboring voxels land in the same meshlet, which the meshlet builder cannot do from a hash walk.
             TVector<uint32> Keys;
-            Keys.Reserve(Voxels.Num());
-            for (const auto& [Key, Acc] : Voxels)
+            if (Shared != nullptr)
             {
-                Keys.Add(Key);
+                Keys.Reserve(Shared->Num());
+                for (const auto& [Key, Owner] : *Shared)
+                {
+                    Keys.Add(Key);
+                }
+            }
+            else
+            {
+                Keys.Reserve(Voxels.Num());
+                for (const auto& [Key, Cell] : Voxels)
+                {
+                    Keys.Add(Key);
+                }
             }
             Algo::Sort(Keys);
+
+            // Shared voxels are kept, hidden and shaded by what every surface puts in them, so a trunk inside a crown stays inside it.
+            auto CoverageAt = [&](uint32 Key)
+            {
+                float Area = 0.0f;
+                if (Shared != nullptr)
+                {
+                    const FVoxelOwner* Owner = Shared->Find(Key);
+                    Area = Owner != nullptr ? Owner->Area : 0.0f;
+                }
+                else
+                {
+                    const FVoxelCell* Cell = Voxels.Find(Key);
+                    Area = Cell != nullptr ? Cell->Area : 0.0f;
+                }
+                return Math::Clamp(Area / (VoxelSize * VoxelSize), 0.0f, 1.0f);
+            };
 
             const float CornerReach = VoxelSize * kSplatHalfWidth * kSplatTriangleRadius;
 
@@ -226,12 +292,16 @@ namespace Lumina::Import::VoxelFar
             THashSet<uint32> Kept;
             for (uint32 Key : Keys)
             {
-                const FVoxelAccumulator& Acc = *Voxels.Find(Key);
-                const float Coverage = Math::Clamp(Acc.Area / (VoxelSize * VoxelSize), 0.0f, 1.0f);
-                if (VoxelHash(Key) <= Math::Sqrt(Coverage))
+                if (VoxelHash(Key) <= Math::Sqrt(CoverageAt(Key)))
                 {
                     Kept.Add(Key);
                 }
+            }
+
+            THashMap<uint32, float> Burial;
+            if (In.bCullOccluded)
+            {
+                ComputeBurial(Keys, CoverageAt, Burial);
             }
 
             // Splats are opaque and overlap their neighbors, so a voxel kept on all six sides is never seen and draws nothing.
@@ -243,6 +313,30 @@ namespace Lumina::Import::VoxelFar
                     && Kept.Contains(VoxelKey(X, Y, Z - 1u)) && Kept.Contains(VoxelKey(X, Y, Z + 1u));
             };
 
+            // Points away from the coverage around the voxel, which for a crown is out through its skin and for the ground is up.
+            auto OpenSide = [&](uint32 X, uint32 Y, uint32 Z)
+            {
+                FVector3 Outward(0.0f);
+                for (int32 DZ = -1; DZ <= 1; ++DZ)
+                {
+                    for (int32 DY = -1; DY <= 1; ++DY)
+                    {
+                        for (int32 DX = -1; DX <= 1; ++DX)
+                        {
+                            const int32 NX = (int32)X + DX;
+                            const int32 NY = (int32)Y + DY;
+                            const int32 NZ = (int32)Z + DZ;
+                            if ((DX | DY | DZ) == 0 || NX < 0 || NY < 0 || NZ < 0 || NX > 1023 || NY > 1023 || NZ > 1023)
+                            {
+                                continue;
+                            }
+                            Outward -= FVector3((float)DX, (float)DY, (float)DZ) * CoverageAt(VoxelKey((uint32)NX, (uint32)NY, (uint32)NZ));
+                        }
+                    }
+                }
+                return Math::Dot(Outward, Outward) > 1e-6f ? Math::Normalize(Outward) : FVector3(0.0f, 1.0f, 0.0f);
+            };
+
             for (uint32 Key : Keys)
             {
                 uint32 X, Y, Z;
@@ -251,17 +345,43 @@ namespace Lumina::Import::VoxelFar
                 {
                     continue;
                 }
+                if (In.bCullOccluded && *Burial.Find(Key) >= kOccludingCoverage)
+                {
+                    continue;
+                }
 
-                const FVoxelAccumulator& Acc = *Voxels.Find(Key);
+                // One splat per shared voxel, since two at one center with different spins speckle the loser through the winner.
+                const FVoxelCell* Found = Voxels.Find(Key);
+                if (Found == nullptr || (Shared != nullptr && Shared->Find(Key)->Owner != SurfaceIndex))
+                {
+                    continue;
+                }
+                const FVoxelCell& Acc = *Found;
                 const FVector3 Center = In.GridMin + FVector3((float)X + 0.5f, (float)Y + 0.5f, (float)Z + 0.5f) * VoxelSize;
                 // A plane facing one way only would be culled from behind, so canceling sides keep the largest triangle's plane and face both ways.
-                const bool bTwoSided = Math::Length(Acc.NormalSum) < kMinNormalCoherence * Acc.Area;
-                const FVector3 FrontNormal = bTwoSided ? Acc.BestNormal : Math::Normalize(Acc.NormalSum);
+                const bool bCanceling = Math::Length(Acc.NormalSum) < kMinNormalCoherence * Acc.Area;
+                const bool bOpenNeeded = In.bCanopyNormals || (bCanceling && In.bFaceOutward);
+                const FVector3 Open = bOpenNeeded ? OpenSide(X, Y, Z) : FVector3(0.0f, 1.0f, 0.0f);
+                const FVector3 Coherent = bCanceling ? Acc.BestNormal : Math::Normalize(Acc.NormalSum);
+                const bool bTwoSided = bCanceling && !In.bFaceOutward;
+                const FVector3 FrontNormal = bCanceling && In.bFaceOutward && Math::Dot(Coherent, Open) < 0.0f ? -Coherent : Coherent;
 
+                FVector3 CanopyNormal(0.0f);
+                if (In.bCanopyNormals)
+                {
+                    const FVector3 Surface = Math::Dot(FrontNormal, Open) < 0.0f ? -FrontNormal : FrontNormal;
+                    CanopyNormal = Math::Normalize(Math::Mix(Surface, Open, kCanopyNormalWeight));
+                }
+
+                // Turned by a hash of the voxel, since splats that all point one way line up into stripes across a canopy.
+                const float Spin = VoxelHash(Key ^ 0x5BD1E995u) * Math::TwoPi<float>();
                 auto EmitSplat = [&](const FVector3& Normal)
                 {
+                    const FVector3 Shading = In.bCanopyNormals ? CanopyNormal : Normal;
                     const FVector3 Helper    = Math::Abs(Normal.y) < 0.9f ? FVector3(0.0f, 1.0f, 0.0f) : FVector3(1.0f, 0.0f, 0.0f);
-                    const FVector3 Tangent   = Math::Normalize(Math::Cross(Helper, Normal));
+                    const FVector3 Axis0     = Math::Normalize(Math::Cross(Helper, Normal));
+                    const FVector3 Axis1     = Math::Cross(Normal, Axis0);
+                    const FVector3 Tangent   = Axis0 * Math::Cos(Spin) + Axis1 * Math::Sin(Spin);
                     const FVector3 Bitangent = Math::Cross(Normal, Tangent);
 
                     // One equilateral triangle, since a splat is a blob and the raster pays per triangle.
@@ -283,9 +403,9 @@ namespace Lumina::Import::VoxelFar
                         const int32 First = Out.Attributes.Num();
                         Out.Attributes.SetNum(First + (int32)In.AttributeCount);
                         float* Attr = &Out.Attributes[First];
-                        Attr[0] = Normal.x;
-                        Attr[1] = Normal.y;
-                        Attr[2] = Normal.z;
+                        Attr[0] = Shading.x;
+                        Attr[1] = Shading.y;
+                        Attr[2] = Shading.z;
                         Attr[3] = UV.x;
                         Attr[4] = UV.y;
                     }
@@ -303,33 +423,97 @@ namespace Lumina::Import::VoxelFar
         }
     }
 
-    void Build(const FBuildInput& In, TVector<FLevel>& OutLevels)
+    void FVoxelCell::Merge(const FVoxelCell& Other)
+    {
+        NormalSum += Other.NormalSum;
+        Area      += Other.Area;
+        if (Other.BestArea > BestArea)
+        {
+            UVMin      = Other.UVMin;
+            UVMax      = Other.UVMax;
+            BestNormal = Other.BestNormal;
+            BestArea   = Other.BestArea;
+            Source     = Other.Source;
+        }
+    }
+
+    void Voxelize(const FBuildInput& In, FSurfaceVoxels& Out)
     {
         LUMINA_PROFILE_SCOPE();
         LUMINA_MEMORY_SCOPE("Meshes");
 
-        OutLevels.Reset();
+        Out.Levels.Reset();
         if (In.Indices.Num() < 3 || In.Positions.IsEmpty() || In.AttributeCount < 5u || !(In.VoxelSize > 0.0f) || In.Resolution < kMinResolution)
         {
             return;
         }
 
-        THashMap<uint32, FVoxelAccumulator> Voxels;
+        THashMap<uint32, FVoxelCell> Voxels;
         VoxelizeLevel(In, In.Resolution, In.VoxelSize, Voxels);
         if (Voxels.IsEmpty())
         {
             return;
         }
 
-        THashMap<uint32, FVoxelAccumulator> Coarser;
-        float VoxelSize = In.VoxelSize;
-        for (uint32 Resolution = In.Resolution; Resolution >= kMinResolution; Resolution /= 2u, VoxelSize *= 2.0f)
+        for (uint32 Resolution = In.Resolution; Resolution >= kMinResolution; Resolution /= 2u)
         {
-            EmitLevel(In, Voxels, VoxelSize, OutLevels.EmplaceGetRef());
-
-            Coarser.Reset();
-            CoarsenLevel(Voxels, Resolution / 2u, Coarser);
-            ElementOps::SwapElements(Voxels, Coarser);
+            THashMap<uint32, FVoxelCell> Coarser;
+            if (Resolution / 2u >= kMinResolution)
+            {
+                CoarsenLevel(Voxels, Resolution / 2u, Coarser);
+            }
+            Out.Levels.Add(Move(Voxels));
+            Voxels = Move(Coarser);
         }
+    }
+
+    void Share(TSpan<const FSurfaceVoxels> Surfaces, FSharedVoxels& Out)
+    {
+        LUMINA_PROFILE_SCOPE();
+        LUMINA_MEMORY_SCOPE("Meshes");
+
+        Out.Levels.Reset();
+        for (uint32 Surface = 0; Surface < (uint32)Surfaces.Num(); ++Surface)
+        {
+            const FSurfaceVoxels& Voxels = Surfaces[Surface];
+            if (Out.Levels.Num() < Voxels.Levels.Num())
+            {
+                Out.Levels.SetNum(Voxels.Levels.Num());
+            }
+            for (int32 Level = 0; Level < Voxels.Levels.Num(); ++Level)
+            {
+                for (const auto& [Key, Cell] : Voxels.Levels[Level])
+                {
+                    FVoxelOwner& Owner = Out.Levels[Level].FindOrAdd(Key);
+                    Owner.Area += Cell.Area;
+                    if (Cell.Area > Owner.OwnerArea)
+                    {
+                        Owner.OwnerArea = Cell.Area;
+                        Owner.Owner     = Surface;
+                    }
+                }
+            }
+        }
+    }
+
+    void Emit(const FBuildInput& In, const FSurfaceVoxels& Voxels, const FSharedVoxels* Shared, uint32 SurfaceIndex, TVector<FLevel>& OutLevels)
+    {
+        LUMINA_PROFILE_SCOPE();
+        LUMINA_MEMORY_SCOPE("Meshes");
+
+        OutLevels.Reset();
+        float VoxelSize = In.VoxelSize;
+        for (int32 Level = 0; Level < Voxels.Levels.Num(); ++Level, VoxelSize *= 2.0f)
+        {
+            const THashMap<uint32, FVoxelOwner>* SharedLevel = Shared != nullptr && Level < Shared->Levels.Num() ? &Shared->Levels[Level] : nullptr;
+            EmitLevel(In, Voxels.Levels[Level], SharedLevel, SurfaceIndex, VoxelSize, OutLevels.EmplaceGetRef());
+        }
+    }
+
+    void Build(const FBuildInput& In, TVector<FLevel>& OutLevels)
+    {
+        FSurfaceVoxels Voxels;
+        Voxelize(In, Voxels);
+        Emit(In, Voxels, nullptr, 0u, OutLevels);
     }
 }

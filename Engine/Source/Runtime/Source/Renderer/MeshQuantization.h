@@ -2,6 +2,7 @@
 
 #include "Lumina.h"
 #include "Renderer/MeshData.h"
+#include "Core/Math/Half.h"
 #include "Renderer/Vertex.h"
 #include "Shared/SharedConstants.h"
 #include "meshoptimizer.h"
@@ -112,9 +113,25 @@ namespace Lumina
         }
     }
 
-    // Where a static meshlet's Local-th vertex sits in the mesh's shared vertex streams.
+    // Rounded up, so a decoded splat is never smaller than the one that closed the gaps around it.
+    FORCEINLINE uint32 EncodeSplatReach(float Reach)
+    {
+        const uint32 Half = (uint32)Math::Detail::FloatToHalf(Math::Max(Reach, 0.0f)) & 0x7FFFu;
+        return Math::Min((Half + 15u) >> 4u, (1u << MESHLET_SPLAT_REACH_BITS) - 1u);
+    }
+
+    FORCEINLINE float DecodeSplatReach(uint32 Bits)
+    {
+        return Math::Detail::HalfToFloat((uint16)(Bits << (16u - MESHLET_SPLAT_REACH_BITS - 1u)));
+    }
+
+    // Where a static meshlet's Local-th vertex sits in the mesh's shared vertex streams, a compact splat's own vertex for each of its corners.
     FORCEINLINE uint32 GetStaticVertexIndex(const FMeshletData& Data, const FMeshlet& M, uint32 Local)
     {
+        if (M.bCompactSplat)
+        {
+            return M.BaseVertex + Local / 3u;
+        }
         if (M.HasShortVertexRefs())
         {
             const uint32 Word = Data.MeshletVertexRefs[M.VertexOffset + Local / 2u];
@@ -123,11 +140,37 @@ namespace Lumina
         return M.BaseVertex + Data.MeshletVertexRefs[M.VertexOffset + Local];
     }
 
+    // Twin of MakeSplatCorner and SplatCornerPosition in SceneGlobals.slang, so CPU readers rebuild the corners the GPU draws.
+    FORCEINLINE FVector3 GetSplatCornerPosition(const FMeshletData& Data, const FMeshlet& M, uint32 Local)
+    {
+        const uint32   Corner = Local % 3u;
+        const uint32   Vertex = GetStaticVertexIndex(Data, M, Local);
+        const FVector3 Center = DecodeMeshPosition(Data.PositionGrid, Data.VertexPositions[Vertex]);
+        const FVector3 Plane  = UnpackNormal(Data.VertexAttributes[Vertex].Tangent);
+        const FVector3 Helper = Math::Abs(Plane.y) < 0.9f ? FVector3(0.0f, 1.0f, 0.0f) : FVector3(1.0f, 0.0f, 0.0f);
+        const FVector3 Axis0  = Math::Normalize(Math::Cross(Helper, Plane));
+        const FVector3 Axis1  = Math::Cross(Plane, Axis0);
+        uint32 Hash = Vertex * 0x9E3779B1u;
+        Hash ^= Hash >> 15u;
+        Hash *= 0x85EBCA77u;
+        Hash ^= Hash >> 13u;
+        const float    Spin      = (float)(Hash >> 8u) * (Math::TwoPi<float>() / 16777216.0f);
+        const FVector3 Tangent   = Axis0 * Math::Cos(Spin) + Axis1 * Math::Sin(Spin);
+        const FVector3 Bitangent = Math::Cross(Plane, Tangent);
+        constexpr float kHalfSide = 0.8660254f;
+        const FVector3 Offset = Corner == 0u ? Bitangent : (Corner == 1u ? -Tangent * kHalfSide - Bitangent * 0.5f : Tangent * kHalfSide - Bitangent * 0.5f);
+        return Center + Offset * DecodeSplatReach(M.SplatReach);
+    }
+
     FORCEINLINE FVector3 GetMeshletVertexPosition(const FMeshletData& Data, const FMeshlet& M, uint32 Local, bool bSkinned)
     {
         if (bSkinned)
         {
             return DecodeMeshPosition(Data.PositionGrid, Data.MeshletSkinnedVertices[M.VertexOffset + Local].Position);
+        }
+        if (M.bCompactSplat)
+        {
+            return GetSplatCornerPosition(Data, M, Local);
         }
         return DecodeMeshPosition(Data.PositionGrid, Data.VertexPositions[GetStaticVertexIndex(Data, M, Local)]);
     }

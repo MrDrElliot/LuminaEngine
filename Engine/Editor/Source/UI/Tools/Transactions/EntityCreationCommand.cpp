@@ -32,7 +32,7 @@ namespace Lumina
 
         // Excluded for the same reason the registry snapshot excludes them, they are not the document.
         Out.Reserve(Registry.NumEntities());
-        Registry.ForEachEntityExcept<FEditorComponent>([&](ECS::FEntity E) { Out.Add(E); });
+        Registry.ForEachEntityExcept<FEditorComponent, FTransientEntityTag>([&](ECS::FEntity E) { Out.Add(E); });
 
         // Sorted so Finalize's diff is a binary search, and handles only with no component data touched.
         Algo::Sort(Out);

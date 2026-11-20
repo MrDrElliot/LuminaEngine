@@ -27,7 +27,6 @@
 #define VERIFY_SSBO_ALIGNMENT(Type) \
 static_assert(sizeof(Type) % 16 == 0, #Type " must be 16-byte aligned")
 
-constexpr int NumCascades = NUM_CASCADES;
 constexpr int ClusterGridSizeZ = 24;
 
 // Screen pixels per cluster edge, fine enough that a cluster's list holds the lights its pixels can actually reach.
@@ -38,14 +37,6 @@ constexpr int MaxClusters = 64 * 32 * ClusterGridSizeZ;
 constexpr int MaxClusterCullBlocks = 512;
 
 static_assert(ClusterGridSizeZ % CLUSTER_CULL_BLOCK_Z == 0, "Z slices must fill whole cull blocks");
-
-// Cascades sit side by side in one row, so the atlas holds only the ones the sun uses.
-constexpr int GCSMCascadeSize  = 2048;
-constexpr int GCSMAtlasHeight  = GCSMCascadeSize;
-constexpr int GCSMCascadeOriginX(int Cascade) { return Cascade * GCSMCascadeSize; }
-constexpr int GCSMCascadeOriginY(int /*Cascade*/) { return 0; }
-// Four in a row is 8192 wide, inside the 16384 every mesh-shader GPU allows.
-constexpr int GCSMAtlasWidth(int CascadeCount) { return (CascadeCount < 1 ? 1 : CascadeCount) * GCSMCascadeSize; }
 
 constexpr int GShadowAtlasResolution    = 4096;
 
@@ -114,7 +105,7 @@ namespace Lumina
         UV                  = 10,
         LightComplexity     = 11,
         ClusterGrid         = 12,
-        ShadowCascades      = 13,
+        ShadowLevels        = 13,
         SunFarShadow        = 14,
         GTAO                = 15,
         MaterialID          = 16,
@@ -153,7 +144,7 @@ namespace Lumina
             case ERenderSceneDebugFlags::UV:                return "UV";
             case ERenderSceneDebugFlags::LightComplexity:   return "Light Complexity";
             case ERenderSceneDebugFlags::ClusterGrid:       return "Light Clusters";
-            case ERenderSceneDebugFlags::ShadowCascades:    return "Shadow Cascades";
+            case ERenderSceneDebugFlags::ShadowLevels:      return "Shadow Levels";
             case ERenderSceneDebugFlags::SunFarShadow:      return "Sun Far Shadow";
             case ERenderSceneDebugFlags::GTAO:              return "GTAO";
             case ERenderSceneDebugFlags::MaterialID:        return "Material ID";
@@ -212,7 +203,6 @@ namespace Lumina
         ShadowOnly              = BIT(10),  // survives shadow views only; every camera view rejects it
         NoDecals                = BIT(11),  // decals pass over it, for things that move through them
         NoContactShadows        = BIT(12),  // thin geometry whose screen-space contact march only returns noise
-        CastFarShadow           = BIT(13),  // also drawn into the sun's far cascade, which every other caster skips
         HasDistanceField        = BIT(14),  // the mesh carries a distance field the sun's far shadows can trace
         Foliage                 = BIT(15),  // scattered grass and painted foliage, which rain splashes pass through
     };
@@ -728,21 +718,22 @@ namespace Lumina
         FVector4 Color;
     };
 
-    // Sun cascade tuning forwarded to the lit shaders, mirrored by FSunShadowParams in Common.slang.
+    // Sun shadow tuning forwarded to the lit shaders, mirrored by FSunShadowParams in Common.slang.
     struct FSunShadowParams
     {
         float  NormalBias = 1.0f;
         float  DepthBias = 0.0f;
-        float  FilterRadiusTexels = 2.0f;   // in cascade-0 texels
-        float  CascadeBlend = 0.0f;
-        float  DistanceFade = 0.1f;         // fraction of the last cascade the shadow fades out over
-        uint32 FilterTaps = 4;
-        uint32 ActiveCascadeCount = NumCascades;
-        uint32 bFarCascade = 0;             // 1 when the last active cascade is the far one
+        float  FilterRadiusTexels = 1.0f;   // in virtual shadow texels
+        float  DistanceFade = 0.1f;         // fraction of the shadowed range the shadow fades out over at its end
         float  TanSunRadius = 0.0f;         // tangent of the sun's angular radius, which sets the penumbra per meter of gap
-        uint32 BlockerTaps = 0;             // near cascade blocker search taps, 0 keeps the fixed-width kernel
-        float  MinFilterRadiusTexels = 0.0f; // narrowest contact-hardened kernel, in cascade-0 texels
-        uint32 _Pad = 0;
+        float  ShadowFar = 0.0f;            // view distance where sun shadows end
+        uint32 FirstLevel = 0;
+        uint32 LastLevel = 0;
+        // A pixel at distance d takes level ceil(log2(d * this)), so its shadow texel matches its own footprint.
+        float  FootprintScale = 0.0f;
+        uint32 Frame = 0;
+        uint32 _Pad0 = 0;
+        uint32 _Pad1 = 0;
     };
 
     static_assert(sizeof(FSunShadowParams) == 48, "FSunShadowParams layout must match FSunShadowParams in Common.slang");
@@ -758,14 +749,6 @@ namespace Lumina
         FVector3           SunDirection{};   // to-light for surface lighting and shadows (== Lights[0].Direction)
         uint32              bHasSun{};
 
-        FVector4           CascadeSplits{};
-        // Half-extent of each CSM cascade; used to convert shadow texel to world length.
-        FVector4           CascadeRadii{};
-        // Per-cascade shadow-map resolution; xyzw = cascades 0..3.
-        FVector4           CascadeResolutions{};
-        // Ortho depth range of each cascade, which turns a shadow-map NDC z delta into world units.
-        FVector4           CascadeDepthRanges{};
-
         FSunShadowParams   SunShadow{};
 
         FVector4           AmbientLight{};
@@ -779,11 +762,11 @@ namespace Lumina
         uint32                          _LightFunctionPad[3]{};
     };
 
-    static_assert(sizeof(FSceneLightData) == 224, "FSceneLightData layout must match FLightData in Common.slang");
+    static_assert(sizeof(FSceneLightData) == 160, "FSceneLightData layout must match FLightData in Common.slang");
     static_assert(offsetof(FSceneLightData, SunDirection) == 16, "SunDirection must sit at 16, matching the scalar layout in Common.slang");
     VERIFY_SSBO_ALIGNMENT(FSceneLightData);
     // Relaxed block layout rejects a vector straddling 16, so the spans must follow the last one.
-    static_assert(offsetof(FSceneLightData, Lights) == 160, "Lights must sit at 160");
+    static_assert(offsetof(FSceneLightData, Lights) == 96, "Lights must sit at 96");
     
     struct FLineBatch
     {
@@ -804,7 +787,7 @@ namespace Lumina
     struct FGTAOSettings
     {
         uint32 AOTextureIndex = Constants::kIndexNoneU32;
-        // Sun occlusion traced past the cascades, read pixel for pixel by the opaque lighting.
+        // Sun occlusion traced past the virtual shadow, read pixel for pixel by the opaque lighting.
         uint32 SunShadowMaskIndex = Constants::kIndexNoneU32;
         // Half resolution bounced light in rgb and the hemisphere fraction it covers in a, set only on frames that traced it.
         uint32 IndirectDiffuseIndex = Constants::kIndexNoneU32;
@@ -1162,7 +1145,7 @@ namespace Lumina
     VERIFY_SSBO_ALIGNMENT(FInstanceCullEntry);
 
     // One instance cull workgroup, so a block the camera is too far from is skipped by the whole group at once.
-    constexpr uint32 kInstanceCullBlockSize = 64;
+    constexpr uint32 kInstanceCullBlockSize = INSTANCE_CULL_BLOCK_SIZE;
 
     // Conservative distance bounds of kInstanceCullBlockSize consecutive retained slots.
     struct alignas(16) FInstanceBlockBounds
@@ -1188,10 +1171,13 @@ namespace Lumina
         uint32      MeshletVisibilityBase;
         // Read only when LODAndThinning carries INSTANCE_CUSTOM_LAYERS_BIT, so a zeroed payload still reads as Default.
         uint32      RenderLayers;
+        // Past this camera distance the material's world position offset is skipped in every pass, 0 never.
+        float       WPODisableDistance;
+        uint32      Reserved[3];
     };
     // Word 0 is never handed out, so a zeroed payload reads as an instance with no meshlet visibility.
     constexpr uint32 kNoMeshletVisibility = 0u;
-    static_assert(sizeof(FInstanceStatic) == 32, "FInstanceStatic layout must match shader");
+    static_assert(sizeof(FInstanceStatic) == 48, "FInstanceStatic layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FInstanceStatic);
 
     struct FGPUInstance
@@ -1253,6 +1239,8 @@ namespace Lumina
 
 
     constexpr uint32 kNoPreSkinBase = Constants::kIndexNoneU32;
+    // Set on a base that names another instance's skinned index, whose slice holds the same skinned vertices. Mirrors Common.slang.
+    constexpr uint32 kPreSkinShareBit = 0x80000000u;
     // No per-frame skinned meshlet bounds, so the cull falls back to bind-pose spheres and distrusts them.
     constexpr uint32 kNoSkinnedBounds = Constants::kIndexNoneU32;
 
@@ -1288,13 +1276,14 @@ namespace Lumina
 
     static_assert(MESHLET_MAX_LODS < INSTANCE_FORCED_LOD_MASK, "A forced LOD plus one must fit INSTANCE_FORCED_LOD_MASK");
 
-    // The forced LOD plus one in the low bits (0 is automatic), the custom layer bit, the custom depth word, and the foliage thinning start distance as a half float in the high half.
+    // The forced LOD plus one in the low bits (0 is automatic), the custom layer and shadow offset bits, the custom depth word, and the foliage thinning start distance as a half float in the high half.
     inline uint32 PackLODAndThinning(int32 ForcedLODIndex, float ThinningStartDistance, uint32 RenderLayers = RENDER_LAYER_DEFAULT_MASK,
-                                     uint32 CustomDepthStencil = 0u)
+                                     uint32 CustomDepthStencil = 0u, bool bShadowWPO = true, bool bShadowCacheable = false)
     {
         const uint32 LOD    = (uint32)Math::Clamp(ForcedLODIndex + 1, 0, (int32)INSTANCE_FORCED_LOD_MASK);
         const uint32 Layers = RenderLayers != RENDER_LAYER_DEFAULT_MASK ? INSTANCE_CUSTOM_LAYERS_BIT : 0u;
-        return LOD | Layers | (CustomDepthStencil << INSTANCE_CUSTOM_DEPTH_SHIFT)
+        const uint32 Shadow = (bShadowWPO ? 0u : INSTANCE_NO_SHADOW_WPO_BIT) | (bShadowCacheable ? INSTANCE_SHADOW_CACHEABLE_BIT : 0u);
+        return LOD | Layers | Shadow | (CustomDepthStencil << INSTANCE_CUSTOM_DEPTH_SHIFT)
              | ((uint32)FHalf(Math::Clamp(ThinningStartDistance, 0.0f, 65000.0f)).Bits << 16);
     }
 
@@ -1334,16 +1323,6 @@ namespace Lumina
         FGPUFrustum Frustum;
         FGPUFrustum ShadowFrustum;
 
-        FGPUFrustum CascadeFrustum[NumCascades];
-
-        FMatrix4 CascadeHZBViewProjection[NumCascades];
-        // xy = pyramid-UV offset of the cascade's tile, zw = its UV scale.
-        FVector4 CascadeHZBTile[NumCascades];
-        FVector4 CascadeHZBNdcScale[NumCascades];
-
-        FMatrix4 CascadeHZBViewProjectionMid[NumCascades];
-        FVector4 CascadeHZBNdcScaleMid[NumCascades];
-
         uint32 bFrustumCull;
         uint32 bOcclusionCull;
         uint32 InstanceNum;
@@ -1353,7 +1332,6 @@ namespace Lumina
         float PyramidHeight;
 
         float  ShadowMaxDistance;
-        uint32 bShadowOcclusionCull;
 
         uint32 MeshletDrawTag;
         uint32 DebugMode;
@@ -1361,12 +1339,6 @@ namespace Lumina
         // Bindless ResourceID of the depth pyramid; HZB tap goes through uBindlessTex2D.
         uint32 DepthPyramidIndex;
 
-        uint32 CascadePyramidIndex;
-        uint32 bCascadeHZBValid;
-        uint32 bCascadeHZBMidValid;
-        float  CascadePyramidWidth;
-        float  CascadePyramidHeight;
-        uint32 CascadePyramidMipCount;
         uint32 BoneNum;
 
         // The cull camera clip range, so the sphere projection and the Hi-Z tap agree with CullCameraProjection.
@@ -1378,6 +1350,9 @@ namespace Lumina
         uint32 VirtualGeometryFlags = 0;
         // Projected diameter in pixels under which an instance leaves the meshlet path for its far proxy.
         float  ProxyTransitionPixels = 0.0f;
+        uint32 _Pad0 = 0;
+        uint32 _Pad1 = 0;
+        uint32 _Pad2 = 0;
     };
 
     VERIFY_SSBO_ALIGNMENT(FCullData);
@@ -1395,11 +1370,12 @@ namespace Lumina
             CastShadowOnly  = BIT(4),
             SunAligned      = BIT(5),
             MeshletHiZ      = BIT(6),
-            Cascade         = BIT(7),
-            FarCascade      = BIT(8),
             OrthographicLOD = BIT(9),
             NoFoliage       = BIT(10),
             CustomDepthOnly = BIT(11),
+            ShadowCacheStatic  = BIT(12),
+            ShadowCacheDynamic = BIT(13),
+            VirtualShadow      = BIT(14),
         };
     }
 
@@ -1418,7 +1394,7 @@ namespace Lumina
     {
         FVector4   FrustumPlanes[6];           // 96 B
         FVector4   ViewOriginAndFlags;         // 16 B, xyz is origin and w is asfloat(flags)
-        uint32      CascadeIndex;               // Cascade this view rasterizes; only read when Flags has Cascade
+        uint32      ShadowLevel;                // Virtual shadow level this view rasterizes; only read when Flags has VirtualShadow
         float       MinBoundsDiameter;          // Reject bounds thinner than this (world units); 0 = off
         float       LODErrorScale;              // MakeLODErrorScale; 0 keeps every instance at LOD 0
         uint32      LayerMask;                  // Render layers the view draws
@@ -1526,6 +1502,34 @@ namespace Lumina
         EGPUSceneSettingFlags Flags;
     };
 
+    // Defined in TerrainRenderTypes.h, which includes this header.
+    struct FTerrainRecord;
+
+    // One level of the sun's virtual shadow, mirrored by FVirtualShadowLevel in VirtualShadow.slang.
+    struct FVirtualShadowLevelGPU
+    {
+        FMatrix4    ViewProjection = FMatrix4(1.0f);
+        // The global page under the level's top left virtual page, so a page's identity survives the level scrolling.
+        FIntVector2 PageOrigin = FIntVector2(0);
+        float       TexelWorld = 0.0f;
+        float       DepthRange = 0.0f;
+        uint32      bInvalidate = 0;
+        uint32      bActive = 0;
+        uint32      _Pad0 = 0;
+        uint32      _Pad1 = 0;
+    };
+    static_assert(sizeof(FVirtualShadowLevelGPU) == 96, "FVirtualShadowLevelGPU must match FVirtualShadowLevel in VirtualShadow.slang");
+
+    // One virtual page, mirrored by FVirtualShadowPage in VirtualShadow.slang.
+    struct FVirtualShadowPageGPU
+    {
+        uint32 Entry;
+        uint32 Tag;
+        uint32 LastRequested;
+        uint32 State;
+    };
+    static_assert(sizeof(FVirtualShadowPageGPU) == 16, "FVirtualShadowPageGPU must match FVirtualShadowPage in VirtualShadow.slang");
+
     struct FSceneRoot
     {
         RHI::TGPUSpan<FBoneTransform>       Bones;
@@ -1559,6 +1563,8 @@ namespace Lumina
         RHI::TGPUSpan<FMeshletCone>         SkinnedMeshletCones;
         // Parallel to PreSkinnedVertices, and empty when no view wants motion vectors.
         RHI::TGPUSpan<FPrevSkinnedPosition> PreSkinnedPrevPositions;
+        // Read by the draw path to resolve an instance that shares another's pre-skin slice.
+        RHI::TGPUSpan<FSkinnedFrameData>    SkinnedFrameData;
 
         // The retained slot arrays, which the far proxy pass draws from directly since a proxy has no compacted instance.
         RHI::TGPUSpan<FTransform3x4>        RetainedTransforms;
@@ -1566,17 +1572,30 @@ namespace Lumina
         RHI::TGPUSpan<FInstanceProxy>       RetainedProxies;
         // Retained slots CullInstances turned into proxies this frame, in proxy draw order.
         RHI::TGPUSpan<uint32>               ProxyList;
+        // One bit per retained slot the sun's shadow cache holds, empty while the cache is off.
+        RHI::TGPUSpan<uint32>               ShadowCacheBits;
+        // Every terrain the frame draws, in the order their VisID slot ranges follow.
+        RHI::TGPUSpan<FTerrainRecord>       Terrains;
+        // The sun's virtual shadow pages, level by level, each level's mask mips, and the levels themselves.
+        RHI::TGPUSpan<FVirtualShadowPageGPU>  VirtualShadowPages;
+        RHI::TGPUSpan<uint32>                 VirtualShadowMasks;
+        RHI::TGPUSpan<FVirtualShadowLevelGPU> VirtualShadowLevels;
 
         uint32 BRDFLutIndex          = 0;
         uint32 SkyIrradianceIndex    = 0;
         uint32 SkyPrefilterIndex     = 0;
-        uint32 ShadowCascadeIndex    = 0;  // bindless 2D SRV (cascade atlas)
         uint32 ShadowAtlasIndex      = 0;  // bindless 2D SRV (spot/point atlas)
         uint32 SkyCubeIndex          = 0;  // bindless cube SRV (full-res sky; sharp near-mirror reflections)
         uint32 ProbeCubeArrayIndex   = 0;
-        uint32 _Pad0                 = 0;
+        uint32 VirtualShadowPoolIndex   = 0;
+        uint32 VirtualShadowPoolRWIndex = 0;
+        // Page rows per layer of the pool, with the dynamic layer below the static one.
+        uint32 VirtualShadowPoolRows    = 0;
+        uint32 _Pad0                    = 0;
+        uint32 _Pad1                    = 0;
+        uint32 _Pad2                    = 0;
     };
-    static_assert(sizeof(FSceneRoot) == 464, "FSceneRoot must match SceneGlobals.slang");
+    static_assert(sizeof(FSceneRoot) == 576, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {

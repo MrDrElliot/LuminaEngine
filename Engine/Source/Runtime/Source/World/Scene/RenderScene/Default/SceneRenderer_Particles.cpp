@@ -17,6 +17,8 @@ namespace Lumina
     static constexpr uint64 ParticleBlockAlign      = 64;
     static constexpr uint32 ParticleSetupsPerFrame  = 2048;
     static constexpr uint32 ParticleMaxDispatchGroups = 65535;
+    // A sub-emitter batches one wave after its parent, so chains deeper than this run on their own.
+    static constexpr int32  ParticleMaxSimWaves = 4;
     // Bytes of grid copied back to the CPU in one frame, past which the remaining emitters wait for a later frame.
     static constexpr uint64 ParticleGridReadbackBudget = 32ull << 20;
 
@@ -107,7 +109,7 @@ namespace Lumina
         uint32   bRandomStartFrame;
         uint32   bShadowPass;
         int32    ShadowDataIndex;
-        uint32   ShadowCascade;
+        uint32   ShadowLevel;
         float    CameraFadeDistance;
         float    Pad0;
     };
@@ -149,6 +151,25 @@ namespace Lumina
     {
         const float Sum = Math::Length(FVector3(WorldMat[0])) + Math::Length(FVector3(WorldMat[1])) + Math::Length(FVector3(WorldMat[2]));
         return Math::Max(Sum / 3.0f, 1e-4f);
+    }
+
+    // The batched wave an emitter's step may join, or -1 when it has to run on its own after every wave.
+    static int32 ParticleSimWave(const FParticleExtract& Item, const FParticleGPUState* Parent)
+    {
+        if (Item.SourceEmitterIndex < 0)
+        {
+            return 0;
+        }
+        // A parent planned after its child still holds last frame's state, so the child cannot know where the parent lands.
+        if (Parent == nullptr || Item.SourceEmitterIndex >= Item.EmitterIndex)
+        {
+            return -1;
+        }
+        if (!Parent->bSimulatedThisFrame)
+        {
+            return 0;
+        }
+        return Parent->BatchWave >= 0 ? Parent->BatchWave + 1 : -1;
     }
 
     static uint32 ParticleVertsPerParticle(const FParticleExtract& Item)
@@ -445,6 +466,7 @@ namespace Lumina
         bool                        bHasNeighbors = false;
         uint32                      GridFlags     = 0u;
         bool                        bBatched      = false;
+        uint8                       Wave          = 0;
 
         // Shared by every step this frame, so the arrays cross to the GPU once.
         RHI::TGPUSpan<FVector4>     ArrayDataSpan;
@@ -478,6 +500,7 @@ namespace Lumina
                     .ClearAddress  = bFirstChunk ? Clear.Gpu : 0,
                     .ClearBytes    = bFirstChunk ? Clear.Size : 0,
                     .bBarrierAfter = bBarrierAfter && FirstGroup + ParticleMaxDispatchGroups >= Groups,
+                    .Wave          = Wave,
                 });
             }
         }
@@ -921,6 +944,7 @@ namespace Lumina
 
         // An emitter that reaches none of the dispatches below is fully dead, and draws nothing.
         State.bSimulatedThisFrame = false;
+        State.BatchWave = -1;
 
         if (IsParticleEmitterCulled(Item, false) || !EnsureParticleBuffers(CL, Item, State))
         {
@@ -1001,8 +1025,10 @@ namespace Lumina
         E.PlanTiming(Sim.DeltaTime);
         E.PlanEmitterMotion(Sim.DeltaTime);
 
-        // A later step reads what the previous one wrote, and a sub-emitter reads its parent's events, so both need barriers.
-        E.bBatched = E.TotalSteps == 1u && Item.SourceEmitterIndex < 0 && !E.bHasGrid && !E.bHasNeighbors && ParticleCounterArena;
+        // A later step reads what the previous one wrote, so only a single step batches. A sub-emitter reads its parent's events, so it goes one wave after a parent that ran this frame.
+        const int32 Wave = ParticleSimWave(Item, E.Parent);
+        E.bBatched = Wave >= 0 && Wave < ParticleMaxSimWaves && E.TotalSteps == 1u && !E.bHasGrid && !E.bHasNeighbors && ParticleCounterArena;
+        E.Wave = E.bBatched ? (uint8)Wave : 0u;
         E.PlannedSteps = E.bBatched ? &ParticleBatchedSteps : &ParticleSerialSteps;
         State->FrameSpawnCounter = E.bBatched
             ? ParticleCounterArena.Gpu + (uint64)ParticleCounterSlotsUsed++ * ParticleCounterBytes
@@ -1021,6 +1047,7 @@ namespace Lumina
         {
             PlanParticleSimStep(E, Sim, StepIndex);
         }
+        State->BatchWave = E.bBatched && State->bSimulatedThisFrame ? (int8)E.Wave : (int8)-1;
 
         QueueParticleEmitterOutputs(E, Sim);
     }
@@ -1211,14 +1238,22 @@ namespace Lumina
             }
             ClearsToCompute();
 
-            Algo::Sort(ParticleBatchedSteps, [](const FParticleSimStep& A, const FParticleSimStep& B) { return A.Pipeline.Handle < B.Pipeline.Handle; });
+            Algo::Sort(ParticleBatchedSteps, [](const FParticleSimStep& A, const FParticleSimStep& B)
+            {
+                return A.Wave != B.Wave ? A.Wave < B.Wave : A.Pipeline.Handle < B.Pipeline.Handle;
+            });
 
             const uint32 NumBatched = (uint32)ParticleBatchedSteps.Num();
             for (uint32 RunStart = 0u; RunStart < NumBatched;)
             {
                 const RHI::FPipelineH Pipeline = ParticleBatchedSteps[RunStart].Pipeline;
+                const uint8 Wave = ParticleBatchedSteps[RunStart].Wave;
+                if (RunStart > 0u && ParticleBatchedSteps[RunStart - 1u].Wave != Wave)
+                {
+                    ComputeToNext();
+                }
                 uint32 RunEnd = RunStart + 1u;
-                while (RunEnd < NumBatched && ParticleBatchedSteps[RunEnd].Pipeline == Pipeline)
+                while (RunEnd < NumBatched && ParticleBatchedSteps[RunEnd].Pipeline == Pipeline && ParticleBatchedSteps[RunEnd].Wave == Wave)
                 {
                     ++RunEnd;
                 }
@@ -1952,13 +1987,13 @@ namespace Lumina
         Barriers::RasterToRead(CL);
     }
 
-    void FDefaultSceneRenderer::ParticleShadowCasters(RHI::FCmdListH CL, int32 SunShadowDataIndex)
+    void FDefaultSceneRenderer::ParticleShadowCasters(RHI::FCmdListH CL, int32 SunShadowDataIndex, uint32 FirstLevel, uint32 LastLevel)
     {
         const FFrameData& Frame = *RenderFrame;
-        const uint32 NumCascades = Frame.Views.NumNearCascadeViews;
+        const uint32 NumLevels = LastLevel >= FirstLevel ? LastLevel - FirstLevel + 1u : 0u;
 
         static const FShaderH ShadowPixelShader = FShaderLibrary::Get("ParticleShadowPixel.slang");
-        if (!ShadowPixelShader || NumCascades == 0u)
+        if (!ShadowPixelShader || NumLevels == 0u)
         {
             return;
         }
@@ -1976,7 +2011,7 @@ namespace Lumina
                 continue;
             }
 
-            // The cascades render before this frame's simulation, so they show the particles as last simulated.
+            // The shadow levels render before this frame's simulation, so they show the particles as last simulated.
             auto ParticleStateIt = ParticleGPUStates.Find(Item.Entity);
             if (ParticleStateIt == nullptr || Item.EmitterIndex >= ParticleStateIt->Num())
             {
@@ -1994,7 +2029,7 @@ namespace Lumina
                 FGraphicsPipelineKey Key;
                 Key.VS          = VS;
                 Key.PS          = ShadowPixelShader;
-                Key.DepthFormat = EFormat::D32;
+                Key.DepthFormat = EFormat::UNKNOWN;
                 LastPipeline    = GetOrCreatePipeline(Key);
                 LastVS          = VS;
             }
@@ -2002,7 +2037,7 @@ namespace Lumina
             FParticlePushConstants PC = MakeParticlePushConstants(Item, State, false);
             PC.bShadowPass     = 1u;
             PC.ShadowDataIndex = SunShadowDataIndex;
-            PC.ShadowCascade   = 0u;
+            PC.ShadowLevel     = FirstLevel;
             AppendBytes(ParticleDrawConstants, PC);
             ParticleShadowVertexCounts.Add(PC.VertsPerParticle * State.AllocatedMax);
             ParticleDraws.Emplace(LastPipeline, false);
@@ -2014,32 +2049,30 @@ namespace Lumina
             return;
         }
 
-        // One upload holds every cascade's copy, cascade-major, so each draw points at its own entry.
+        // One upload holds every level's copy, level-major, so each draw points at its own entry.
         constexpr int32 PCBytes = (int32)sizeof(FParticlePushConstants);
-        const int32 CascadeBytes = (int32)NumEmitters * PCBytes;
-        ParticleDrawConstants.SetNum(CascadeBytes * (int32)NumCascades);
-        for (uint32 Cascade = 1; Cascade < NumCascades; ++Cascade)
+        const int32 LevelBytes = (int32)NumEmitters * PCBytes;
+        ParticleDrawConstants.SetNum(LevelBytes * (int32)NumLevels);
+        for (uint32 Level = 1; Level < NumLevels; ++Level)
         {
-            uint8* CascadeConstants = ParticleDrawConstants.GetData() + (int32)Cascade * CascadeBytes;
-            Memory::Memcpy(CascadeConstants, ParticleDrawConstants.GetData(), CascadeBytes);
+            uint8* LevelConstants = ParticleDrawConstants.GetData() + (int32)Level * LevelBytes;
+            Memory::Memcpy(LevelConstants, ParticleDrawConstants.GetData(), LevelBytes);
             for (uint32 Emitter = 0; Emitter < NumEmitters; ++Emitter)
             {
-                reinterpret_cast<FParticlePushConstants*>(CascadeConstants)[Emitter].ShadowCascade = Cascade;
+                reinterpret_cast<FParticlePushConstants*>(LevelConstants)[Emitter].ShadowLevel = FirstLevel + Level;
             }
         }
         const RHI::GPUPtr DrawsBase = RHI::CopyTransientArray(
-            reinterpret_cast<const FParticlePushConstants*>(ParticleDrawConstants.GetData()), NumEmitters * NumCascades).Address;
+            reinterpret_cast<const FParticlePushConstants*>(ParticleDrawConstants.GetData()), NumEmitters * NumLevels).Address;
+
+        // Every level covers the whole virtual map, and the pixel shader keeps only what lands in a requested page.
+        const RHI::FRect Full{ 0, (int32)VSM_VIRTUAL_SIZE, 0, (int32)VSM_VIRTUAL_SIZE };
+        RHI::CmdSetViewport(CL, Full);
+        RHI::CmdSetScissor(CL, Full);
 
         RHI::FPipelineH BoundPipeline;
-        for (uint32 Cascade = 0; Cascade < NumCascades; ++Cascade)
+        for (uint32 Level = 0; Level < NumLevels; ++Level)
         {
-            const int32 TileX = GCSMCascadeOriginX((int)Cascade);
-            const int32 TileY = GCSMCascadeOriginY((int)Cascade);
-            const int32 TileW = GCSMCascadeSize;
-            const RHI::FRect TileRect{ TileX, TileX + TileW, TileY, TileY + TileW };
-            RHI::CmdSetViewport(CL, TileRect);
-            RHI::CmdSetScissor(CL, TileRect);
-
             for (uint32 Emitter = 0; Emitter < NumEmitters; ++Emitter)
             {
                 const FParticleDraw& Draw = ParticleDraws[Emitter];
@@ -2048,7 +2081,7 @@ namespace Lumina
                     RHI::CmdSetPipeline(CL, Draw.Pipeline);
                     BoundPipeline = Draw.Pipeline;
                 }
-                const uint64 Entry = (uint64)Cascade * NumEmitters + Emitter;
+                const uint64 Entry = (uint64)Level * NumEmitters + Emitter;
                 const FParticleDrawBatch Batch{ .Draws = RHI::TGPUSpan<FParticlePushConstants>::FromAddress(
                     DrawsBase + Entry * sizeof(FParticlePushConstants), 1u) };
                 RHI::CmdDraw(CL, MakeArgs(Batch), ParticleShadowVertexCounts[Emitter], 1u, 0u, 0u);

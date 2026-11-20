@@ -531,6 +531,15 @@ namespace Lumina
                     return false;
                 }
             }
+            else if (Meshlet.bCompactSplat)
+            {
+                // One vertex per splat from BaseVertex onward, with no refs to check.
+                if ((uint64)Meshlet.BaseVertex + Meshlet.VertexCount / 3u > NumVertices || Meshlet.VertexCount != Meshlet.TriangleCount * 3u)
+                {
+                    OutReason = "compact splat meshlet past the vertex count";
+                    return false;
+                }
+            }
             else
             {
                 const bool   bShort    = Meshlet.HasShortVertexRefs();

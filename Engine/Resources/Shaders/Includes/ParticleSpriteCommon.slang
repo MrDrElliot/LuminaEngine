@@ -61,9 +61,9 @@ struct FParticlePushConstants
     uint   FlipbookMode;
     float  FlipbookFPS;
     uint   bRandomStartFrame;
-    uint   bShadowPass;            // drawing into the sun cascade ShadowCascade instead of the camera
+    uint   bShadowPass;            // drawing into the sun's shadow level ShadowLevel instead of the camera
     int    ShadowDataIndex;
-    uint   ShadowCascade;
+    uint   ShadowLevel;
     float  CameraFadeDistance;     // meters from the camera inside which a sprite fades away; 0 disables it
     float  Pad0;
 };
@@ -136,7 +136,8 @@ float4 ParticleToClip(float3 WorldPos)
 {
     if (Pass().bShadowPass != 0u)
     {
-        return mul(GetShadowViewProjection(Pass().ShadowDataIndex, Pass().ShadowCascade), float4(WorldPos, 1.0));
+        // Six level projections ride each of the sun's shadow data slots.
+        return mul(GetShadowViewProjection(Pass().ShadowDataIndex + int(Pass().ShadowLevel / 6u), Pass().ShadowLevel % 6u), float4(WorldPos, 1.0));
     }
     return WorldToClip(WorldPos);
 }

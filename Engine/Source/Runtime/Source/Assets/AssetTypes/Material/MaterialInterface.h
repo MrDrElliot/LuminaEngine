@@ -109,7 +109,7 @@ namespace Lumina
     namespace MaterialDomain
     {
         constexpr bool IsMeshlet(EMaterialType Type)        { return Type == EMaterialType::PBR; }
-        constexpr bool UsesVertexStage(EMaterialType Type)  { return Type != EMaterialType::PBR && Type != EMaterialType::None; }
+        constexpr bool UsesVertexStage(EMaterialType Type)  { return Type != EMaterialType::PBR && Type != EMaterialType::Terrain && Type != EMaterialType::None; }
         constexpr bool IsFullscreen(EMaterialType Type)
         {
             return Type == EMaterialType::PostProcess || Type == EMaterialType::UI || Type == EMaterialType::LightFunction;

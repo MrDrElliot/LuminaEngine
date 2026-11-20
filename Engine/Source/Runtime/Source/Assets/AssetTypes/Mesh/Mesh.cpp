@@ -479,6 +479,69 @@ namespace Lumina
         MeshletHeaderSlab::Write(Resource.MeshBuffers.MeshletHeaderSlot, MakeMeshletHeader(Resource));
     }
 
+    namespace
+    {
+        // Grows Center and Radius to enclose the other sphere.
+        void EncloseSphere(FVector3& Center, float& Radius, bool& bEmpty, const FVector3& OtherCenter, float OtherRadius)
+        {
+            if (bEmpty)
+            {
+                Center = OtherCenter;
+                Radius = OtherRadius;
+                bEmpty = false;
+                return;
+            }
+            const float Distance = Math::Length(OtherCenter - Center);
+            if (Distance + OtherRadius <= Radius)
+            {
+                return;
+            }
+            if (Distance + Radius <= OtherRadius)
+            {
+                Center = OtherCenter;
+                Radius = OtherRadius;
+                return;
+            }
+            const float Grown = (Radius + Distance + OtherRadius) * 0.5f;
+            Center += (OtherCenter - Center) * ((Grown - Radius) / Distance);
+            Radius  = Grown;
+        }
+
+        // Two entries per run of MESHLET_CULL_GROUP_SIZE meshlets, the cut's widest bounds and the run's sphere, which IsMeshletRunCulled reads after the per-meshlet ones.
+        void BuildMeshletRunBounds(const FMeshletData& MD, TVector<FMeshletLODBounds>& Out)
+        {
+            const int32 NumMeshlets = MD.Meshlets.Num();
+            const int32 NumRuns     = (NumMeshlets + MESHLET_CULL_GROUP_SIZE - 1) / MESHLET_CULL_GROUP_SIZE;
+            Out.SetNum(NumRuns * 2);
+            for (int32 Run = 0; Run < NumRuns; ++Run)
+            {
+                FMeshletLODBounds Lod    = {};
+                FMeshletLODBounds Extent = {};
+                Lod.SelfError   = kMeshletLODErrorInfinite;
+                Lod.ParentError = 0.0f;
+                Lod.Flags       = MESHLET_LOD_FLAG_VOXEL;
+                bool bSelfEmpty   = true;
+                bool bParentEmpty = true;
+                bool bExtentEmpty = true;
+
+                const int32 End = Math::Min((Run + 1) * MESHLET_CULL_GROUP_SIZE, NumMeshlets);
+                for (int32 m = Run * MESHLET_CULL_GROUP_SIZE; m < End; ++m)
+                {
+                    const FMeshletLODBounds& B = MD.MeshletLODBounds[m];
+                    EncloseSphere(Lod.SelfCenter, Lod.SelfRadius, bSelfEmpty, B.SelfCenter, B.SelfRadius);
+                    EncloseSphere(Lod.ParentCenter, Lod.ParentRadius, bParentEmpty, B.ParentCenter, B.ParentRadius);
+                    EncloseSphere(Extent.SelfCenter, Extent.SelfRadius, bExtentEmpty, MD.MeshletSpheres[m].Center, MD.MeshletSpheres[m].Radius);
+                    Lod.SelfError   = Math::Min(Lod.SelfError, B.SelfError);
+                    Lod.ParentError = Math::Max(Lod.ParentError, B.ParentError);
+                    // Voxel only while every meshlet is a splat, and a voxel parent while any meshlet has one.
+                    Lod.Flags = (Lod.Flags & B.Flags & MESHLET_LOD_FLAG_VOXEL) | ((Lod.Flags | B.Flags) & MESHLET_LOD_FLAG_VOXEL_PARENT);
+                }
+                Out[Run * 2]     = Lod;
+                Out[Run * 2 + 1] = Extent;
+            }
+        }
+    }
+
     void MeshBuffers::CreateForResource(FMeshResource& Resource)
     {
         LUMINA_MEMORY_SCOPE("Meshes");
@@ -532,8 +595,14 @@ namespace Lumina
         const uint64 PaletteBytes  = sizeof(FMeshletBonePalette) * MData.MeshletBonePalettes.Num();
         const uint64 BoneIdxBytes  = sizeof(uint32)         * MData.MeshletBoneIndices.Num();
         // Only a complete array is published; a partial one would be indexed past its end by the cull.
-        const uint64 LODBoundsBytes = MData.MeshletLODBounds.Num() == MData.Meshlets.Num()
-                                    ? sizeof(FMeshletLODBounds) * MData.MeshletLODBounds.Num() : 0u;
+        const bool bLODBounds = MData.MeshletLODBounds.Num() == MData.Meshlets.Num() && MData.MeshletSpheres.Num() == MData.Meshlets.Num();
+        TVector<FMeshletLODBounds> RunBounds;
+        if (bLODBounds && !MData.MeshletLODBounds.IsEmpty())
+        {
+            BuildMeshletRunBounds(MData, RunBounds);
+        }
+        const uint64 MeshletLODBytes = bLODBounds ? sizeof(FMeshletLODBounds) * MData.MeshletLODBounds.Num() : 0u;
+        const uint64 LODBoundsBytes  = MeshletLODBytes + sizeof(FMeshletLODBounds) * RunBounds.Num();
 
         const bool bMissingStaticStream = !bSkinned && (PositionBytes == 0 || RefBytes == 0);
         if (MeshletBytes == 0 || SphereBytes == 0 || ConeBytes == 0 || VertexBytes == 0 || TriangleBytes == 0 || bMissingStaticStream)
@@ -594,7 +663,8 @@ namespace Lumina
         UploadIfPresent(MData.MeshletVertexRefs.GetData(), RefBytes,      RefOffset);
         UploadIfPresent(MData.VertexUV1s.GetData(),        UV1Bytes,      UV1Offset);
         UploadIfPresent(MData.VertexColors.GetData(),      ColorBytes,    ColorOffset);
-        UploadIfPresent(MData.MeshletLODBounds.GetData(),  LODBoundsBytes, LODBoundsOffset);
+        UploadIfPresent(MData.MeshletLODBounds.GetData(),  MeshletLODBytes, LODBoundsOffset);
+        UploadIfPresent(RunBounds.GetData(),               LODBoundsBytes - MeshletLODBytes, LODBoundsOffset + MeshletLODBytes);
 
         if (PaletteBytes != 0 && BoneIdxBytes != 0)
         {
@@ -654,88 +724,84 @@ namespace Lumina
         return MeshResources != nullptr && MeshResources->MeshletData.HasClusterLOD();
     }
 
-    namespace
+    bool RestoreSourceStreamsFromMeshlets(const FMeshResource& Source, FMeshResource& Resource)
     {
-        // The finest slot of every surface holds the source geometry, so the build streams can be read back out of it into Resource.
-        bool RestoreSourceStreamsFromMeshlets(const FMeshResource& Source, FMeshResource& Resource)
+        const FMeshletData& MD = Source.MeshletData;
+        if (Source.bSkinnedMesh || MD.IsEmpty() || MD.VertexPositions.IsEmpty())
         {
-            const FMeshletData& MD = Source.MeshletData;
-            if (Source.bSkinnedMesh || MD.IsEmpty() || MD.VertexPositions.IsEmpty())
-            {
-                return false;
-            }
-
-            // Surfaces and the field carry over, and the build inputs the importer set keep steering the rebuild.
-            Resource.Name                = Source.Name;
-            Resource.GeometrySurfaces    = Source.GeometrySurfaces;
-            Resource.DistanceField       = Source.DistanceField;
-            Resource.MaxLODs             = Source.MaxLODs;
-            Resource.bMeshletConeCulling = Source.bMeshletConeCulling;
-            Resource.bOptimizeMeshlets   = Source.bOptimizeMeshlets;
-            Resource.bFastMeshletBuild   = Source.bFastMeshletBuild;
-            Resource.bDestructiveLODs    = Source.bDestructiveLODs;
-
-            const int32 NumVertices = MD.VertexPositions.Num();
-            if (MD.VertexAttributes.Num() != NumVertices)
-            {
-                return false;
-            }
-
-            // Only the finest slot's vertices come back, since coarser levels and splats hold vertices the source never had.
-            constexpr uint32 kUnused = ~0u;
-            TVector<uint32>  Compact(NumVertices, kUnused);
-            TVector<uint32>  Indices;
-            uint32           Used = 0;
-            auto Remap = [&](uint32 Vertex)
-            {
-                uint32& Slot = Compact[Vertex];
-                if (Slot == kUnused)
-                {
-                    Slot = Used++;
-                }
-                Indices.Add(Slot);
-            };
-
-            for (FGeometrySurface& Surface : Resource.GeometrySurfaces)
-            {
-                Surface.StartIndex = (uint32)Indices.Num();
-                const uint32 Begin = Surface.LODMeshletOffset[0];
-                const uint32 End   = Math::Min(Begin + Surface.LODMeshletCount[0], (uint32)MD.Meshlets.Num());
-                for (uint32 m = Begin; m < End; ++m)
-                {
-                    const FMeshlet& M = MD.Meshlets[m];
-                    for (uint32 t = 0; t < M.TriangleCount; ++t)
-                    {
-                        const uint32 Packed = MD.MeshletTriangles[M.TriangleOffset + t];
-                        Remap(GetStaticVertexIndex(MD, M, Packed & 0xFFu));
-                        Remap(GetStaticVertexIndex(MD, M, (Packed >> 8) & 0xFFu));
-                        Remap(GetStaticVertexIndex(MD, M, (Packed >> 16) & 0xFFu));
-                    }
-                }
-                Surface.IndexCount = (uint32)Indices.Num() - Surface.StartIndex;
-            }
-
-            Resource.ResizeVertices(Used);
-            Resource.Indices = Move(Indices);
-
-            const bool bHasUV1   = MD.VertexUV1s.Num()   == NumVertices;
-            const bool bHasColor = MD.VertexColors.Num() == NumVertices;
-            for (int32 v = 0; v < NumVertices; ++v)
-            {
-                const uint32 Slot = Compact[v];
-                if (Slot == kUnused)
-                {
-                    continue;
-                }
-                Resource.Positions[Slot] = DecodeMeshPosition(MD.PositionGrid, MD.VertexPositions[v]);
-                Resource.Normals[Slot]   = MD.VertexAttributes[v].Normal;
-                Resource.Tangents[Slot]  = MD.VertexAttributes[v].Tangent;
-                Resource.UVs[Slot]       = MD.VertexAttributes[v].UV;
-                Resource.UVs1[Slot]      = bHasUV1 ? MD.VertexUV1s[v] : MD.VertexAttributes[v].UV;
-                Resource.Colors[Slot]    = bHasColor ? MD.VertexColors[v] : 0xFFFFFFFFu;
-            }
-            return !Resource.Indices.IsEmpty();
+            return false;
         }
+
+        // Surfaces and the field carry over, and the build inputs the importer set keep steering the rebuild.
+        Resource.Name                = Source.Name;
+        Resource.GeometrySurfaces    = Source.GeometrySurfaces;
+        Resource.DistanceField       = Source.DistanceField;
+        Resource.MaxLODs             = Source.MaxLODs;
+        Resource.bMeshletConeCulling = Source.bMeshletConeCulling;
+        Resource.bOptimizeMeshlets   = Source.bOptimizeMeshlets;
+        Resource.bFastMeshletBuild   = Source.bFastMeshletBuild;
+        Resource.bDestructiveLODs    = Source.bDestructiveLODs;
+
+        const int32 NumVertices = MD.VertexPositions.Num();
+        if (MD.VertexAttributes.Num() != NumVertices)
+        {
+            return false;
+        }
+
+        // Only the finest slot's vertices come back, since coarser levels and splats hold vertices the source never had.
+        constexpr uint32 kUnused = ~0u;
+        TVector<uint32>  Compact(NumVertices, kUnused);
+        TVector<uint32>  Indices;
+        uint32           Used = 0;
+        auto Remap = [&](uint32 Vertex)
+        {
+            uint32& Slot = Compact[Vertex];
+            if (Slot == kUnused)
+            {
+                Slot = Used++;
+            }
+            Indices.Add(Slot);
+        };
+
+        for (FGeometrySurface& Surface : Resource.GeometrySurfaces)
+        {
+            Surface.StartIndex = (uint32)Indices.Num();
+            const uint32 Begin = Surface.LODMeshletOffset[0];
+            const uint32 End   = Math::Min(Begin + Surface.LODMeshletCount[0], (uint32)MD.Meshlets.Num());
+            for (uint32 m = Begin; m < End; ++m)
+            {
+                const FMeshlet& M = MD.Meshlets[m];
+                for (uint32 t = 0; t < M.TriangleCount; ++t)
+                {
+                    const uint32 Packed = MD.MeshletTriangles[M.TriangleOffset + t];
+                    Remap(GetStaticVertexIndex(MD, M, Packed & 0xFFu));
+                    Remap(GetStaticVertexIndex(MD, M, (Packed >> 8) & 0xFFu));
+                    Remap(GetStaticVertexIndex(MD, M, (Packed >> 16) & 0xFFu));
+                }
+            }
+            Surface.IndexCount = (uint32)Indices.Num() - Surface.StartIndex;
+        }
+
+        Resource.ResizeVertices(Used);
+        Resource.Indices = Move(Indices);
+
+        const bool bHasUV1   = MD.VertexUV1s.Num()   == NumVertices;
+        const bool bHasColor = MD.VertexColors.Num() == NumVertices;
+        for (int32 v = 0; v < NumVertices; ++v)
+        {
+            const uint32 Slot = Compact[v];
+            if (Slot == kUnused)
+            {
+                continue;
+            }
+            Resource.Positions[Slot] = DecodeMeshPosition(MD.PositionGrid, MD.VertexPositions[v]);
+            Resource.Normals[Slot]   = MD.VertexAttributes[v].Normal;
+            Resource.Tangents[Slot]  = MD.VertexAttributes[v].Tangent;
+            Resource.UVs[Slot]       = MD.VertexAttributes[v].UV;
+            Resource.UVs1[Slot]      = bHasUV1 ? MD.VertexUV1s[v] : MD.VertexAttributes[v].UV;
+            Resource.Colors[Slot]    = bHasColor ? MD.VertexColors[v] : 0xFFFFFFFFu;
+        }
+        return !Resource.Indices.IsEmpty();
     }
 
     namespace

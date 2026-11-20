@@ -1,71 +1,20 @@
 #pragma once
 #include "SceneGlobals.slang"
 
-// Shared terrain GPU layouts. Keep in sync with the matching structs in TerrainRenderTypes.h.
+// Mirrors TerrainRenderTypes.h.
+static const uint kTerrainLODLevels    = 6u;
 
-struct FTerrainRenderParams
+int2 TerrainChunkExtent(int2 QuadOrigin, int QuadsPerChunk, int Resolution)
 {
-    float2  OriginXZ;
-    float   TileWorldSize;
-    float   MaxHeight;
+    return min(int2(QuadsPerChunk, QuadsPerChunk), int2(Resolution - 1, Resolution - 1) - QuadOrigin);
+}
 
-    int     Resolution;
-    int     ChunkResolution;
-    int     ChunksPerSide;
-    int     LayerCount;
-
-    float3  WorldOriginY;
-    uint    EntityID;
-
-    uint    MaterialIndex;
-    int     MeshletsPerChunkSide;
-    int     MeshletQuadSide;
-    uint    _Pad0;
-};
-
-struct FTerrainChunkInfo
+int2 TerrainLevelQuads(int2 FineQuads, uint Level)
 {
-    float3 BoundsMin;
-    float  _Pad0;
-    float3 BoundsMax;
-    float  _Pad1;
-    int2   ChunkCoord;
-    int2   QuadOrigin;
-    uint   MeshletOffset;
-    uint   MeshletCount;
-    uint   _Pad2;
-    uint   _Pad3;
-};
+    return (FineQuads + int((1u << Level) - 1u)) >> Level;
+}
 
-struct FTerrainMeshletInfo
+int2 TerrainLevelMeshletsSide(int2 FineQuads, uint Level)
 {
-    float3 BoundsMin;
-    float  _Pad0;
-    float3 BoundsMax;
-    float  _Pad1;
-    int2   ChunkLocalQuadOrigin;
-    int2   QuadExtent;
-    uint   ChunkIndex;
-    uint   _Pad2;
-    uint   _Pad3;
-    uint   _Pad4;
-};
-
-struct FTerrainVisibleMeshlet
-{
-    uint ChunkIndex;
-    uint MeshletIndex;
-};
-
-// One push range shared by the terrain VS and PS, and the PS never dereferences the cull pointers.
-struct FTerrainPushConstants
-{
-    Ptr<FTerrainRenderParams>       Params;
-    GPUSpan<FTerrainChunkInfo>      Chunks;
-    GPUSpan<FTerrainMeshletInfo>    Meshlets;
-    GPUSpan<FTerrainVisibleMeshlet> Visible;
-    FTexture2D                      Heightmap;
-    FTexture2D                      Normal;
-    FTexture2DArray                 LayerWeights;
-    uint                            _Pad0;
-};
+    return (TerrainLevelQuads(FineQuads, Level) + int(TERRAIN_MESHLET_QUADS - 1u)) / int(TERRAIN_MESHLET_QUADS);
+}

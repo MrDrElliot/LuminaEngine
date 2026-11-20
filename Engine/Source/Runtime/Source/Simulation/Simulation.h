@@ -67,6 +67,7 @@ namespace Lumina
         NODISCARD ESimulationMode GetMode() const { return Mode; }
         NODISCARD uint32 GetNumPlayers() const { return Session.NumPlayers; }
         NODISCARD uint32 GetLocalPlayer() const { return Session.LocalPlayer; }
+        NODISCARD const CStruct* GetInputStruct() const { return Session.InputStruct; }
 
         //~ For systems in the Simulation stage.
 
@@ -103,6 +104,9 @@ namespace Lumina
 
         template<typename T>
         void SubmitLocalInput(const T& Input) { SubmitLocalInput(static_cast<const void*>(&Input)); }
+
+        // The same held input, for a caller that fills it in place.
+        NODISCARD void* GetLocalInput() { return bRunning ? PendingLocalInput.GetData() : nullptr; }
 
         // Runs every tick the frame owes, rewinding first if a late input proved a prediction wrong.
         void Advance(double FrameSeconds);
@@ -213,7 +217,6 @@ namespace Lumina
         THashMap<uint32, ECS::FEntity> EntitiesBySimId;
 
         TVector<uint8>          PendingLocalInput;
-        bool                    bHasPendingLocalInput = false;
         TVector<TVector<FInputSlot>> Inputs;
         // The inputs the tick being simulated reads, one per player.
         TVector<const uint8*>   TickInputs;

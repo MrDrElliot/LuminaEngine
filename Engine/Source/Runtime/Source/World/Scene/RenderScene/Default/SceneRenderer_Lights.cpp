@@ -146,6 +146,4 @@ namespace Lumina
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
     }
-
-    // Background, terrain and undeferred materials were never classified, so they keep the env pass.
 }

@@ -18,6 +18,7 @@
 #include "UI/Tools/EditorEntityUtils.h"
 #include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/Component.h"
+#include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/TagComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
@@ -205,7 +206,8 @@ namespace Lumina::MCP
 
             auto Visit = [&](ECS::FEntity Entity)
             {
-                if (!ContainsText(FStringView(SceneEntityName(Registry, Entity)), In.Contains))
+                // Generated entities such as forest tiles would bury what the level actually holds.
+                if (Registry.HasAny<FTransientEntityTag>(Entity) || !ContainsText(FStringView(SceneEntityName(Registry, Entity)), In.Contains))
                 {
                     return;
                 }

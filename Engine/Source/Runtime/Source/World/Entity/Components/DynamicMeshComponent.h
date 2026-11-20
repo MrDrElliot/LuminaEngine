@@ -106,6 +106,9 @@ namespace Lumina
         // Commit's build, run at once whatever batch is open; the batch itself calls this for every pending commit.
         bool CommitNow();
 
+        // Publishes a resource GenerateMeshlets already ran on, such as one loaded from a cache, without staging any streams.
+        bool CommitBuiltResource(FMeshResource&& Built, const FVector3& LocalMin, const FVector3& LocalMax);
+
         // Set by a Commit made while a mesh build batch was open, and cleared when the batch builds it.
         bool bCommitPending = false;
 
@@ -221,6 +224,9 @@ namespace Lumina
     private:
 
         FDynamicMeshBuildData& EnsureBuildData();
+
+        // Uploads, resolves materials, drops the CPU streams and publishes, for a resource whose meshlets are built.
+        void PublishBuilt(TSharedPtr<FDynamicMeshRenderData> NewData);
 
         /// Resolve the material half of Data's surfaces against the current overrides. Takes the data
         /// rather than reading the member so Commit can run it on the not-yet-published snapshot.

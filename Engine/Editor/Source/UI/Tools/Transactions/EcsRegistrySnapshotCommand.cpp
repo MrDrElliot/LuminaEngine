@@ -65,7 +65,7 @@ namespace Lumina
 
         // Editor entities and the settings singleton stay, since their unreflected components would dangle.
         TVector<ECS::FEntity> ToDestroy;
-        Registry.ForEachEntityExcept<FEditorComponent, FSingletonEntityTag>([&](ECS::FEntity E) { ToDestroy.Add(E); });
+        Registry.ForEachEntityExcept<FEditorComponent, FTransientEntityTag, FSingletonEntityTag>([&](ECS::FEntity E) { ToDestroy.Add(E); });
         for (ECS::FEntity E : ToDestroy)
         {
             Registry.Destroy(E);
@@ -93,7 +93,7 @@ namespace Lumina
 
         // The image covers every entity and the world settings, so each one is marked, which also dirties the world package.
         TVector<ECS::FEntity> Live;
-        W->GetEntityRegistry().ForEachEntityExcept<FEditorComponent>([&](ECS::FEntity E) { Live.Add(E); });
+        W->GetEntityRegistry().ForEachEntityExcept<FEditorComponent, FTransientEntityTag>([&](ECS::FEntity E) { Live.Add(E); });
         ExternalEntities::MarkChanged(W, Live);
     }
 

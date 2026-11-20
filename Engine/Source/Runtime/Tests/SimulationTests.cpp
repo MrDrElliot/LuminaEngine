@@ -3,9 +3,13 @@
 #include "Core/Math/Random.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectCore.h"
+#include "Memory/Memcpy.h"
+#include "Paths/Paths.h"
+#include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/ScriptableTest.h"
 #include "Simulation/DeterministicMath.h"
 #include "Simulation/Simulation.h"
+#include "Simulation/SimulationLibrary.h"
 #include <cmath>
 #include "Simulation/SimulationComponents.h"
 #include "World/World.h"
@@ -40,6 +44,8 @@ namespace
         TStrongObjectPtr<CWorld> Owner;
         FSimulation*             Sim = nullptr;
         CSimTestSystem*          System = nullptr;
+        // Submits through the C# WorldSimulation instead, returning one when the input landed.
+        int32 (*ManagedSubmit)(void* World, int32 MoveX, int32 bFire) = nullptr;
     };
 
     // Peers in one process, joined by a network that delays every message and drops some, so rollback and recovery both run.
@@ -117,7 +123,15 @@ namespace
                 {
                     // Submitted for the tick it will be stamped on, the way a game samples its controls each frame.
                     const int64 StampTick = (int64)Sim.GetCurrentTick() + 2;
-                    Sim.SubmitLocalInput(ScriptedInput(Player, StampTick));
+                    const SSimTestInput Input = ScriptedInput(Player, StampTick);
+                    if (Peers[Player].ManagedSubmit != nullptr)
+                    {
+                        EXPECT_EQ(Peers[Player].ManagedSubmit(Peers[Player].World, Input.MoveX, Input.bFire ? 1 : 0), 1);
+                    }
+                    else
+                    {
+                        Sim.SubmitLocalInput(Input);
+                    }
                 }
                 Sim.Advance(kFrameSeconds);
 
@@ -289,4 +303,132 @@ TEST(Simulation, DeterministicMathTracksTheLibrary)
             EXPECT_NEAR(SimMath::Atan2(Y, X), std::atan2(Y, X), 2e-5f) << Y << ", " << X;
         }
     }
+}
+
+// A standalone world starts a one player session by the input struct's name, the call C# makes through WorldSimulation.Start.
+TEST(Simulation, AStandaloneWorldStartsASessionByInputName)
+{
+    RegisterPendingTypes();
+    TStrongObjectPtr<CWorld> World(NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient));
+    FSimulation& Sim = FWorldTestAccess::EnableSimulation(*World);
+
+    EXPECT_FALSE(CSimulationLibrary::StartSession(World.Get(), FName("NoSuchInputStruct"), 1));
+    EXPECT_FALSE(Sim.IsRunning());
+
+    ASSERT_TRUE(CSimulationLibrary::StartSession(World.Get(), FName("SSimTestInput"), 9));
+    EXPECT_TRUE(CSimulationLibrary::IsSessionRunning(World.Get()));
+    EXPECT_EQ(CSimulationLibrary::GetSessionPlayers(World.Get()), 1u);
+    EXPECT_EQ(Sim.GetInputStruct(), SSimTestInput::StaticStruct());
+    EXPECT_NE(CSimulationLibrary::GetLocalInput(World.Get(), FName("SSimTestInput")), nullptr);
+    EXPECT_EQ(CSimulationLibrary::GetLocalInput(World.Get(), FName("SSimTestBody")), nullptr) << "the wrong struct is refused, not reinterpreted";
+    Sim.Stop();
+}
+
+class FManagedSimulationTest : public ::testing::Test
+{
+public:
+
+    static void SetUpTestSuite()
+    {
+        Paths::InitializePaths();
+        DotNet::Initialize();
+    }
+
+    static void TearDownTestSuite()
+    {
+        if (DotNet::IsInitialized())
+        {
+            DotNet::Shutdown();
+        }
+    }
+
+    void SetUp() override
+    {
+        if (!DotNet::IsInitialized())
+        {
+            GTEST_SKIP() << "the managed host did not start in this process";
+        }
+    }
+};
+
+// One peer simulates in C++ and the other in C#, through lag, loss and rewinds, and the checksums hold them to the same state.
+TEST_F(FManagedSimulationTest, ACSharpPeerAgreesWithACppPeer)
+{
+    auto* Tick   = (void(*)(const SExclusiveContext*))DotNet::ResolveManagedExport("Test_SimulationTick");
+    auto* Submit = (int32(*)(void*, int32, int32))DotNet::ResolveManagedExport("Test_SimulationSubmit");
+    ASSERT_NE(Tick, nullptr);
+    ASSERT_NE(Submit, nullptr);
+
+    FSimHarness Harness(2, RollbackDesc());
+    Harness.MinLagFrames = 2;
+    Harness.MaxLagFrames = 6;
+    Harness.DropPercent  = 10;
+    Harness.Peers[1].System->ManagedTick = Tick;
+    Harness.Peers[1].ManagedSubmit = Submit;
+
+    for (int32 i = 0; i < 600; ++i)
+    {
+        Harness.Step();
+    }
+
+    for (const FPeer& Peer : Harness.Peers)
+    {
+        EXPECT_FALSE(Peer.Sim->HasDesynced()) << "desync at tick " << Peer.Sim->GetDesyncTick();
+        EXPECT_GT(Peer.Sim->GetRollbackCount(), 0u) << "the lag should have forced the C# tick to replay";
+        EXPECT_GT(Peer.Sim->GetVerifiedChecksums(), 50u);
+    }
+    EXPECT_GT(Harness.Peers[0].System->ProjectilesSpawned, 0);
+    EXPECT_EQ(Harness.Peers[1].System->ProjectilesSpawned, 0) << "the C# peer's projectiles came from C#";
+
+    TVector<ECS::FEntity> Entities;
+    Harness.Peers[1].Sim->GetEntities(Entities);
+    int32 Owners = 0;
+    for (ECS::FEntity Entity : Entities)
+    {
+        const SSimTestBody* Body = Harness.Peers[1].World->GetEntityRegistry().TryGet<SSimTestBody>(Entity);
+        Owners += Body != nullptr && Body->Owner >= 0 ? 1 : 0;
+    }
+    EXPECT_EQ(Owners, 2) << "C# spawned one body per player";
+}
+
+// A session refuses an input of another struct from C#, and takes none at all once it stops.
+TEST_F(FManagedSimulationTest, CSharpInputOfTheWrongStructIsRefused)
+{
+    auto* Submit    = (int32(*)(void*, int32, int32))DotNet::ResolveManagedExport("Test_SimulationSubmit");
+    auto* WrongType = (int32(*)(void*))DotNet::ResolveManagedExport("Test_SimulationSubmitWrongType");
+    ASSERT_NE(Submit, nullptr);
+    ASSERT_NE(WrongType, nullptr);
+
+    FSimHarness Harness(1, RollbackDesc());
+    FPeer& Peer = Harness.Peers[0];
+    EXPECT_EQ(WrongType(Peer.World), 0);
+    ASSERT_EQ(Submit(Peer.World, -1, 1), 1);
+    const SSimTestInput* Held = static_cast<const SSimTestInput*>(Peer.Sim->GetLocalInput());
+    EXPECT_EQ(Held->MoveX, -1);
+    EXPECT_TRUE(Held->bFire);
+
+    Peer.Sim->Stop();
+    EXPECT_EQ(Submit(Peer.World, 1, 0), 0);
+}
+
+// The C# SimMath runs the same operations in the same order as the C++ one, so both land on the same bits.
+TEST_F(FManagedSimulationTest, CSharpSimMathMatchesCppBitForBit)
+{
+    auto* Evaluate = (void(*)(float, float, float*))DotNet::ResolveManagedExport("Test_SimMathEvaluate");
+    ASSERT_NE(Evaluate, nullptr);
+
+    int32 Mismatches = 0;
+    for (int32 Step = -3000; Step <= 3000; ++Step)
+    {
+        const float A = (float)Step * 0.0137f;
+        const float B = (float)((Step * 7919) % 401 - 200) * 0.031f;
+        float Managed[5] = {};
+        Evaluate(A, B, Managed);
+        const float Native[5] = { SimMath::Sin(A), SimMath::Cos(A), SimMath::Atan(A), SimMath::Atan2(A, B), SimMath::WrapAngle(A) };
+        for (int32 i = 0; i < 5; ++i)
+        {
+            Mismatches += Memory::Memcmp(&Managed[i], &Native[i], sizeof(float)) != 0 ? 1 : 0;
+        }
+    }
+    EXPECT_EQ(Mismatches, 0);
 }

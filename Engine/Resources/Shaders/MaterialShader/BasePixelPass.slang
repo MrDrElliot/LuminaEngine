@@ -86,7 +86,7 @@ PSOutput FragmentMain(FBaseVertexOutput Input)
     Output.Revealage = Coverage;
 
     // View Mode > OIT Layer Count, where 1.0 per fragment turns accum.a into a per-pixel fragment count.
-    if (SPEC_ENABLE_DEBUG_VIEWS != 0 && Scene().CullData.DebugMode == DEBUG_MODE_OIT_LAYER_COUNT)
+    if (Scene().CullData.DebugMode == DEBUG_MODE_OIT_LAYER_COUNT)
     {
         Output.Accum     = float4(0.0, 0.0, 0.0, 1.0);
         Output.Revealage = 0.0;
