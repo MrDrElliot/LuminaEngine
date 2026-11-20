@@ -1292,12 +1292,10 @@ namespace Lumina
         TVector<uint32>                        BoneSliceByPrimitive;
         // Primitive indices the cull kept, dense, filled straight from the parallel cull via a cursor.
         TVector<uint32>                        SkinnedCandidates;
-        TVector<uint32>                        SkinnedCandidateBones;
+        // Primitives whose slice the layout allocates serially, first the misses and then followers whose leader cannot lend.
         TVector<uint32>                        PendingSliceAllocs;
-        // Candidates that may skin from their leader's slice, settled once every own slice is laid out.
-        TVector<uint32>                        SharedPoseCandidates;
-        // Parallel to SharedPoseCandidates, the leader primitive that may lend its slice, found in the parallel pass so the serial one only assigns.
-        TVector<uint32>                        SharedPoseLeaders;
+        // Follower primitive and the leader primitive that may lend it a slice, settled once every own slice is laid out.
+        TVector<FUIntVector2>                  SharedPoses;
         TAtomic<uint32>                        SharedPoseCursor{0};
         // Per primitive, set when this frame's slice is the leader's, so the emit leaves it to the leader.
         TVector<uint8>                         BoneSliceBorrowed;

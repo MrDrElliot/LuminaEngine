@@ -325,15 +325,21 @@ namespace Lumina
             }
         }
 
+        // Neither it nor anything following it was drawn lately, so a mesh that ticks when rendered keeps the pose it has.
+        bool IsPoseHeldOffscreen(const SSkeletalMeshComponent& Mesh, double Now)
+        {
+            return Mesh.VisibilityBasedAnimTick == EAnimUpdateMode::TickWhenRendered &&
+                   (Now - Math::Max(Mesh.LastRenderedTime, Mesh.FollowerRenderedTime)) > kAnimVisibilityGrace &&
+                   CVarAnimBudget.GetValue();
+        }
+
         // Frozen time deliberately does NOT accumulate, so an off-screen pose resumes where it left off.
         bool ShouldUpdatePose(SSkeletalMeshComponent& Mesh, ECS::FEntity Entity, float DeltaTime,
                               double Now, bool bForce, float& OutStepTime)
         {
             OutStepTime = 0.0f;
 
-            if (Mesh.VisibilityBasedAnimTick == EAnimUpdateMode::TickWhenRendered &&
-                (Now - Math::Max(Mesh.LastRenderedTime, Mesh.FollowerRenderedTime)) > kAnimVisibilityGrace &&
-                CVarAnimBudget.GetValue())
+            if (IsPoseHeldOffscreen(Mesh, Now))
             {
                 return false;
             }
@@ -1061,6 +1067,12 @@ namespace Lumina
         {
             Followers.ParallelForEach([&](ECS::FEntity Entity, ECS::TMut<SFollowerPoseComponent> FollowerMut, ECS::TMut<SSkeletalMeshComponent> MeshMut)
             {
+                // An unseen follower keeps its last copy and its borrowed slice, which still draws the leader's live pose into any shadow.
+                if (FollowerMut.Get().CopiedLeader != ECS::NullEntity && IsPoseHeldOffscreen(MeshMut.Get(), Now))
+                {
+                    return;
+                }
+
                 SSkeletalMeshComponent& Mesh = MeshMut.GetMut();
                 SFollowerPoseComponent& Follower = FollowerMut.GetMut();
                 Follower.bSharesLeaderPose = false;

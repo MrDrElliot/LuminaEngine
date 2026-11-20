@@ -914,22 +914,11 @@ namespace Lumina
         // A streamed mover that stopped still holds CPU copies from before it streamed, so it takes the CPU path once.
         void CatchUpStoppedStreams(const FSyncPools& Pools, uint32 MovedStamp, bool bNoneStopped);
 
-        enum class EStreamKind : uint32
-        {
-            Skip,
-            CPUPath,
-            Stream,
-        };
-        // What the stream needs of one entity this frame, read from its record.
-        struct FStreamCacheEntry
-        {
-            EStreamKind Kind = EStreamKind::Skip;
-            uint32      Slot = kNoStreamSlot;
-            FVector3    LocalCenter = FVector3(0.0f);
-            float       Radius = 0.0f;
-        };
-        FStreamCacheEntry LookupStreamCacheEntry(ECS::FEntity Entity);
+        // The entity's record with its stream cache current, or null when nothing of it is drawn; a StreamSlot of kNoStreamSlot takes the CPU path.
+        FEntityRecord* FindStreamRecord(ECS::FEntity Entity);
         void BuildStreamCacheEntry(FEntityRecord& Record) const;
+        // Writes the record the GPU scatters, plus the CPU bounds a skeletal primitive's gather culls and picks LODs with.
+        void WriteStreamRecord(const FEntityRecord& Stamp, uint32 Record, const FMatrix4& Matrix);
         // A structural sync of the entity, which may move its slot or bounds.
         void InvalidateStreamCache(ECS::FEntity Entity);
         // Everything at once, for a rescan, a reset or a foreground toggle.
@@ -982,6 +971,8 @@ namespace Lumina
         FStreamedLists              StreamedLastFrame;
         TVector<ECS::FEntity>       StoppedScratch;
         TVector<uint32>             StreamedBlocks;
+        // One bit per cull block, which orders and dedupes StreamedBlocks in a single pass.
+        TVector<uint64>             StreamedBlockBits;
         // Drops every streamed list and record count, for a reset or a rescan that rebuilt the CPU copies.
         void ResetStreamState();
 
