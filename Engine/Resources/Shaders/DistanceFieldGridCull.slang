@@ -1,14 +1,14 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 #include "Includes/DistanceField.slang"
-#include "Includes/SunDFShadowCommon.slang"
+#include "Includes/DistanceFieldGrid.slang"
 #include "Includes/WaveAtomics.slang"
 
-// Gathers every static caster with a distance field for SunDFShadowBin.slang to bin into the sun-space grid the trace walks.
+// Gathers every static caster with a distance field that overlaps the grid, for DistanceFieldGridBin.slang to bin.
 
 static const uint LOCAL_SIZE_X = 64u;
 
-// Mirror of Lumina::FSunDFShadowCullArgs.
+// Mirror of Lumina::FDFGridCullArgs.
 struct FPushConstants
 {
     // Blocks of 64 slots holding a distance-field caster. Empty walks every slot.
@@ -16,9 +16,9 @@ struct FPushConstants
     GPUSpan<FInstanceCullEntry> RetainedCullEntries;
     GPUSpan<FTransform3x4>      RetainedTransforms;
     GPUSpan<FInstanceStatic>    RetainedStatic;
-    // Casters over many cells, which SunDFShadowBin.slang bins with a whole group each.
+    // Casters over many cells, which DistanceFieldGridBin.slang bins with a whole group each.
     GPUSpan<uint>               LargeObjects;
-    FSunDFShadowGrid            Grid;
+    FDFObjectGrid               Grid;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -71,7 +71,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
     }
 
     // Reached through the pass block, since a local copy would put its span pointers in a function variable.
-    FSunDFShadowGrid* Grid = &Pass().Grid;
+    FDFObjectGrid* Grid = &Pass().Grid;
     // A degenerate transform leaves a non-finite sphere, whose cell range would turn into a runaway loop.
     const float4 Sphere = Cull.SphereBounds;
     if (!all(isfinite(Sphere)) || Sphere.w < Grid.MinRadius)
@@ -79,11 +79,9 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
         return;
     }
 
-    // Sun rays are parallel, so a caster can only shade receivers whose sun-space footprint it overlaps.
-    const float2 SunXY = float2(dot(Sphere.xyz, Grid.SunRight), dot(Sphere.xyz, Grid.SunUp));
-    const float2 CellMin = floor((SunXY - Sphere.w - Grid.Origin) / Grid.CellSize);
-    const float2 CellMax = floor((SunXY + Sphere.w - Grid.Origin) / Grid.CellSize);
-    if (any(CellMax < 0.0) || any(CellMin >= float2(Grid.Dimension)))
+    // A caster can only reach receivers whose cells its padded footprint overlaps.
+    const float4 Bounds = Grid.CellBounds(Sphere);
+    if (any(Bounds.zw < 0.0) || any(Bounds.xy >= float2(Grid.Dimension)))
     {
         return;
     }
@@ -105,18 +103,18 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
         return;
     }
 
-    const uint ObjectIndex = WaveInterlockedAdd(Grid.Counters.At(kSunDFObjectCounter), 1u);
+    const uint ObjectIndex = WaveInterlockedAdd(Grid.Counters.At(kDFGridObjectCounter), 1u);
     if (ObjectIndex >= Grid.Objects.Count)
     {
         return;
     }
 
     uint Flags = Volume.bTwoSided ? kDistanceFieldTwoSided : 0u;
-    const int4 Range = SunDFCellRange(Sphere, Grid.SunRight, Grid.SunUp, Grid.Origin, Grid.CellSize, Grid.Dimension);
-    if (uint(Range.z - Range.x + 1) * uint(Range.w - Range.y + 1) > kSunDFLargeCasterCells)
+    const int4 Range = Grid.CellRange(Sphere);
+    if (uint(Range.z - Range.x + 1) * uint(Range.w - Range.y + 1) > kDFGridLargeObjectCells)
     {
-        Flags |= kSunDFLargeCaster;
-        const uint LargeIndex = WaveInterlockedAdd(Grid.Counters.At(kSunDFLargeCounter), 1u);
+        Flags |= kDFGridLargeObject;
+        const uint LargeIndex = WaveInterlockedAdd(Grid.Counters.At(kDFGridLargeCounter), 1u);
         if (LargeIndex < Pass().LargeObjects.Count)
         {
             Pass().LargeObjects.Set(LargeIndex, ObjectIndex);
@@ -128,7 +126,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
     Volume.Texture.GetDimensions(DimX, DimY, DimZ);
     const float3 Voxel = Volume.VolumeSize / float3(max(uint3(DimX, DimY, DimZ), uint3(1u, 1u, 1u)));
 
-    FSunDFObject Object;
+    FDFObject Object;
     Object.WorldToLocal = InverseAffine(LocalToWorld);
     Object.Sphere       = Sphere;
     Object.VolumeMin    = Volume.VolumeMin;

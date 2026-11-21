@@ -822,25 +822,24 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     }
 
     // Translucent skips GTAO, which comes from opaque depth and holds what is behind the glass.
-    float GTAO = 1.0;
+    FScreenAO ScreenAO;
+    ScreenAO.Visibility = 1.0;
+    ScreenAO.BentNormal = N;
     float4 IndirectDiffuse = float4(0.0, 0.0, 0.0, 0.0);
 #ifndef TRANSLUCENT
-    if (Scene().GTAOSettings.AOTexture.IsValid())
-    {
-        // Explicit LOD, since the deferred lighting lane is compute and has no implicit derivatives.
-        float2 ScreenUV = ScreenPos / float2(Scene().ScreenSize.xy);
-        GTAO = Scene().GTAOSettings.AOTexture.SampleLevel(Samplers::LinearClamp, ScreenUV, 0.0).r;
+    // Explicit LOD inside, since the deferred lighting lane is compute and has no implicit derivatives.
+    const float2 ScreenUV = ScreenPos / float2(Scene().ScreenSize.xy);
+    ScreenAO = SampleScreenAO(ScreenUV, N);
 
-        // Only ever traced alongside GTAO, whose working depth it marches.
-        if (Scene().GTAOSettings.IndirectDiffuse.IsValid())
-        {
-            IndirectDiffuse = Scene().GTAOSettings.IndirectDiffuse.SampleLevel(Samplers::LinearClamp, ScreenUV, 0.0);
-        }
+    // Only ever traced alongside GTAO, whose working depth it marches.
+    if (Scene().GTAOSettings.IndirectDiffuse.IsValid())
+    {
+        IndirectDiffuse = Scene().GTAOSettings.IndirectDiffuse.SampleLevel(Samplers::LinearClamp, ScreenUV, 0.0);
     }
 #endif
 
-    // Specular takes this through ComputeSpecularOcclusion, and where the bounce stands in for the sky the IBL steps back.
-    const float AmbientAO = AO * min(GTAO, 1.0 - IndirectDiffuse.a);
+    // Specular takes this through its cone occlusion, and where the bounce stands in for the sky the IBL steps back.
+    const float AmbientAO = AO * min(ScreenAO.Visibility, 1.0 - IndirectDiffuse.a);
 
     // Metals carry no diffuse.
     const float3 DiffuseColor = Albedo * (1.0 - Metallic);
@@ -853,11 +852,11 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         float2 DFG_IBL    = SampleBRDFLUT(NdotV_IBL, Roughness);
 #ifdef TRANSLUCENT
         float3 IBLDiffuse, IBLSpec;
-        EvaluateIBLAmbientSplit(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO, IBLDiffuse, IBLSpec);
+        EvaluateIBLAmbientSplit(WorldPosition, N, ScreenAO.BentNormal, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO, IBLDiffuse, IBLSpec);
         Ambient = IBLDiffuse;
         LoSpec += IBLSpec;
 #else
-        float3 IBLAmbient = EvaluateIBLAmbient(WorldPosition, N, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO);
+        float3 IBLAmbient = EvaluateIBLAmbient(WorldPosition, N, ScreenAO.BentNormal, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO);
         Ambient = IBLAmbient;
 #endif
     }
@@ -883,7 +882,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         Ambient *= (1.0 - Coat * CoatF);
         Lo      *= (1.0 - Coat * CoatF);
         LoCoat  += CoatIBL * Coat * GetAmbientLightIntensity()
-                 * ComputeSpecularOcclusion(CoatNdotV, AmbientAO, CoatRough);
+                 * ComputeBentSpecularOcclusion(ScreenAO.BentNormal, N, CoatR, CoatNdotV, AmbientAO, CoatRough);
     }
 
     Out.Color = Ambient + Lo + LoCoat + G.Emissive;
@@ -981,15 +980,17 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
     case DEBUG_MODE_GTAO:
     {
         // White where GTAO is off for this view.
-        float DbgAO = 1.0;
-        if (Scene().GTAOSettings.AOTexture.IsValid())
-        {
-            float2 DbgUV = ScreenPos / float2(Scene().ScreenSize.xy);
-            DbgAO = Scene().GTAOSettings.AOTexture.SampleLevel(Samplers::LinearClamp, DbgUV, 0.0).r;
-        }
+        const float DbgAO = Scene().GTAOSettings.AOTexture.IsValid()
+            ? Scene().GTAOSettings.AOTexture.SampleLevel(Samplers::LinearClamp, ScreenPos / float2(Scene().ScreenSize.xy), 0.0).r : 1.0;
         Color = float3(DbgAO, DbgAO, DbgAO);
         break;
     }
+    case DEBUG_MODE_BENT_NORMAL:
+        Color = SampleScreenAO(ScreenPos / float2(Scene().ScreenSize.xy), N).BentNormal * 0.5 + 0.5;
+        break;
+    case DEBUG_MODE_DISTANCE_FIELD_AO:
+        Color = SampleDistanceFieldAO(ScreenPos / float2(Scene().ScreenSize.xy)).xxx;
+        break;
     case DEBUG_MODE_SCREEN_SPACE_GI:
         // Black where the trace is off for this view.
         Color = Scene().GTAOSettings.IndirectDiffuse.IsValid()

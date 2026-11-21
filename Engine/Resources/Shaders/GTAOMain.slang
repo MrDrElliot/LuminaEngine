@@ -4,7 +4,7 @@
 #include "Includes/XeGTAO.slang"
 #include "Includes/CORTAO.slang"
 
-// Horizon search over the prefiltered depth pyramid, or a CORTAO trace when CORTAO_SAMPLE_COUNT is defined; writes the noisy visibility term plus packed edges.
+// Horizon search over the prefiltered depth pyramid, or a CORTAO trace when CORTAO_SAMPLE_COUNT is defined, writing noisy visibility, its bent normal and packed edges.
 
 struct FPushConstants
 {
@@ -32,10 +32,11 @@ float SampleWorkingDepth(float2 UV, float MipLevel)
 // Total occlusion is never right for a pixel the camera can see, and it wrecks the denoise weights.
 static const float kMinVisibility = 0.03;
 
-void StoreVisibility(uint2 PixCoord, float Visibility)
+void StoreVisibility(uint2 PixCoord, float Visibility, float3 BentNormal, float3 Normal)
 {
-    const float Packed = saturate(max(kMinVisibility, Visibility) / XE_GTAO_OCCLUSION_TERM_SCALE);
-    Pass().AOTerm[PixCoord] = float4(Packed, 0.0, 0.0, 0.0);
+    const float  Packed       = saturate(max(kMinVisibility, Visibility) / XE_GTAO_OCCLUSION_TERM_SCALE);
+    const float3 BentOffsetWS = mul((float3x3)GetInverseCameraView(), BentNormal - Normal);
+    Pass().AOTerm[PixCoord] = float4(Packed, EncodeBentNormalOffset(BentOffsetWS));
 }
 
 [shader("compute")]
@@ -69,15 +70,17 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     // Under a pixel of coverage there is no horizon to find, and MinS below would march off screen.
     if (ScreenspaceRadius < XE_GTAO_PIXEL_TOO_CLOSE)
     {
-        StoreVisibility(PixCoord, 1.0);
+        StoreVisibility(PixCoord, 1.0, Center.Normal, Center.Normal);
         return;
     }
 
     const float2 LocalNoise  = XeGTAO_SpatioTemporalNoise(PixCoord, Pass().NoiseIndex);
 
 #ifdef CORTAO_SAMPLE_COUNT
-    StoreVisibility(PixCoord, CORTAO_Visibility(V, Pass().WorkingDepth, XeGTAO_ComputeViewspacePosition(V, ScreenUV, Center.ViewspaceZ),
-        Center.Normal, EffectRadius, LocalNoise, CORTAO_Hash(PixCoord, Pass().NoiseIndex)));
+    float3 BentNormal;
+    const float Visibility = CORTAO_Visibility(V, Pass().WorkingDepth, XeGTAO_ComputeViewspacePosition(V, ScreenUV, Center.ViewspaceZ),
+        Center.Normal, EffectRadius, LocalNoise, CORTAO_Hash(PixCoord, Pass().NoiseIndex), BentNormal);
+    StoreVisibility(PixCoord, Visibility, BentNormal, Center.Normal);
 #else
     const float  NoiseSlice  = LocalNoise.x;
     const float  NoiseSample = LocalNoise.y;
@@ -89,6 +92,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     // Fades the effect out where the footprint is only a few pixels wide, matching the reference.
     float Visibility = saturate((10.0 - ScreenspaceRadius) / 100.0) * 0.5;
+    float3 BentNormal = float3(0.0, 0.0, 0.0);
 
     [loop]
     for (uint Slice = 0; Slice < SliceCount; ++Slice)
@@ -124,11 +128,13 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         const float H1 =  XeGTAO_FastACos(HorizonCos0);
 
         Visibility += ProjNLen * (XeGTAO_SliceArc(S, H0) + XeGTAO_SliceArc(S, H1));
+        BentNormal += XeGTAO_SliceBentNormal(S, H0, H1, ViewVec);
     }
 
     Visibility /= float(SliceCount);
     Visibility = pow(Visibility, Pass().FinalValuePower);
 
-    StoreVisibility(PixCoord, Visibility);
+    const float BentLength = length(BentNormal);
+    StoreVisibility(PixCoord, Visibility, BentLength > 1e-6 ? BentNormal / BentLength : Center.Normal, Center.Normal);
 #endif
 }

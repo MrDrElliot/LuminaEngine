@@ -76,6 +76,11 @@ namespace Lumina::RHI
         {
             Swapchain = CreateSwapchain(Surface, RequestedExtent);
             Surface   = FSurfaceH{};
+            if (bHDRRequested)
+            {
+                SetSwapchainHDR(Swapchain, true);
+                RecreateSwapchain(Swapchain, RequestedExtent);
+            }
         }
         else
         {
@@ -140,5 +145,25 @@ namespace Lumina::RHI
     EFormat FSwapchainTarget::GetFormat() const
     {
         return GetSwapchainFormat(Swapchain);
+    }
+
+    void FSwapchainTarget::SetHDR(bool bHDR)
+    {
+        if (bHDR == bHDRRequested)
+        {
+            return;
+        }
+
+        bHDRRequested = bHDR;
+        if (IsValid(Swapchain))
+        {
+            SetSwapchainHDR(Swapchain, bHDR);
+            Recreate();
+        }
+    }
+
+    bool FSwapchainTarget::IsHDR() const
+    {
+        return IsValid(Swapchain) && IsSwapchainHDR(Swapchain);
     }
 }

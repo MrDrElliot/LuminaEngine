@@ -1,10 +1,10 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GroupScan.slang"
 
-// One group turns the sun grid's per-cell caster counts into each cell's end in place, and writes the total past the last cell.
+// One group turns a distance-field grid's per-cell caster counts into each cell's end in place, and writes the total past the last cell.
 #define SCAN_THREADS 256u
 
-// Mirror of Lumina::FSunDFShadowScanArgs.
+// Mirror of Lumina::FDFGridScanArgs.
 struct FPushConstants
 {
     GPUSpan<uint> CellCounts;

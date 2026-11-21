@@ -8,6 +8,7 @@
 #include "Containers/String.h"
 #include "Input/Key.h"
 #include "Physics/PhysicsTypes.h"
+#include "Renderer/HDROutput.h"
 #include "Renderer/PresentMode.h"
 #include "EngineSettings.generated.h"
 
@@ -364,6 +365,18 @@ namespace Lumina
         PROPERTY(Editable, Category = "Display")
         bool bLowLatencyMode = false;
 
+        // Presents the primary window in HDR10, which lets highlights run brighter than SDR white.
+        PROPERTY(Editable, Category = "Display")
+        EHDROutput HDROutput = EHDROutput::Auto;
+
+        // Brightness of SDR white and the UI in HDR, where 0 follows the Windows SDR content brightness.
+        PROPERTY(Editable, Category = "Display", ClampMin = 0.0f, ClampMax = 1000.0f, Units = "nits")
+        float HDRPaperWhiteNits = 0.0f;
+
+        // Brightest highlight sent to the display in HDR, where 0 uses the peak the monitor reports.
+        PROPERTY(Editable, Category = "Display", ClampMin = 0.0f, ClampMax = 10000.0f, Units = "nits")
+        float HDRPeakNits = 0.0f;
+
         void PostInitSettings() override;
 
         // Pushes PresentMode to the RHI, rebuilding the primary swapchain if one already exists.
@@ -592,6 +605,18 @@ namespace Lumina
         /** Trades depth-pyramid bandwidth against thin-object accuracy and temporal stability. */
         PROPERTY(Editable, Category = "Ambient Occlusion|Heuristics", ClampMin = 0.0f, ClampMax = 30.0f)
         float GTAODepthMipSamplingOffset = 3.3f;
+
+        // Large scale sky occlusion from cones traced through the mesh distance fields, under canopies, in alleys and indoors.
+        PROPERTY(Editable, Category = "Ambient Occlusion|Distance Field")
+        bool bDistanceFieldAO = true;
+
+        // How far from a surface a mesh can still block its sky.
+        PROPERTY(Editable, Category = "Ambient Occlusion|Distance Field", ClampMin = 0.5f, ClampMax = 50.0f)
+        float DistanceFieldAOMaxDistance = 8.0f;
+
+        // Camera distance the occlusion fades out by, which also sizes the grid its casters are binned into.
+        PROPERTY(Editable, Category = "Ambient Occlusion|Distance Field", ClampMin = 10.0f, ClampMax = 1000.0f)
+        float DistanceFieldAOViewDistance = 150.0f;
 
         // Half resolution indirect diffuse gathered along GTAO's horizon slices from last frame's lit color; needs GTAO on.
         PROPERTY(Editable, Category = "Global Illumination")

@@ -244,6 +244,7 @@ FGTAOCenter XeGTAO_LoadCenter(FGTAOView V, FTexture2D WorkingDepth, uint2 PixCoo
 // One slice of the horizon search, the screen direction it marches and the normal projected into its plane.
 struct FGTAOSlice
 {
+    float2 Direction;
     float2 Omega;
     float  SliceN;
     float  SinSliceN;
@@ -268,6 +269,7 @@ FGTAOSlice XeGTAO_MakeSlice(FGTAOView V, float Phi, float ScreenspaceRadius, flo
     const float3 ProjectedNormalVec = Normal - AxisVec * dot(Normal, AxisVec);
 
     FGTAOSlice S;
+    S.Direction = float2(CosPhi, SinPhi);
     S.Omega     = float2(CosPhi * SignX, SinPhi * SignY) * ScreenspaceRadius;
     S.ProjNLen  = length(ProjectedNormalVec);
     S.CosNorm   = saturate(dot(ProjectedNormalVec, ViewVec) / max(S.ProjNLen, 1e-6));
@@ -284,6 +286,24 @@ FGTAOSlice XeGTAO_MakeSlice(FGTAOView V, float Phi, float ScreenspaceRadius, flo
 float XeGTAO_SliceArc(FGTAOSlice S, float H)
 {
     return (S.CosNorm + 2.0 * H * S.SinSliceN - cos(2.0 * H - S.SliceN)) / 4.0;
+}
+
+// Rotates X by the turn taking the view axis (0, 0, -1) onto ViewVec, which faces the camera so 1 + E stays positive.
+float3 XeGTAO_RotateFromViewAxis(float3 X, float3 ViewVec)
+{
+    const float3 Axis = float3(ViewVec.y, -ViewVec.x, 0.0);
+    const float  E    = -ViewVec.z;
+    return E * X + cross(Axis, X) + Axis * (dot(Axis, X) / (1.0 + E));
+}
+
+// Cosine-weighted mean open direction of a slice between horizons H0 and H1, the reference's Algorithm 2 extension.
+float3 XeGTAO_SliceBentNormal(FGTAOSlice S, float H0, float H1, float3 ViewVec)
+{
+    const float N  = S.SliceN;
+    const float T0 = (6.0 * sin(H0 - N) - sin(3.0 * H0 - N) + 6.0 * sin(H1 - N) - sin(3.0 * H1 - N)
+                    + 16.0 * sin(N) - 3.0 * (sin(H0 + N) + sin(H1 + N))) / 12.0;
+    const float T1 = (-cos(3.0 * H0 - N) - cos(3.0 * H1 - N) + 8.0 * cos(N) - 3.0 * (cos(H0 + N) + cos(H1 + N))) / 12.0;
+    return XeGTAO_RotateFromViewAxis(float3(S.Direction * T0, -T1), ViewVec) * S.ProjNLen;
 }
 
 // Fraction of the radius a step reaches, jittered per slice and step by the golden ratio.

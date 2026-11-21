@@ -165,6 +165,8 @@ namespace Lumina
             Frame.PostProcess.bHasActivePostProcess    = false;
         }
 
+        Frame.PostProcess.DisplayHeadroomStops = DisplayHeadroomStops;
+
         Frame.PostProcess.ActivePostProcessMaterials.Reset();
         for (CMaterialInterface* PPInterface : PendingPostProcessMaterials)
         {

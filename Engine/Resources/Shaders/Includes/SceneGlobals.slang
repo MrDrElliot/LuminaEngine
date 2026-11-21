@@ -727,6 +727,54 @@ float3 ReconstructWorldPos(float2 UV, float Depth)
     return mul(GetInverseCameraView(), float4(ReconstructViewPos(UV, Depth, GetInverseCameraProjection()), 1.0)).xyz;
 }
 
+// GTAO keeps how far its bent normal leans from the depth normal, in world space, biased so an unbent pixel stores exactly zero.
+float3 EncodeBentNormalOffset(float3 Offset)
+{
+    return saturate(Offset * (127.0 / 255.0) + (128.0 / 255.0));
+}
+
+float3 DecodeBentNormalOffset(float3 Encoded)
+{
+    return Encoded * (255.0 / 127.0) - (128.0 / 127.0);
+}
+
+struct FScreenAO
+{
+    float  Visibility;
+    float3 BentNormal;
+};
+
+// Distance field sky visibility alone, open where it is not traced.
+float SampleDistanceFieldAO(float2 ScreenUV)
+{
+    return Scene().GTAOSettings.SkyOcclusion.IsValid() ? Scene().GTAOSettings.SkyOcclusion.SampleLevel(Samplers::LinearClamp, ScreenUV, 0.0).r : 1.0;
+}
+
+// GTAO's small scale and the distance fields' large scale visibility, their leans applied to shading normal N so a normal map keeps its detail.
+FScreenAO SampleScreenAO(float2 ScreenUV, float3 N)
+{
+    float  Visibility = 1.0;
+    float3 Lean       = float3(0.0, 0.0, 0.0);
+    if (Scene().GTAOSettings.AOTexture.IsValid())
+    {
+        const float4 Packed = Scene().GTAOSettings.AOTexture.SampleLevel(Samplers::LinearClamp, ScreenUV, 0.0);
+        Visibility *= Packed.r;
+        Lean       += DecodeBentNormalOffset(Packed.gba);
+    }
+    if (Scene().GTAOSettings.SkyOcclusion.IsValid())
+    {
+        const float4 Packed = Scene().GTAOSettings.SkyOcclusion.SampleLevel(Samplers::LinearClamp, ScreenUV, 0.0);
+        Visibility *= Packed.r;
+        Lean       += DecodeBentNormalOffset(Packed.gba);
+    }
+
+    const float3 Bent = N + Lean;
+    FScreenAO AO;
+    AO.Visibility = Visibility;
+    AO.BentNormal = dot(Bent, N) > 1e-3 ? normalize(Bent) : N;
+    return AO;
+}
+
 // The surface's true orientation from its depth neighbors, which a normal map cannot tilt into the surface.
 float3 GeometricViewNormal(FTexture2D Depth, int2 Texel, float DepthC, float3 ViewC, float2 Size)
 {

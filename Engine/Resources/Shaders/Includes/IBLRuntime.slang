@@ -72,6 +72,40 @@ float ComputeSpecularOcclusion(float NdotV, float AO, float Roughness)
     return saturate(pow(NdotV + AO, exp2(-16.0 * Roughness - 1.0)) - 1.0 + AO);
 }
 
+// Oat and Sander 2007, the solid angle two caps share over 2 pi, with the smoothstep falloff Jimenez et al. 2016 suggest.
+float SphericalCapIntersection(float CosCap1, float CosCap2, float CosDistance)
+{
+    const float R1 = acos(CosCap1);
+    const float R2 = acos(CosCap2);
+    const float D  = acos(clamp(CosDistance, -1.0, 1.0));
+    const float SmallerCap = 1.0 - max(CosCap1, CosCap2);
+    if (min(R1, R2) <= max(R1, R2) - D)
+    {
+        return SmallerCap;
+    }
+    if (R1 + R2 <= D)
+    {
+        return 0.0;
+    }
+    const float Delta = abs(R1 - R2);
+    return smoothstep(0.0, 1.0, 1.0 - saturate((D - Delta) / max(R1 + R2 - Delta, 1e-4))) * SmallerCap;
+}
+
+// Jimenez et al. 2016 cone test of the specular lobe against the open cone around the bent normal, relative to an open hemisphere.
+float ComputeBentSpecularOcclusion(float3 BentN, float3 N, float3 R, float NdotV, float AO, float Roughness)
+{
+    const float Alpha   = Roughness * Roughness;
+    const float CosLobe = exp2(-3.321928 * Alpha * Alpha);
+    const float CosOpen = sqrt(saturate(1.0 - AO));
+
+    // Dividing by the open hemisphere's share stops grazing reflections on open ground reading as occluded.
+    const float Unoccluded = SphericalCapIntersection(0.0, CosLobe, dot(N, R));
+    const float Cone       = Unoccluded > 1e-4 ? saturate(SphericalCapIntersection(CosOpen, CosLobe, dot(BentN, R)) / Unoccluded) : AO;
+
+    // A near mirror lobe is all or nothing against the cone, so it keeps the softer direction-free term.
+    return lerp(ComputeSpecularOcclusion(NdotV, AO, Roughness), Cone, smoothstep(0.01, 0.09, Alpha));
+}
+
 // Colored multi-bounce ambient occlusion (Jimenez et al. 2016), diffuse only.
 float3 AOMultiBounce(float Visibility, float3 DiffuseColor)
 {
@@ -82,7 +116,7 @@ float3 AOMultiBounce(float Visibility, float3 DiffuseColor)
 }
 
 // The mirror lobe returns separately so the translucent path can keep reflections un-premultiplied.
-void EvaluateIBLAmbientSplit(float3 WorldPos, float3 N, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO,
+void EvaluateIBLAmbientSplit(float3 WorldPos, float3 N, float3 BentN, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO,
                              out float3 OutDiffuse, out float3 OutSpecular)
 {
     float3 R = reflect(-V, N);
@@ -98,19 +132,20 @@ void EvaluateIBLAmbientSplit(float3 WorldPos, float3 N, float3 V, float NdotV, f
     float3 DiffuseColor = Albedo * (1.0 - Metallic);
     float3 kD           = DiffuseColor * (1.0 - FssEss - FmsEms);
 
-    float3 Irradiance = SampleDiffuseIrradiance(WorldPos, N);
+    // The bent normal points at the open part of the hemisphere, so the sky arrives from where it can.
+    float3 Irradiance = SampleDiffuseIrradiance(WorldPos, BentN);
     float3 PreFilt    = SampleSpecularRadiance(WorldPos, R, Roughness);
 
-    float SpecAO = ComputeSpecularOcclusion(NdotV, AO, Roughness);
+    float SpecAO = ComputeBentSpecularOcclusion(BentN, N, R, NdotV, AO, Roughness);
 
     OutSpecular = FssEss * PreFilt * SpecAO;
     // Only kD takes the colored bounce; FmsEms is specular energy, tinted by Favg rather than by albedo.
     OutDiffuse  = (FmsEms * AO + kD * AOMultiBounce(AO, DiffuseColor)) * Irradiance;
 }
 
-float3 EvaluateIBLAmbient(float3 WorldPos, float3 N, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO)
+float3 EvaluateIBLAmbient(float3 WorldPos, float3 N, float3 BentN, float3 V, float NdotV, float2 DFG, float3 Albedo, float3 F0, float Roughness, float Metallic, float AO)
 {
     float3 Diffuse, Specular;
-    EvaluateIBLAmbientSplit(WorldPos, N, V, NdotV, DFG, Albedo, F0, Roughness, Metallic, AO, Diffuse, Specular);
+    EvaluateIBLAmbientSplit(WorldPos, N, BentN, V, NdotV, DFG, Albedo, F0, Roughness, Metallic, AO, Diffuse, Specular);
     return Diffuse + Specular;
 }

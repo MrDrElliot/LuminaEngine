@@ -12,8 +12,8 @@ namespace Lumina
         // How far past a receiver a distance-field caster can still shade it.
         constexpr float  kSunDFMaxTrace           = 1000.0f;
 
-        // Mirror of FSunDFObject in SunDFShadowCommon.slang.
-        struct FSunDFObject
+        // Mirror of FDFObject in DistanceFieldGrid.slang.
+        struct FDFObject
         {
             FTransform3x4 WorldToLocal;
             FVector4      Sphere;
@@ -26,49 +26,88 @@ namespace Lumina
             float         VoxelSize;
             uint32        _Pad0;
         };
-        static_assert(sizeof(FSunDFObject) == 112);
+        static_assert(sizeof(FDFObject) == 112);
 
-        // Mirror of FSunDFShadowGrid in SunDFShadowCommon.slang.
-        struct FSunDFShadowGrid
+        // Mirror of FDFObjectGrid in DistanceFieldGrid.slang.
+        struct FDFObjectGrid
         {
-            RHI::TGPUSpan<FSunDFObject> Objects;
-            RHI::TGPUSpan<uint32>       CellCounts;
-            RHI::TGPUSpan<uint32>       CellItems;
-            RHI::TGPUSpan<uint32>       Counters;
-            FVector3                    SunRight;
-            float                       CellSize;
-            FVector3                    SunUp;
-            float                       MinRadius;
-            FVector2                    Origin;
-            uint32                      Dimension;
-            uint32                      _Pad0;
+            RHI::TGPUSpan<FDFObject> Objects;
+            RHI::TGPUSpan<uint32>    CellCounts;
+            RHI::TGPUSpan<uint32>    CellItems;
+            RHI::TGPUSpan<uint32>    Counters;
+            FVector3                 Right;
+            float                    CellSize;
+            FVector3                 Up;
+            float                    MinRadius;
+            FVector2                 Origin;
+            uint32                   Dimension;
+            float                    SpherePad;
         };
-        static_assert(sizeof(FSunDFShadowGrid) == 112);
+        static_assert(sizeof(FDFObjectGrid) == 112);
 
-        // Mirror of FPushConstants in SunDFShadowCull.slang.
-        struct FSunDFShadowCullArgs
+        // Mirror of FPushConstants in DistanceFieldGridCull.slang.
+        struct FDFGridCullArgs
         {
             RHI::TGPUSpan<uint32>             Blocks;
             RHI::TGPUSpan<FInstanceCullEntry> RetainedCullEntries;
             RHI::TGPUSpan<FTransform3x4>      RetainedTransforms;
             RHI::TGPUSpan<FInstanceStatic>    RetainedStatic;
             RHI::TGPUSpan<uint32>             LargeObjects;
-            FSunDFShadowGrid                  Grid;
+            FDFObjectGrid                     Grid;
         };
 
-        // Mirror of FPushConstants in SunDFShadowBin.slang.
-        struct FSunDFShadowBinArgs
+        // Mirror of FPushConstants in DistanceFieldGridBin.slang.
+        struct FDFGridBinArgs
         {
             RHI::TGPUSpan<uint32> LargeObjects;
-            FSunDFShadowGrid      Grid;
+            FDFObjectGrid         Grid;
             uint32                bScatter;
         };
 
-        // Mirror of FPushConstants in SunDFShadowScan.slang.
-        struct FSunDFShadowScanArgs
+        // Mirror of FPushConstants in DistanceFieldGridScan.slang.
+        struct FDFGridScanArgs
         {
             RHI::TGPUSpan<uint32> CellCounts;
         };
+
+        // Matches kConeTanHalf in DistanceFieldAO.slang, whose cones widen by this much past the reach.
+        constexpr float kDistanceFieldAOConeTanHalf = 0.55f;
+
+        // Mirror of FPushConstants in DistanceFieldAO.slang.
+        struct FDistanceFieldAOArgs
+        {
+            uint32        OutputSize[2];
+            uint32        DepthSize[2];
+            uint32        DepthIndex;
+            uint32        GBufferBIndex;
+            uint32        SlotImageIndex;
+            uint32        OutputUAV;
+            float         MaxDistance;
+            float         ViewDistance;
+            FDFObjectGrid Grid;
+        };
+
+        // The trace reads a built grid's spans, and a grid of no cells, which every receiver falls outside, when there is none.
+        FDFObjectGrid MakeGridArgs(const FDistanceFieldGrid& Grid, const FDistanceFieldGridPlacement& Placement)
+        {
+            FDFObjectGrid Args = {};
+            if (!Grid.bReady)
+            {
+                return Args;
+            }
+            Args.Objects    = { Grid.Objects, Grid.Objects.CapacityOf<FDFObject>() };
+            Args.CellCounts = { Grid.CellCounts, Placement.Dimension * Placement.Dimension + 1u };
+            Args.CellItems  = { Grid.CellItems, Grid.CellItems.CapacityOf<uint32>() };
+            Args.Counters   = { Grid.Counters, 4u };
+            Args.Right      = Placement.Right;
+            Args.CellSize   = Placement.CellSize;
+            Args.Up         = Placement.Up;
+            Args.MinRadius  = Placement.MinRadius;
+            Args.Origin     = Placement.Origin;
+            Args.Dimension  = Placement.Dimension;
+            Args.SpherePad  = Placement.SpherePad;
+            return Args;
+        }
 
         // Mirror of FTerrainShadowRecord in SunFarShadow.slang.
         struct FTerrainShadowRecord
@@ -95,7 +134,7 @@ namespace Lumina
             uint32   TerrainSteps;
             uint32   NumTerrains;
             float    _Pad;
-            FSunDFShadowGrid DFGrid;
+            FDFObjectGrid    DFGrid;
             float    DFNear;
             float    DFFar;
             float    DFMaxTrace;
@@ -194,20 +233,8 @@ namespace Lumina
         Args.DFNear             = Settings.DFNear;
         Args.DFFar              = Settings.DFFar;
         Args.DFMaxTrace         = kSunDFMaxTrace;
-        Args.bDistanceField     = (Settings.bDistanceField && bSunDFGridReady) ? 1u : 0u;
-        if (Args.bDistanceField != 0u)
-        {
-            Args.DFGrid.Objects      = { SunDFObjectBuffer, SunDFObjectBuffer.CapacityOf<FSunDFObject>() };
-            Args.DFGrid.CellCounts   = { SunDFCellCountBuffer, kSunDFGridDimension * kSunDFGridDimension + 1u };
-            Args.DFGrid.CellItems    = { SunDFCellItemBuffer, SunDFCellItemBuffer.CapacityOf<uint32>() };
-            Args.DFGrid.Counters     = { SunDFCounterBuffer, 4u };
-            Args.DFGrid.SunRight     = Settings.SunRight;
-            Args.DFGrid.CellSize     = Settings.GridCellSize;
-            Args.DFGrid.SunUp        = Settings.SunUp;
-            Args.DFGrid.MinRadius    = Settings.DFMinRadius;
-            Args.DFGrid.Origin       = Settings.GridOrigin;
-            Args.DFGrid.Dimension    = kSunDFGridDimension;
-        }
+        Args.bDistanceField     = (Settings.bDistanceField && SunDFGrid.bReady) ? 1u : 0u;
+        Args.DFGrid             = MakeGridArgs(SunDFGrid, Settings.DFGrid);
 
         // Every casting terrain, not only those in view, since a ridge behind the camera still shades what is in front.
         uint32 NumCastingTerrains = 0u;
@@ -298,43 +325,49 @@ namespace Lumina
 
     bool FDefaultSceneRenderer::SunDFShadowCullPass(RHI::FCmdListH CL)
     {
-        bSunDFGridReady = false;
-        const FFrameData& Frame = *RenderFrame;
-        const auto& Settings = Frame.Lighting.SunFarShadow;
+        SunDFGrid.bReady = false;
+        const auto& Settings = RenderFrame->Lighting.SunFarShadow;
         if (!WantsSunFarShadowTrace() || !Settings.bDistanceField)
         {
             return false;
         }
 
-        static const FShaderH CullCS = FShaderLibrary::Get("SunDFShadowCull.slang");
-        static const FShaderH BinCS  = FShaderLibrary::Get("SunDFShadowBin.slang");
-        static const FShaderH ScanCS = FShaderLibrary::Get("SunDFShadowScan.slang");
+        SCENE_GPU_SCOPE(CL, "Sun DF Shadow Cull");
+        return BuildDistanceFieldGrid(CL, SunDFGrid, Settings.DFGrid);
+    }
+
+    bool FDefaultSceneRenderer::BuildDistanceFieldGrid(RHI::FCmdListH CL, FDistanceFieldGrid& Grid, const FDistanceFieldGridPlacement& Placement)
+    {
+        Grid.bReady = false;
+        const FFrameData& Frame = *RenderFrame;
+
+        static const FShaderH CullCS = FShaderLibrary::Get("DistanceFieldGridCull.slang");
+        static const FShaderH BinCS  = FShaderLibrary::Get("DistanceFieldGridBin.slang");
+        static const FShaderH ScanCS = FShaderLibrary::Get("DistanceFieldGridScan.slang");
         const uint32 RetainedSlots = Frame.Geometry.RetainedUpload.SlotCount;
         const bool bRetainedFits = RetainedSlots > 0
                                 && RetainedCullEntryBuffer.CapacityOf<FInstanceCullEntry>() >= RetainedSlots
                                 && RetainedTransformBuffer.CapacityOf<FTransform3x4>()     >= RetainedSlots
                                 && RetainedStaticBuffer.CapacityOf<FInstanceStatic>()      >= RetainedSlots;
-        if (!CullCS || !BinCS || !ScanCS || !bRetainedFits)
+        if (!CullCS || !BinCS || !ScanCS || !bRetainedFits || Placement.Dimension == 0u)
         {
             return false;
         }
 
-        SCENE_GPU_SCOPE(CL, "Sun DF Shadow Cull");
-
-        constexpr uint32 NumCells = kSunDFGridDimension * kSunDFGridDimension;
-        constexpr uint32 MinItems = NumCells * kSunDFCellCapacity;
+        const uint32 NumCells = Placement.Dimension * Placement.Dimension;
+        const uint32 MinItems = NumCells * kDFGridCellCapacity;
         // The extra slot past the last cell is where the scan leaves the total.
-        constexpr uint32 NumCellSlots = NumCells + 1u;
+        const uint32 NumCellSlots = NumCells + 1u;
 
         // Holds the scan's item total, then the cull's caster and large caster counts.
         constexpr uint32 NumDemands = 3u;
-        FSceneBuffer& DemandReadback = SunDFDemandReadback[CurrentFrameSlot];
+        FSceneBuffer& DemandReadback = Grid.DemandReadback[CurrentFrameSlot];
         const uint32* Demand = DemandReadback.CpuAs<const uint32>();
         const uint32 ItemsWanted   = Demand != nullptr ? Math::Max(Demand[0], MinItems) : MinItems;
-        const uint32 ObjectsWanted = Demand != nullptr ? Math::Max(Demand[1], kSunDFMinObjects) : kSunDFMinObjects;
-        if (Demand != nullptr && Demand[2] > kSunDFMaxLargeCasters)
+        const uint32 ObjectsWanted = Demand != nullptr ? Math::Max(Demand[1], kDFGridMinObjects) : kDFGridMinObjects;
+        if (Demand != nullptr && Demand[2] > kDFGridMaxLargeCasters)
         {
-            LOG_WARN_ONCE("Renderer: the sun's distance-field grid needed {} large casters but holds {}, so far shadows lose casters.", Demand[2], kSunDFMaxLargeCasters);
+            LOG_WARN_ONCE("Renderer: the {} distance-field grid needed {} large casters but holds {}, so it loses casters.", Grid.Objects.DebugName, Demand[2], kDFGridMaxLargeCasters);
         }
         if (DemandReadback.Gpu == 0)
         {
@@ -346,81 +379,75 @@ namespace Lumina
             }
         }
 
-        ReserveBuffer(CL, SunDFObjectBuffer,    (uint64)ObjectsWanted * sizeof(FSunDFObject), false, false);
-        ReserveBuffer(CL, SunDFCellCountBuffer, (uint64)NumCellSlots * sizeof(uint32), false, false);
-        ReserveBuffer(CL, SunDFCellItemBuffer,  (uint64)ItemsWanted * sizeof(uint32), false, false);
-        ReserveBuffer(CL, SunDFCounterBuffer,   4u * sizeof(uint32), false, false);
-        ReserveBuffer(CL, SunDFLargeObjectBuffer, (uint64)kSunDFMaxLargeCasters * sizeof(uint32), false, false);
-        const uint32 NumItems   = SunDFCellItemBuffer.CapacityOf<uint32>();
-        const uint32 NumObjects = SunDFObjectBuffer.CapacityOf<FSunDFObject>();
-        if (NumObjects < kSunDFMinObjects ||
-            SunDFLargeObjectBuffer.CapacityOf<uint32>() < kSunDFMaxLargeCasters ||
-            SunDFCellCountBuffer.CapacityOf<uint32>() < NumCellSlots ||
+        ReserveBuffer(CL, Grid.Objects,      (uint64)ObjectsWanted * sizeof(FDFObject), false, false);
+        ReserveBuffer(CL, Grid.CellCounts,   (uint64)NumCellSlots * sizeof(uint32), false, false);
+        ReserveBuffer(CL, Grid.CellItems,    (uint64)ItemsWanted * sizeof(uint32), false, false);
+        ReserveBuffer(CL, Grid.Counters,     4u * sizeof(uint32), false, false);
+        ReserveBuffer(CL, Grid.LargeObjects, (uint64)kDFGridMaxLargeCasters * sizeof(uint32), false, false);
+        const uint32 NumItems   = Grid.CellItems.CapacityOf<uint32>();
+        const uint32 NumObjects = Grid.Objects.CapacityOf<FDFObject>();
+        if (NumObjects < kDFGridMinObjects ||
+            Grid.LargeObjects.CapacityOf<uint32>() < kDFGridMaxLargeCasters ||
+            Grid.CellCounts.CapacityOf<uint32>() < NumCellSlots ||
             NumItems < MinItems ||
-            SunDFCounterBuffer.CapacityOf<uint32>() < 4u)
+            Grid.Counters.CapacityOf<uint32>() < 4u)
         {
             return false;
         }
         if (NumItems < ItemsWanted)
         {
-            LOG_WARN_ONCE("Renderer: the sun's distance-field grid needed {} cell items but could only grow to {}, so far shadows lose casters.", ItemsWanted, NumItems);
+            LOG_WARN_ONCE("Renderer: the {} distance-field grid needed {} cell items but could only grow to {}, so it loses casters.", Grid.Objects.DebugName, ItemsWanted, NumItems);
         }
         if (NumObjects < ObjectsWanted)
         {
-            LOG_WARN_ONCE("Renderer: the sun's distance-field grid needed {} casters but could only grow to {}, so far shadows lose casters.", ObjectsWanted, NumObjects);
+            LOG_WARN_ONCE("Renderer: the {} distance-field grid needed {} casters but could only grow to {}, so it loses casters.", Grid.Objects.DebugName, ObjectsWanted, NumObjects);
         }
 
-        RHI::CmdMemzero(CL, RHI::FGPURange{ SunDFCellCountBuffer.Gpu, (uint64)NumCellSlots * sizeof(uint32) });
-        RHI::CmdMemzero(CL, RHI::FGPURange{ SunDFCounterBuffer.Gpu, 4u * sizeof(uint32) });
+        RHI::CmdMemzero(CL, RHI::FGPURange{ Grid.CellCounts.Gpu, (uint64)NumCellSlots * sizeof(uint32) });
+        RHI::CmdMemzero(CL, RHI::FGPURange{ Grid.Counters.Gpu, 4u * sizeof(uint32) });
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
-        FSunDFShadowCullArgs Args = {};
+        // Spans sized to what was reserved, which MakeGridArgs reads back once the grid is ready.
+        Grid.bReady = true;
+        FDFGridCullArgs Args = {};
         Args.RetainedCullEntries = { RetainedCullEntryBuffer, RetainedSlots };
         Args.RetainedTransforms  = { RetainedTransformBuffer, RetainedSlots };
         Args.RetainedStatic      = { RetainedStaticBuffer, RetainedSlots };
-        Args.LargeObjects        = { SunDFLargeObjectBuffer, kSunDFMaxLargeCasters };
-        Args.Grid.Objects        = { SunDFObjectBuffer, NumObjects };
-        Args.Grid.CellCounts     = { SunDFCellCountBuffer, NumCellSlots };
-        Args.Grid.CellItems      = { SunDFCellItemBuffer, NumItems };
-        Args.Grid.Counters       = { SunDFCounterBuffer, 4u };
-        Args.Grid.SunRight       = Settings.SunRight;
-        Args.Grid.CellSize       = Settings.GridCellSize;
-        Args.Grid.SunUp          = Settings.SunUp;
-        Args.Grid.MinRadius      = Settings.DFMinRadius;
-        Args.Grid.Origin         = Settings.GridOrigin;
-        Args.Grid.Dimension      = kSunDFGridDimension;
+        Args.LargeObjects        = { Grid.LargeObjects, kDFGridMaxLargeCasters };
+        Args.Grid                = MakeGridArgs(Grid, Placement);
+        Grid.bReady = false;
 
         // Only the blocks holding a distance-field caster, unless the block table is not current.
-        static_assert(kInstanceCullBlockSize == 64u, "SunDFShadowCull.slang walks a block per 64-lane group.");
+        static_assert(kInstanceCullBlockSize == 64u, "DistanceFieldGridCull.slang walks a block per 64-lane group.");
         const bool bBlockList = bInstanceBlockBoundsValid && !bDistanceFieldBlocksDirty;
         if (bBlockList && DistanceFieldBlocks.IsEmpty())
         {
-            bSunDFGridReady = true;
+            Grid.bReady = true;
             return true;
         }
         const uint32 NumGroups = bBlockList ? (uint32)DistanceFieldBlocks.Num() : RenderUtils::GetGroupCount(RetainedSlots, 64u);
         if (bBlockList)
         {
-            Args.Blocks = { SunDFBlockListBuffer, (uint32)DistanceFieldBlocks.Num() };
+            Args.Blocks = { DistanceFieldBlockListBuffer, (uint32)DistanceFieldBlocks.Num() };
         }
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullCS));
-        // SunDFShadowCull.slang undoes the fold with GroupID.y * MAX_DISPATCH_AXIS.
+        // DistanceFieldGridCull.slang undoes the fold with GroupID.y * MAX_DISPATCH_AXIS.
         const FUIntVector2 Groups = RenderUtils::FoldGroupCount(NumGroups);
         RHI::CmdDispatch(CL, MakeArgs(Args), Groups.x, Groups.y, 1u);
 
         // A group per large caster, then a lane per remaining caster, counted first and scattered once the scan has placed every cell.
-        const uint32 BinGroups = kSunDFMaxLargeCasters + RenderUtils::GetGroupCount(NumObjects, 64u);
-        FSunDFShadowBinArgs BinArgs = {};
+        const uint32 BinGroups = kDFGridMaxLargeCasters + RenderUtils::GetGroupCount(NumObjects, 64u);
+        FDFGridBinArgs BinArgs = {};
         BinArgs.LargeObjects = Args.LargeObjects;
         BinArgs.Grid         = Args.Grid;
         RHI::Barriers::ComputeToCompute(CL);
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(BinCS));
         RHI::CmdDispatch(CL, MakeArgs(BinArgs), BinGroups, 1u, 1u);
 
-        FSunDFShadowScanArgs ScanArgs = {};
+        FDFGridScanArgs ScanArgs = {};
         ScanArgs.CellCounts = Args.Grid.CellCounts;
         RHI::Barriers::ComputeToCompute(CL);
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ScanCS));
@@ -436,11 +463,81 @@ namespace Lumina
             RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::TransferRead);
         if (DemandReadback.Gpu != 0)
         {
-            RHI::CmdMemcpy(CL, { DemandReadback.Gpu, sizeof(uint32) }, { SunDFCellCountBuffer.Gpu + NumCells * sizeof(uint32), sizeof(uint32) });
-            RHI::CmdMemcpy(CL, { DemandReadback.Gpu + sizeof(uint32), 2u * sizeof(uint32) }, { SunDFCounterBuffer.Gpu, 2u * sizeof(uint32) });
+            RHI::CmdMemcpy(CL, { DemandReadback.Gpu, sizeof(uint32) }, { Grid.CellCounts.Gpu + NumCells * sizeof(uint32), sizeof(uint32) });
+            RHI::CmdMemcpy(CL, { DemandReadback.Gpu + sizeof(uint32), 2u * sizeof(uint32) }, { Grid.Counters.Gpu, 2u * sizeof(uint32) });
             RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite, RHI::EStageFlags::Host, RHI::EAccessFlags::HostRead);
         }
-        bSunDFGridReady = true;
+        Grid.bReady = true;
         return true;
+    }
+
+    bool FDefaultSceneRenderer::WantsDistanceFieldAO(const FSceneView& View) const
+    {
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        return Settings != nullptr && Settings->bDistanceFieldAO && View.bIsPrimary;
+    }
+
+    bool FDefaultSceneRenderer::IsDistanceFieldAOTraced() const
+    {
+        return CurrentView != nullptr && WantsDistanceFieldAO(*CurrentView) && HasVisBufferGeometry()
+            && GetNamedImage(ENamedImage::DistanceFieldAO).IsValid() && GetNamedImage(ENamedImage::DistanceFieldAOTrace).IsValid();
+    }
+
+    void FDefaultSceneRenderer::DistanceFieldAOPass(RHI::FCmdListH CL)
+    {
+        SkyDFGrid.bReady = false;
+        if (!IsDistanceFieldAOTraced())
+        {
+            return;
+        }
+
+        static const FShaderH TraceCS    = FShaderLibrary::Get("DistanceFieldAO.slang");
+        static const FShaderH UpsampleCS = FShaderLibrary::Get("GTAOUpsample.slang");
+        const FSceneImage& Depth  = GetNamedImage(ENamedImage::DepthAttachment);
+        const FSceneImage& Trace  = GetNamedImage(ENamedImage::DistanceFieldAOTrace);
+        const FSceneImage& Output = GetNamedImage(ENamedImage::DistanceFieldAO);
+        const int32 TraceSlot = Trace.GetMipUAVIndex(0);
+        if (!TraceCS || !UpsampleCS || Depth.GetResourceID() < 0 || TraceSlot < 0)
+        {
+            return;
+        }
+
+        SCENE_GPU_SCOPE(CL, "Distance Field AO");
+
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        const float MaxDistance  = Math::Max(Settings->DistanceFieldAOMaxDistance, 0.5f);
+        const float ViewDistance = Math::Max(Settings->DistanceFieldAOViewDistance, 10.0f);
+
+        // Looking straight down on the camera, every caster binned over its reach so a receiver's own cell holds all that can occlude it.
+        const FVector3 Camera = RenderFrame->ViewVolume.GetViewPosition();
+        FDistanceFieldGridPlacement Placement;
+        Placement.Right     = FVector3(1.0f, 0.0f, 0.0f);
+        Placement.Up        = FVector3(0.0f, 0.0f, 1.0f);
+        Placement.Origin    = FVector2(Camera.x - ViewDistance, Camera.z - ViewDistance);
+        Placement.CellSize  = 2.0f * ViewDistance / (float)kSkyDFGridDimension;
+        Placement.Dimension = kSkyDFGridDimension;
+        Placement.SpherePad = MaxDistance * (1.0f + kDistanceFieldAOConeTanHalf);
+        BuildDistanceFieldGrid(CL, SkyDFGrid, Placement);
+
+        // Traced even without a grid, since the lighting reads whatever this leaves behind.
+        FDistanceFieldAOArgs Args = {};
+        Args.OutputSize[0] = Trace.GetSizeX();
+        Args.OutputSize[1] = Trace.GetSizeY();
+        Args.DepthSize[0]  = Depth.GetSizeX();
+        Args.DepthSize[1]  = Depth.GetSizeY();
+        Args.DepthIndex     = (uint32)Depth.GetResourceID();
+        Args.GBufferBIndex  = (uint32)GetNamedImage(ENamedImage::GBufferB).GetResourceID();
+        Args.SlotImageIndex = (uint32)GetNamedImage(ENamedImage::MaterialSlot).GetResourceID();
+        Args.OutputUAV      = (uint32)TraceSlot;
+        Args.MaxDistance   = MaxDistance;
+        Args.ViewDistance  = ViewDistance;
+        Args.Grid          = MakeGridArgs(SkyDFGrid, Placement);
+
+        DispatchCompute(CL, TraceCS, Args,
+            RenderUtils::GetGroupCount(Args.OutputSize[0], 8u),
+            RenderUtils::GetGroupCount(Args.OutputSize[1], 8u), 1);
+        RHI::Barriers::ComputeToCompute(CL);
+
+        BilateralUpsample(CL, UpsampleCS, Trace, Output, Depth, 2u, /*bRawHalfDepth*/ true);
     }
 }

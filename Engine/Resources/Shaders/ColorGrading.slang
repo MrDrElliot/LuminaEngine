@@ -1,6 +1,7 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 #include "Includes/Tonemap.slang"
+#include "Includes/HDROutput.slang"
 
 // The grading constants exceed the 128 B push limit, so they ride the transient ring by device address.
 
@@ -42,6 +43,7 @@ struct FColorGradingConstants
 
     float4 Fade;               // .rgb display color, .a amount
     float4 Letterbox;          // .x picture aspect or 0, .y output aspect
+    float4 HDROutput;          // .x highlight gain range in stops, 0 for an SDR display
 };
 
 struct FComposePushConstants
@@ -233,6 +235,9 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
         }
     }
 
+    // Taken before the curve, which flattens every highlight the HDR gain has to tell apart.
+    const float PeakChannel = max(Color.r, max(Color.g, Color.b));
+
     Color = ApplyTonemap(Color, Grading.TonemapMode);
 
     if ((Features & GRADING_LIFT_GAMMA_GAIN) != 0u)
@@ -265,14 +270,27 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
                                    Grading.Shadows.a, Grading.Midtones.a, Grading.Highlights.a), 0.0);
     }
 
+    const float GainStops = Grading.HDROutput.x;
+    float GainCode = 1.0;
+    if (GainStops > 0.0)
+    {
+        GainCode = EncodeHDRGain(HDRHighlightGain(PeakChannel, exp2(GainStops)), GainStops);
+    }
+
     Color = EncodeDisplayGamma(Color);
 
-    Color += ScreenSpaceDither(Input.Position.xy);
+    const float3 Dither = ScreenSpaceDither(Input.Position.xy);
+    Color += Dither;
+    if (GainCode < 1.0)
+    {
+        GainCode = saturate(GainCode + Dither.x);
+    }
 
     if ((Features & GRADING_FADE) != 0u)
     {
         const float4 Fade = Grading.Fade;
-        Color = lerp(Color, Fade.rgb, saturate(Fade.a));
+        Color    = lerp(Color, Fade.rgb, saturate(Fade.a));
+        GainCode = lerp(GainCode, 1.0, saturate(Fade.a));
     }
 
     if ((Features & GRADING_LETTERBOX) != 0u)
@@ -282,9 +300,10 @@ float4 FragmentMain(VSOutput Input) : SV_Target0
         const float2 FromCenter = abs(Input.UV - 0.5) * 2.0;
         if ((Ratio < 1.0 && FromCenter.y > Ratio) || (Ratio > 1.0 && FromCenter.x > 1.0 / Ratio))
         {
-            Color = float3(0.0, 0.0, 0.0);
+            Color    = float3(0.0, 0.0, 0.0);
+            GainCode = 1.0;
         }
     }
 
-    return float4(Color, 1.0);
+    return float4(Color, GainCode);
 }

@@ -99,7 +99,8 @@ uint CORTAO_OccludedRays(float3 Direction, float Radius)
 
 #ifdef CORTAO_SAMPLE_COUNT
 // Visibility of the hemisphere around Normal at viewspace Position, out to Radius, from a pyramid of depths packed with normals.
-float CORTAO_Visibility(FGTAOView V, FTexture2D PackedDepth, float3 Position, float3 Normal, float Radius, float2 Noise, uint Hash)
+float CORTAO_Visibility(FGTAOView V, FTexture2D PackedDepth, float3 Position, float3 Normal, float Radius, float2 Noise, uint Hash,
+                        out float3 OutBentNormal)
 {
     const float3 ViewDir = normalize(-Position);
     const float  Z       = Position.z;
@@ -182,6 +183,16 @@ float CORTAO_Visibility(FGTAOView V, FTexture2D PackedDepth, float3 Position, fl
 
         RayBits |= CORTAO_OccludedRays(float3(dot(Direction, RayX), dot(Direction, RayY), dot(Direction, Normal)), OccluderRadius);
     }
+
+    // The rays are cosine distributed, so the mean of the open ones is the cosine-weighted bent normal.
+    float3 OpenSum = float3(0.0, 0.0, 0.0);
+    [unroll]
+    for (uint Ray = 0u; Ray < CORTAO_RAY_COUNT; ++Ray)
+    {
+        OpenSum += ((RayBits & (1u << Ray)) == 0u) ? CORTAO_RayDirection(Ray) : float3(0.0, 0.0, 0.0);
+    }
+    const float OpenLength = length(OpenSum);
+    OutBentNormal = OpenLength > 1e-6 ? (RayX * OpenSum.x + RayY * OpenSum.y + Normal * OpenSum.z) / OpenLength : Normal;
 
     return 1.0 - float(countbits(RayBits)) / float(CORTAO_RAY_COUNT);
 }

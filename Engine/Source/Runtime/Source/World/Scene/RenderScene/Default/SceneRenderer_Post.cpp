@@ -41,8 +41,10 @@ namespace Lumina
             FVector4 Fade;
             // .x = letterbox aspect (0 = none), .y = output aspect.
             FVector4 Letterbox;
+            // .x = display headroom in stops above paper white, 0 for an SDR display.
+            FVector4 HDROutput;
         };
-        static_assert(sizeof(FColorGradingConstants) == 192, "FColorGradingConstants layout must match ColorGrading.slang::FColorGradingConstants.");
+        static_assert(sizeof(FColorGradingConstants) == 208, "FColorGradingConstants layout must match ColorGrading.slang::FColorGradingConstants.");
         
         FColorGradingConstants MakeDefaultColorGrading(float Time)
         {
@@ -467,6 +469,8 @@ namespace Lumina
         FColorGradingConstants Constants = BuildColorGradingConstants(ActivePostProcess, SceneGlobalData.Time);
         Constants.Letterbox.y = (float)Output.GetExtent().x / (float)Math::Max(Output.GetExtent().y, 1u);
         Constants.Features    = ComputeGradingFeatures(Constants);
+        // Captures feed materials and thumbnails, so only the presented view carries the HDR gain.
+        Constants.HDROutput.x = CurrentView == &SceneViews[0] ? Frame.PostProcess.DisplayHeadroomStops : 0.0f;
 
         struct FComposePushConstants
         {

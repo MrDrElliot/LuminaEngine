@@ -44,7 +44,10 @@ namespace Lumina
 
         // Draw-list upload + per-cmd DrawIndexed, inside an already-open render pass. Shared by the
         // main viewport and every secondary window.
-        void RecordDrawLists(RHI::FCmdListH CL, ImDrawData* DrawData, float FBW, float FBH);
+        void RecordDrawLists(RHI::FCmdListH CL, ImDrawData* DrawData, EFormat TargetFormat, float FBW, float FBH);
+
+        // Scene images draw opaque, so the HDR gain in their alpha lands in the target unblended.
+        RHI::FPipelineH GetPipeline(EFormat TargetFormat, bool bOpaque);
 
         // Multi-viewport window-lifecycle hooks.
         static void OnRendererCreateWindow(ImGuiViewport* Viewport);
@@ -60,9 +63,9 @@ namespace Lumina
         // Build/resize the window's swapchain, record its live draw data, present.
         void RenderSecondaryViewport(FImGuiViewportData* Data, ImDrawData* DrawData);
 
-        // Pipeline (BGRA8 swapchain), depth-disabled state, and the font atlases living in the
-        // new texture heap (keyed by ImTextureData::UniqueID).
-        RHI::FPipelineH                        NewPipeline;
+        // Keyed by target format and opaque bit, since the window may draw into an SDR swapchain or the HDR composite.
+        THashMap<uint64, RHI::FPipelineH>      Pipelines;
+        // The font atlases living in the new texture heap, keyed by ImTextureData::UniqueID.
         THashMap<int32, RHI::FManagedTexture>  NewFontTextures;
 
         // Path-loaded UI images (icons), decoded straight into the new texture heap so their

@@ -663,6 +663,9 @@ namespace Lumina::RHI
     RUNTIME_API FTextureH    AcquireNextImage(FSwapchainH Swapchain);   // invalid handle if out-of-date this call
     RUNTIME_API FUIntVector2 GetSwapchainExtent(FSwapchainH Swapchain);
     RUNTIME_API EFormat      GetSwapchainFormat(FSwapchainH Swapchain);
+    // Takes effect at the next rebuild, which falls back to SDR where the surface offers no HDR10 format.
+    RUNTIME_API void         SetSwapchainHDR(FSwapchainH Swapchain, bool bHDR);
+    RUNTIME_API bool         IsSwapchainHDR(FSwapchainH Swapchain);
     RUNTIME_API void         CmdSwapchainBarrierToRender(FCmdListH CL, FSwapchainH Swapchain);
     // Split so the submit can sit inside the caller's ordering lock and the slow present call outside it.
     RUNTIME_API void         SubmitSwapchainFrame(FSwapchainH Swapchain, FCmdListH FinalCommandList, FSemaphoreH FrameSignal, uint64 FrameSignalValue,

@@ -146,12 +146,8 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float3 FssEss = FresnelSchlickRoughness(NdotV, F0, Roughness) * DFG.x + DFG.y;
 
     // Same occlusion the base pass gave this lobe, or the reflection's coverage edge reads as a brightness step.
-    float AmbientAO = G.AmbientOcclusion;
-    if (Scene().GTAOSettings.AOTexture.IsValid())
-    {
-        AmbientAO *= Scene().GTAOSettings.AOTexture.SampleLevel(Samplers::LinearClamp, UV, 0.0).r;
-    }
-    const float SpecAO = ComputeSpecularOcclusion(NdotV, AmbientAO, Roughness);
+    const FScreenAO ScreenAO = SampleScreenAO(UV, N);
+    const float     SpecAO   = ComputeBentSpecularOcclusion(ScreenAO.BentNormal, N, R, NdotV, G.AmbientOcclusion * ScreenAO.Visibility, Roughness);
 
     // Validity is premultiplied into the color, so the environment keeps exactly the share the trace could not vouch for.
     const float3 PreFilt = SampleSpecularRadiance(WorldPosition, R, Roughness);

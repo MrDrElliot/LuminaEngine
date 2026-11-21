@@ -218,10 +218,10 @@ struct FEntityAABB
 
 struct FGTAOSettings
 {
-    FTexture2D AOTexture;       // ~0u means no GTAO for this view
+    FTexture2D AOTexture;       // Visibility in r and the encoded bent normal lean in gba, ~0u means no GTAO for this view
     FTexture2D SunShadowMask;   // Sun occlusion traced past the virtual shadow range, invalid when not traced.
     FTexture2D IndirectDiffuse; // Screen-space bounce in rgb and its hemisphere coverage in a, invalid when not traced.
-    uint       _Pad2;
+    FTexture2D SkyOcclusion;    // Distance field sky visibility in r and its bent normal lean in gba, invalid when not traced.
 };
 
 static const uint MatFlag_None        = 0;
@@ -1077,6 +1077,10 @@ struct FCullData
 #define DEBUG_MODE_SCREEN_SPACE_GI      32u
 // Sun shadow casters by how their virtual shadow meshlets rasterized, green in compute and red in hardware.
 #define DEBUG_MODE_SHADOW_RASTER        33u
+// GTAO's bent normal as a world-space color, the shading normal where GTAO is off.
+#define DEBUG_MODE_BENT_NORMAL          34u
+// Distance field sky visibility alone, white where it is not traced.
+#define DEBUG_MODE_DISTANCE_FIELD_AO    35u
 
 // Global scale on every material's POM settings. Matches FParallaxSettings in SceneRenderTypes.h.
 struct FParallaxSettings

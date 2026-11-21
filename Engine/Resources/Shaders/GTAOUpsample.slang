@@ -3,7 +3,7 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/XeGTAO.slang"
 
-// Bilateral upsample of a half-resolution term (GTAO or screen space GI), weighting the four nearest texels by how well their depth matches this pixel's.
+// Bilateral upsample of a half-resolution term (GTAO, screen space GI or distance field AO), weighting the four nearest texels by how well their depth matches this pixel's.
 
 struct FPushConstants
 {
@@ -14,6 +14,8 @@ struct FPushConstants
     FTexture2D   FullDepth;
     FRWTexture2D Output;
     uint         DepthScale;
+    // Set when HalfDepth is the raw depth buffer rather than GTAO's linear working depth.
+    uint         bRawHalfDepth;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -52,7 +54,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         const int2   Offset = int2(i & 1, i >> 1);
         const int3   Tap    = int3(clamp(Base + Offset, int2(0, 0), MaxTap), 0);
         const float4 Value  = AO.Load(Tap);
-        const float  Dz     = abs(HalfDepth.Load(int3(Tap.xy * int(Pass().DepthScale), 0)).r - Z);
+        const float  TapRaw = HalfDepth.Load(int3(Tap.xy * int(Pass().DepthScale), 0)).r;
+        const float  TapZ   = Pass().bRawHalfDepth != 0u ? XeGTAO_ClampDepth(XeGTAO_ScreenSpaceToViewSpaceDepth(V, TapRaw)) : TapRaw;
+        const float  Dz     = abs(TapZ - Z);
         const float2 Bilin  = lerp(1.0 - F, F, float2(Offset));
         const float  Weight = Bilin.x * Bilin.y * XeGTAO_DepthWeight(Dz, InvSigmaZ);
 

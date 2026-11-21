@@ -41,6 +41,13 @@ namespace Lumina
         int32 FrameRateLimit = 0;
 
         PROPERTY(Hidden)
+        EHDROutput HDROutput = EHDROutput::Auto;
+
+        // Zero follows the project, which by default follows the Windows SDR content brightness.
+        PROPERTY(Hidden)
+        float HDRPaperWhiteNits = 0.0f;
+
+        PROPERTY(Hidden)
         EQualityLevel ViewDistanceQuality = EQualityLevel::Default;
 
         PROPERTY(Hidden)

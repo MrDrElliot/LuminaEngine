@@ -9,6 +9,7 @@
 #include "Assets/AssetTypes/Prefabs/PrefabComponents.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Object/Package/Thumbnail/PackageThumbnail.h"
 #include "Core/UpdateContext.h"
 #include "FileSystem/FileSystem.h"
 #include "Input/InputContext.h"
@@ -16,6 +17,7 @@
 #include "Log/Log.h"
 #include "Renderer/RHI.h"
 #include "Renderer/RHICore.h"
+#include "Renderer/RenderManager.h"
 #include "Settings/EditorSettings.h"
 #include "Thumbnails/ThumbnailUtils.h"
 #include "Tools/ComponentVisualizers/ComponentVisualizer.h"
@@ -190,8 +192,15 @@ namespace Lumina
 
         if (const void* MappedMemory = Readback.Cpu)
         {
-            ThumbnailUtils::StoreDownsampledRGBA(*Package->GetPackageThumbnail(),
+            FPackageThumbnail& Thumbnail = *Package->GetPackageThumbnail();
+            ThumbnailUtils::StoreDownsampledRGBA(Thumbnail,
                 static_cast<const uint8*>(MappedMemory), SourceWidth, SourceHeight, (size_t)SourceWidth * 4u);
+
+            // The display image's alpha holds the HDR highlight gain while the editor presents HDR, which a thumbnail must not read as coverage.
+            for (int32 Alpha = 3; Alpha < Thumbnail.ImageData.Num(); Alpha += 4)
+            {
+                Thumbnail.ImageData[Alpha] = 255;
+            }
         }
 
         RHI::Retire(Readback);
@@ -1056,18 +1065,29 @@ namespace Lumina
         ImGui::GetWindowDrawList()->AddRectFilled(PanelMin, PanelMax, EditorColors::U32(EditorColors::PanelBg()));
 
         // A target nobody has composited into holds whatever memory it was given, so it is not drawn.
-        const IRenderScene* Scene = HasWorld() ? GetWorld()->GetRenderer() : nullptr;
+        IRenderScene* Scene = HasWorld() ? GetWorld()->GetRenderer() : nullptr;
         const bool bHasSceneImage = Scene != nullptr && Scene->HasCompositedFrame();
+
+        if (Scene != nullptr)
+        {
+            // Only the main window can present HDR10, and a torn-off tool window always presents SDR.
+            const FRenderManager* Manager = TryRender();
+            const bool bMainWindow = ImGui::GetWindowViewport() == ImGui::GetMainViewport();
+            Scene->SetDisplayHeadroom(Manager != nullptr && bMainWindow ? Manager->GetHDROutput().GetHeadroomStops() : 0.0f);
+        }
 
         if (bHasSceneImage)
         {
-            ImGui::GetWindowDrawList()->AddImage(
+            ImDrawList* DrawList = ImGui::GetWindowDrawList();
+            ImGuiX::BeginSceneDisplay(DrawList);
+            DrawList->AddImage(
                 ViewportTexture,
                 WindowPosition,
                 WindowBottomRight,
                 ImVec2(0, 0), ImVec2(1, 1),
                 IM_COL32_WHITE
             );
+            ImGuiX::EndSceneDisplay(DrawList);
         }
 
         else
@@ -1319,6 +1339,8 @@ namespace Lumina
                     // Redraws every cached page while open, so each caster shows how it rasterizes rather than only the ones that moved.
                     { ERenderSceneDebugFlags::ShadowRaster,    "Shadow Raster"    },
                     { ERenderSceneDebugFlags::GTAO,            "GTAO"             },
+                    { ERenderSceneDebugFlags::BentNormal,      "Bent Normal"      },
+                    { ERenderSceneDebugFlags::DistanceFieldAO, "Distance Field AO" },
                     { ERenderSceneDebugFlags::ScreenSpaceGI,   "Screen Space GI"  },
                     // The two failure modes look identical in a lit view, hence two separate inspectors.
                     { ERenderSceneDebugFlags::ProbeInfluence,  "Probe Influence"  },

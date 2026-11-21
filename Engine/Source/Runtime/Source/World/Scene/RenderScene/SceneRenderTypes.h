@@ -125,7 +125,9 @@ namespace Lumina
         QuadEfficiency      = 31,
         ScreenSpaceGI       = 32,
         ShadowRaster        = 33,
-        Num                 = 34,
+        BentNormal          = 34,
+        DistanceFieldAO     = 35,
+        Num                 = 36,
     };
 
     constexpr FStringView RenderFlagsAsString(ERenderSceneDebugFlags Flags)
@@ -165,6 +167,8 @@ namespace Lumina
             case ERenderSceneDebugFlags::QuadEfficiency:    return "Quad Efficiency";
             case ERenderSceneDebugFlags::ScreenSpaceGI:     return "Screen Space GI";
             case ERenderSceneDebugFlags::ShadowRaster:      return "Shadow Raster";
+            case ERenderSceneDebugFlags::BentNormal:        return "Bent Normal";
+            case ERenderSceneDebugFlags::DistanceFieldAO:   return "Distance Field AO";
             default:                                        return "Lit";
         }
     }
@@ -794,7 +798,8 @@ namespace Lumina
         uint32 SunShadowMaskIndex = Constants::kIndexNoneU32;
         // Half resolution bounced light in rgb and the hemisphere fraction it covers in a, set only on frames that traced it.
         uint32 IndirectDiffuseIndex = Constants::kIndexNoneU32;
-        uint32 _Pad2 = 0;
+        // Distance field sky visibility and its bent normal lean, set only on frames that traced it.
+        uint32 SkyOcclusionIndex = Constants::kIndexNoneU32;
     };
 
     // 32 byte layout, must match FBillboardInstance in Common.slang.

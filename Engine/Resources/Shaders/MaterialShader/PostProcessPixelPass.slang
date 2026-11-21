@@ -88,5 +88,6 @@ float4 FragmentMain(PSInput Input) : SV_Target0
 
     $MATERIAL_INPUTS
 
-    return float4(Material.Emissive, 1.0);
+    // Alpha carries the HDR highlight gain, which a material never authors.
+    return float4(Material.Emissive, SceneColor.a);
 }

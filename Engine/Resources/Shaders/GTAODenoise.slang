@@ -3,7 +3,7 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/XeGTAO.slang"
 
-// Edge-aware blur driven by the packed edges the main pass wrote, two horizontal pixels per thread.
+// Edge-aware blur of visibility and bent normal lean, driven by the packed edges the main pass wrote, two horizontal pixels per thread.
 
 struct FPushConstants
 {
@@ -17,21 +17,22 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-void AddSample(float Value, float Weight, inout float Sum, inout float SumWeight)
+void AddSample(float4 Value, float Weight, inout float4 Sum, inout float SumWeight)
 {
     Sum       += Weight * Value;
     SumWeight += Weight;
 }
 
-void StoreOutput(uint2 PixCoord, float Value, bool bFinalApply)
+// The lean in gba is stored linearly, so a weighted mean of it needs no decode.
+void StoreOutput(uint2 PixCoord, float4 Value, bool bFinalApply)
 {
-    float Result = Value;
+    float4 Result = Value;
     if (bFinalApply)
     {
-        Result = saturate(Result * XE_GTAO_OCCLUSION_TERM_SCALE);
-        Result = saturate(1.0 - (1.0 - Result) * Pass().Intensity);
+        Result.r = saturate(Result.r * XE_GTAO_OCCLUSION_TERM_SCALE);
+        Result.r = saturate(1.0 - (1.0 - Result.r) * Pass().Intensity);
     }
-    Pass().Output[PixCoord] = float4(Result, 0.0, 0.0, 0.0);
+    Pass().Output[PixCoord] = Result;
 }
 
 [shader("compute")]
@@ -61,10 +62,19 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float4 EdgesQ1 = Edges.GatherRed(Smp, GatherCenter, int2(2, 0));
     const float4 EdgesQ2 = Edges.GatherRed(Smp, GatherCenter, int2(1, 2));
 
-    const float4 VisQ0 = AOTerm.GatherRed(Smp, GatherCenter, int2(0, 0));
-    const float4 VisQ1 = AOTerm.GatherRed(Smp, GatherCenter, int2(2, 0));
-    const float4 VisQ2 = AOTerm.GatherRed(Smp, GatherCenter, int2(0, 2));
-    const float4 VisQ3 = AOTerm.GatherRed(Smp, GatherCenter, int2(2, 2));
+    // Rows above, at and below the pair, columns from one left of it to one right of it, clamped like the edge gathers.
+    float4 Terms[3][4];
+    const int2 MaxTap = int2(ViewportSize) - 1;
+    [unroll]
+    for (int Row = 0; Row < 3; ++Row)
+    {
+        [unroll]
+        for (int Column = 0; Column < 4; ++Column)
+        {
+            const int2 Tap = clamp(int2(PixCoordBase) + int2(Column - 1, Row - 1), int2(0, 0), MaxTap);
+            Terms[Row][Column] = AOTerm.Load(int3(Tap, 0));
+        }
+    }
 
     [unroll]
     for (int Side = 0; Side < 2; ++Side)
@@ -96,28 +106,20 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         const float WeightBL = DiagWeight * (EdgesC.w * EdgesB.x + EdgesC.x * EdgesL.w);
         const float WeightBR = DiagWeight * (EdgesC.y * EdgesR.w + EdgesC.w * EdgesB.y);
 
-        const float ValueC  = (Side == 0) ? VisQ0[1] : VisQ1[0];
-        const float ValueL  = (Side == 0) ? VisQ0[0] : VisQ0[1];
-        const float ValueT  = (Side == 0) ? VisQ0[2] : VisQ1[3];
-        const float ValueR  = (Side == 0) ? VisQ1[0] : VisQ1[1];
-        const float ValueB  = (Side == 0) ? VisQ2[2] : VisQ3[3];
-        const float ValueTL = (Side == 0) ? VisQ0[3] : VisQ0[2];
-        const float ValueBR = (Side == 0) ? VisQ3[3] : VisQ3[2];
-        const float ValueTR = (Side == 0) ? VisQ1[3] : VisQ1[2];
-        const float ValueBL = (Side == 0) ? VisQ2[3] : VisQ2[2];
+        const int Center = Side + 1;
 
-        float SumWeight = BlurAmount;
-        float Sum       = ValueC * SumWeight;
+        float  SumWeight = BlurAmount;
+        float4 Sum       = Terms[1][Center] * SumWeight;
 
-        AddSample(ValueL, EdgesC.x, Sum, SumWeight);
-        AddSample(ValueR, EdgesC.y, Sum, SumWeight);
-        AddSample(ValueT, EdgesC.z, Sum, SumWeight);
-        AddSample(ValueB, EdgesC.w, Sum, SumWeight);
+        AddSample(Terms[1][Center - 1], EdgesC.x, Sum, SumWeight);
+        AddSample(Terms[1][Center + 1], EdgesC.y, Sum, SumWeight);
+        AddSample(Terms[0][Center],     EdgesC.z, Sum, SumWeight);
+        AddSample(Terms[2][Center],     EdgesC.w, Sum, SumWeight);
 
-        AddSample(ValueTL, WeightTL, Sum, SumWeight);
-        AddSample(ValueTR, WeightTR, Sum, SumWeight);
-        AddSample(ValueBL, WeightBL, Sum, SumWeight);
-        AddSample(ValueBR, WeightBR, Sum, SumWeight);
+        AddSample(Terms[0][Center - 1], WeightTL, Sum, SumWeight);
+        AddSample(Terms[0][Center + 1], WeightTR, Sum, SumWeight);
+        AddSample(Terms[2][Center - 1], WeightBL, Sum, SumWeight);
+        AddSample(Terms[2][Center + 1], WeightBR, Sum, SumWeight);
 
         StoreOutput(PixCoord, Sum / max(SumWeight, 1e-6), bFinalApply);
     }

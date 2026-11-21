@@ -39,11 +39,6 @@ namespace Lumina::ImGuiX
 
     namespace Detail
     {
-        // Mirrors IMGUI_DISPLAY_* in Includes/ImGuiCommon.slang.
-        constexpr uint32 GDisplayModeDirect = 0u;
-        constexpr uint32 GDisplayModeHDR    = 1u;
-        constexpr uint32 GDisplayModeLinear = 2u;
-
         static void DisplayStateCallback(const ImDrawList*, const ImDrawCmd*)
         {
             // Intentionally empty, since the backend intercepts this by identity before it would run.
@@ -68,6 +63,23 @@ namespace Lumina::ImGuiX
 
         // A non-zero size makes ImGui copy the payload into the draw list, so it outlives this call.
         DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
+    }
+
+    void BeginSceneDisplay(ImDrawList* DrawList)
+    {
+        if (DrawList == nullptr)
+        {
+            return;
+        }
+
+        Detail::FImGuiDisplayState State;
+        State.DisplayMode = Detail::GDisplayModeScene;
+        DrawList->AddCallback(Detail::GetDisplayStateCallback(), &State, sizeof(State));
+    }
+
+    void EndSceneDisplay(ImDrawList* DrawList)
+    {
+        EndTextureDisplay(DrawList);
     }
 
     void EndHDRPreview(ImDrawList* DrawList)

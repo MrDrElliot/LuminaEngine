@@ -51,6 +51,23 @@ namespace Lumina
         FUNCTION()
         static void SetVSync(bool bEnabled);
 
+        FUNCTION()
+        static EHDROutput GetHDROutput();
+
+        FUNCTION()
+        static void SetHDROutput(EHDROutput Mode);
+
+        // Brightness of the UI and SDR white in HDR, where 0 follows the operating system.
+        FUNCTION()
+        static float GetHDRPaperWhiteNits();
+
+        FUNCTION()
+        static void SetHDRPaperWhiteNits(float Nits);
+
+        // Whether the game presents HDR10 right now, so a menu can hide its HDR options on an SDR display.
+        FUNCTION()
+        static bool IsHDROutputActive();
+
         // Zero is unlimited.
         FUNCTION()
         static int32 GetFrameRateLimit();

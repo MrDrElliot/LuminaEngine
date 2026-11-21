@@ -677,6 +677,8 @@ namespace Lumina::RHI
         uint32                 CurrentImageIndex;
         VkSemaphore            CurrentAcquire;
         FPresentSync           SubmittedSync;      // signaled by the frame submit, waited by the present after it
+        bool                   bHDRRequested = false;
+        bool                   bHDR          = false;   // built as HDR10, which a surface without it never is
     };
 
     // What a GPU copy crosses, since host-sourced bytes are the ones that cost PCIe bandwidth every frame.
@@ -704,6 +706,7 @@ namespace Lumina::RHI
         bool                            bDeviceAddressCommands = false;
         // Present fences retire an old swapchain without idling every queue on the device.
         bool                            bSwapchainMaintenance1 = false;
+        bool                            bSwapchainColorSpace = false;
         // The CPU can write straight into an optimally-tiled image, with no staging buffer and no copy pass.
         bool                            bHostImageCopy = false;
         bool                            bHostQueryReset = false;
@@ -2414,6 +2417,13 @@ namespace Lumina::RHI
                 InstanceExtensions.Add(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
                 InstanceExtensions.Add(SurfaceMaint);
                 GSurfaceMaintenance1Available = true;
+            }
+
+            // Lists the HDR color spaces among a surface's formats, without which no swapchain can present HDR10.
+            if (HasInstanceExt(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))
+            {
+                InstanceExtensions.Add(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+                GDevice->bSwapchainColorSpace = true;
             }
         }
 
@@ -6258,6 +6268,29 @@ namespace Lumina::RHI
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 
+    static VkSurfaceFormatKHR ChooseSurfaceFormat(const FSwapchain& SC)
+    {
+        constexpr VkSurfaceFormatKHR SDR { VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
+        if (!SC.bHDRRequested || !GDevice->bSwapchainColorSpace)
+        {
+            return SDR;
+        }
+
+        uint32 Count = 0;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(GDevice->PhysicsDevice, SC.Surface, &Count, nullptr);
+        TVector<VkSurfaceFormatKHR> Formats(Count);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(GDevice->PhysicsDevice, SC.Surface, &Count, Formats.GetData());
+
+        for (const VkSurfaceFormatKHR& Candidate : Formats)
+        {
+            if (Candidate.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 && Candidate.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT)
+            {
+                return Candidate;
+            }
+        }
+        return SDR;
+    }
+
     static bool BuildSwapchainImages(FSwapchain& SC, const FUIntVector2& Extent, VkSwapchainKHR OldSwapchain)
     {
         VkSurfaceCapabilitiesKHR Caps{};
@@ -6290,8 +6323,9 @@ namespace Lumina::RHI
             ImageCount = Math::Min(ImageCount, Caps.maxImageCount);
         }
 
-        const VkFormat Format = VK_FORMAT_B8G8R8A8_UNORM;
-
+        const VkSurfaceFormatKHR SurfaceFormat = ChooseSurfaceFormat(SC);
+        const VkFormat Format = SurfaceFormat.format;
+        SC.bHDR = SurfaceFormat.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;
 
         VkSwapchainCreateInfoKHR Info
         {
@@ -6299,7 +6333,7 @@ namespace Lumina::RHI
             .surface          = SC.Surface,
             .minImageCount    = ImageCount,
             .imageFormat      = Format,
-            .imageColorSpace  = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+            .imageColorSpace  = SurfaceFormat.colorSpace,
             .imageExtent      = ActualExtent,
             .imageArrayLayers = 1,
             // Transfer source lets a window capture copy the presented image back, where the surface allows it.
@@ -6329,7 +6363,7 @@ namespace Lumina::RHI
         FTextureDesc Desc;
         Desc.Type      = ETextureType::Tex2D;
         Desc.Dimension = FUIntVector3(SC.Extent.x, SC.Extent.y, 1);
-        Desc.Format    = EFormat::BGRA8_UNORM;
+        Desc.Format    = SC.bHDR ? EFormat::R10G10B10A2_UNORM : EFormat::BGRA8_UNORM;
         Desc.Usage     = EImageUsageFlags::ColorAttachment | EImageUsageFlags::TransferDst;
 
         SC.Images.Reserve(Count);
@@ -6572,8 +6606,17 @@ namespace Lumina::RHI
 
     EFormat GetSwapchainFormat(FSwapchainH Swapchain)
     {
-        (void)Swapchain;
-        return EFormat::BGRA8_UNORM;   // BuildSwapchainImages always requests this
+        return GDevice->Swapchains[Swapchain].bHDR ? EFormat::R10G10B10A2_UNORM : EFormat::BGRA8_UNORM;
+    }
+
+    void SetSwapchainHDR(FSwapchainH Swapchain, bool bHDR)
+    {
+        GDevice->Swapchains[Swapchain].bHDRRequested = bHDR;
+    }
+
+    bool IsSwapchainHDR(FSwapchainH Swapchain)
+    {
+        return GDevice->Swapchains[Swapchain].bHDR;
     }
 
     static void SwapchainImageBarrier(VkCommandBuffer Cmd, VkImage Image, VkImageLayout Old, VkImageLayout New,

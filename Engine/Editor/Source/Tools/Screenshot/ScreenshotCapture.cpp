@@ -98,22 +98,23 @@ namespace Lumina::Screenshot
             return true;
         }
 
-        // Returns false when Format is not an 8-bit RGBA or BGRA variant.
-        bool SwizzleToRGBA8(EFormat Format, TVector<uint8>& Pixels)
+        // Returns false when Format is not an 8-bit RGBA or BGRA variant. Alpha comes out opaque, since the display image keeps its HDR highlight gain there.
+        bool ToOpaqueRGBA8(EFormat Format, TVector<uint8>& Pixels)
         {
-            if (Format == EFormat::RGBA8_UNORM || Format == EFormat::SRGBA8_UNORM)
-            {
-                return true;
-            }
-            if (Format != EFormat::BGRA8_UNORM && Format != EFormat::SBGRA8_UNORM)
+            const bool bBGRA = Format == EFormat::BGRA8_UNORM || Format == EFormat::SBGRA8_UNORM;
+            if (!bBGRA && Format != EFormat::RGBA8_UNORM && Format != EFormat::SRGBA8_UNORM)
             {
                 return false;
             }
             for (int32 i = 0; i + 3 < Pixels.Num(); i += 4)
             {
-                const uint8 Blue = Pixels[i];
-                Pixels[i] = Pixels[i + 2];
-                Pixels[i + 2] = Blue;
+                if (bBGRA)
+                {
+                    const uint8 Blue = Pixels[i];
+                    Pixels[i] = Pixels[i + 2];
+                    Pixels[i + 2] = Blue;
+                }
+                Pixels[i + 3] = 255;
             }
             return true;
         }
@@ -121,7 +122,7 @@ namespace Lumina::Screenshot
         bool WritePNG(const FString& OutPath, uint32 Width, uint32 Height, EFormat Format,
                       TVector<uint8>& Pixels, FString& OutError)
         {
-            if (!SwizzleToRGBA8(Format, Pixels))
+            if (!ToOpaqueRGBA8(Format, Pixels))
             {
                 OutError = "Unsupported source format for PNG capture (need RGBA8/BGRA8 variant).";
                 return false;
@@ -304,7 +305,7 @@ namespace Lumina::Screenshot
         {
             return false;
         }
-        if (!SwizzleToRGBA8(SrcImage.Desc.Format, OutRGBA))
+        if (!ToOpaqueRGBA8(SrcImage.Desc.Format, OutRGBA))
         {
             OutError = "The display image is not an 8-bit color format.";
             return false;

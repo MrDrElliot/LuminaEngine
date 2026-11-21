@@ -10,6 +10,11 @@ float4 FragmentMain(FImGuiInterpolants Input) : SV_Target0
                  ? FTexture2DArray(Args.TextureID).Sample(Args.Sampler, float3(Input.UV, (float)Args.ArraySlice))
                  : FTexture2D(Args.TextureID).Sample(Args.Sampler, Input.UV);
 
+    if (Args.DisplayMode == IMGUI_DISPLAY_SCENE)
+    {
+        return float4(Input.Color.rgb * Texel.rgb, Texel.a);
+    }
+
     if (Args.DisplayMode == IMGUI_DISPLAY_HDR)
     {
         // ACES rather than the scene's operator, so an asset previews the same whichever level is open.

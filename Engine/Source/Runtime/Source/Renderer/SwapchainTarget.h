@@ -41,11 +41,16 @@ namespace Lumina::RHI
         FUIntVector2 GetExtent() const;
         EFormat GetFormat() const;
 
+        // Rebuilds only on a change, and stays SDR where the surface has no HDR10 format.
+        void SetHDR(bool bHDR);
+        bool IsHDR() const;
+
     private:
 
         FSurfaceH    Surface;                    // consumed by the first build
         FSwapchainH  Swapchain;
         FUIntVector2 RequestedExtent { 0, 0 };
         FUIntVector2 BuiltExtent     { 0, 0 };   // zero until a build succeeds, which arms the retry
+        bool         bHDRRequested   = false;
     };
 }

@@ -57,6 +57,9 @@ namespace Lumina
         // False until a frame has composited into the display target, which is what makes it opaque.
         virtual bool HasCompositedFrame() const { return true; }
 
+        // HDR range of the display this image is presented on, in stops above paper white, where 0 keeps it SDR.
+        virtual void SetDisplayHeadroom(float Stops) {}
+
         virtual RHI::FTextureH GetDisplayTexture() const { return {}; }
 
         //~ Entity picking (editor)

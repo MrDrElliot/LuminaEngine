@@ -245,6 +245,10 @@ namespace Lumina::ImGuiX
     // ImGui::Image of a texture asset, wrapped in BeginTextureDisplay.
     RUNTIME_API void TextureImage(const CTexture* Texture, const ImVec2& Size);
 
+    // Draws the following images as a scene's display image, opaque, so the HDR highlight gain in its alpha reaches the window.
+    RUNTIME_API void BeginSceneDisplay(ImDrawList* DrawList);
+    RUNTIME_API void EndSceneDisplay(ImDrawList* DrawList);
+
     /**
      * Draws the following images as one slice of a Texture2DArray.
      */
@@ -253,6 +257,12 @@ namespace Lumina::ImGuiX
 
     namespace Detail
     {
+        // Mirrors IMGUI_DISPLAY_* in Includes/ImGuiCommon.slang.
+        constexpr uint32 GDisplayModeDirect = 0u;
+        constexpr uint32 GDisplayModeHDR    = 1u;
+        constexpr uint32 GDisplayModeLinear = 2u;
+        constexpr uint32 GDisplayModeScene  = 3u;
+
         // Mirrors FImGuiArgs' display fields in Includes/ImGuiCommon.slang.
         struct FImGuiDisplayState
         {

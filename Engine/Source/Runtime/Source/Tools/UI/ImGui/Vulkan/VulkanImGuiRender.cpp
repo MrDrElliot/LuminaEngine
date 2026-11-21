@@ -74,8 +74,11 @@ namespace Lumina
 
         FRecursiveScopeLock Lock(Mutex);
 
-        RHI::Retire(NewPipeline);
-        NewPipeline = {};
+        for (auto& [Key, Pipeline] : Pipelines)
+        {
+            RHI::Retire(Pipeline);
+        }
+        Pipelines.Reset();
         for (auto& [FontIndex, Texture] : NewFontTextures)
         {
             RHI::Textures::Release(Texture);
@@ -182,27 +185,36 @@ namespace Lumina
         RecordDrawData_NewRHI(CL, DrawData, Target, Extent);
     }
 
-    void FVulkanImGuiRender::RecordDrawData_NewRHI(RHI::FCmdListH CL, ImDrawData* DrawData, RHI::FTextureH Target, const FUIntVector2& Extent)
+    RHI::FPipelineH FVulkanImGuiRender::GetPipeline(EFormat TargetFormat, bool bOpaque)
     {
-        if (!NewPipeline)
+        const uint64 Key = (uint64)TargetFormat | (bOpaque ? (1ull << 32) : 0ull);
+        if (const RHI::FPipelineH* Found = Pipelines.Find(Key))
         {
-            RHI::FBlendDesc Blend;
-            Blend.bBlendEnable   = true;
-            Blend.ColorOp        = RHI::EBlend::Add;
-            Blend.SrcColorFactor = RHI::EFactor::SrcAlpha;
-            Blend.DstColorFactor = RHI::EFactor::OneMinusSrcAlpha;
-            Blend.AlphaOp        = RHI::EBlend::Add;
-            Blend.SrcAlphaFactor = RHI::EFactor::One;
-            Blend.DstAlphaFactor = RHI::EFactor::OneMinusSrcAlpha;
-
-            const RHI::FColorTarget ColorTarget { .Format = EFormat::BGRA8_UNORM, .Blend = Blend };
-            RHI::FRasterDesc RasterDesc;
-            RasterDesc.Topology     = RHI::ETopology::TriangleList;
-            RasterDesc.ColorTargets = TSpan<const RHI::FColorTarget>(&ColorTarget, 1);
-
-            NewPipeline = RHI::CreateGraphicsPipeline("ImGuiVert.slang", "ImGuiPixel.slang", RasterDesc);
+            return *Found;
         }
 
+        // Alpha accumulates coverage, which is what pulls the HDR gain under translucent UI back toward 1.
+        RHI::FBlendDesc Blend;
+        Blend.bBlendEnable   = !bOpaque;
+        Blend.ColorOp        = RHI::EBlend::Add;
+        Blend.SrcColorFactor = RHI::EFactor::SrcAlpha;
+        Blend.DstColorFactor = RHI::EFactor::OneMinusSrcAlpha;
+        Blend.AlphaOp        = RHI::EBlend::Add;
+        Blend.SrcAlphaFactor = RHI::EFactor::One;
+        Blend.DstAlphaFactor = RHI::EFactor::OneMinusSrcAlpha;
+
+        const RHI::FColorTarget ColorTarget { .Format = TargetFormat, .Blend = Blend };
+        RHI::FRasterDesc RasterDesc;
+        RasterDesc.Topology     = RHI::ETopology::TriangleList;
+        RasterDesc.ColorTargets = TSpan<const RHI::FColorTarget>(&ColorTarget, 1);
+
+        const RHI::FPipelineH Pipeline = RHI::CreateGraphicsPipeline("ImGuiVert.slang", "ImGuiPixel.slang", RasterDesc);
+        Pipelines.Add(Key, Pipeline);
+        return Pipeline;
+    }
+
+    void FVulkanImGuiRender::RecordDrawData_NewRHI(RHI::FCmdListH CL, ImDrawData* DrawData, RHI::FTextureH Target, const FUIntVector2& Extent)
+    {
         // Always begin/end the pass so the swapchain image is cleared even with no draws; an overlay keeps the game image under it.
         RHI::FRenderAttachment Color;
         Color.Texture  = Target;
@@ -217,14 +229,15 @@ namespace Lumina
 
         RHI::CmdBeginRenderPass(CL, Pass);
 
-        RecordDrawLists(CL, DrawData, (float)Extent.x, (float)Extent.y);
+        RecordDrawLists(CL, DrawData, RHI::GetTextureDesc(Target).Format, (float)Extent.x, (float)Extent.y);
 
         RHI::CmdEndRenderPass(CL);
     }
 
-    void FVulkanImGuiRender::RecordDrawLists(RHI::FCmdListH CL, ImDrawData* DrawData, float FBW, float FBH)
+    void FVulkanImGuiRender::RecordDrawLists(RHI::FCmdListH CL, ImDrawData* DrawData, EFormat TargetFormat, float FBW, float FBH)
     {
-        if (DrawData != nullptr && DrawData->TotalVtxCount > 0 && DrawData->TotalIdxCount > 0 && FBW > 0.0f && FBH > 0.0f && NewPipeline)
+        const RHI::FPipelineH BlendedPipeline = GetPipeline(TargetFormat, false);
+        if (DrawData != nullptr && DrawData->TotalVtxCount > 0 && DrawData->TotalIdxCount > 0 && FBW > 0.0f && FBH > 0.0f && BlendedPipeline)
         {
             const int32 TotalVtx = DrawData->TotalVtxCount;
             const int32 TotalIdx = DrawData->TotalIdxCount;
@@ -261,7 +274,8 @@ namespace Lumina
             RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
             RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
             RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CCW);
-            RHI::CmdSetPipeline(CL, NewPipeline);
+            RHI::CmdSetPipeline(CL, BlendedPipeline);
+            RHI::FPipelineH BoundPipeline = BlendedPipeline;
 
             const ImVec2 ClipOff   = DrawData->DisplayPos;
             const ImVec2 ClipScale = DrawData->FramebufferScale;
@@ -286,6 +300,14 @@ namespace Lumina
                             Args.Exposure    = State->Exposure;
                             Args.ArraySlice  = State->ArraySlice;
                             Args.bIsArray    = State->bIsArray;
+
+                            const bool bOpaque = State->DisplayMode == ImGuiX::Detail::GDisplayModeScene;
+                            const RHI::FPipelineH Wanted = bOpaque ? GetPipeline(TargetFormat, true) : BlendedPipeline;
+                            if (Wanted && Wanted != BoundPipeline)
+                            {
+                                RHI::CmdSetPipeline(CL, Wanted);
+                                BoundPipeline = Wanted;
+                            }
                         }
                         continue;
                     }
@@ -394,7 +416,7 @@ namespace Lumina
         RHI::CmdBeginRenderPass(CL, Pass);
 
         // The actual image can be smaller than requested when the surface clamped.
-        RecordDrawLists(CL, DrawData, (float)ImgExtent.x, (float)ImgExtent.y);
+        RecordDrawLists(CL, DrawData, Data->Target.GetFormat(), (float)ImgExtent.x, (float)ImgExtent.y);
 
         RHI::CmdEndRenderPass(CL);
         Data->Target.Present(CL);

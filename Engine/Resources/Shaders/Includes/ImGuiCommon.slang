@@ -8,6 +8,7 @@
 #define IMGUI_DISPLAY_DIRECT 0u
 #define IMGUI_DISPLAY_HDR    1u
 #define IMGUI_DISPLAY_LINEAR 2u   // sRGB encode, for a texture whose sampler hands back linear values
+#define IMGUI_DISPLAY_SCENE  3u   // a scene display image, drawn opaque so its alpha HDR gain reaches the composite
 
 struct FImGuiArgs
 {

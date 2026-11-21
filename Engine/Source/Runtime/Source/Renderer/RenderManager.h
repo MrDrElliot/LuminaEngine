@@ -5,6 +5,8 @@
 #include "RHITexture.h"
 #include "RenderResource.h"
 #include "SwapchainTarget.h"
+#include "HDROutput.h"
+#include "Platform/Display/PlatformDisplay.h"
 #include "Core/Delegates/Delegate.h"
 #include "Memory/SmartPtr.h"
 #include "Containers/HashTable.h"
@@ -125,6 +127,12 @@ namespace Lumina
         // Rebuild the primary swapchain (vsync / present-mode change).
         RUNTIME_API void RecreatePrimarySwapchain();
 
+        // What the primary window presents with, refreshed at the start of every frame.
+        NODISCARD const FHDROutputState& GetHDROutput() const { return HDROutput; }
+
+        // A player's choice from the game settings, used in place of the project's. Zero nits keeps the project's paper white.
+        RUNTIME_API void SetUserHDROutput(EHDROutput Mode, float PaperWhiteNits);
+
         // The whole composited main window, editor UI included, as tightly packed BGRA8 with the top row first.
         struct FWindowCapture
         {
@@ -169,7 +177,15 @@ namespace Lumina
 
         void ApplyPendingResize();
 
-        void RecordWindowCapture(RHI::FCmdListH CL, RHI::FTextureH SwapImage, const FUIntVector2& Extent, uint8 FrameIndex);
+        void RecordWindowCapture(RHI::FCmdListH CL, RHI::FTextureH WindowImage, const FUIntVector2& Extent, uint8 FrameIndex);
+
+        // Polls the monitor now and then, and rebuilds the swapchain when the HDR choice changes.
+        void UpdateHDROutput();
+
+        // Sized to the swapchain on demand, and released once the window presents SDR again.
+        RHI::FTextureH AcquireHDRComposite(const FUIntVector2& Extent);
+        void EncodeHDRComposite(RHI::FCmdListH CL, RHI::FTextureH SwapImage);
+        void ReleaseHDRTargets();
 
         // Runs once the slot's fence has been waited, which is when its copy is complete.
         void ResolveWindowCapture(uint8 FrameIndex);
@@ -206,6 +222,19 @@ namespace Lumina
 
         // New RHI owns presentation: the primary window swapchain.
         RHI::FSwapchainTarget               SwapchainTarget;
+
+        FHDROutputState                     HDROutput;
+        PlatformDisplay::FHDRDisplayInfo    HDRDisplay;
+        double                              NextHDRDisplayQuery = 0.0;
+        bool                                bUserHDROutput      = false;
+        EHDROutput                          UserHDRMode         = EHDROutput::Auto;
+        float                               UserPaperWhiteNits  = 0.0f;
+
+        // The window composited in SDR with the scene's highlight gain in alpha, which the encode turns into HDR10.
+        RHI::FManagedTexture                HDRComposite;
+        // An 8-bit copy of the composite, since a window capture hands out BGRA8 bytes.
+        RHI::FManagedTexture                HDRCaptureScratch;
+        RHI::FPipelineH                     HDREncodePipeline;
 
         FDelegateHandle                     WindowResizedHandle;
 

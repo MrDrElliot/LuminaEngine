@@ -211,6 +211,11 @@ namespace Lumina
             }
         }
 
+        if (FRenderManager* Manager = TryRender())
+        {
+            Manager->SetUserHDROutput(HDROutput, Math::Max(HDRPaperWhiteNits, 0.0f));
+        }
+
         if (Global::GEngine != nullptr)
         {
             Global::GEngine->SetUserFrameRateLimit(Math::Max(FrameRateLimit, 0));
@@ -226,6 +231,7 @@ namespace Lumina
         }
         bVSync = RHI::GetPresentMode() == EPresentMode::FIFO;
         FrameRateLimit = GetDefault<CRendererSettings>()->MaxFPS;
+        HDROutput = GetDefault<CRendererSettings>()->HDROutput;
     }
 
     void CGameUserSettings::ResetToDefaults()
@@ -236,6 +242,8 @@ namespace Lumina
         RefreshRate = 0;
         bVSync = GetDefault<CRendererSettings>()->PresentMode == EPresentMode::FIFO;
         FrameRateLimit = GetDefault<CRendererSettings>()->MaxFPS;
+        HDROutput = GetDefault<CRendererSettings>()->HDROutput;
+        HDRPaperWhiteNits = 0.0f;
         SetOverallQuality(EQualityLevel::Default);
         bOverrideUpscaling = false;
         Upscaler = EUpscaler::TAA;

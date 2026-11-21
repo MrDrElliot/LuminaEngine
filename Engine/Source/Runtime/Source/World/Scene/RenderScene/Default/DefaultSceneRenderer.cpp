@@ -285,12 +285,9 @@ namespace Lumina
         RetainedTransformBuffer.Release();
         RetainedStaticBuffer.Release();
         RetainedProxyBuffer.Release();
-        SunDFObjectBuffer.Release();
-        SunDFCellCountBuffer.Release();
-        SunDFCellItemBuffer.Release();
-        SunDFCounterBuffer.Release();
-        SunDFBlockListBuffer.Release();
-        SunDFLargeObjectBuffer.Release();
+        SunDFGrid.Release();
+        SkyDFGrid.Release();
+        DistanceFieldBlockListBuffer.Release();
         SkinnedMeshletBoundsBuffer.Release();
         SkinnedMeshletConeBuffer.Release();
         SurfaceDescBuffer.Release();
@@ -342,7 +339,6 @@ namespace Lumina
             MaterialClassifyRing[Slot].Release();
             VisibleInstanceRing[Slot].Release();
             TotalsRing[Slot].Release();
-            SunDFDemandReadback[Slot].Release();
             ProxyListRing[Slot].Release();
             ProxyDrawArgsRing[Slot].Release();
 
@@ -737,6 +733,8 @@ namespace Lumina
                 VisBufferClassifyPass(CL);
                 MaterialGBufferPass(CL);
                 SunContactShadowPass(CL);
+                // After the GBuffer for its smooth normals, which depth alone would facet.
+                DistanceFieldAOPass(CL);
                 VolumetricCloudPass(CL);
                 FroxelInjectPass(CL);
                 FroxelIntegratePass(CL);
@@ -1408,6 +1406,8 @@ namespace Lumina
         case ENamedImage::ScreenSpaceGI:      return "Scene.ScreenSpaceGI";
         case ENamedImage::ScreenSpaceGIHistory: return "Scene.ScreenSpaceGIHistory";
         case ENamedImage::SunFarShadowMask:   return "Scene.SunFarShadowMask";
+        case ENamedImage::DistanceFieldAOTrace: return "Scene.DistanceFieldAOTrace";
+        case ENamedImage::DistanceFieldAO:    return "Scene.DistanceFieldAO";
         case ENamedImage::SSRTrace:           return "Scene.SSRTrace";
         case ENamedImage::SSRPyramid:         return "Scene.SSRPyramid";
         case ENamedImage::SSRSurface:         return "Scene.SSRSurface";
@@ -1517,6 +1517,8 @@ namespace Lumina
         case ENamedImage::ScreenSpaceGI:
         case ENamedImage::ScreenSpaceGIHistory:
         case ENamedImage::SunFarShadowMask:
+        case ENamedImage::DistanceFieldAOTrace:
+        case ENamedImage::DistanceFieldAO:
         case ENamedImage::SSRTrace:
         case ENamedImage::SSRPyramid:
         case ENamedImage::SSRSurface:
@@ -1609,7 +1611,8 @@ namespace Lumina
         {
             const FUIntVector2 Size = (Image == ENamedImage::GTAOBlur) ? Extent : GetGTAOTraceExtent(Extent);
             OutDesc.Dimension = FUIntVector3(Size.x, Size.y, 1);
-            OutDesc.Format    = EFormat::R8_UNORM;
+            // Visibility in r and the bent normal's world-space lean in gba, the edges alone being one channel.
+            OutDesc.Format    = (Image == ENamedImage::GTAOEdges) ? EFormat::R8_UNORM : EFormat::RGBA8_UNORM;
             OutDesc.Usage     = RHI::EImageUsageFlags::ColorAttachment | RHI::EImageUsageFlags::Sampled |
                                 RHI::EImageUsageFlags::Storage;
             return true;
@@ -1631,6 +1634,17 @@ namespace Lumina
 
         case ENamedImage::SunFarShadowMask:
             OutDesc.Format = EFormat::R8_UNORM;
+            OutDesc.Usage  = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            return true;
+
+        // Sky visibility in r and the bent normal's world-space lean in gba, traced at half resolution and upsampled against depth.
+        case ENamedImage::DistanceFieldAOTrace:
+        case ENamedImage::DistanceFieldAO:
+            if (Image == ENamedImage::DistanceFieldAOTrace)
+            {
+                OutDesc.Dimension = FUIntVector3((Extent.x + 1u) / 2u, (Extent.y + 1u) / 2u, 1);
+            }
+            OutDesc.Format = EFormat::RGBA8_UNORM;
             OutDesc.Usage  = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             return true;
 
@@ -1798,6 +1812,9 @@ namespace Lumina
         }
 
         Want(ENamedImage::SunFarShadowMask, View.bIsPrimary && WantsSunFarShadowMask(), /*bMipUAVs*/ true);
+        const bool bDistanceFieldAO = WantsDistanceFieldAO(View);
+        Want(ENamedImage::DistanceFieldAOTrace, bDistanceFieldAO, /*bMipUAVs*/ true);
+        Want(ENamedImage::DistanceFieldAO,      bDistanceFieldAO, /*bMipUAVs*/ true);
         Want(ENamedImage::SSRTrace,         bSSR,  /*bMipUAVs*/ true);
         Want(ENamedImage::SSRPyramid,       bSSR,  /*bMipUAVs*/ true);
         Want(ENamedImage::SSRSurface,       bSSR,  /*bMipUAVs*/ true);

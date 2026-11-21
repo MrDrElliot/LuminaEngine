@@ -39,6 +39,21 @@ namespace Lumina
     static constexpr uint32 kMinimumVRAMMiB     = 2816;
     static constexpr uint32 kRecommendedVRAMMiB = 6144;
 
+    // Polled, since Windows sends no message GLFW forwards when the desktop switches HDR on or off.
+    static constexpr double kHDRDisplayPollSeconds  = 1.0;
+    static constexpr float  kFallbackPaperWhiteNits = 200.0f;
+    static constexpr float  kFallbackPeakNits       = 1000.0f;
+
+    // Mirrors FHDROutputArgs in Includes/HDROutput.slang.
+    struct FHDROutputArgs
+    {
+        uint32 Composite;
+        float  GainStops;
+        float  PaperWhiteNits;
+        float  PeakNits;
+    };
+    static_assert(sizeof(FHDROutputArgs) == 16, "FHDROutputArgs must match Includes/HDROutput.slang.");
+
     static void WarnIfBelowRecommendedVRAM()
     {
         const RHI::FGPUDeviceInfo Info = RHI::GetDeviceInfo();
@@ -410,6 +425,10 @@ namespace Lumina
         // Before Shutdown, which drains the retire queues the slab hands its allocation to.
         MeshletHeaderSlab::Shutdown();
 
+        ReleaseHDRTargets();
+        RHI::Retire(HDREncodePipeline);
+        HDREncodePipeline = {};
+
         SwapchainTarget.Shutdown();
         RHI::FreeDevice();
     }
@@ -615,6 +634,8 @@ namespace Lumina
 
             ApplyPendingResize();
 
+            UpdateHDROutput();
+
             // Read every frame like the other renderer settings, and a no-op unless the value moved.
             RHI::SetMaxAnisotropy((float)GetDefault<CRendererSettings>()->MaxAnisotropy);
 
@@ -631,6 +652,10 @@ namespace Lumina
             }
 
             const FUIntVector2 Extent = SwapchainTarget.GetExtent();
+
+            // An HDR10 swapchain is reached through the SDR composite, which carries the scene's highlight gain to the encode.
+            const bool bHDRFrame = SwapchainTarget.IsHDR();
+            const RHI::FTextureH WindowImage = bHDRFrame ? AcquireHDRComposite(Extent) : SwapImage;
 
             RHI::FCmdListH CL = RHI::OpenCommandList();
             RHI::CmdSetTextureHeap(CL, RHI::GetGlobalHeap());
@@ -660,10 +685,22 @@ namespace Lumina
                 }
 
                 const RHI::FTextureH Source = Scene ? Scene->GetDisplayTexture() : RHI::FTextureH{};
+                if (Scene != nullptr)
+                {
+                    Scene->SetDisplayHeadroom(HDROutput.GetHeadroomStops());
+                }
                 if (RHI::IsValid(Source))
                 {
-                    RHI::CmdBlitTexture(CL, Source, RHI::FTextureSlice{}, SwapImage, RHI::FTextureSlice{}, RHI::EFilter::Linear);
+                    RHI::CmdBlitTexture(CL, Source, RHI::FTextureSlice{}, WindowImage, RHI::FTextureSlice{}, RHI::EFilter::Linear);
                 }
+                else if (bHDRFrame)
+                {
+                    const float Black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+                    RHI::CmdClearTexture(CL, WindowImage, Black);
+                }
+                RHI::CmdBarrier(CL,
+                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                    RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
             }
             #endif
 
@@ -672,12 +709,17 @@ namespace Lumina
             {
                 LUMINA_PROFILE_SECTION_COLORED("ImGui Record", tracy::Color::SlateBlue3);
                 RHI::CmdBeginMarker(CL, "ImGui");
-                ImGuiRenderer->OnEndFrame(CL, SwapImage, Extent, ImGuiDrawData);
+                ImGuiRenderer->OnEndFrame(CL, WindowImage, Extent, ImGuiDrawData);
                 RHI::CmdEndMarker(CL);
             }
             #endif
 
-            RecordWindowCapture(CL, SwapImage, Extent, ThisFrameIndex);
+            RecordWindowCapture(CL, WindowImage, Extent, ThisFrameIndex);
+
+            if (bHDRFrame)
+            {
+                EncodeHDRComposite(CL, SwapImage);
+            }
 
             RHI::CmdEndMarker(CL);
 
@@ -724,7 +766,7 @@ namespace Lumina
         return true;
     }
 
-    void FRenderManager::RecordWindowCapture(RHI::FCmdListH CL, RHI::FTextureH SwapImage, const FUIntVector2& Extent, uint8 FrameIndex)
+    void FRenderManager::RecordWindowCapture(RHI::FCmdListH CL, RHI::FTextureH WindowImage, const FUIntVector2& Extent, uint8 FrameIndex)
     {
         FScopeLock Lock(WindowCaptureMutex);
         if (RequestedWindowCapture == 0 || InFlightWindowCapture.Ticket != 0 || Extent.x == 0 || Extent.y == 0)
@@ -744,7 +786,30 @@ namespace Lumina
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::Transfer, RHI::EAccessFlags::ColorWrite | RHI::EAccessFlags::TransferWrite,
             RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead);
-        RHI::CmdCopyTextureToMemory(CL, SwapImage, RHI::FTextureSlice{}, Readback, Extent.x);
+
+        // Readers expect the BGRA8 bytes an SDR swapchain holds, so the half-float HDR composite is converted first.
+        RHI::FTextureH Readable = WindowImage;
+        if (RHI::GetTextureDesc(WindowImage).Format != EFormat::BGRA8_UNORM)
+        {
+            if (!HDRCaptureScratch.IsValid() || RHI::GetTextureDesc(HDRCaptureScratch.Texture).Dimension.x != Extent.x
+                || RHI::GetTextureDesc(HDRCaptureScratch.Texture).Dimension.y != Extent.y)
+            {
+                RHI::Textures::Release(HDRCaptureScratch);
+                HDRCaptureScratch = RHI::Textures::Create(RHI::FTexture2DDesc
+                {
+                    .Width     = Extent.x,
+                    .Height    = Extent.y,
+                    .Format    = EFormat::BGRA8_UNORM,
+                    .DebugName = "Window.HDRCaptureScratch",
+                });
+            }
+            RHI::CmdBlitTexture(CL, WindowImage, RHI::FTextureSlice{}, HDRCaptureScratch.Texture, RHI::FTextureSlice{}, RHI::EFilter::Nearest);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead);
+            Readable = HDRCaptureScratch.Texture;
+        }
+        RHI::CmdCopyTextureToMemory(CL, Readable, RHI::FTextureSlice{}, Readback, Extent.x);
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
             RHI::EStageFlags::Host, RHI::EAccessFlags::HostRead);
@@ -784,6 +849,140 @@ namespace Lumina
     void FRenderManager::RecreatePrimarySwapchain()
     {
         SwapchainTarget.Recreate();
+    }
+
+    void FRenderManager::SetUserHDROutput(EHDROutput Mode, float PaperWhiteNits)
+    {
+        bUserHDROutput     = true;
+        UserHDRMode        = Mode;
+        UserPaperWhiteNits = PaperWhiteNits;
+    }
+
+    void FRenderManager::UpdateHDROutput()
+    {
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        const EHDROutput Mode = bUserHDROutput ? UserHDRMode : Settings->HDROutput;
+
+        FWindow* Window = Windowing::TryGetPrimaryWindowHandle();
+        const double Now = PlatformTime::Seconds();
+        if (Mode != EHDROutput::Off && Window != nullptr && Now >= NextHDRDisplayQuery)
+        {
+            NextHDRDisplayQuery = Now + kHDRDisplayPollSeconds;
+            int X = 0;
+            int Y = 0;
+            Window->GetWindowPosition(X, Y);
+            const FUIntVector2 Size = Window->GetExtent();
+            const PlatformDisplay::FHDRDisplayInfo Previous = HDRDisplay;
+            HDRDisplay = PlatformDisplay::QueryHDRDisplay(X + (int32)(Size.x / 2), Y + (int32)(Size.y / 2));
+            if (HDRDisplay.bHDREnabled != Previous.bHDREnabled || HDRDisplay.PeakNits != Previous.PeakNits
+                || HDRDisplay.SDRWhiteNits != Previous.SDRWhiteNits)
+            {
+                LOG_INFO("Display is in {} mode, peak {:.0f} nits, SDR white {:.0f} nits.", HDRDisplay.bHDREnabled ? "HDR" : "SDR",
+                         HDRDisplay.PeakNits, HDRDisplay.SDRWhiteNits);
+            }
+        }
+
+        SwapchainTarget.SetHDR(Mode == EHDROutput::On || (Mode == EHDROutput::Auto && HDRDisplay.bHDREnabled));
+
+        const float PaperWhite = bUserHDROutput && UserPaperWhiteNits > 0.0f ? UserPaperWhiteNits : Settings->HDRPaperWhiteNits;
+        const float Peak       = Settings->HDRPeakNits > 0.0f ? Settings->HDRPeakNits : HDRDisplay.PeakNits;
+
+        const bool bWasActive = HDROutput.bActive;
+        HDROutput.bActive        = SwapchainTarget.IsHDR();
+        HDROutput.PaperWhiteNits = PaperWhite > 0.0f ? PaperWhite : (HDRDisplay.SDRWhiteNits > 0.0f ? HDRDisplay.SDRWhiteNits : kFallbackPaperWhiteNits);
+        HDROutput.PeakNits       = Math::Max(Peak > 0.0f ? Peak : kFallbackPeakNits, HDROutput.PaperWhiteNits);
+
+        if (HDROutput.bActive != bWasActive)
+        {
+            LOG_INFO("Presenting {}, paper white {:.0f} nits, peak {:.0f} nits.", HDROutput.bActive ? "HDR10" : "SDR",
+                     HDROutput.PaperWhiteNits, HDROutput.PeakNits);
+        }
+        if (!HDROutput.bActive)
+        {
+            ReleaseHDRTargets();
+        }
+    }
+
+    RHI::FTextureH FRenderManager::AcquireHDRComposite(const FUIntVector2& Extent)
+    {
+        if (HDRComposite.IsValid())
+        {
+            const FUIntVector3 Built = RHI::GetTextureDesc(HDRComposite.Texture).Dimension;
+            if (Built.x == Extent.x && Built.y == Extent.y)
+            {
+                return HDRComposite.Texture;
+            }
+            RHI::Textures::Release(HDRComposite);
+        }
+
+        // Half floats, so the gain code in alpha keeps the precision 8 bits would band.
+        HDRComposite = RHI::Textures::Create(RHI::FTexture2DDesc
+        {
+            .Width         = Extent.x,
+            .Height        = Extent.y,
+            .Format        = EFormat::RGBA16_FLOAT,
+            .bRenderTarget = true,
+            .DebugName     = "Window.HDRComposite",
+        });
+        return HDRComposite.Texture;
+    }
+
+    void FRenderManager::EncodeHDRComposite(RHI::FCmdListH CL, RHI::FTextureH SwapImage)
+    {
+        if (!HDREncodePipeline)
+        {
+            const RHI::FColorTarget ColorTarget { .Format = EFormat::R10G10B10A2_UNORM };
+            RHI::FRasterDesc RasterDesc;
+            RasterDesc.Topology     = RHI::ETopology::TriangleList;
+            RasterDesc.ColorTargets = TSpan<const RHI::FColorTarget>(&ColorTarget, 1);
+            HDREncodePipeline = RHI::CreateGraphicsPipeline("FullscreenQuad.slang", "HDRCompositeEncode.slang", RasterDesc);
+            if (!HDREncodePipeline)
+            {
+                return;
+            }
+        }
+
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::RasterColorOut | RHI::EStageFlags::Transfer, RHI::EAccessFlags::ColorWrite | RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderRead);
+
+        RHI::FRenderAttachment Color;
+        Color.Texture = SwapImage;
+        Color.LoadOp  = RHI::ELoadOp::Undefined;
+        Color.StoreOp = RHI::EStoreOp::Store;
+
+        RHI::FRenderPassDesc Pass;
+        Pass.ColorAttachments = TSpan<const RHI::FRenderAttachment>(&Color, 1);
+        Pass.RenderArea       = SwapchainTarget.GetExtent();
+
+        RHI::CmdBeginMarker(CL, "HDR Encode");
+        RHI::CmdBeginRenderPass(CL, Pass);
+        RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+        RHI::CmdSetPipeline(CL, HDREncodePipeline);
+
+        const FHDROutputArgs Args
+        {
+            .Composite      = HDRComposite.ResourceID(),
+            .GainStops      = HDROutput.GetHeadroomStops(),
+            .PaperWhiteNits = HDROutput.PaperWhiteNits,
+            .PeakNits       = HDROutput.PeakNits,
+        };
+        RHI::CmdDraw(CL, RHI::CopyTransient(Args), 3, 1, 0, 0);
+        RHI::CmdEndRenderPass(CL);
+        RHI::CmdEndMarker(CL);
+    }
+
+    void FRenderManager::ReleaseHDRTargets()
+    {
+        if (HDRComposite.IsValid())
+        {
+            RHI::Textures::Release(HDRComposite);
+        }
+        if (HDRCaptureScratch.IsValid())
+        {
+            RHI::Textures::Release(HDRCaptureScratch);
+        }
     }
 
     void FRenderManager::OnWindowResized(FWindow* Window, const FUIntVector2& Extent)

@@ -97,6 +97,45 @@ namespace Lumina
         FDefaultSceneRenderer& Renderer;
     };
 
+    // One frame's distance-field casters and the cells they are binned into, sized by what the last frames asked for.
+    struct FDistanceFieldGrid
+    {
+        FSceneBuffer Objects;
+        FSceneBuffer CellCounts;
+        FSceneBuffer CellItems;
+        FSceneBuffer Counters;
+        FSceneBuffer LargeObjects;
+        // The cell items, casters and large casters each frame's binning asked for, read back to grow the buffers to the demand.
+        TArray<FSceneBuffer, RHI::kFramesInFlight> DemandReadback;
+        bool bReady = false;
+
+        void Release()
+        {
+            Objects.Release();
+            CellCounts.Release();
+            CellItems.Release();
+            Counters.Release();
+            LargeObjects.Release();
+            for (FSceneBuffer& Readback : DemandReadback)
+            {
+                Readback.Release();
+            }
+            bReady = false;
+        }
+    };
+
+    // A square grid spanned by Right and Up, binning each caster over its bounding sphere grown by SpherePad.
+    struct FDistanceFieldGridPlacement
+    {
+        FVector3 Right;
+        FVector3 Up;
+        FVector2 Origin;
+        float    CellSize  = 1.0f;
+        uint32   Dimension = 1u;
+        float    MinRadius = 0.0f;
+        float    SpherePad = 0.0f;
+    };
+
     // RenderSceneFactory falls back to this whenever no override is installed.
     class FDefaultSceneRenderer : public IRenderScene
     {
@@ -458,12 +497,8 @@ namespace Lumina
                     bool                         bDistanceField = false;
                     float                        DFNear = 0.0f;
                     float                        DFFar = 0.0f;
-                    float                        DFMinRadius = 0.0f;
                     // The grid the casters are binned into, square in the plane facing the sun.
-                    FVector3                     SunRight = FVector3(1.0f, 0.0f, 0.0f);
-                    FVector3                     SunUp = FVector3(0.0f, 0.0f, 1.0f);
-                    FVector2                     GridOrigin = FVector2(0.0f);
-                    float                        GridCellSize = 1.0f;
+                    FDistanceFieldGridPlacement  DFGrid;
 
                     // Zero steps leaves the contact march off.
                     uint32                       ContactSteps = 0u;
@@ -628,6 +663,7 @@ namespace Lumina
                 SPostProcessSettings             ActivePostProcessStorage = {};
                 bool                             bHasActivePostProcess = false;
                 TVector<FPostProcessMaterial>    ActivePostProcessMaterials;
+                float                            DisplayHeadroomStops = 0.0f;
             } PostProcess;
 
             struct FExtracts
@@ -674,6 +710,8 @@ namespace Lumina
             ScreenSpaceGI,
             ScreenSpaceGIHistory,
             SunFarShadowMask,
+            DistanceFieldAOTrace,
+            DistanceFieldAO,
             SSRTrace,
             SSRPyramid,
             SSRSurface,
@@ -833,6 +871,7 @@ namespace Lumina
 
         uint32 GetDisplayResourceID() const override;
         bool HasCompositedFrame() const override { return FramesComposited > 0; }
+        void SetDisplayHeadroom(float Stops) override { DisplayHeadroomStops = Stops; }
 
         RUNTIME_API void SettleResolveWork(int32 MaxIterations = 8);
 
@@ -1103,9 +1142,9 @@ namespace Lumina
         bool GTAOPrefilterDepth(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH PrefilterCS);
         bool GTAOMain(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH MainCS);
         bool GTAODenoise(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH DenoiseCS);
-        // Upsamples a half size Source into Output against GTAO's working depth, which is DepthScale times Source's size.
-        bool GTAOUpsample(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH UpsampleCS,
-            const FSceneImage& Source, const FSceneImage& Output, uint32 DepthScale);
+        // Upsamples a half size Source into Output against HalfDepth, sized DepthScale times Source and linear unless bRawHalfDepth.
+        bool BilateralUpsample(RHI::FCmdListH CL, FShaderH UpsampleCS, const FSceneImage& Source, const FSceneImage& Output,
+            const FSceneImage& HalfDepth, uint32 DepthScale, bool bRawHalfDepth);
         // Marches GTAO's working depth, so it needs GTAO on, and only the primary view keeps the color history it gathers.
         bool WantsScreenSpaceGI(const FSceneView& View) const;
         bool IsScreenSpaceGITraced() const;
@@ -1117,6 +1156,12 @@ namespace Lumina
         bool SunFarShadowPass(RHI::FCmdListH CL);
         void SunContactShadowPass(RHI::FCmdListH CL);
         bool SunDFShadowCullPass(RHI::FCmdListH CL);
+        // Culls this frame's distance-field casters overlapping Placement's grid and bins them, leaving Grid.bReady on success.
+        bool BuildDistanceFieldGrid(RHI::FCmdListH CL, FDistanceFieldGrid& Grid, const FDistanceFieldGridPlacement& Placement);
+        // Large scale sky visibility from the mesh distance fields around each pixel, primary view only.
+        bool WantsDistanceFieldAO(const FSceneView& View) const;
+        bool IsDistanceFieldAOTraced() const;
+        void DistanceFieldAOPass(RHI::FCmdListH CL);
         void TransparentPass(RHI::FCmdListH CL);
         void OITResolvePass(RHI::FCmdListH CL);
         void UnorderedTranslucentPass(RHI::FCmdListH CL);
@@ -1835,22 +1880,25 @@ namespace Lumina
         FSceneBuffer RetainedCullEntryBuffer { "Retained.CullEntries", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer InstanceBlockBoundsBuffer { "Retained.InstanceBlockBounds", 1.5f, EBufferInit::Zeroed };
 
-        // The sun's distance-field casters for this frame and the grid they are binned into.
-        FSceneBuffer SunDFObjectBuffer    { "SunDF.Objects",    kSceneBufferGrowth, EBufferInit::Undefined, false };
-        FSceneBuffer SunDFCellCountBuffer { "SunDF.CellCounts", 1.0f, EBufferInit::Zeroed,    false };
-        FSceneBuffer SunDFCellItemBuffer  { "SunDF.CellItems",  kSceneBufferGrowth, EBufferInit::Undefined, false };
-        FSceneBuffer SunDFCounterBuffer   { "SunDF.Counters",   1.0f, EBufferInit::Zeroed,    false };
-        FSceneBuffer SunDFBlockListBuffer { "SunDF.Blocks",     1.5f, EBufferInit::Undefined };
-        FSceneBuffer SunDFLargeObjectBuffer { "SunDF.LargeObjects", 1.0f, EBufferInit::Undefined, false };
-        // The cell items and casters each frame's binning asked for, read back to grow the item and object buffers to the demand.
-        TArray<FSceneBuffer, RHI::kFramesInFlight> SunDFDemandReadback = MakeSceneRing<RHI::kFramesInFlight>("Readback.SunDFDemand", 1.0f);
+        // The sun's distance-field casters, binned in the plane facing it, and the sky's, binned looking down around the camera.
+        FDistanceFieldGrid SunDFGrid {
+            { "SunDF.Objects", kSceneBufferGrowth, EBufferInit::Undefined, false }, { "SunDF.CellCounts", 1.0f, EBufferInit::Zeroed, false },
+            { "SunDF.CellItems", kSceneBufferGrowth, EBufferInit::Undefined, false }, { "SunDF.Counters", 1.0f, EBufferInit::Zeroed, false },
+            { "SunDF.LargeObjects", 1.0f, EBufferInit::Undefined, false }, MakeSceneRing<RHI::kFramesInFlight>("Readback.SunDFDemand", 1.0f) };
+        FDistanceFieldGrid SkyDFGrid {
+            { "SkyDF.Objects", kSceneBufferGrowth, EBufferInit::Undefined, false }, { "SkyDF.CellCounts", 1.0f, EBufferInit::Zeroed, false },
+            { "SkyDF.CellItems", kSceneBufferGrowth, EBufferInit::Undefined, false }, { "SkyDF.Counters", 1.0f, EBufferInit::Zeroed, false },
+            { "SkyDF.LargeObjects", 1.0f, EBufferInit::Undefined, false }, MakeSceneRing<RHI::kFramesInFlight>("Readback.SkyDFDemand", 1.0f) };
+        // The blocks of retained slots holding a distance-field caster, which every grid's cull walks.
+        FSceneBuffer DistanceFieldBlockListBuffer { "DistanceField.Blocks", 1.5f, EBufferInit::Undefined };
         static constexpr uint32 kSunDFGridDimension = 128u;
-        static constexpr uint32 kSunDFCellCapacity  = 32u;
-        static constexpr uint32 kSunDFMinObjects    = 16384u;
+        // Cells this wide hold every caster within the sky reach of their receivers without binning each caster into hundreds.
+        static constexpr uint32 kSkyDFGridDimension = 64u;
+        static constexpr uint32 kDFGridCellCapacity = 32u;
+        static constexpr uint32 kDFGridMinObjects   = 16384u;
         static constexpr uint32 kTransformStreamGroupSize = 64u;
         // A caster past this count bins in the cull pass itself, slower but never dropped.
-        static constexpr uint32 kSunDFMaxLargeCasters = 256u;
-        bool                    bSunDFGridReady     = false;
+        static constexpr uint32 kDFGridMaxLargeCasters = 256u;
         TVector<FInstanceBlockBounds> InstanceBlockBounds;
         TVector<uint32>               DirtyInstanceBlocks;
         TVector<uint32>               BlockMergeScratch;
@@ -2453,6 +2501,9 @@ namespace Lumina
 
         // Frames that reached Submit in RenderView, so Output holds a real image rather than undefined memory.
         uint64                                  FramesComposited = 0;
+
+        // Set by whoever presents the display image, and copied into each extracted frame.
+        float                                   DisplayHeadroomStops = 0.0f;
         bool                                    bWarnedNoComposite = false;
         bool                                    bWarnedFallbackMaterial = false;
 

@@ -80,7 +80,8 @@ namespace Lumina
         // The final denoise pass wrote the ping-pong target its parity selects.
         const uint32 NumPasses = (uint32)Math::Max(Params.DenoisePasses, 1);
         const ENamedImage Denoised = ((NumPasses - 1u) & 1u) == 0u ? ENamedImage::GTAODenoise : ENamedImage::GTAO;
-        return GTAOUpsample(CL, Params, UpsampleCS, GetNamedImage(Denoised), GetNamedImage(ENamedImage::GTAOBlur), 1u);
+        return BilateralUpsample(CL, UpsampleCS, GetNamedImage(Denoised), GetNamedImage(ENamedImage::GTAOBlur),
+            GetNamedImage(ENamedImage::GTAOWorkingDepth), 1u, /*bRawHalfDepth*/ false);
     }
 
     bool FDefaultSceneRenderer::MakeGTAOParams(FGTAOParams& P) const
@@ -296,10 +297,9 @@ namespace Lumina
         return true;
     }
 
-    bool FDefaultSceneRenderer::GTAOUpsample(RHI::FCmdListH CL, const FGTAOParams& P, FShaderH UpsampleCS,
-        const FSceneImage& Source, const FSceneImage& Output, uint32 DepthScale)
+    bool FDefaultSceneRenderer::BilateralUpsample(RHI::FCmdListH CL, FShaderH UpsampleCS, const FSceneImage& Source, const FSceneImage& Output,
+        const FSceneImage& HalfDepth, uint32 DepthScale, bool bRawHalfDepth)
     {
-        const FSceneImage& WorkingDepth = GetNamedImage(ENamedImage::GTAOWorkingDepth);
 
         struct FUpsampleConstants
         {
@@ -310,12 +310,14 @@ namespace Lumina
             uint32 FullDepthIndex;
             uint32 OutputUAV;
             uint32 DepthScale;
+            uint32 bRawHalfDepth;
         } PC = {};
 
         const int32 AOSlot        = Source.GetResourceID();
-        const int32 HalfDepthSlot = WorkingDepth.GetResourceID();
+        const int32 HalfDepthSlot = HalfDepth.GetResourceID();
+        const int32 FullDepthSlot = GetNamedImage(ENamedImage::DepthAttachment).GetResourceID();
         const int32 OutputSlot    = Output.GetMipUAVIndex(0);
-        if (AOSlot < 0 || HalfDepthSlot < 0 || OutputSlot < 0)
+        if (AOSlot < 0 || HalfDepthSlot < 0 || FullDepthSlot < 0 || OutputSlot < 0)
         {
             LOG_ERROR_ONCE("Bilateral upsample is missing a heap slot; skipping it.");
             return false;
@@ -327,9 +329,10 @@ namespace Lumina
         PC.HalfSize[1]    = Source.GetSizeY();
         PC.AOIndex        = (uint32)AOSlot;
         PC.HalfDepthIndex = (uint32)HalfDepthSlot;
-        PC.FullDepthIndex = (uint32)P.DepthSlot;
+        PC.FullDepthIndex = (uint32)FullDepthSlot;
         PC.OutputUAV      = (uint32)OutputSlot;
         PC.DepthScale     = DepthScale;
+        PC.bRawHalfDepth  = bRawHalfDepth ? 1u : 0u;
 
         DispatchCompute(CL, UpsampleCS, PC,
             RenderUtils::GetGroupCount(PC.FullSize[0], 8u),
@@ -468,7 +471,7 @@ namespace Lumina
             RHI::Barriers::ComputeToCompute(CL);
         }
 
-        GTAOUpsample(CL, P, UpsampleCS, Trace, GetNamedImage(ENamedImage::ScreenSpaceGI), DepthScale);
+        BilateralUpsample(CL, UpsampleCS, Trace, GetNamedImage(ENamedImage::ScreenSpaceGI), WorkingDepth, DepthScale, /*bRawHalfDepth*/ false);
     }
 
     void FDefaultSceneRenderer::CaptureScreenSpaceGIHistory(RHI::FCmdListH CL)

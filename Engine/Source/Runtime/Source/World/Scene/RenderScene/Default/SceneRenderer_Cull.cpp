@@ -382,10 +382,10 @@ namespace Lumina
             if (!DistanceFieldBlocks.IsEmpty())
             {
                 const uint64 Bytes = (uint64)DistanceFieldBlocks.Num() * sizeof(uint32);
-                ReserveBuffer(CL, SunDFBlockListBuffer, Bytes, /*bAllowShrink*/ true, /*bPreserveContents*/ false);
-                if (SunDFBlockListBuffer.Size >= Bytes)
+                ReserveBuffer(CL, DistanceFieldBlockListBuffer, Bytes, /*bAllowShrink*/ true, /*bPreserveContents*/ false);
+                if (DistanceFieldBlockListBuffer.Size >= Bytes)
                 {
-                    StageWrite(SunDFBlockListBuffer.Gpu, DistanceFieldBlocks.GetData(), Bytes);
+                    StageWrite(DistanceFieldBlockListBuffer.Gpu, DistanceFieldBlocks.GetData(), Bytes);
                 }
                 else
                 {
@@ -1177,6 +1177,10 @@ namespace Lumina
         if (Images[(int)ENamedImage::SunFarShadowMask].IsValid() && WantsSunFarShadowMask())
         {
             SceneGlobalData.GTAOSettings.SunShadowMaskIndex = (uint32)Images[(int)ENamedImage::SunFarShadowMask].GetResourceID();
+        }
+        if (IsDistanceFieldAOTraced())
+        {
+            SceneGlobalData.GTAOSettings.SkyOcclusionIndex = (uint32)Images[(int)ENamedImage::DistanceFieldAO].GetResourceID();
         }
         if (IsScreenSpaceGITraced())
         {

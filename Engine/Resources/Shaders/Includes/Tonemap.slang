@@ -136,6 +136,11 @@ float3 EncodeDisplayGamma(float3 X)
     return pow(max(X, 0.0), float3(INV_GAMMA));
 }
 
+float3 DecodeDisplayGamma(float3 X)
+{
+    return pow(max(X, 0.0), float3(2.2));
+}
+
 // The exact inverse of the hardware sRGB decode, so an sRGB texture's texel reaches the display as authored.
 float3 EncodeSRGB(float3 Linear)
 {

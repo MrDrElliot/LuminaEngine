@@ -1,7 +1,7 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
-#include "Includes/SunDFShadowCommon.slang"
+#include "Includes/DistanceFieldGrid.slang"
 
 // Sun occlusion the virtual shadow levels cannot hold, marched per pixel from the depth buffer and read back by the lighting.
 
@@ -32,7 +32,7 @@ struct FPushConstants
     uint                 TerrainSteps;
     uint                 NumTerrains;
     float                _Pad;
-    FSunDFShadowGrid     DFGrid;
+    FDFObjectGrid        DFGrid;
     float                DFNear;
     float                DFFar;
     float                DFMaxTrace;
@@ -40,6 +40,38 @@ struct FPushConstants
     FTerrainShadowRecord Terrains[kMaxTerrainShadowRecords];
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
+
+// Every caster binned into the receiver's cell, which is the only cell a ray toward the sun can cross.
+float TraceSunDFShadows(FDFObjectGrid* Grid, float3 P, float3 ToSun, float TanHalfAngle, float MaxTrace)
+{
+    const int2 Cell = Grid.CellAt(P);
+    if (any(Cell < 0) || any(Cell >= int(Grid.Dimension)))
+    {
+        return 1.0;
+    }
+
+    const uint CellIndex = uint(Cell.y) * Grid.Dimension + uint(Cell.x);
+    const uint First     = Grid.CellCounts.Get(CellIndex);
+    const uint End       = min(Grid.CellCounts.Get(CellIndex + 1u), Grid.CellItems.Count);
+
+    float Visibility = 1.0;
+    [loop]
+    for (uint i = First; i < End && Visibility > 0.0; ++i)
+    {
+        const FDFObject Object = Grid.Objects.Get(Grid.CellItems.Get(i));
+
+        // Rejects casters the ray passes beside or that sit behind the receiver.
+        const float3 ToCenter = Object.Sphere.xyz - P;
+        const float  Along    = dot(ToCenter, ToSun);
+        const float  MissSq   = dot(ToCenter, ToCenter) - Along * Along;
+        if (Along < -Object.Sphere.w || Along - Object.Sphere.w > MaxTrace || MissSq > Object.Sphere.w * Object.Sphere.w)
+        {
+            continue;
+        }
+        Visibility = min(Visibility, TraceDFObjectCone(Object, P, ToSun, TanHalfAngle, MaxTrace));
+    }
+    return Visibility;
+}
 
 float TerrainHeightAt(FTerrainShadowRecord T, float2 XZ)
 {
