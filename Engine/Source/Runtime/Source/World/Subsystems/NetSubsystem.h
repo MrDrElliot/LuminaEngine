@@ -79,6 +79,28 @@ namespace Lumina
         FUNCTION()
         void MarkEntityDirty(ECS::FEntity Entity);
 
+        // Host only. Stops replicating the entity and its children, and every client keeps simulating its own copy instead of despawning it.
+        FUNCTION()
+        void TearOff(ECS::FEntity Entity);
+
+        // Raised where Target says as an event of T, which a system reads with a TEventReader<T> and finds Sender filled in. Connection names the client for Target Client.
+        template<typename T>
+        bool Send(ENetMessageTarget Target, const T& Message, uint32 Connection = 0)
+        {
+            static_assert(std::is_base_of_v<SNetMessage, T>, "A net message derives from SNetMessage.");
+            return SendMessageOfType(Target, Connection, ECS::GetComponentTypeID<T>(), &Message);
+        }
+
+        bool SendMessageOfType(ENetMessageTarget Target, uint32 Connection, ECS::FComponentTypeID TypeID, const void* Message);
+
+        // The C# side of Send, naming its event by queue id.
+        FUNCTION(ScriptInternal)
+        bool SendScriptMessage(uint32 Target, uint32 Connection, uint32 TypeId, void* Message);
+
+        // Where a C# message keeps its Sender and the entity ids it carries, as byte offsets.
+        FUNCTION(ScriptInternal)
+        static void RegisterScriptMessage(uint32 TypeId, uint32 SenderOffset, void* EntityOffsets, uint32 Count);
+
         FUNCTION()
         uint32 EntityToNetId(ECS::FEntity Entity);
 

@@ -97,8 +97,13 @@ namespace Lumina
             uint32 FogShaftDepthIndex; // bindless 2D SRV of the depth each shaft texel was marched against
             uint32 CloudDepthIndex;    // bindless 2D SRV of the depth each cloud texel was marched against
             float  CloudFloor;         // altitude of the cloud layer's base, so the composite can skip clouds below reach
+
+            uint32 GroundFogIndex;      // bindless 2D SRV of the half-res ground fog, ~0u when no layer is in view
+            uint32 GroundFogDepthIndex; // bindless 2D SRV of the depth each ground fog texel was marched against
+            uint32 _Pad0;
+            uint32 _Pad1;
         };
-        static_assert(sizeof(FAtmosphereCompositePushConstants) == 80,
+        static_assert(sizeof(FAtmosphereCompositePushConstants) == 96,
             "FAtmosphereCompositePushConstants must match AtmosphereComposite.slang::FPushConstants.");
 
         constexpr uint32 AtmosphereTileSize = 8;
@@ -491,8 +496,9 @@ namespace Lumina
         const bool bFog    = Frame.Volumetrics.bHasFog;
         const bool bAerial = AtmosphereTerms.AerialInScatterIndex != Constants::kIndexNoneU32;
         const bool bClouds = AtmosphereTerms.CloudScatterIndex != Constants::kIndexNoneU32;
+        const bool bGroundFog = AtmosphereTerms.GroundFogIndex != Constants::kIndexNoneU32;
 
-        if (!bFog && !bAerial && !bClouds)
+        if (!bFog && !bAerial && !bClouds && !bGroundFog)
         {
             return;
         }
@@ -544,6 +550,8 @@ namespace Lumina
         PC.FogShaftDepthIndex = AtmosphereTerms.FogShaftDepthIndex;
 
         PC.CloudFloor         = Math::Max(Frame.Volumetrics.Clouds.LayerBottom, 100.0f);
+        PC.GroundFogIndex      = AtmosphereTerms.GroundFogIndex;
+        PC.GroundFogDepthIndex = AtmosphereTerms.GroundFogDepthIndex;
 
         auto Spec = [](uint32 Id, bool bOn)
         {
@@ -556,6 +564,7 @@ namespace Lumina
             Spec(15u, PC.bFog != 0u),
             Spec(16u, PC.bVolumetric != 0u),
             Spec(17u, PC.FogShaftIndex != Constants::kIndexNoneU32),
+            Spec(18u, bGroundFog),
         };
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CS, TSpan<const RHI::FSpecializationConstant>(CompositeConsts, std::size(CompositeConsts))));
 

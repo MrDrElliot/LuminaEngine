@@ -197,7 +197,7 @@ TEST(EntityChangeTracking, SettledCameraRigLeavesItsTransformUnchanged)
     ExpectRigsChanged(Step(), true);
     ExpectRigsChanged(Step(), false);
 
-    Registry.Get<STransformComponent>(Target).SetLocation(FVector3(5.0f, 0.0f, 0.0f));
+    Registry.Get<STransformComponent>(Target).SetLocalLocation(FVector3(5.0f, 0.0f, 0.0f));
     ExpectRigsChanged(Step(), true);
     EXPECT_GT(Registry.Get<STransformComponent>(Follower).GetWorldLocation().x, 0.0f) << "the follower lags toward the moved target";
     EXPECT_NEAR(Registry.Get<STransformComponent>(Arm).GetWorldLocation().x, 5.0f, 1e-4f) << "the arm pivot has no lag by default";

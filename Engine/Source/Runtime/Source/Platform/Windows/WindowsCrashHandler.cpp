@@ -158,6 +158,35 @@ namespace Lumina::CrashHandler
             }
         }
 
+        // A call through a null or freed pointer faults outside every module, where nothing unwinds, but its return address is still on the stack.
+        bool ResumeAtCallerIfPcIsLost(HANDLE Process, CONTEXT* Context, DWORD64& OutLostPc)
+        {
+#if defined(_M_X64)
+            OutLostPc = Context->Rip;
+            if (SymGetModuleBase64(Process, OutLostPc) != 0)
+            {
+                return false;
+            }
+            DWORD64 ReturnAddress = 0;
+            SIZE_T BytesRead = 0;
+            if (ReadProcessMemory(Process, reinterpret_cast<LPCVOID>(Context->Rsp), &ReturnAddress, sizeof(ReturnAddress), &BytesRead)
+                && BytesRead == sizeof(ReturnAddress) && SymGetModuleBase64(Process, ReturnAddress) != 0)
+            {
+                Context->Rip = ReturnAddress;
+                Context->Rsp += sizeof(DWORD64);
+                return true;
+            }
+#elif defined(_M_ARM64)
+            OutLostPc = Context->Pc;
+            if (SymGetModuleBase64(Process, OutLostPc) == 0 && SymGetModuleBase64(Process, Context->Lr) != 0)
+            {
+                Context->Pc = Context->Lr;
+                return true;
+            }
+#endif
+            return false;
+        }
+
         // Best-effort, bailing on first failure since the process has already crashed.
         void CaptureStackTraceFromContext(CONTEXT* ContextRecord, char* OutBuffer, size_t BufferSize)
         {
@@ -178,6 +207,8 @@ namespace Lumina::CrashHandler
             }
 
             SymRefreshModuleList(Process);
+            DWORD64 LostPc = 0;
+            const bool bPcWasLost = ResumeAtCallerIfPcIsLost(Process, ContextRecord, LostPc);
 
             STACKFRAME64 Frame{};
             DWORD MachineType;
@@ -214,6 +245,14 @@ namespace Lumina::CrashHandler
                 OutBuffer[Offset++] = '\n';
                 OutBuffer[Offset]   = 0;
             };
+
+            if (bPcWasLost)
+            {
+                char LostLine[128];
+                _snprintf_s(LostLine, sizeof(LostLine), _TRUNCATE, "  [0x%016llX] <called through a bad pointer, walking on from its caller>",
+                    (unsigned long long)LostPc);
+                AppendLine(LostLine);
+            }
 
             constexpr int MaxFrames = 64;
             char SymBuf[sizeof(SYMBOL_INFO) + 256];

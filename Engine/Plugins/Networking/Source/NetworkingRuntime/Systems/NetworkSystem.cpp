@@ -39,6 +39,8 @@
 #include "Core/CommandLine/CommandLine.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/ScriptNet.h"
+#include "Net/NetMessages.h"
+#include "LuminaNetworkRuntime.h"
 #include "World/Entity/Systems/ScriptSyncSystem.h"
 #include "Networking/NetworkEvents.h"
 #include "Net/NetSimulation.h"
@@ -699,6 +701,167 @@ namespace Lumina
             }
         }
         
+        void MarkReplicatedChanges(ECS::FRegistry& Registry, FNetWorldState& State)
+        {
+            LUMINA_PROFILE_SCOPE();
+            const ECS::FSparseSet* Networked = Registry.FindStorage(static_cast<uint32>(ECS::GetComponentTypeID<SNetworkComponent>()));
+            const uint32 Since = State.ReplicatedChangeTick;
+            State.ReplicatedChangeTick = ECS::FSparseSet::AdvanceChangeTick();
+            if (Networked == nullptr || Networked->GetDenseSize() == 0)
+            {
+                return;
+            }
+
+            const TVector<int32>& TypeIdToIndex = State.ReplTypes.TypeIdToIndex;
+            if (State.ReplicatedWriteEpochs.Num() < TypeIdToIndex.Num())
+            {
+                State.ReplicatedWriteEpochs.SetNum(TypeIdToIndex.Num(), ~0ull);
+            }
+
+            TVector<ECS::FEntity>& Changed = State.ReplicatedChangeScratch;
+            Changed.Reset();
+            for (int32 TypeID = 0; TypeID < TypeIdToIndex.Num(); ++TypeID)
+            {
+                ECS::FSparseSet* Pool = TypeIdToIndex[TypeID] >= 0 ? Registry.FindStorage(static_cast<uint32>(TypeID)) : nullptr;
+                if (Pool == nullptr)
+                {
+                    continue;
+                }
+                // Tracking stamps the whole pool at once, so the first scan of a pool sends everything it holds.
+                if (!Pool->IsTrackingChanges())
+                {
+                    Pool->TrackChanges();
+                }
+                const uint64 Epoch = Pool->GetWriteEpoch();
+                if (State.ReplicatedWriteEpochs[TypeID] == Epoch)
+                {
+                    continue;
+                }
+                State.ReplicatedWriteEpochs[TypeID] = Epoch;
+
+                const ECS::FEntity* Dense = Pool->GetDenseData();
+                const uint32*       Ticks = Pool->GetChangeTickData();
+                for (int32 Index = 0; Index < Pool->GetDenseSize(); ++Index)
+                {
+                    const ECS::FEntity Entity = Dense[Index];
+                    if (!Entity.IsTombstone() && ECS::FSparseSet::IsNewerTick(Ticks[Index], Since)
+                        && Networked->Contains(Entity))
+                    {
+                        Changed.Add(Entity);
+                    }
+                }
+            }
+
+            for (ECS::FEntity Entity : Changed)
+            {
+                if (!Registry.HasAll<FNetDirty>(Entity))
+                {
+                    Registry.Emplace<FNetDirty>(Entity);
+                }
+            }
+        }
+
+        void WriteTearOffMessage(uint32 Guid, TVector<uint8>& OutMsg)
+        {
+            FNetArchive Writer(OutMsg);
+            uint8 Type = static_cast<uint8>(ENetMessage::TearOffEntity);
+            Writer << Type;
+            Net::WriteNetGuid(Writer, Guid);
+        }
+
+        // Leaves Entity a plain local entity, its solver body back to the motion it was authored with if a proxy had frozen it.
+        void StripNetworking(ECS::FRegistry& Registry, CWorld* World, FNetWorldState& State, ECS::FEntity Entity)
+        {
+            const SNetworkComponent& Net = Registry.Get<ECS::Read<SNetworkComponent>>(Entity);
+            Physics::IPhysicsScene* PhysScene = World != nullptr ? World->GetPhysicsScene() : nullptr;
+            const SRigidBodyComponent* Body = Registry.TryGet<ECS::Read<SRigidBodyComponent>>(Entity);
+            if (Net.bProxyPhysicsConfigured && PhysScene != nullptr && Body != nullptr
+                && PhysScene->GetBodyStatus(Entity) == Physics::EPhysicsBodyStatus::Ready)
+            {
+                PhysScene->ChangeBodyMotionType(Entity, Body->BodyType);
+            }
+
+            Registry.Remove<SNetworkComponent, FRepTransform, FComponentRepState, FNetDirty, FScriptSyncState, FNetPredictionClient,
+                            FNetPredictionServer, FNetCharacterDrive, SNetProxyTag, SNetDrivenTransformTag>(Entity);
+            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+
+            SNetEntityTornOffEvent TornOff;
+            TornOff.Entity = Entity;
+            ECS::SendEventIfRead(State.Events, TornOff);
+        }
+
+        void CollectNetworkedHierarchy(ECS::FRegistry& Registry, ECS::FEntity Entity, TVector<ECS::FEntity>& Out)
+        {
+            if (Registry.HasAll<SNetworkComponent>(Entity) && !Out.Contains(Entity))
+            {
+                Out.Add(Entity);
+            }
+            Registry.GetHierarchy().ForEachChild(Entity, [&](ECS::FEntity Child)
+            {
+                CollectNetworkedHierarchy(Registry, Child, Out);
+            });
+        }
+
+        // Ahead of any replication this tick, so nothing more is sent for a torn-off entity and no client despawns its copy.
+        void ProcessTearOffs(CWorld* World, ECS::FRegistry& Registry, FNetWorldState& State)
+        {
+            if (State.PendingTearOffs.IsEmpty())
+            {
+                return;
+            }
+
+            TVector<ECS::FEntity> Torn;
+            for (ECS::FEntity Root : State.PendingTearOffs)
+            {
+                if (Registry.IsValid(Root))
+                {
+                    CollectNetworkedHierarchy(Registry, Root, Torn);
+                }
+            }
+            State.PendingTearOffs.Reset();
+
+            for (ECS::FEntity Entity : Torn)
+            {
+                const uint32 Guid = Registry.Get<ECS::Read<SNetworkComponent>>(Entity).NetGUID.Value;
+                if (Guid != 0)
+                {
+                    TVector<uint8> Msg;
+                    WriteTearOffMessage(Guid, Msg);
+                    for (auto& [Connection, View] : State.ClientViews)
+                    {
+                        if (View.Relevant.Remove(Guid) > 0)
+                        {
+                            Net::AppendFramedMessage(View.PendingReliable, Msg.GetData(), static_cast<SIZE_T>(Msg.Num()));
+                        }
+                    }
+                    State.KnownStableGuids.RemoveSingleSwap(Guid);
+                    if (State.GuidTable.Find(SNetGUID{ Guid }) == Entity)
+                    {
+                        State.GuidTable.Unregister(SNetGUID{ Guid });
+                    }
+                }
+                StripNetworking(Registry, World, State, Entity);
+            }
+        }
+
+        void ApplyTearOff(ECS::FRegistry& Registry, CWorld* World, FNetWorldState& State, const uint8* Data, SIZE_T Size)
+        {
+            FNetArchive Reader(Data, Size);
+            uint8 Type = 0;
+            Reader << Type;
+            const uint32 Guid = Net::ReadNetGuid(Reader);
+            if (Reader.HasError())
+            {
+                return;
+            }
+            const ECS::FEntity Entity = FindLiveEntity(Registry, State, Guid);
+            State.GuidTable.Unregister(SNetGUID{ Guid });
+            if (Entity != ECS::NullEntity && Registry.HasAll<SNetworkComponent>(Entity))
+            {
+                StripNetworking(Registry, World, State, Entity);
+            }
+        }
+
         void ConfigureProxyPhysics(ECS::FRegistry& Registry, CWorld* World)
         {
             Physics::IPhysicsScene* PhysScene = World->GetPhysicsScene();
@@ -1788,6 +1951,8 @@ namespace Lumina
                 case ENetMessage::OwnershipUpdate:   return "ownership";
                 case ENetMessage::SpawnEntity:       return "spawn";
                 case ENetMessage::DespawnEntity:     return "despawn";
+                case ENetMessage::TearOffEntity:     return "tearoff";
+                case ENetMessage::EventMessage:      return "message";
                 case ENetMessage::PropertyUpdate:
                 case ENetMessage::PropertyPacket:    return "property";
                 case ENetMessage::MoveAck:           return "moveack";
@@ -1878,6 +2043,17 @@ namespace Lumina
 
         void FlushRpcs(FNetWorldState& State)
         {
+            {
+                TScopeLock Scope(State.MessageLock);
+                for (auto& [Connection, Batch] : State.PendingMessages)
+                {
+                    if (!Batch.IsEmpty())
+                    {
+                        State.Transport->Send(FConnectionHandle{ Connection }, Batch.GetData(), static_cast<SIZE_T>(Batch.Num()), 0, ESendMode::Reliable);
+                        Batch.Reset();
+                    }
+                }
+            }
             for (auto& [Connection, Batch] : State.PendingRpcReliable)
             {
                 if (!Batch.IsEmpty())
@@ -1997,6 +2173,8 @@ namespace Lumina
             NetSimulation::Pump(World, State, bServer);
             if (bServer)
             {
+                ProcessTearOffs(World, Registry, State);
+                MarkReplicatedChanges(Registry, State);
                 if (State.ConnectedClients > 0)
                 {
                     State.Stats.PropertyUpdatesSent = 0;
@@ -2106,11 +2284,6 @@ namespace Lumina
         RunsAfter<CLifetimeSystem>();
         // Sync fields a script wrote this frame have to be compared before the send reads them.
         RunsAfter<CScriptSyncSystem>();
-    }
-
-    bool CNetworkSystem::HasWork(const SSystemContext& Context)
-    {
-        return GetWorld() != nullptr && GetWorld()->GetNetMode() != ENetMode::Standalone;
     }
 
     void CNetworkSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
@@ -2410,6 +2583,12 @@ namespace Lumina
                             ApplyDespawnEntity(Registry, *State, Msg, MsgSize);
                         }
                         break;
+                    case ENetMessage::TearOffEntity:
+                        if (!bServer)
+                        {
+                            ApplyTearOff(Registry, World, *State, Msg, MsgSize);
+                        }
+                        break;
                     case ENetMessage::PropertyUpdate:
                         if (!bServer)
                         {
@@ -2602,6 +2781,9 @@ namespace Lumina
 
                     case ENetMessage::ScriptRpc:
                         ReceiveScriptRpc(Registry, *State, bServer, Event.Connection.Value, Msg, MsgSize);
+                        break;
+                    case ENetMessage::EventMessage:
+                        NetMessages::Apply(*State, FLuminaNetworkRuntime::Get().GetScriptNetMessages(), bServer ? Event.Connection.Value : 0u, Msg, MsgSize);
                         break;
                     case ENetMessage::MoveCommands:
                         if (Physics::IPhysicsScene* Scene = World->GetPhysicsScene(); bServer && Scene != nullptr)

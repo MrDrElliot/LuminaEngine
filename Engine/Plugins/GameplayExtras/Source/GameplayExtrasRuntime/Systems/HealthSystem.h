@@ -7,7 +7,7 @@
 namespace Lumina
 {
 
-    // Drives SHealthComponent::RegenPerSecond and the post-damage cooldown that gates it.
+    // Drives SHealthComponent::RegenPerSecond on the host, and on a client raises its events when replicated health arrives.
     REFLECT()
     class CHealthSystem : public CEntitySystem
     {
@@ -20,6 +20,9 @@ namespace Lumina
 
     private:
 
+        void Regenerate(const SSystemContext& Context);
+
         ECS::TQuery<ECS::Write<SHealthComponent>> Regenerators;
+        ECS::TQuery<ECS::Read<SHealthComponent>, ECS::Changed<SHealthComponent>> ChangedHealth;
     };
 }

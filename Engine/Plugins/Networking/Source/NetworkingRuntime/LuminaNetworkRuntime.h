@@ -4,6 +4,7 @@
 
 
 #include "Networking/INetworkRuntime.h"
+#include "Net/NetMessages.h"
 
 namespace Lumina
 {
@@ -35,6 +36,7 @@ namespace Lumina
         bool SetEntityOwner(CWorld* World, ECS::FEntity Entity, uint32 ConnectionId) override;
         bool StartSimulationSession(CWorld* World, const CStruct* InputStruct, uint64 Seed) override;
         void MarkEntityDirty(CWorld* World, ECS::FEntity Entity) override;
+        void TearOff(CWorld* World, ECS::FEntity Entity) override;
         uint32 EntityToNetId(const CWorld* World, ECS::FEntity Entity) const override;
         ECS::FEntity NetIdToEntity(const CWorld* World, uint32 NetId) const override;
         bool SendScriptRpc(CEntityScript* Script, uint32 RpcId, ERpcTarget Target, uint8 Flags,
@@ -44,9 +46,14 @@ namespace Lumina
         void BindEntityIds(const CWorld* World, FNetArchive& Ar) const override;
         uint32 PredictSpawn(CWorld* World, ECS::FEntity StandIn, bool bKeepStandIn) override;
         void ConfirmPredictedSpawn(CWorld* World, ECS::FEntity Entity, uint32 ConnectionId, uint32 Key) override;
+        bool SendNetMessage(CWorld* World, ENetMessageTarget Target, uint32 Connection, ECS::FComponentTypeID TypeID, const void* Message) override;
+        void RegisterScriptNetMessage(ECS::FComponentTypeID TypeID, uint32 SenderOffset, TSpan<const uint32> EntityOffsets) override;
+
+        const FScriptNetMessages& GetScriptNetMessages() const { return ScriptNetMessages; }
 
     private:
 
         TUniquePtr<FNetLoadBotSwarm> BotSwarm;
+        FScriptNetMessages           ScriptNetMessages;
     };
 }

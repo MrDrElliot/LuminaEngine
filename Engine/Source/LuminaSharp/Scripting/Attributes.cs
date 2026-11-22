@@ -51,6 +51,9 @@ public sealed class ReflectAttribute : Attribute
     // Runs only where something is drawn or played, never on a dedicated server, a bot or a headless process.
     public bool Cosmetic { get; set; }
 
+    // Runs only in a networked session, host or client, never in a standalone game. With HostOnly, only on a listen or dedicated server.
+    public bool Networked { get; set; }
+
     // A component that is deterministic simulation state, saved every tick and restored when a late input rewinds the simulation.
     public bool Rollback { get; set; }
 
@@ -165,6 +168,10 @@ public sealed class ReflectAttribute : Attribute
         if (Cosmetic)
         {
             yield return new(nameof(Cosmetic), "");
+        }
+        if (Networked)
+        {
+            yield return new(nameof(Networked), "");
         }
         if (Rollback)
         {

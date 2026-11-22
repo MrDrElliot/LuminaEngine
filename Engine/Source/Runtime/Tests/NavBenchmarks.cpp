@@ -509,7 +509,7 @@ TEST(NavBenchmark, DISABLED_WorldSources)
         for (int32 Moved = 0; Moved < 10; ++Moved)
         {
             STransformComponent& Transform = World.Registry().Get<STransformComponent>(Obstacles[Random.Next() % Obstacles.Num()]);
-            Transform.SetLocation(Transform.GetLocation() + FVector3(Random.Range(-2.0f, 2.0f), 0.0f, Random.Range(-2.0f, 2.0f)));
+            Transform.SetLocalLocation(Transform.GetLocalLocation() + FVector3(Random.Range(-2.0f, 2.0f), 0.0f, Random.Range(-2.0f, 2.0f)));
         }
         const double Ms = World.Tick();
         Moving += Ms;
@@ -688,7 +688,7 @@ TEST(NavBenchmark, DISABLED_Hitch)
         {
             Mover.Angle += 3.0f / 60.0f / Mover.Radius;
             const FVector3 At = Mover.Center + FVector3(std::cos(Mover.Angle) * Mover.Radius, 0.0f, std::sin(Mover.Angle) * Mover.Radius);
-            Registry.Get<STransformComponent>(Mover.Entity).SetLocation(Ground(At.x, At.z) + FVector3(0.0f, bModifierMovers ? 0.0f : 0.7f, 0.0f));
+            Registry.Get<STransformComponent>(Mover.Entity).SetLocalLocation(Ground(At.x, At.z) + FVector3(0.0f, bModifierMovers ? 0.0f : 0.7f, 0.0f));
         }
         NavTick.Samples.Add(World.Tick());
         FollowTick.Samples.Add(World.TickFollow());

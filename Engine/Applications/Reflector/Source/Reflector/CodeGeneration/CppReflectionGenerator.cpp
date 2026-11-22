@@ -866,7 +866,7 @@ namespace Lumina::Reflection
                 else if (Pair.Key() == "NetFlags")
                 {
                     if (Pair.Value().find("Unreliable") != std::string::npos) { Flags += " | Lumina::EFunctionFlags::NetUnreliable"; }
-                    if (Pair.Value().find("OwnerOnly") != std::string::npos)  { Flags += " | Lumina::EFunctionFlags::NetOwnerOnly"; }
+                    if (Pair.Value().find("AnyCaller") != std::string::npos)  { Flags += " | Lumina::EFunctionFlags::NetAnyCaller"; }
                 }
             }
 

@@ -31,6 +31,7 @@
 #include "Log/Log.h"
 #include "Memory/Memory.h"
 #include "Scripting/DotNet/DotNetHost.h"
+#include "Core/Serialization/NetArchive.h"
 #include "Scripting/ScriptableObject.h"
 #include "Containers/StringFormat.h"
 
@@ -1244,6 +1245,40 @@ namespace Lumina
         ElementDescs.Reset();
         MapDescs.Reset();
         OptionalDescs.Reset();
+    }
+
+    bool CScriptStruct::NetSerializeCustom(FNetArchive& Ar, void* Data) const
+    {
+        if (CStruct::NetSerializeCustom(Ar, Data))
+        {
+            return true;
+        }
+
+        using FIsNetSerializable = int32 (*)(const char*, int32);
+        using FNetSerialize      = int32 (*)(const char*, int32, void*, void*);
+
+        const char*  Name     = *GetName();
+        const int32  NameSize = static_cast<int32>(strlen(Name));
+        if (!bManagedNetSerializerResolved)
+        {
+            bManagedNetSerializerResolved = true;
+            const FIsNetSerializable IsNetSerializable = reinterpret_cast<FIsNetSerializable>(DotNet::ResolveManagedExport("IsScriptStructNetSerializable"));
+            if (IsNetSerializable != nullptr && IsNetSerializable(Name, NameSize) != 0)
+            {
+                ManagedNetSerializer = DotNet::ResolveManagedExport("NetSerializeScriptStruct");
+            }
+        }
+        if (ManagedNetSerializer == nullptr)
+        {
+            return false;
+        }
+
+        // A throw on one peer would leave the other reading a layout this one never wrote, so the stream is marked broken instead.
+        if (reinterpret_cast<FNetSerialize>(ManagedNetSerializer)(Name, NameSize, &Ar, Data) == 0)
+        {
+            Ar.SetHasError(true);
+        }
+        return true;
     }
 
     void CScriptStruct::OnDestroy()

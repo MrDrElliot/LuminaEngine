@@ -60,10 +60,20 @@ namespace Lumina
     {
         None       = 0,
         Unreliable = 1 << 0, // may be dropped, for frequent cosmetic calls
-        OwnerOnly  = 1 << 1, // ignored on arrival unless the caller owns the entity or is the host
+        AnyCaller  = 1 << 1, // accepted from every connection, where by default only the entity's owner and the host may call it
     };
 
     ENUM_CLASS_FLAGS(ENetFlags);
+
+    // Where a net message goes. A client sends only to the host, and the host to one client, every client, or every client and itself.
+    REFLECT()
+    enum class ENetMessageTarget : uint8
+    {
+        Host     = 0,
+        Client   = 1,
+        Clients  = 2,
+        Everyone = 3,
+    };
 
     // Who may write a Sync field, spelled the same in PROPERTY(Sync = ...).
     REFLECT(BitMask)

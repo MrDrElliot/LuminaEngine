@@ -127,7 +127,7 @@ TEST(LagCompensation, TheSystemRecordsHitboxesOnAHost)
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
         const ECS::FEntity Soldier = Registry.Create();
-        Registry.Emplace<STransformComponent>(Soldier).SetLocation(FVector3(5.0f, 0.0f, 0.0f));
+        Registry.Emplace<STransformComponent>(Soldier).SetLocalLocation(FVector3(5.0f, 0.0f, 0.0f));
         Registry.Emplace<SLagCompensationComponent>(Soldier);
 
         FWorldTestAccess::TickStage(*World, EUpdateStage::FrameEnd, kTick);

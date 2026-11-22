@@ -482,10 +482,12 @@ namespace Lumina
             const FFunction* Function = Route.Function;
             INetworkRuntime* Net = GetNetworkRuntime();
 
-            // Owner-only calls are refused unless they came from the entity's owner or from the host.
-            if (EnumHasAnyFlags(Function->GetFunctionFlags(), EFunctionFlags::NetOwnerOnly) && CallerId != 0
+            // Only the entity's owner and the host may call an RPC unless it opts into AnyCaller, so a client cannot drive what it does not own.
+            if (!EnumHasAnyFlags(Function->GetFunctionFlags(), EFunctionFlags::NetAnyCaller) && CallerId != 0
                 && (Net == nullptr || Net->GetEntityOwner(Script.GetWorld(), Script.GetOwningEntity()) != CallerId))
             {
+                LOG_WARN_ONCE("[Net] {}::{} refused a call from connection {}, which does not own the entity. Mark it AnyCaller if every client may call it.",
+                              *Script.GetClass()->GetName(), *Function->GetFunctionName(), CallerId);
                 return;
             }
 

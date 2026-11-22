@@ -16,12 +16,12 @@ namespace Lumina
         constexpr FColor(const FVector4& Vec) : R(Vec.x), G(Vec.y), B(Vec.z), A(Vec.w) {}
 
 
-        operator FVector4() const
+        constexpr operator FVector4() const
         {
             return FVector4(R, G, B, A);
         }
 
-        operator FVector3() const
+        constexpr operator FVector3() const
         {
             return FVector3(R, G, B);
         }
@@ -35,22 +35,22 @@ namespace Lumina
             return Ar;
         }
     
-        float GetR() const { return R; }
-        float GetG() const { return G; }
-        float GetB() const { return B; }
-        float GetA() const { return A; }
+        constexpr float GetR() const { return R; }
+        constexpr float GetG() const { return G; }
+        constexpr float GetB() const { return B; }
+        constexpr float GetA() const { return A; }
     
-        void SetR(float r) { R = r; }
-        void SetG(float g) { G = g; }
-        void SetB(float b) { B = b; }
-        void SetA(float a) { A = a; }
+        constexpr void SetR(float r) { R = r; }
+        constexpr void SetG(float g) { G = g; }
+        constexpr void SetB(float b) { B = b; }
+        constexpr void SetA(float a) { A = a; }
     
-        float ToGrayscale() const
+        constexpr float ToGrayscale() const
         {
             return 0.2126f * R + 0.7152f * G + 0.0722f * B;
         }
     
-        void Clamp()
+        constexpr void Clamp()
         {
             R = Math::Clamp(R, 0.0f, 1.0f);
             G = Math::Clamp(G, 0.0f, 1.0f);
@@ -58,27 +58,27 @@ namespace Lumina
             A = Math::Clamp(A, 0.0f, 1.0f);
         }
     
-        FColor operator+(const FColor& other) const
+        constexpr FColor operator+(const FColor& other) const
         {
             return FColor(R + other.R, G + other.G, B + other.B, A + other.A);
         }
 
-        FColor operator-(const FColor& other) const
+        constexpr FColor operator-(const FColor& other) const
         {
             return FColor(R - other.R, G - other.G, B - other.B, A - other.A);
         }
 
-        FColor operator*(float scalar) const
+        constexpr FColor operator*(float scalar) const
         {
             return FColor(R * scalar, G * scalar, B * scalar, A * scalar);
         }
 
-        FColor operator*(const FColor& other) const
+        constexpr FColor operator*(const FColor& other) const
         {
             return FColor(R * other.R, G * other.G, B * other.B, A * other.A);
         }
 
-        static FColor Lerp(const FColor& start, const FColor& end, float t)
+        static constexpr FColor Lerp(const FColor& start, const FColor& end, float t)
         {
             return FColor(
                 start.R + t * (end.R - start.R),
@@ -93,7 +93,7 @@ namespace Lumina
             return Format("R: {} G: {} B: {} A: {}", R, G, B, A);
         }
 
-        bool operator == (const FColor& Other) const
+        constexpr bool operator == (const FColor& Other) const
         {
             return R == Other.R
                 && G == Other.G
@@ -101,12 +101,12 @@ namespace Lumina
                 && A == Other.A;
         }
 
-        bool operator != (const FColor& Color) const
+        constexpr bool operator != (const FColor& Color) const
         {
             return !(*this == Color);
         }
     
-        static FColor FromGrayscale(float value, float alpha = 1.0f)
+        static constexpr FColor FromGrayscale(float value, float alpha = 1.0f)
         {
             return FColor(value, value, value, alpha);
         }
@@ -121,7 +121,7 @@ namespace Lumina
         /** Lower saturation, higher lightness. */
         static FColor MakeRandomPastel(float alpha = 1.0f);
 
-        static void RGBtoHSL(const FColor& color, float& h, float& s, float& l)
+        static constexpr void RGBtoHSL(const FColor& color, float& h, float& s, float& l)
         {
             float r = color.R;
             float g = color.G;
@@ -143,14 +143,14 @@ namespace Lumina
             }
     
             l = (max + min) / 2.0f;
-            s = (max == min) ? 0.0f : (max - min) / (1.0f - std::abs(2.0f * l - 1.0f));
+            s = (max == min) ? 0.0f : (max - min) / (1.0f - Math::Abs(2.0f * l - 1.0f));
             h /= 6.0f;
         }
 
-        static FColor HSLtoRGB(float h, float s, float l, float alpha = 1.0f)
+        static constexpr FColor HSLtoRGB(float h, float s, float l, float alpha = 1.0f)
         {
-            float c = (1.0f - std::abs(2.0f * l - 1.0f)) * s;
-            float x = c * (1.0f - std::abs(fmod(h * 6.0f, 2.0f) - 1.0f));
+            float c = (1.0f - Math::Abs(2.0f * l - 1.0f)) * s;
+            float x = c * (1.0f - Math::Abs(Math::FMod(h * 6.0f, 2.0f) - 1.0f));
             float m = l - c / 2.0f;
     
             float r = 0.0f, g = 0.0f, b = 0.0f;

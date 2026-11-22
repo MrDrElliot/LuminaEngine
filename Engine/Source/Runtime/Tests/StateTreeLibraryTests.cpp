@@ -191,7 +191,7 @@ namespace LuminaStateTreeLibraryTests
         {
             Guard = Registry().Create();
             // Off the first waypoint, so the first move has somewhere to walk.
-            Registry().Emplace<STransformComponent>(Guard).SetLocation(kPatrolA - FVector3(2.0f, 0.0f, 0.0f));
+            Registry().Emplace<STransformComponent>(Guard).SetLocalLocation(kPatrolA - FVector3(2.0f, 0.0f, 0.0f));
             Registry().Emplace<SPathFollowComponent>(Guard);
             SPerceptionComponent& Sight = Registry().Emplace<SPerceptionComponent>(Guard);
             Sight.EyeOffset = FVector3(0.0f, 1.0f, 0.0f);
@@ -205,7 +205,7 @@ namespace LuminaStateTreeLibraryTests
         void SpawnIntruder(const FVector3& Location)
         {
             Intruder = Registry().Create();
-            Registry().Emplace<STransformComponent>(Intruder).SetLocation(Location);
+            Registry().Emplace<STransformComponent>(Intruder).SetLocalLocation(Location);
             Registry().Emplace<SAIStimuliSourceComponent>(Intruder);
         }
 
@@ -273,7 +273,7 @@ namespace LuminaStateTreeLibraryTests
         {
             if (NumSeen == 4)
             {
-                Registry().Get<STransformComponent>(Intruder).SetLocation(FVector3(0.0f));
+                Registry().Get<STransformComponent>(Intruder).SetLocalLocation(FVector3(0.0f));
             }
         });
 

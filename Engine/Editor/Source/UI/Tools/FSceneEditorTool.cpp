@@ -3427,27 +3427,27 @@ namespace Lumina
             ImGui::PopStyleColor();
             ImGuiX::TextTooltip("Rotation (Euler Angles)");
             ImGui::SameLine();
-            const FQuat CameraRotation = CameraTransform.GetRotation();
+            const FQuat CameraRotation = CameraTransform.GetLocalRotation();
             if (!Math::IsSameRotation(CameraRotation, CameraEulerRotationSource))
             {
-                CameraEulerDegrees = CameraTransform.GetRotationAsEuler();
+                CameraEulerDegrees = CameraTransform.GetLocalRotationAsEuler();
                 CameraEulerRotationSource = CameraRotation;
             }
 
             if (ImGui::DragFloat3("R", Math::ValuePtr(CameraEulerDegrees), 0.01f))
             {
-                CameraTransform.SetRotationFromEuler(CameraEulerDegrees);
-                CameraEulerRotationSource = CameraTransform.GetRotation();
+                CameraTransform.SetLocalRotationFromEuler(CameraEulerDegrees);
+                CameraEulerRotationSource = CameraTransform.GetLocalRotation();
             }
 
             ImGui::Separator();
             if (ImGui::Button("Reset Position", ImVec2(-1, 0)))
             {
-                World->GetComponent<STransformComponent>(EditorEntity).SetLocation(FVector3(0.0f));
+                World->GetComponent<STransformComponent>(EditorEntity).SetLocalLocation(FVector3(0.0f));
             }
             if (ImGui::Button("Reset Rotation", ImVec2(-1, 0)))
             {
-                World->GetComponent<STransformComponent>(EditorEntity).SetRotation(FQuat(1.0f, 0.0f, 0.0f, 0.0f));
+                World->GetComponent<STransformComponent>(EditorEntity).SetLocalRotation(FQuat(1.0f, 0.0f, 0.0f, 0.0f));
             }
             ImGui::Spacing();
             if (ImGui::Button("Close", ImVec2(-1, 0)))

@@ -138,6 +138,21 @@ namespace Lumina
         }
     }
 
+    void FNetArchive::SerializeEntity(uint32& EntityId)
+    {
+        if (IsWriting() && EntityToNetGUID)
+        {
+            WriteVarUInt(*this, EntityToNetGUID(EntityId));
+            return;
+        }
+        if (IsReading() && NetGUIDToEntity)
+        {
+            EntityId = NetGUIDToEntity(ReadVarUInt(*this));
+            return;
+        }
+        SerializeEntityId(EntityId);
+    }
+
     void FNetArchive::AlignToByte()
     {
         const int64 Rem = BitCursor & 7;

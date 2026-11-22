@@ -275,8 +275,8 @@ namespace Lumina::Physics
 
         TSharedPtr<FPhysicsCharacterHandle> Handle = MakeShared<FPhysicsCharacterHandle>();
         Handle->WorldId = WorldId;
-        Handle->Position = Transform->GetLocation();
-        Handle->Rotation = Transform->GetRotation();
+        Handle->Position = Transform->GetLocalLocation();
+        Handle->Rotation = Transform->GetLocalRotation();
         ApplyCharacterSettings(*Handle, *Component, Registry.TryGet<SCharacterMovementComponent>(Entity));
 
         Handle->SpawnPosition = Handle->Position;
@@ -689,10 +689,10 @@ namespace Lumina::Physics
         }
 
         // The velocity is derived, so footsteps and animation on a mirrored character still see it move.
-        const FVector3 Target = Transform->GetLocation();
+        const FVector3 Target = Transform->GetLocalLocation();
         Movement.Velocity = FixedDt > 0.0f ? (Target - Character.Position) / FixedDt : FVector3(0.0f);
         Character.Position = Target;
-        Character.Rotation = Transform->GetRotation();
+        Character.Rotation = Transform->GetLocalRotation();
         Character.Velocity = Movement.Velocity;
         Character.bAwaitingGround = false;
         Physics.LastBodyPosition = Character.Position;

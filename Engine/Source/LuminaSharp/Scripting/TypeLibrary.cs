@@ -93,6 +93,7 @@ internal sealed class TypeLibrary
                 continue;
             }
             ScriptStructs[StableId] = new ScriptStructEntry(Describe(Type), NativeBase != null ? NativeTypeName.Of(NativeBase) : "");
+            WarnOnMisdeclaredNetSerialize(Type);
         }
 
         // Built once every current name is known, so an alias never shadows a live type.
@@ -186,6 +187,57 @@ internal sealed class TypeLibrary
     }
 
     private static object BoxView<T>(nint Address) where T : struct, INativeStruct => NativeStructs.FromAddress<T>(Address);
+
+    // A script struct's own NetSerialize run over the native value at Address.
+    internal delegate void FNetSerializeCall(nint Address, FNetArchive Archive);
+
+    private delegate void FNetSerializeInto<T>(ref T Self, FNetArchive Archive);
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, FNetSerializeCall?> NetSerializers = new();
+
+    // Found the way C++ finds one, by a NetSerialize method taking the archive, with null for a struct that replicates field by field.
+    public FNetSerializeCall? FindNetSerializer(string StableId)
+    {
+        return NetSerializers.GetOrAdd(StableId, Name =>
+        {
+            if (!ScriptStructs.TryGetValue(Name, out ScriptStructEntry Entry) || !typeof(INativeStruct).IsAssignableFrom(Entry.Description.Type)
+                || NetSerializeMethodOf(Entry.Description.Type) is not { } Method)
+            {
+                return null;
+            }
+            MethodInfo Bind = typeof(TypeLibrary).GetMethod(nameof(BindNetSerializer), BindingFlags.NonPublic | BindingFlags.Static)!
+                .MakeGenericMethod(Entry.Description.Type);
+            return (FNetSerializeCall)Bind.Invoke(null, new object[] { Method })!;
+        });
+    }
+
+    private static FNetSerializeCall BindNetSerializer<T>(MethodInfo Method) where T : struct, INativeStruct
+    {
+        FNetSerializeInto<T> Into = Method.CreateDelegate<FNetSerializeInto<T>>();
+        return (nint Address, FNetArchive Archive) =>
+        {
+            T Value = NativeStructs.FromAddress<T>(Address);
+            Into(ref Value, Archive);
+        };
+    }
+
+    private const BindingFlags NetSerializeFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+
+    private static MethodInfo? NetSerializeMethodOf(Type Type)
+    {
+        MethodInfo? Method = Type.GetMethod("NetSerialize", NetSerializeFlags, null, new[] { typeof(FNetArchive) }, null);
+        return Method != null && Method.ReturnType == typeof(void) ? Method : null;
+    }
+
+    // C++ passes over a NetSerialize of the wrong shape without a word, so this says it, since the struct would quietly send every field instead.
+    private static void WarnOnMisdeclaredNetSerialize(Type Type)
+    {
+        if (NetSerializeMethodOf(Type) == null && Type.GetMethods(NetSerializeFlags).Any(Method => Method.Name == "NetSerialize"))
+        {
+            Native.Log(ELogLevel.Warn,
+                $"'{Type.FullName}' declares NetSerialize, but not as void NetSerialize(FNetArchive Archive), so it replicates field by field instead.");
+        }
+    }
 
     private static bool IsEngineNamespace(string? Space) => Space != null && (Space.StartsWith("System") || Space.StartsWith("LuminaSharp"));
 
@@ -716,7 +768,7 @@ internal sealed class TypeDescription
     private const uint RpcHostFlag = 1u << 8;
     private const uint RpcOwnerFlag = 1u << 9;
     private const uint NetUnreliableFlag = 1u << 10;
-    private const uint NetOwnerOnlyFlag = 1u << 11;
+    private const uint NetAnyCallerFlag = 1u << 11;
 
     // A [Function], an [Rpc] method, or a method a Sync or Bind field names, each of which native calls through a reflected frame.
     private static bool IsReflectedMethod(MethodInfo Method, HashSet<string> NamedBySync)
@@ -809,9 +861,9 @@ internal sealed class TypeDescription
         {
             Flags |= NetUnreliableFlag;
         }
-        if ((Declared.Flags & Lumina.ENetFlags.OwnerOnly) != 0)
+        if ((Declared.Flags & Lumina.ENetFlags.AnyCaller) != 0)
         {
-            Flags |= NetOwnerOnlyFlag;
+            Flags |= NetAnyCallerFlag;
         }
         return Flags;
     }

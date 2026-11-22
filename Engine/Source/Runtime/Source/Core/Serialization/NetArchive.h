@@ -29,6 +29,9 @@ namespace Lumina
         void  SerializeBits(void* Value, uint32 NumBits);
         void  SerializeBit(bool& bValue);
 
+        // An entity crosses as its NetGUID when this archive translates them, otherwise as its raw id.
+        void  SerializeEntity(uint32& EntityId);
+
         // Advances to the next byte boundary so each changed net field stays byte-addressable. Writing pads with zero bits.
         void  AlignToByte();
 

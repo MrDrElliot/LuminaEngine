@@ -144,6 +144,10 @@ internal static class EventType<T> where T : struct, IEvent
     static EventType()
     {
         (Id, Name, bView) = EventTypes.Resolve<T>();
+        if (typeof(INetMessage).IsAssignableFrom(typeof(T)) && Name.StartsWith("cs:", StringComparison.Ordinal))
+        {
+            NetMessageLayout.Register<T>(Id);
+        }
     }
 }
 

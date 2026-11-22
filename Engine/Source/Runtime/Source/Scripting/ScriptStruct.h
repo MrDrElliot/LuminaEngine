@@ -161,6 +161,9 @@ namespace Lumina
         NODISCARD TSpan<FProperty* const> GetOwnProperties() const { return OwnProperties; }
         NODISCARD CStruct* GetNativeBase() const { return NativeBase; }
 
+        // A C# struct with a NetSerialize method packs itself through it, as a C++ struct with one does.
+        bool NetSerializeCustom(FNetArchive& Ar, void* Data) const override;
+
         void OnDestroy() override;
 
     private:
@@ -196,6 +199,10 @@ namespace Lumina
         TVector<TUniquePtr<Scripting::FScriptMapElementDesc>>     MapDescs;
         TVector<TUniquePtr<Scripting::FScriptOptionalDesc>>       OptionalDescs;
         bool                                           bRuntimeFreed = false;
+
+        // Asked of the C# type behind this struct the first time it replicates, then the entry that packs it, or null when it does not.
+        mutable bool                                   bManagedNetSerializerResolved = false;
+        mutable void*                                  ManagedNetSerializer = nullptr;
     };
 
 }

@@ -162,7 +162,7 @@ namespace Lumina
             const FVector3 Delta = PieceCenter - Center;
             const float Length = Math::Length(Delta);
             const FVector3 Offset = (Length > 1e-4f ? Delta / Length : FVector3(0.0f)) * ExplodeAmount;
-            World->GetComponent<STransformComponent>(Entity).SetLocation(PieceCenter + Offset);
+            World->GetComponent<STransformComponent>(Entity).SetLocalLocation(PieceCenter + Offset);
         }
     }
 

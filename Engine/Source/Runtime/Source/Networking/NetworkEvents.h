@@ -19,6 +19,17 @@ namespace Lumina
         LeftHost     = 3,
     };
 
+    // The base of a C++ net message, a REFLECT(Event) struct a system sends with CNetSubsystem::Send and reads where it lands like any other event.
+    REFLECT()
+    struct RUNTIME_API SNetMessage
+    {
+        GENERATED_BODY()
+
+        // The connection it came from, written on arrival, 0 for the host.
+        PROPERTY(Hidden)
+        uint32 Sender = 0;
+    };
+
     // A connection joined or left, queued for systems and broadcast through CNetSubsystem's session delegates.
     REFLECT(Event)
     struct RUNTIME_API SNetSessionEvent
@@ -50,6 +61,16 @@ namespace Lumina
 
         PROPERTY(Hidden)
         uint32 OwningConnectionId = 0;
+    };
+
+    // An entity stopped being networked and lives on as a local entity, raised on the host and on every client that held it.
+    REFLECT(Event)
+    struct RUNTIME_API SNetEntityTornOffEvent
+    {
+        GENERATED_BODY()
+
+        PROPERTY(Hidden)
+        ECS::FEntity Entity = ECS::NullEntity;
     };
 
     // A client destroyed its copy of a replicated entity, so Entity is already gone when this is read.

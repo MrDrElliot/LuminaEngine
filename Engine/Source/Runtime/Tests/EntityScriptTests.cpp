@@ -2029,9 +2029,12 @@ namespace
             return true;
         }
 
+        uint32 GetEntityOwner(const CWorld*, ECS::FEntity) const override { return Owner; }
+
         TVector<ERpcTarget> Sent;
         uint32              LastRpcId = 0;
         TVector<uint8>      LastPayload;
+        uint32              Owner = 0;
     };
 
     // A client world with the recording runtime installed, so a Host RPC called here has to leave instead of running.
@@ -2130,6 +2133,38 @@ TEST(EntityScriptRpc, AReceivedRpcRunsAtTheSyncPointNotWhenQueued)
     ASSERT_EQ(Script->Received.Num(), 1);
     EXPECT_EQ(Script->Received[0], FString("base 5 five"));
     EXPECT_EQ(Fixture.Runtime.Sent.Num(), 1) << "an arriving call runs here and is not sent straight back";
+}
+
+// An RPC belongs to the entity's owner and the host unless it says otherwise, so another client's call is dropped.
+TEST(EntityScriptRpc, ACallFromAClientThatDoesNotOwnTheEntityIsRefused)
+{
+    FClientRpcFixture Fixture;
+    CEntityScriptRpcTest* Script = Fixture.MakeScript<CEntityScriptRpcTest>();
+    Script->Ping(5, "five");
+    Fixture.Runtime.Owner = 2;
+
+    ScriptNet::QueueRpc(*Fixture.World, Script->GetOwningEntity(), 0, Fixture.Runtime.LastRpcId, 3, Fixture.Runtime.LastPayload);
+    Fixture.World->GetEventQueues().Commit();
+    EXPECT_TRUE(Script->Received.IsEmpty()) << "a client drove an entity it does not own";
+
+    ScriptNet::QueueRpc(*Fixture.World, Script->GetOwningEntity(), 0, Fixture.Runtime.LastRpcId, 2, Fixture.Runtime.LastPayload);
+    Fixture.World->GetEventQueues().Commit();
+    ASSERT_EQ(Script->Received.Num(), 1) << "the owner's own call was refused";
+    EXPECT_EQ(Script->Received[0], FString("base 5 five"));
+}
+
+// AnyCaller opens an RPC to every connection, which is what a shared object such as a door needs.
+TEST(EntityScriptRpc, AnAnyCallerRpcAcceptsEveryConnection)
+{
+    FClientRpcFixture Fixture;
+    CEntityScriptRpcTest* Script = Fixture.MakeScript<CEntityScriptRpcTest>();
+    Script->Knock(9);
+    Fixture.Runtime.Owner = 2;
+
+    ScriptNet::QueueRpc(*Fixture.World, Script->GetOwningEntity(), 0, Fixture.Runtime.LastRpcId, 3, Fixture.Runtime.LastPayload);
+    Fixture.World->GetEventQueues().Commit();
+    ASSERT_EQ(Script->Received.Num(), 1);
+    EXPECT_EQ(Script->Received[0], FString("knock 9"));
 }
 
 // Replicated values land while the network system runs, and the change handler sees old and new only at the sync point.

@@ -166,6 +166,9 @@ namespace Lumina
          *  honoring a custom StructOps serializer. Used by FProperty::NetSerialize for nested structs. */
         RUNTIME_API void NetSerializeAll(FNetArchive& Ar, void* Data) const;
 
+        // A struct that packs itself, through its own NetSerialize or a script's, is written or read here and returns true.
+        RUNTIME_API virtual bool NetSerializeCustom(FNetArchive& Ar, void* Data) const;
+
         //~ Per-field net delta helpers. The replicated property set and order match on both peers, so a changed-field bitmask needs no tags.
 
         /** Count of replicated fields (the bitmask width). Same walk/filter as NetSerializeProperties. */

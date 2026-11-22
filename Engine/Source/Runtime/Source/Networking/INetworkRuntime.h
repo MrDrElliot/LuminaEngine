@@ -71,6 +71,15 @@ namespace Lumina
         // A replicated field on Entity changed, so the server diffs it on the next send.
         virtual void MarkEntityDirty(CWorld* World, ECS::FEntity Entity) {}
 
+        // Sends a message of event type TypeID where Target says, raised there as that event with its sender written in. False when it cannot go.
+        virtual bool SendNetMessage(CWorld* World, ENetMessageTarget Target, uint32 Connection, ECS::FComponentTypeID TypeID, const void* Message) { return false; }
+
+        // A C# message has no reflection, so it crosses as its bytes, with the sender written at SenderOffset and each entity id at EntityOffsets translated.
+        virtual void RegisterScriptNetMessage(ECS::FComponentTypeID TypeID, uint32 SenderOffset, TSpan<const uint32> EntityOffsets) {}
+
+        // Server only. Ends networking for Entity and the networked entities under it, leaving every peer its own local copy.
+        virtual void TearOff(CWorld* World, ECS::FEntity Entity) {}
+
         // The id both peers know an entity by, 0 when it has none.
         virtual uint32 EntityToNetId(const CWorld* World, ECS::FEntity Entity) const { return 0; }
         virtual ECS::FEntity NetIdToEntity(const CWorld* World, uint32 NetId) const { return ECS::NullEntity; }

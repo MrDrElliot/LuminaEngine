@@ -89,4 +89,53 @@ namespace Lumina
 
     // Mirrors FOG_MAX_VOLUMES in Fog.slang.
     inline constexpr uint32 GFogMaxVolumes = 32;
+
+    // Mirrors FGroundFogLayer in GroundFog.slang. The two rows map world space to the layer's area, inside while both stay within one.
+    struct alignas(16) FGPUGroundFogLayer
+    {
+        FVector4 WorldToLayerX = FVector4(0.0f);
+        FVector4 WorldToLayerZ = FVector4(0.0f);
+        // x = ground height, y = thickness, z = top softness as a fraction of the thickness, w = extinction
+        FVector4 Shape         = FVector4(0.0f);
+        // rgb = albedo, w = scattering intensity
+        FVector4 Albedo        = FVector4(0.0f);
+        // xy = edge fade in layer units along x and z, z = fade-out distance from the camera, w = anisotropy
+        FVector4 Edge          = FVector4(0.0f);
+        // x = wisp strength, y = inverse wisp scale, zw = distance the drift has carried the wisps along x and z
+        FVector4 Wisps         = FVector4(0.0f);
+    };
+    VERIFY_SSBO_ALIGNMENT(FGPUGroundFogLayer);
+
+    // Mirrors FGroundFogSim in GroundFog.slang, one per frame for every simulation pass.
+    struct alignas(16) FGPUGroundFogSim
+    {
+        // Window's minimum corner along x and z, its texel size and its resolution.
+        FVector2    Origin       = FVector2(0.0f);
+        float       TexelWorld   = 0.1f;
+        uint32      Resolution   = 0;
+        // Texels the window moved since the state was written, read through by the first pass.
+        FIntVector2 Shift        = FIntVector2(0);
+        float       Dt           = 0.0f;
+        uint32      bIngest      = 0;
+        // Obstacle map coordinates as u = x * U.x + z * U.y + U.z, the same for v.
+        FVector4    ObstacleU    = FVector4(0.0f);
+        FVector4    ObstacleV    = FVector4(0.0f);
+        // Height of an obstacle depth as Y = Depth * x + y, and the vertical band the fog fills.
+        FVector2    DepthToY     = FVector2(0.0f);
+        float       BandBottom   = 0.0f;
+        float       BandTop      = 0.0f;
+        FVector2    Wind         = FVector2(0.0f);
+        // Fractions of the flow and of the wisp offset that survive one step.
+        float       VelocityKeep = 1.0f;
+        float       SwirlKeep    = 1.0f;
+        // Fraction of a parted path that fills back in per step.
+        float       RefillRate   = 0.0f;
+        float       Displacement = 0.0f;
+        float       Vorticity    = 0.0f;
+        float       MaxSpeed     = 0.0f;
+    };
+    VERIFY_SSBO_ALIGNMENT(FGPUGroundFogSim);
+
+    // Mirrors GROUND_FOG_MAX_LAYERS in GroundFog.slang.
+    inline constexpr uint32 GGroundFogMaxLayers = 8;
 }

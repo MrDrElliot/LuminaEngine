@@ -80,7 +80,7 @@ namespace
 
         void PlaceTarget(const FVector3& Location)
         {
-            Registry().Get<STransformComponent>(Target).SetLocation(Location);
+            Registry().Get<STransformComponent>(Target).SetLocalLocation(Location);
         }
 
         bool Sees()

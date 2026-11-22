@@ -159,7 +159,7 @@ namespace Lumina
             // Other trees may read this transform from another worker, so the turn lands at the next flush.
             Context.GetWorld()->GetCommandBus().Patch<STransformComponent>(Context.GetOwner(), [Yaw](STransformComponent& Transform)
             {
-                Transform.SetRotation(Math::FromYawDegrees(Yaw));
+                Transform.SetLocalRotation(Math::FromYawDegrees(Yaw));
             });
         }
         return Math::Abs(Math::DeltaAngleDegrees(Yaw, Desired)) <= Look.AcceptanceAngle ? EStateTreeRunStatus::Succeeded : EStateTreeRunStatus::Running;

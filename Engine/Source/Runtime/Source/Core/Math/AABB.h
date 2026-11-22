@@ -21,27 +21,27 @@ namespace Lumina
         PROPERTY(Editable)
         FVector3 Max;
         
-        SAABB()
+        constexpr SAABB()
             : Min(0.0f), Max(0.0f)
         {}
 
-        SAABB(const FVector3& InMin, const FVector3& InMax)
+        constexpr SAABB(const FVector3& InMin, const FVector3& InMax)
             : Min(InMin), Max(InMax)
         {}
 
         // False for both a default-constructed box and the inverted min/max a failed build leaves behind.
-        FORCEINLINE bool IsValid() const { return Max.x > Min.x || Max.y > Min.y || Max.z > Min.z; }
+        FORCEINLINE constexpr bool IsValid() const { return Max.x > Min.x || Max.y > Min.y || Max.z > Min.z; }
 
         FUNCTION()
-        FORCEINLINE float MaxScale() const { return Math::Max(GetSize().x, Math::Max(GetSize().y, GetSize().z)); }
+        FORCEINLINE constexpr float MaxScale() const { return Math::Max(GetSize().x, Math::Max(GetSize().y, GetSize().z)); }
         
         FUNCTION()
-        FORCEINLINE FVector3 GetSize() const { return Max - Min; }
+        FORCEINLINE constexpr FVector3 GetSize() const { return Max - Min; }
         
         FUNCTION()
-        FORCEINLINE FVector3 GetCenter() const { return Min + GetSize() * 0.5f; }
+        FORCEINLINE constexpr FVector3 GetCenter() const { return Min + GetSize() * 0.5f; }
         
-        NODISCARD SAABB ToWorld(const FMatrix4& World) const
+        NODISCARD constexpr SAABB ToWorld(const FMatrix4& World) const
         {
             FVector3 NewMin = FVector3(World[3]);
             FVector3 NewMax = FVector3(World[3]);

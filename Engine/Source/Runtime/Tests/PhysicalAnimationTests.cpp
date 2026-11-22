@@ -102,7 +102,7 @@ namespace
             Dt = 1.0f / Math::Max(10.0f, World->GetDefaultWorldSettings().PhysicsHz);
 
             const ECS::FEntity Ground = Registry->Create();
-            Registry->Emplace<STransformComponent>(Ground).SetLocation(FVector3(0.0f, -0.5f, 0.0f));
+            Registry->Emplace<STransformComponent>(Ground).SetLocalLocation(FVector3(0.0f, -0.5f, 0.0f));
             Registry->Emplace<SRigidBodyComponent>(Ground).BodyType = EBodyType::Static;
             Registry->Emplace<SBoxColliderComponent>(Ground).HalfExtent = FVector3(100.0f, 0.5f, 100.0f);
 
@@ -158,7 +158,7 @@ namespace
         void SpawnMannequin(const FVector3& At, bool bWalks)
         {
             Owner = Registry->Create();
-            Registry->Emplace<STransformComponent>(Owner).SetLocation(At);
+            Registry->Emplace<STransformComponent>(Owner).SetLocalLocation(At);
 
             SRagdollComponent& Ragdoll = Registry->Emplace<SRagdollComponent>(Owner);
             Ragdoll.State         = ERagdollState::Powered;
@@ -453,8 +453,8 @@ TEST_F(PhysicalAnimation, ScaledRagdollRestsOnShapesTheSizeOfItsMesh)
 
     Owner = Registry->Create();
     STransformComponent& Transform = Registry->Emplace<STransformComponent>(Owner);
-    Transform.SetLocation(FVector3(0.0f, 0.5f, 0.0f));
-    Transform.SetScale(FVector3(CharacterScale));
+    Transform.SetLocalLocation(FVector3(0.0f, 0.5f, 0.0f));
+    Transform.SetLocalScale(FVector3(CharacterScale));
     SRagdollComponent& Limp = Registry->Emplace<SRagdollComponent>(Owner);
     Limp.State = ERagdollState::Simulated;
 

@@ -237,6 +237,8 @@
 #define GPU_INSTANCE_NO_SHADOW_WPO_BIT  0x20000u
 // Held by the sun's static shadow cache, so cached sun shadow views draw it and the per-frame ones skip it.
 #define GPU_INSTANCE_SHADOW_CACHED_BIT  0x40000u
+// Skinned, or still settling after a move the sun's cache saw, so views that only want moving bodies keep it.
+#define GPU_INSTANCE_MOVER_BIT          0x80000u
 // Retained slots per instance cull workgroup, which is also the span one FInstanceBlockBounds covers.
 #define INSTANCE_CULL_BLOCK_SIZE        64u
 

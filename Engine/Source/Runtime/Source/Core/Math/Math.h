@@ -70,28 +70,28 @@ namespace Lumina::Math
     }
 
 
-    [[nodiscard]] inline FQuat FindLookAtRotation(const FVector3& Target, const FVector3& From)
+    [[nodiscard]] constexpr FQuat FindLookAtRotation(const FVector3& Target, const FVector3& From)
     {
         const FVector3 ForwardDirection = Normalize(Target - From);
         return QuatLookAt(ForwardDirection, FVector3(0.0f, 1.0f, 0.0f));
     }
 
     // Eases Current toward Target at Rate per second, the same at any frame rate. Mirrors LuminaSharp's Mathf.Damp.
-    [[nodiscard]] inline float Damp(float Current, float Target, float Rate, float DeltaTime)
+    [[nodiscard]] constexpr float Damp(float Current, float Target, float Rate, float DeltaTime)
     {
-        return Current + (Target - Current) * (1.0f - std::exp(-Rate * DeltaTime));
+        return Current + (Target - Current) * (1.0f - Exp(-Rate * DeltaTime));
     }
 
     // Moves Current toward Target by at most MaxDelta.
-    [[nodiscard]] inline float MoveTowards(float Current, float Target, float MaxDelta)
+    [[nodiscard]] constexpr float MoveTowards(float Current, float Target, float MaxDelta)
     {
         return Abs(Target - Current) <= MaxDelta ? Target : Current + (Target > Current ? MaxDelta : -MaxDelta);
     }
 
     // The shortest signed turn from Current to Target in degrees, within [-180, 180].
-    [[nodiscard]] inline float DeltaAngleDegrees(float Current, float Target)
+    [[nodiscard]] constexpr float DeltaAngleDegrees(float Current, float Target)
     {
-        float Delta = std::fmod(Target - Current, 360.0f);
+        float Delta = FMod(Target - Current, 360.0f);
         if (Delta < 0.0f)
         {
             Delta += 360.0f;
@@ -100,47 +100,47 @@ namespace Lumina::Math
     }
 
     // Interpolates between two angles in degrees along the shorter way round.
-    [[nodiscard]] inline float LerpAngleDegrees(float A, float B, float Alpha)
+    [[nodiscard]] constexpr float LerpAngleDegrees(float A, float B, float Alpha)
     {
         return A + DeltaAngleDegrees(A, B) * Saturate(Alpha);
     }
 
     // Turns Current toward Target in degrees by at most MaxDelta, along the shorter way round.
-    [[nodiscard]] inline float MoveTowardsAngleDegrees(float Current, float Target, float MaxDelta)
+    [[nodiscard]] constexpr float MoveTowardsAngleDegrees(float Current, float Target, float MaxDelta)
     {
         const float Delta = DeltaAngleDegrees(Current, Target);
         return Abs(Delta) < MaxDelta ? Target : MoveTowards(Current, Current + Delta, MaxDelta);
     }
 
     // The heading of Direction in degrees, zero along +Z and growing toward +X, which is how a yaw input reads.
-    [[nodiscard]] inline float YawDegrees(const FVector3& Direction)
+    [[nodiscard]] constexpr float YawDegrees(const FVector3& Direction)
     {
-        return Degrees(std::atan2(Direction.x, Direction.z));
+        return Degrees(Atan2(Direction.x, Direction.z));
     }
 
     // The pitch of Direction in degrees as a camera reads it, positive looking down.
-    [[nodiscard]] inline float PitchDegrees(const FVector3& Direction)
+    [[nodiscard]] constexpr float PitchDegrees(const FVector3& Direction)
     {
-        const float Across = std::sqrt(Direction.x * Direction.x + Direction.z * Direction.z);
-        return -Degrees(std::atan2(Direction.y, Across));
+        const float Across = Sqrt(Direction.x * Direction.x + Direction.z * Direction.z);
+        return -Degrees(Atan2(Direction.y, Across));
     }
 
     // A with its height dropped.
-    [[nodiscard]] inline FVector3 Flat(const FVector3& A)
+    [[nodiscard]] constexpr FVector3 Flat(const FVector3& A)
     {
         return FVector3(A.x, 0.0f, A.z);
     }
 
     // The distance between A and B across the ground, ignoring height.
-    [[nodiscard]] inline float FlatDistance(const FVector3& A, const FVector3& B)
+    [[nodiscard]] constexpr float FlatDistance(const FVector3& A, const FVector3& B)
     {
         const float Dx = A.x - B.x;
         const float Dz = A.z - B.z;
-        return std::sqrt(Dx * Dx + Dz * Dz);
+        return Sqrt(Dx * Dx + Dz * Dz);
     }
 
     // A turn of Yaw degrees about +Y, the rotation a yaw input describes.
-    [[nodiscard]] inline FQuat FromYawDegrees(float Yaw)
+    [[nodiscard]] constexpr FQuat FromYawDegrees(float Yaw)
     {
         return FromAxisAngle(FVector3(0.0f, 1.0f, 0.0f), Radians(Yaw));
     }

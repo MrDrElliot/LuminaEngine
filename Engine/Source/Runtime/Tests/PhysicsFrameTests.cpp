@@ -62,7 +62,7 @@ namespace
         {
             ECS::FRegistry& R = Registry();
             const ECS::FEntity Entity = R.Create();
-            R.Emplace<STransformComponent>(Entity).SetLocation(Location);
+            R.Emplace<STransformComponent>(Entity).SetLocalLocation(Location);
             if (!Parent.IsNull())
             {
                 ECS::Utils::ReparentEntity(R, Entity, Parent, false);
@@ -121,7 +121,7 @@ TEST(PhysicsFrame, FixedStepCodeReadsTheSimulatedPose)
     W.Scene().SetPreStepCallback([&](float)
     {
         ++Reads;
-        EXPECT_NEAR(W.Registry().Get<STransformComponent>(Ball).GetLocation().x, W.Scene().GetBodyPosition(Ball).x, 1e-5f)
+        EXPECT_NEAR(W.Registry().Get<STransformComponent>(Ball).GetLocalLocation().x, W.Scene().GetBodyPosition(Ball).x, 1e-5f)
             << "a fixed step reads where the body is, not the blended display pose";
     }, [] { return true; });
 
@@ -188,8 +188,8 @@ TEST(PhysicsFrame, AScriptTeleportIsNotOverwritten)
 
     const FVector3 MovingTarget(50.0f, 3.0f, 0.0f);
     const FVector3 SleepingTarget(-50.0f, 3.0f, 5.0f);
-    W.Registry().Get<STransformComponent>(Moving).SetLocation(MovingTarget);
-    W.Registry().Get<STransformComponent>(Sleeping).SetLocation(SleepingTarget);
+    W.Registry().Get<STransformComponent>(Moving).SetLocalLocation(MovingTarget);
+    W.Registry().Get<STransformComponent>(Sleeping).SetLocalLocation(SleepingTarget);
 
     // Both a frame that steps and one that does not, since only a stepping frame clears the pending teleport.
     for (const double Dt : { 2.0 * kRenderDt, 0.25 * kRenderDt, kRenderDt })

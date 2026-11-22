@@ -3,6 +3,7 @@
 #include "Components/HealthComponent.h"
 #include "Core/Object/ObjectCore.h"
 #include "World/World.h"
+#include "World/WorldContext.h"
 #include "WorldTestAccess.h"
 
 using namespace Lumina;
@@ -274,6 +275,67 @@ TEST(HealthSystem, EditorWorldsDoNotRegen)
     FRegenWorld Fixture(EWorldType::Editor);
     Fixture.Health().Health = 50.0f;
 
+    EXPECT_FLOAT_EQ(Fixture.Tick(), 50.0f);
+    EXPECT_FLOAT_EQ(Fixture.Tick(), 50.0f);
+}
+
+namespace
+{
+    // A client world, whose health only ever arrives from the host.
+    struct FClientHealthWorld : FRegenWorld
+    {
+        FWorldContext Context;
+
+        FClientHealthWorld()
+        {
+            Context.NetMode = ENetMode::Client;
+            FWorldTestAccess::SetOwningContext(*World, &Context);
+        }
+
+        ~FClientHealthWorld()
+        {
+            FWorldTestAccess::SetOwningContext(*World, nullptr);
+        }
+
+        // Written through tracked access, the way a replicated update lands in the component.
+        SHealthComponent& Arrive() const
+        {
+            return *World->GetEntityRegistry().TryGet<ECS::Write<SHealthComponent>>(Entity);
+        }
+    };
+}
+
+TEST(HealthSystem, ClientsRaiseEventsForArrivingHealth)
+{
+    FClientHealthWorld Fixture;
+    FHealthLog Log(Fixture.Health());
+
+    Fixture.Tick();
+    EXPECT_TRUE(Log.Changed.IsEmpty()) << "the first values a client sees are where it starts, not a change";
+
+    Fixture.Arrive().Health = 40.0f;
+    Fixture.Tick();
+    ASSERT_EQ(Log.Changed.Num(), 1);
+    EXPECT_FLOAT_EQ(Log.Changed[0].Delta, -60.0f);
+    EXPECT_EQ(Log.Died, 0);
+
+    SHealthComponent& Dying = Fixture.Arrive();
+    Dying.Health = 0.0f;
+    Dying.bDead  = true;
+    Fixture.Tick();
+    EXPECT_EQ(Log.Died, 1);
+
+    Fixture.Tick();
+    EXPECT_EQ(Log.Changed.Num(), 2) << "an update with nothing new raises nothing";
+    EXPECT_EQ(Log.Died, 1);
+}
+
+TEST(HealthSystem, ClientsLeaveRegenerationToTheHost)
+{
+    FClientHealthWorld Fixture;
+    Fixture.Arrive().Health = 50.0f;
+
+    EXPECT_FLOAT_EQ(Fixture.Tick(), 50.0f);
     EXPECT_FLOAT_EQ(Fixture.Tick(), 50.0f);
     EXPECT_FLOAT_EQ(Fixture.Tick(), 50.0f);
 }

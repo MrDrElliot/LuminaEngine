@@ -22,6 +22,7 @@ struct FMeshletCullContext
     bool     bTwoSided;
     bool     bCustomDepth;
     bool     bShadowCached;
+    bool     bMover;
     // The views pick this instance's LOD, so a cluster mesh draws its cut rather than the pinned slot whole.
     bool     bSelectsLOD;
     // A skinned cluster mesh, which every view cuts as the camera's LOD view does.
@@ -56,6 +57,7 @@ FMeshletCullContext MakeMeshletCullContext(FGPUInstance* Inst)
     Ctx.bTwoSided   = I.HasFlag(EInstanceFlags::TwoSided);
     Ctx.bCustomDepth = I.bCustomDepth;
     Ctx.bShadowCached = I.bShadowCached;
+    Ctx.bMover        = I.bMover;
     Ctx.bSelectsLOD = I.SurfaceDescIndex != kNoSurfaceDesc && !Ctx.bSkinned;
     Ctx.bCameraCut  = I.SurfaceDescIndex != kNoSurfaceDesc && Ctx.bSkinned;
     Ctx.SurfaceDescIndex   = I.SurfaceDescIndex;
@@ -226,7 +228,7 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
               && !(View.HasFlag(CULL_VIEW_FLAG_NO_FOLIAGE) && Ctx.bFoliage)
               && !(View.HasFlag(CULL_VIEW_FLAG_CUSTOM_DEPTH_ONLY) && !Ctx.bCustomDepth)
               && !(!bShadowView && Ctx.bShadowOnly)
-              && !IsShadowCacheSplitRejected(View, Ctx.bShadowCached)
+              && !IsShadowCacheSplitRejected(View, Ctx.bShadowCached, Ctx.bMover)
               && !(View.HasFlag(CULL_VIEW_FLAG_DISTANCE) && (Ctx.DistToCamera - Ctx.InstRadius > Ctx.MaxShadowDist));
 
     if (bKeep)

@@ -65,6 +65,9 @@ namespace Lumina
         NODISCARD FORCEINLINE EUpdateStage GetUpdateStage() const { return UpdateStage; }
         NODISCARD RUNTIME_API EWorldType GetWorldType() const;
 
+        // A network client, whose replicated state the host decides.
+        NODISCARD RUNTIME_API bool IsNetClient() const;
+
         //~ Structure. A parallel system's changes land at its segment's flush, an exclusive system's at once.
 
         // The handle is valid at once either way; from a parallel system it gets its components at the flush.

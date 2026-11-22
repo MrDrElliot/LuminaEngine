@@ -97,7 +97,7 @@ namespace
             for (int32 i = 0; i < Count; ++i)
             {
                 const ECS::FEntity Entity = Registry->Create();
-                Registry->Emplace<STransformComponent>(Entity).SetLocation(FVector3((float)(i % 100) * 2.0f, 500.0f, (float)(i / 100) * 2.0f));
+                Registry->Emplace<STransformComponent>(Entity).SetLocalLocation(FVector3((float)(i % 100) * 2.0f, 500.0f, (float)(i / 100) * 2.0f));
                 auto& Body = Registry->Emplace<SRigidBodyComponent>(Entity);
                 Body.bUseGravity = false;
                 Body.LinearDamping = 0.0f;

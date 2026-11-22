@@ -1680,7 +1680,7 @@ namespace Lumina::ECS::Utils
     {
         if (auto* Transform = Registry.TryGet<STransformComponent>(Entity))
         {
-            Transform->SetScale(Scale);
+            Transform->SetLocalScale(Scale);
         }
     }
 

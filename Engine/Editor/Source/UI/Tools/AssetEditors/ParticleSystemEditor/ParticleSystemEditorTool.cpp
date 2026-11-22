@@ -81,8 +81,8 @@ namespace Lumina
 
         STransformComponent& ParticleTransform = World->GetComponent<STransformComponent>(ParticleEntity);
         STransformComponent& EditorTransform   = World->GetComponent<STransformComponent>(EditorEntity);
-        const FQuat LookRotation = Math::FindLookAtRotation(ParticleTransform.GetLocation(), EditorTransform.GetLocation());
-        EditorTransform.SetRotation(LookRotation);
+        const FQuat LookRotation = Math::FindLookAtRotation(ParticleTransform.GetLocalLocation(), EditorTransform.GetLocalLocation());
+        EditorTransform.SetLocalRotation(LookRotation);
     }
 
     void FParticleSystemEditorTool::OnInitialize()
@@ -308,7 +308,7 @@ namespace Lumina
         }
 
         const CParticleEmitter* Emitter = PS->Emitters[SelectedEmitter].Get();
-        const FVector3 Origin = World->GetComponent<STransformComponent>(ParticleEntity).GetLocation();
+        const FVector3 Origin = World->GetComponent<STransformComponent>(ParticleEntity).GetLocalLocation();
         const FVector4 ShapeColor(0.3f, 0.8f, 1.0f, 1.0f);
         const FVector4 BoundsColor(1.0f, 0.75f, 0.2f, 1.0f);
 

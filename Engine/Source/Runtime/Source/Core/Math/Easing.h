@@ -71,7 +71,7 @@ namespace Lumina
                 return Result;
             }
 
-            NODISCARD inline float BounceOut(float T)
+            NODISCARD constexpr float BounceOut(float T)
             {
                 constexpr float N = 7.5625f;
                 constexpr float D = 2.75f;
@@ -84,7 +84,7 @@ namespace Lumina
                 return N * T * T + 0.984375f;
             }
 
-            NODISCARD inline float SpringOut(float T)
+            NODISCARD constexpr float SpringOut(float T)
             {
                 const float S = 1.0f - T;
                 return (Math::Sin(T * Math::Pi<float>() * (0.2f + 2.5f * T * T * T))

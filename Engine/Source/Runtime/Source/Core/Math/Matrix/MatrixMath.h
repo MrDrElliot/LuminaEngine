@@ -23,8 +23,12 @@ namespace Lumina::Math
     }
 
     // SIMD fast path: 4x4 float transpose via a single shuffle network.
-    [[nodiscard]] inline TMat<float, 4, 4> Transpose(const TMat<float, 4, 4>& M)
+    [[nodiscard]] constexpr TMat<float, 4, 4> Transpose(const TMat<float, 4, 4>& M)
     {
+        if consteval
+        {
+            return Transpose<float, 4, 4>(M);
+        }
         using namespace SIMD;
         __m128 R0 = VFloat4::LoadAligned(&M.Cols[0][0]);
         __m128 R1 = VFloat4::LoadAligned(&M.Cols[1][0]);
@@ -148,8 +152,12 @@ namespace Lumina::Math
     }
 
     // SSE cofactor inverse overload for FMatrix4 that matches the template above.
-    [[nodiscard]] inline TMat<float, 4, 4> Inverse(const TMat<float, 4, 4>& M)
+    [[nodiscard]] constexpr TMat<float, 4, 4> Inverse(const TMat<float, 4, 4>& M)
     {
+        if consteval
+        {
+            return Inverse<float>(M);
+        }
         using namespace SIMD;
 
         const VFloat4 In0 = VFloat4::LoadAligned(&M.Cols[0][0]);
@@ -216,8 +224,12 @@ namespace Lumina::Math
     }
 
     // Exact-type SIMD overloads for FMatrix4 win over the templates above and match their scalar result.
-    [[nodiscard]] inline TMat<float, 4, 4> Translate(const TMat<float, 4, 4>& M, const TVec<float, 3>& V)
+    [[nodiscard]] constexpr TMat<float, 4, 4> Translate(const TMat<float, 4, 4>& M, const TVec<float, 3>& V)
     {
+        if consteval
+        {
+            return Translate<float>(M, V);
+        }
         using namespace SIMD;
         const VFloat4 C0 = VFloat4::LoadAligned(&M.Cols[0][0]);
         const VFloat4 C1 = VFloat4::LoadAligned(&M.Cols[1][0]);
@@ -235,8 +247,12 @@ namespace Lumina::Math
         return Out;
     }
 
-    [[nodiscard]] inline TMat<float, 4, 4> Scale(const TMat<float, 4, 4>& M, const TVec<float, 3>& V)
+    [[nodiscard]] constexpr TMat<float, 4, 4> Scale(const TMat<float, 4, 4>& M, const TVec<float, 3>& V)
     {
+        if consteval
+        {
+            return Scale<float>(M, V);
+        }
         using namespace SIMD;
         TMat<float, 4, 4> Out;
         (VFloat4::LoadAligned(&M.Cols[0][0]) * VFloat4::Broadcast(V.x)).StoreAligned(&Out.Cols[0][0]);
@@ -247,10 +263,10 @@ namespace Lumina::Math
     }
 
     template<typename T>
-    [[nodiscard]] TMat<T, 4, 4> Rotate(const TMat<T, 4, 4>& M, T AngleRadians, const TVec<T, 3>& Axis)
+    [[nodiscard]] constexpr TMat<T, 4, 4> Rotate(const TMat<T, 4, 4>& M, T AngleRadians, const TVec<T, 3>& Axis)
     {
-        const T Cos = static_cast<T>(std::cos(AngleRadians));
-        const T Sin = static_cast<T>(std::sin(AngleRadians));
+        const T Cos = Math::Cos(AngleRadians);
+        const T Sin = Math::Sin(AngleRadians);
         const TVec<T, 3> A = Normalize(Axis);
         const TVec<T, 3> Temp = A * (T(1) - Cos);
 
@@ -274,9 +290,9 @@ namespace Lumina::Math
     }
 
     template<typename T>
-    [[nodiscard]] TMat<T, 4, 4> Perspective(T FovYRadians, T Aspect, T Near, T Far)
+    [[nodiscard]] constexpr TMat<T, 4, 4> Perspective(T FovYRadians, T Aspect, T Near, T Far)
     {
-        const T TanHalf = static_cast<T>(std::tan(FovYRadians / T(2)));
+        const T TanHalf = Tan(FovYRadians / T(2));
         TMat<T, 4, 4> Result(T(0));
         Result[0][0] = T(1) / (Aspect * TanHalf);
         Result[1][1] = T(1) / TanHalf;
@@ -287,10 +303,10 @@ namespace Lumina::Math
     }
 
     template<typename T>
-    [[nodiscard]] TMat<T, 4, 4> PerspectiveFov(T FovRadians, T Width, T Height, T Near, T Far)
+    [[nodiscard]] constexpr TMat<T, 4, 4> PerspectiveFov(T FovRadians, T Width, T Height, T Near, T Far)
     {
         const T Rad = FovRadians;
-        const T H = static_cast<T>(std::cos(T(0.5) * Rad)) / static_cast<T>(std::sin(T(0.5) * Rad));
+        const T H = Cos(T(0.5) * Rad) / Sin(T(0.5) * Rad);
         const T W = H * Height / Width;
         TMat<T, 4, 4> Result(T(0));
         Result[0][0] = W;
@@ -327,7 +343,7 @@ namespace Lumina::Math
     }
 
     template<typename T>
-    [[nodiscard]] TMat<T, 4, 4> LookAt(const TVec<T, 3>& Eye, const TVec<T, 3>& Center, const TVec<T, 3>& Up)
+    [[nodiscard]] constexpr TMat<T, 4, 4> LookAt(const TVec<T, 3>& Eye, const TVec<T, 3>& Center, const TVec<T, 3>& Up)
     {
         const TVec<T, 3> F = Normalize(Center - Eye);
         const TVec<T, 3> S = Normalize(Cross(Up, F));
@@ -377,7 +393,7 @@ namespace Lumina::Math
 
     // Rotation matrix -> quaternion, branch-by-largest-component.
     template<typename T>
-    [[nodiscard]] TQuat<T> ToQuat(const TMat<T, 3, 3>& M)
+    [[nodiscard]] constexpr TQuat<T> ToQuat(const TMat<T, 3, 3>& M)
     {
         const T FourXSquaredMinus1 = M[0][0] - M[1][1] - M[2][2];
         const T FourYSquaredMinus1 = M[1][1] - M[0][0] - M[2][2];
@@ -390,7 +406,7 @@ namespace Lumina::Math
         if (FourYSquaredMinus1 > FourBiggestSquaredMinus1) { FourBiggestSquaredMinus1 = FourYSquaredMinus1; BiggestIndex = 2; }
         if (FourZSquaredMinus1 > FourBiggestSquaredMinus1) { FourBiggestSquaredMinus1 = FourZSquaredMinus1; BiggestIndex = 3; }
 
-        const T BiggestVal = static_cast<T>(std::sqrt(FourBiggestSquaredMinus1 + T(1))) * T(0.5);
+        const T BiggestVal = Sqrt(FourBiggestSquaredMinus1 + T(1)) * T(0.5);
         const T Mult = T(0.25) / BiggestVal;
 
         switch (BiggestIndex)
@@ -403,7 +419,7 @@ namespace Lumina::Math
     }
 
     template<typename T>
-    [[nodiscard]] TQuat<T> ToQuat(const TMat<T, 4, 4>& M)
+    [[nodiscard]] constexpr TQuat<T> ToQuat(const TMat<T, 4, 4>& M)
     {
         return ToQuat(TMat<T, 3, 3>(
             TVec<T, 3>(M[0].x, M[0].y, M[0].z),
@@ -413,35 +429,35 @@ namespace Lumina::Math
 
     // Quaternion from an axis and angle (radians).
     template<typename T>
-    [[nodiscard]] TQuat<T> AngleAxis(T AngleRadians, const TVec<T, 3>& Axis)
+    [[nodiscard]] constexpr TQuat<T> AngleAxis(T AngleRadians, const TVec<T, 3>& Axis)
     {
         const T Half = AngleRadians * T(0.5);
-        const T S = static_cast<T>(std::sin(Half));
-        return TQuat<T>(static_cast<T>(std::cos(Half)), Axis.x * S, Axis.y * S, Axis.z * S);
+        const T S = Sin(Half);
+        return TQuat<T>(Cos(Half), Axis.x * S, Axis.y * S, Axis.z * S);
     }
 
     // Look-rotation quaternion from a forward direction and up vector.
     template<typename T>
-    [[nodiscard]] TQuat<T> QuatLookAt(const TVec<T, 3>& Direction, const TVec<T, 3>& Up)
+    [[nodiscard]] constexpr TQuat<T> QuatLookAt(const TVec<T, 3>& Direction, const TVec<T, 3>& Up)
     {
         TMat<T, 3, 3> Result(T(1));
         Result[2] = Direction;                          // left-handed forward
         const TVec<T, 3> Right = Cross(Up, Result[2]);
-        Result[0] = Right * (T(1) / static_cast<T>(std::sqrt(Max(T(0.00001), Dot(Right, Right)))));
+        Result[0] = Right * (T(1) / Sqrt(Max(T(0.00001), Dot(Right, Right))));
         Result[1] = Cross(Result[2], Result[0]);
         return ToQuat(Result);
     }
 
     // Affine TRS decompose for non-skewed, non-projective transforms. Returns false on singular.
     template<typename T>
-    bool Decompose(const TMat<T, 4, 4>& M, TVec<T, 3>& OutScale, TQuat<T>& OutRotation, TVec<T, 3>& OutTranslation)
+    constexpr bool Decompose(const TMat<T, 4, 4>& M, TVec<T, 3>& OutScale, TQuat<T>& OutRotation, TVec<T, 3>& OutTranslation)
     {
         OutScale = TVec<T, 3>(T(1));
         OutRotation = TQuat<T>::Identity();
         OutTranslation = TVec<T, 3>(T(0));
 
         TMat<T, 4, 4> Local = M;
-        if (std::abs(Local[3][3]) < T(Math::kSmallNumber))
+        if (Abs(Local[3][3]) < T(Math::kSmallNumber))
         {
             return false;
         }
@@ -475,7 +491,7 @@ namespace Lumina::Math
 
     // Full decompose signature (skew/perspective are filled for affine transforms).
     template<typename T>
-    bool Decompose(const TMat<T, 4, 4>& M, TVec<T, 3>& OutScale, TQuat<T>& OutRotation,
+    constexpr bool Decompose(const TMat<T, 4, 4>& M, TVec<T, 3>& OutScale, TQuat<T>& OutRotation,
                    TVec<T, 3>& OutTranslation, TVec<T, 3>& OutSkew, TVec<T, 4>& OutPerspective)
     {
         OutSkew = TVec<T, 3>(T(0));
@@ -485,7 +501,7 @@ namespace Lumina::Math
 
     // Shortest-arc quaternion rotating From onto To, both expected normalized.
     template<typename T>
-    [[nodiscard]] TQuat<T> RotationBetween(const TVec<T, 3>& From, const TVec<T, 3>& To)
+    [[nodiscard]] constexpr TQuat<T> RotationBetween(const TVec<T, 3>& From, const TVec<T, 3>& To)
     {
         const T CosTheta = Dot(From, To);
 
@@ -504,14 +520,14 @@ namespace Lumina::Math
         }
 
         const TVec<T, 3> Axis = Cross(From, To);
-        const T S = static_cast<T>(std::sqrt((T(1) + CosTheta) * T(2)));
+        const T S = Sqrt((T(1) + CosTheta) * T(2));
         const T InvS = T(1) / S;
         return TQuat<T>(S * T(0.5), Axis.x * InvS, Axis.y * InvS, Axis.z * InvS);
     }
 
     // Build a 4x4 matrix from 16 column-major scalars.
     template<typename T>
-    [[nodiscard]] TMat<T, 4, 4> MakeMat4(const T* Ptr)
+    [[nodiscard]] constexpr TMat<T, 4, 4> MakeMat4(const T* Ptr)
     {
         TMat<T, 4, 4> Result(T(0));
         for (int c = 0; c < 4; ++c)

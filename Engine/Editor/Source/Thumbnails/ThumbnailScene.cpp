@@ -113,9 +113,9 @@ namespace Lumina
         }
 
         STransformComponent& Transform = World->GetComponent<STransformComponent>(CameraEntity);
-        Transform.SetLocation(Position);
+        Transform.SetLocalLocation(Position);
         const FQuat Rotation = Math::FindLookAtRotation(Target, Position);
-        Transform.SetRotation(Rotation);
+        Transform.SetLocalRotation(Rotation);
 
         // World is never ticked so CameraSystem doesn't run; set view directly here.
         SCameraComponent& Camera = World->GetComponent<SCameraComponent>(CameraEntity);

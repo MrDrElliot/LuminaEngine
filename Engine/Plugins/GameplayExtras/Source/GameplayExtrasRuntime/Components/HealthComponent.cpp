@@ -22,6 +22,7 @@ namespace Lumina
         {
             Health.RegenCooldown = Health.RegenDelay;
             Health.bDead = bDied;
+            Health.Observe();
 
             const SHealthChangedEvent Event = MakeHealthEvent(Health, Health.Health - Before, Instigator);
             if (Health.OnHealthChanged.Broadcast(Event) && bDied)
@@ -54,6 +55,7 @@ namespace Lumina
         const float Before = Health;
         Health = Math::Min(MaxHealth, Health + Amount);
         const float After = Health;
+        Observe();
         if (After != Before)
         {
             OnHealthChanged.Broadcast(MakeHealthEvent(*this, After - Before, Instigator));
@@ -79,6 +81,31 @@ namespace Lumina
         bDead = false;
         RegenCooldown = 0.0f;
         Health = NewHealth > 0.0f ? Math::Min(NewHealth, MaxHealth) : MaxHealth;
+        Observe();
         OnHealthChanged.Broadcast(MakeHealthEvent(*this, Health - Before, ECS::NullEntity));
+    }
+
+    void SHealthComponent::BroadcastArrival()
+    {
+        if (!bObserved)
+        {
+            Observe();
+            return;
+        }
+
+        const float Before   = ObservedHealth;
+        const bool  bDied    = bDead && !bObservedDead;
+        const bool  bChanged = Health != Before || bDead != bObservedDead;
+        Observe();
+        if (!bChanged)
+        {
+            return;
+        }
+
+        const SHealthChangedEvent Event = MakeHealthEvent(*this, Health - Before, ECS::NullEntity);
+        if (OnHealthChanged.Broadcast(Event) && bDied)
+        {
+            OnDied.Broadcast(Event);
+        }
     }
 }

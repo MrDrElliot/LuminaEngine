@@ -23,6 +23,7 @@ namespace Lumina::Reflection
     X(ParallelUpdate,       Flag,   Runtime,   "An entity script's promise that its OnUpdate and OnFixedUpdate read and write only its own entity, so the driver runs it in parallel with other such scripts. Inherited by subclasses.") \
     X(HostOnly,             Flag,   Runtime,   "A script, system or world subsystem that runs only on the host, a dedicated server or a standalone game. Inherited, and spelled [Reflect(HostOnly = true)] in C#.") \
     X(ClientOnly,           Flag,   Runtime,   "A script, system or world subsystem that runs only on a client joined to a host. Inherited, and spelled [Reflect(ClientOnly = true)] in C#.") \
+    X(Networked,            Flag,   Runtime,   "A script, system or world subsystem that runs only in a networked session, host or client, never in a standalone game. With HostOnly it runs only on a listen or dedicated server. Inherited, and spelled [Reflect(Networked = true)] in C#.") \
     X(Cosmetic,             Flag,   Runtime,   "A script, system or world subsystem that runs only where something is drawn or played, never on a dedicated server, a bot or a headless process. Inherited, and spelled [Reflect(Cosmetic = true)] in C#.") \
     X(Rollback,             Flag,   Runtime,   "Marks a component as deterministic simulation state, saved every tick and restored when a late input rewinds the simulation. Spelled [Reflect(Rollback = true)] in C#.") \
     X(ConfigFile,           Value,  Runtime,   "Backs the class with the named config file. The config system loads and saves its properties there.") \
@@ -92,7 +93,7 @@ namespace Lumina::Reflection
     X(ToolTip,                  Value, Editor, "Hover text for the function. Filled from the declaration's doc comment when not written by hand.") \
     X(Button,                   Either, Editor, "Draws a parameterless function as a button in the object's inspector, labeled with the value when one is given.") \
     X(Rpc,                      Value, Runtime, "Broadcast, Host or Owner, the C++ spelling of C# [Rpc.*]. The function must be virtual, and calling it routes the call.") \
-    X(NetFlags,                 Value, Runtime, "Unreliable and OwnerOnly, joined with |, the C++ spelling of C# NetFlags.") \
+    X(NetFlags,                 Value, Runtime, "Unreliable and AnyCaller, joined with |, the C++ spelling of C# NetFlags.") \
     X(Bind,                     Flag,  Runtime, "A command a UI document runs from data-event-*, or a computed {{ value }} when it takes nothing and returns one.") \
     X(SuppressGCTransition,     Flag,  Script, "Skips the GC transition on the generated C# call. Only valid on a short leaf function that never calls back into managed code.") \
     X(NoSuppressGCTransition,   Flag,  Script, "Opts one function back out of a type-wide REFLECT(ScriptFastCalls).") \

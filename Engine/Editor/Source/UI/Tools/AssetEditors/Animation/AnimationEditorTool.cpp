@@ -97,8 +97,8 @@ namespace Lumina
         STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
         STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
-        FQuat Rotation = Math::FindLookAtRotation(MeshTransform.GetLocation() + FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocation());
-        EditorTransform.SetRotation(Rotation);
+        FQuat Rotation = Math::FindLookAtRotation(MeshTransform.GetLocalLocation() + FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocalLocation());
+        EditorTransform.SetLocalRotation(Rotation);
     }
 
     void FAnimationEditorTool::CreatePreviewEntity()

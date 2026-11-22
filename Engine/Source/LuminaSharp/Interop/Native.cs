@@ -156,6 +156,14 @@ public static unsafe partial class Native
     [NativeCall(SuppressGCTransition = true)] public static partial int ViewRowProbes(IntPtr State, void* OutProbes, int MaxProbes, int* OutExcludes, int* OutRequires, uint** OutGeneration, uint* OutSeenGeneration);
     [NativeCall] public static partial void ViewEnd(IntPtr State);
 
+    // The bit archive a script struct's NetSerialize packs itself into, see DotNetNetArchive.cpp.
+    [NativeCall(SuppressGCTransition = true)] public static partial int NetArchiveIsReading(IntPtr Archive);
+    [NativeCall(SuppressGCTransition = true)] public static partial int NetArchiveHasError(IntPtr Archive);
+    [NativeCall(SuppressGCTransition = true)] public static partial void NetArchiveSetError(IntPtr Archive);
+    [NativeCall] public static partial void NetArchiveBits(IntPtr Archive, ulong* Value, uint NumBits);
+    [NativeCall] public static partial void NetArchiveBytes(IntPtr Archive, byte* Data, long Size);
+    [NativeCall] public static partial void NetArchiveEntity(IntPtr Archive, uint* Entity);
+
     // The strong reference a canonical wrapper owns.
     [NativeCall] public static partial IntPtr PinObject(IntPtr Object);
     [NativeCall] public static partial void UnpinObject(IntPtr Pin);

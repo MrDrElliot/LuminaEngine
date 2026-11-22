@@ -123,7 +123,7 @@ TEST(NavSourceTracking, AnObstacleMovedOntoOpenGroundRebakesBothItsTiles)
     EXPECT_FALSE(World.IsGroundWalkable(-15.0f, 0.0f));
     EXPECT_TRUE(World.IsGroundWalkable(15.0f, 0.0f));
 
-    World.Registry().Get<STransformComponent>(Crate).SetLocation(FVector3(15.0f, 0.7f, 0.0f));
+    World.Registry().Get<STransformComponent>(Crate).SetLocalLocation(FVector3(15.0f, 0.7f, 0.0f));
     ASSERT_TRUE(World.WaitSettled());
 
     EXPECT_TRUE(World.IsGroundWalkable(-15.0f, 0.0f)) << "the ground the crate left opens again";
@@ -299,7 +299,7 @@ TEST(NavSourceTracking, MovesAndSignalsAloneFindEveryChange)
     World.Start();
     ASSERT_TRUE(World.WaitReady());
 
-    World.Registry().Get<STransformComponent>(Crate).SetLocation(FVector3(15.0f, 0.7f, 0.0f));
+    World.Registry().Get<STransformComponent>(Crate).SetLocalLocation(FVector3(15.0f, 0.7f, 0.0f));
     ASSERT_TRUE(World.WaitSettled());
     EXPECT_TRUE(World.IsGroundWalkable(-15.0f, 0.0f)) << "the move channel carried the crate";
     EXPECT_FALSE(World.IsGroundWalkable(15.0f, 0.0f));
@@ -353,12 +353,12 @@ TEST(NavSourceTracking, AModifierMovingBackOverATileRestampsItFromTheCache)
     ASSERT_TRUE(World.WaitReady());
     EXPECT_FALSE(World.IsGroundWalkable(-15.0f, 0.0f));
 
-    World.Registry().Get<STransformComponent>(Modifier).SetLocation(FVector3(15.0f, 0.0f, 0.0f));
+    World.Registry().Get<STransformComponent>(Modifier).SetLocalLocation(FVector3(15.0f, 0.0f, 0.0f));
     ASSERT_TRUE(World.WaitSettled());
     EXPECT_TRUE(World.IsGroundWalkable(-15.0f, 0.0f));
     EXPECT_FALSE(World.IsGroundWalkable(15.0f, 0.0f));
 
-    World.Registry().Get<STransformComponent>(Modifier).SetLocation(FVector3(-15.0f, 0.0f, 0.0f));
+    World.Registry().Get<STransformComponent>(Modifier).SetLocalLocation(FVector3(-15.0f, 0.0f, 0.0f));
     ASSERT_TRUE(World.WaitSettled());
     EXPECT_FALSE(World.IsGroundWalkable(-15.0f, 0.0f)) << "the cached heightfield still takes the stamp";
     EXPECT_TRUE(World.IsGroundWalkable(15.0f, 0.0f));
@@ -378,7 +378,7 @@ TEST(NavSourceTracking, AColliderMovedOnTerrainCarvesTheSlopeItLandsOn)
     EXPECT_FALSE(World.IsGroundWalkable(-15.0f, 0.0f, Ground(-15.0f, 0.0f)));
     EXPECT_TRUE(World.IsGroundWalkable(15.0f, 0.0f, Ground(15.0f, 0.0f)));
 
-    World.Registry().Get<STransformComponent>(Crate).SetLocation(FVector3(15.0f, Ground(15.0f, 0.0f) + 0.7f, 0.0f));
+    World.Registry().Get<STransformComponent>(Crate).SetLocalLocation(FVector3(15.0f, Ground(15.0f, 0.0f) + 0.7f, 0.0f));
     ASSERT_TRUE(World.WaitSettled());
     EXPECT_TRUE(World.IsGroundWalkable(-15.0f, 0.0f, Ground(-15.0f, 0.0f))) << "the rebake tessellated the terrain it left";
     EXPECT_FALSE(World.IsGroundWalkable(15.0f, 0.0f, Ground(15.0f, 0.0f)));
@@ -430,7 +430,7 @@ TEST(PathFollow, AFollowerWithoutATransformIsSkipped)
     R.Emplace<SPathFollowComponent>(Bare).SetTargetLocation(FVector3(0.0f, 0.0f, 12.0f));
 
     const ECS::FEntity Placed = R.Create();
-    R.Emplace<STransformComponent>(Placed).SetLocation(FVector3(0.0f, 0.0f, -12.0f));
+    R.Emplace<STransformComponent>(Placed).SetLocalLocation(FVector3(0.0f, 0.0f, -12.0f));
     R.Emplace<SPathFollowComponent>(Placed).SetTargetLocation(FVector3(0.0f, 0.0f, 12.0f));
 
     for (int32 Tick = 0; Tick < 3; ++Tick)
@@ -451,7 +451,7 @@ namespace
     {
         ECS::FRegistry& R = World.Registry();
         const ECS::FEntity Agent = R.Create();
-        R.Emplace<STransformComponent>(Agent).SetLocation(At);
+        R.Emplace<STransformComponent>(Agent).SetLocalLocation(At);
         SPathFollowComponent& Follow = R.Emplace<SPathFollowComponent>(Agent);
         Follow.bDriveCharacterController = false;
         Follow.SetTargetLocation(Goal);

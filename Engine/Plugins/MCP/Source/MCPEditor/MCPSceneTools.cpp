@@ -1166,8 +1166,8 @@ namespace Lumina::MCP
         const FQuat Rotation = In.Target.Num() == 3
             ? Math::FindLookAtRotation(FVector3(In.Target[0], In.Target[1], In.Target[2]), Location)
             : FQuat(Math::Radians(FVector3(In.Rotation[0], In.Rotation[1], In.Rotation[2])));
-        Transform->SetLocation(Location);
-        Transform->SetRotation(Rotation);
+        Transform->SetLocalLocation(Location);
+        Transform->SetLocalRotation(Rotation);
 
         const FVector3 Euler = Math::Degrees(Math::YawFirstEulerAngles(Rotation));
         Out.World = "Editor";

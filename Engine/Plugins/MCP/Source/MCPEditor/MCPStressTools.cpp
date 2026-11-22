@@ -528,8 +528,8 @@ namespace Lumina::MCP
                 const float Reach = In.CellSize * StressGridMoveFraction;
                 const FVector3 Offset((Random.NextFloat() * 2.0f - 1.0f) * Reach, 0.0f, (Random.NextFloat() * 2.0f - 1.0f) * Reach);
                 STransformComponent& Transform = World->GetComponent<STransformComponent>(*Found);
-                Transform.SetLocation(StressGridCellCenter(In, Origin, Cell) + Offset);
-                Transform.SetRotationFromEuler(FVector3(0.0f, Random.NextFloat() * 360.0f, 0.0f));
+                Transform.SetLocalLocation(StressGridCellCenter(In, Origin, Cell) + Offset);
+                Transform.SetLocalRotationFromEuler(FVector3(0.0f, Random.NextFloat() * 360.0f, 0.0f));
                 ++Out.Moved;
             }
 

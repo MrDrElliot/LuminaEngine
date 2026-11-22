@@ -62,7 +62,7 @@ namespace
         ECS::FEntity SpawnWater(float X, bool bBuoyancy)
         {
             const ECS::FEntity Entity = Registry().Create();
-            Registry().Emplace<STransformComponent>(Entity).SetLocation(FVector3(X, 0.0f, 0.0f));
+            Registry().Emplace<STransformComponent>(Entity).SetLocalLocation(FVector3(X, 0.0f, 0.0f));
             SWaterComponent& Water = Registry().Emplace<SWaterComponent>(Entity);
             Water.Extent = FVector2(10.0f, 10.0f);
             Water.bBuoyancy = bBuoyancy;
@@ -72,7 +72,7 @@ namespace
         ECS::FEntity SpawnFloater(float X, float Y)
         {
             const ECS::FEntity Entity = Registry().Create();
-            Registry().Emplace<STransformComponent>(Entity).SetLocation(FVector3(X, Y, 0.0f));
+            Registry().Emplace<STransformComponent>(Entity).SetLocalLocation(FVector3(X, Y, 0.0f));
             SRigidBodyComponent& Body = Registry().Emplace<SRigidBodyComponent>(Entity);
             Body.BodyType = EBodyType::Dynamic;
             Body.bUseGravity = true;

@@ -249,7 +249,7 @@ namespace Lumina::RHI
                 return A->MarkerId < B->MarkerId;
             });
 
-        LOG_ERROR("[GPU] GPU breadcrumbs: {} pass(es) in flight when the device was lost "
+        LOG_ERROR("[GPU] GPU breadcrumbs: {} pass(es) in flight when this was reported, which on a CPU crash is only where the GPU happened to be "
                   "(submission order, deepest nesting last):", (uint32)Outstanding.Num());
 
         for (const FEntry* Entry : Outstanding)

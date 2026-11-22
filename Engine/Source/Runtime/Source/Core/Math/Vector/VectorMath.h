@@ -31,9 +31,9 @@ namespace Lumina::Math
     }
 
     template<typename T, int N>
-    [[nodiscard]] T Length(const TVec<T, N>& V)
+    [[nodiscard]] constexpr T Length(const TVec<T, N>& V)
     {
-        return static_cast<T>(std::sqrt(LengthSquared(V)));
+        return Sqrt(LengthSquared(V));
     }
 
     template<typename T, int N>
@@ -43,16 +43,16 @@ namespace Lumina::Math
     }
 
     template<typename T, int N>
-    [[nodiscard]] T Distance(const TVec<T, N>& A, const TVec<T, N>& B)
+    [[nodiscard]] constexpr T Distance(const TVec<T, N>& A, const TVec<T, N>& B)
     {
         return Length(B - A);
     }
 
     template<typename T, int N>
-    [[nodiscard]] TVec<T, N> Normalize(const TVec<T, N>& V)
+    [[nodiscard]] constexpr TVec<T, N> Normalize(const TVec<T, N>& V)
     {
         const T Len = Length(V);
-        return Len > T(0) ? V * (T(1) / Len) : TVec<T, N>{};
+        return Len > T(0) ? V * (T(1) / Len) : TVec<T, N>(T(0));
     }
 
     template<typename T, int N>
@@ -127,7 +127,7 @@ namespace Lumina::Math
     }
 
     #define LUMINA_VEC_MAP1(Name)                                                          \
-        template<typename T, int N> [[nodiscard]] TVec<T, N> Name(const TVec<T, N>& V)      \
+        template<typename T, int N> [[nodiscard]] constexpr TVec<T, N> Name(const TVec<T, N>& V)\
         { TVec<T, N> R{}; for (int i = 0; i < N; ++i) { R[i] = Name(V[i]); } return R; }
 
     LUMINA_VEC_MAP1(Floor)
@@ -175,7 +175,7 @@ namespace Lumina::Math
     }
 
     template<typename T, int N>
-    [[nodiscard]] TVec<T, N> Pow(const TVec<T, N>& Base, const TVec<T, N>& Exp)
+    [[nodiscard]] constexpr TVec<T, N> Pow(const TVec<T, N>& Base, const TVec<T, N>& Exp)
     {
         TVec<T, N> R{};
         for (int i = 0; i < N; ++i) { R[i] = Pow(Base[i], Exp[i]); }
@@ -183,7 +183,7 @@ namespace Lumina::Math
     }
 
     template<typename T, int N>
-    [[nodiscard]] TVec<T, N> Mod(const TVec<T, N>& V, std::type_identity_t<T> S)
+    [[nodiscard]] constexpr TVec<T, N> Mod(const TVec<T, N>& V, std::type_identity_t<T> S)
     {
         TVec<T, N> R{};
         for (int i = 0; i < N; ++i) { R[i] = Mod(V[i], S); }
@@ -215,11 +215,11 @@ namespace Lumina::Math
 
     // Refract a normalized incident I about normal N with index ratio eta.
     template<typename T, int N>
-    [[nodiscard]] TVec<T, N> Refract(const TVec<T, N>& I, const TVec<T, N>& Nrm, T Eta)
+    [[nodiscard]] constexpr TVec<T, N> Refract(const TVec<T, N>& I, const TVec<T, N>& Nrm, T Eta)
     {
         const T DotNI = Dot(Nrm, I);
         const T K = T(1) - Eta * Eta * (T(1) - DotNI * DotNI);
-        if (K < T(0)) { return TVec<T, N>{}; }
+        if (K < T(0)) { return TVec<T, N>(T(0)); }
         return I * Eta - Nrm * (Eta * DotNI + Sqrt(K));
     }
 

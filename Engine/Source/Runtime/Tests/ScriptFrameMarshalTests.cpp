@@ -16,6 +16,7 @@
 #include "Core/Templates/Optional.h"
 #include "Core/Reflection/Type/Function.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
+#include "Core/Serialization/NetArchive.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/OptionalProperty.h"
 #include "Paths/Paths.h"
@@ -804,6 +805,34 @@ TEST_F(FFrameMarshalTest, ANullableResolvesToAnOptionalOverItsPayload)
     int32 PayloadKind = -1;
     EXPECT_EQ(Resolve(&PayloadKind), (int32)EPropertyTypeFlags::Optional);
     EXPECT_EQ(PayloadKind, (int32)EPropertyTypeFlags::Float);
+}
+
+// A C# NetSerialize packs through the bit archive C++ uses, so what one peer writes the other reads back field for field.
+TEST_F(FFrameMarshalTest, ACSharpNetArchiveReadsBackWhatItWrote)
+{
+    auto* Write = (int32(*)(void*))DotNet::ResolveManagedExport("Test_NetArchiveWrite");
+    auto* Read  = (int32(*)(void*))DotNet::ResolveManagedExport("Test_NetArchiveRead");
+    ASSERT_NE(Write, nullptr);
+    ASSERT_NE(Read, nullptr);
+
+    TVector<uint8> Bytes;
+    FNetArchive Writer(Bytes);
+    EXPECT_EQ(Write(&Writer), 0);
+    EXPECT_LE(Bytes.Num(), 32) << "ranged and quantized fields should pack into a handful of bits each";
+
+    FNetArchive Reader(Bytes.GetData(), static_cast<SIZE_T>(Bytes.Num()));
+    const int32 Failures = Read(&Reader);
+    EXPECT_EQ(Failures, 0) << "failure bits 0x" << std::hex << Failures;
+}
+
+// A script struct packs itself when it declares NetSerialize the way C++ does, and a near miss is not mistaken for one.
+TEST_F(FFrameMarshalTest, AScriptStructsNetSerializeIsFoundByItsSignature)
+{
+    auto* Detect = (int32(*)())DotNet::ResolveManagedExport("Test_DetectNetSerialize");
+    ASSERT_NE(Detect, nullptr);
+
+    const int32 Failures = Detect();
+    EXPECT_EQ(Failures, 0) << "failure bits 0x" << std::hex << Failures;
 }
 
 TEST_F(FFrameMarshalTest, EachScriptStructFormRegistersOnceWithOneHandle)

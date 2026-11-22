@@ -396,23 +396,30 @@ bool IsHiZOccluded(FCullSphereProjection P)
     return DepthSphere < PyramidDepth;
 }
 
+// A skinned instance always moves. Anything else counts only while the sun's cache could hold it but has not, which is a body that just moved.
+bool IsMover(bool bSkinned, bool bShadowCacheable, bool bShadowCached)
+{
+    return bSkinned || (GetSceneRoot().ShadowCacheBits.Count > 0u && bShadowCacheable && !bShadowCached);
+}
+
 // A shadow level splits its casters between its static and dynamic views, so each instance lands in exactly one.
-bool IsShadowCacheSplitRejected(FCullView View, bool bShadowCached)
+bool IsShadowCacheSplitRejected(FCullView View, bool bShadowCached, bool bMover)
 {
     return (View.HasFlag(CULL_VIEW_FLAG_SHADOW_CACHE_STATIC) && !bShadowCached)
-        || (View.HasFlag(CULL_VIEW_FLAG_SHADOW_CACHE_DYNAMIC) && bShadowCached);
+        || (View.HasFlag(CULL_VIEW_FLAG_SHADOW_CACHE_DYNAMIC) && bShadowCached)
+        || (View.HasFlag(CULL_VIEW_FLAG_MOVERS_ONLY) && !bMover);
 }
 
 // CullInstances sizes buckets from this and BuildMeshletBlocks appends against it, so they must agree.
 bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool bNoCull, bool bCaster,
-                             bool bShadowOnly, bool bFoliage, bool bCustomDepth, uint Layers, bool bShadowCached)
+                             bool bShadowOnly, bool bFoliage, bool bCustomDepth, uint Layers, bool bShadowCached, bool bMover)
 {
     if ((View.LayerMask & Layers) == 0u)
     {
         return false;
     }
 
-    if (IsShadowCacheSplitRejected(View, bShadowCached))
+    if (IsShadowCacheSplitRejected(View, bShadowCached, bMover))
     {
         return false;
     }

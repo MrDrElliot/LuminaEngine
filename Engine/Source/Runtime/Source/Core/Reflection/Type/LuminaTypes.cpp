@@ -29,18 +29,7 @@ namespace Lumina
 
     void FEntityProperty::NetSerialize(FNetArchive& Ar, void* Value)
     {
-        uint32& Raw = *static_cast<uint32*>(Value);
-        if (Ar.IsWriting() && Ar.EntityToNetGUID)
-        {
-            WriteVarUInt(Ar, Ar.EntityToNetGUID(Raw));
-            return;
-        }
-        if (Ar.IsReading() && Ar.NetGUIDToEntity)
-        {
-            Raw = Ar.NetGUIDToEntity(ReadVarUInt(Ar));
-            return;
-        }
-        Super::NetSerialize(Ar, Value);
+        Ar.SerializeEntity(*static_cast<uint32*>(Value));
     }
 
     void FBoolProperty::NetSerialize(FNetArchive& Ar, void* Value)

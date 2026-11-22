@@ -579,8 +579,11 @@ namespace Lumina
     }
 
     bool FDefaultSceneRenderer::BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
-                                                      FShaderH PixelShader, bool* bOutStandIn, EFormat DepthFormat)
+                                                      FShaderH PixelShader, bool* bOutStandIn, EFormat DepthFormat,
+                                                      bool bBothFaces)
     {
+        const bool bTwoSided = Batch.bTwoSided || bBothFaces;
+
         // A masked caster needs interpolant-carrying geometry and a clipping PS, or its shadow is the whole quad.
         const bool bMaskedClip = Batch.bMasked
                               && Batch.MeshShaderShadowMasked  != nullptr
@@ -593,7 +596,7 @@ namespace Lumina
         // SPEC_SKINNED dead-strips the unused vertex-load path; a mixed batch takes a runtime branch.
         Key.SkinnedMode = SelectSkinnedMode(Batch);
         // A two-sided caster has no back face to reject, and culling one costs it half its shadow.
-        Key.TriCullMode = (uint8)((Batch.bTwoSided ? 0u : (uint32)TriCull_Backface) | (uint32)TriCull_SmallPrim);
+        Key.TriCullMode = (uint8)((bTwoSided ? 0u : (uint32)TriCull_Backface) | (uint32)TriCull_SmallPrim);
         if (Key.MS == nullptr)
         {
             return false;
@@ -617,7 +620,7 @@ namespace Lumina
         RHI::CmdSetPipeline(CL, Pipeline);
 
         // Set here, not hoisted out of the caller's loop, so it cannot disagree with the bit above.
-        RHI::CmdSetCullMode(CL, Batch.bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
+        RHI::CmdSetCullMode(CL, bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
         return true;
     }
 

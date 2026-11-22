@@ -426,6 +426,7 @@ namespace Lumina
         // Takes a shadow slot for the rain occlusion view, so it runs before the counter is read back.
         ExtractWeather(Registry, Frame);
         ExtractWeatherInteraction(Registry, Frame);
+        ExtractGroundFog(Registry, Frame);
         ApplyWeatherToClouds(Frame);
 
         // This is the last writer of the shadow counter, which can overshoot like the light count.
@@ -858,6 +859,15 @@ namespace Lumina
             const FMatrix4& RainVP = Frame.Weather.OcclusionViewProjection;
             Frame.Weather.OcclusionCullView = PushView(RainVP, ViewVolume.GetViewPosition(), RainFlags,
                 MakeLODErrorScale(RainVP, (float)Frame.Weather.OcclusionResolution, ShadowTolerance));
+        }
+
+        if (Frame.GroundFog.ObstacleShadowDataIndex != Constants::kIndexNone)
+        {
+            const uint32 ObstacleFlags = ECullViewFlags::Frustum | ECullViewFlags::CastShadowOnly | ECullViewFlags::OrthographicLOD
+                                       | ECullViewFlags::NoFoliage | ECullViewFlags::MoversOnly;
+            const FMatrix4& ObstacleVP = Frame.GroundFog.ObstacleViewProjection;
+            Frame.GroundFog.ObstacleCullView = PushView(ObstacleVP, ViewVolume.GetViewPosition(), ObstacleFlags,
+                MakeLODErrorScale(ObstacleVP, (float)Frame.GroundFog.Sim.Resolution, ShadowTolerance));
         }
 
         // The camera's own rejects minus the Hi-Z, since custom depth has to hold what the scene hides.

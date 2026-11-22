@@ -800,9 +800,9 @@ namespace Lumina
 
         // Framed off bounds, or anything but a human-sized rig opens inside the mesh or too far to see.
         const SAABB Bounds = SkeletalMesh->GetAABB();
-        CreateFloorPlane(MeshTransform.GetLocation().y + Bounds.Min.y);
+        CreateFloorPlane(MeshTransform.GetLocalLocation().y + Bounds.Min.y);
 
-        const FVector3 Center = MeshTransform.GetLocation() + Bounds.GetCenter();
+        const FVector3 Center = MeshTransform.GetLocalLocation() + Bounds.GetCenter();
         const float Radius = Math::Max(Math::Length(Bounds.GetSize() * 0.5f), 0.5f);
         SetOrbitTarget(Center, Radius * 3.0f);
         SetCameraMode(EEditorCameraMode::Orbit);

@@ -69,7 +69,7 @@ namespace
 
         const FWeatherInteractionState& Step(const FVector3& Location, double DeltaTime = 0.1)
         {
-            Registry().Get<STransformComponent>(Wader).SetLocation(Location);
+            Registry().Get<STransformComponent>(Wader).SetLocalLocation(Location);
             SSystemContext Context = FWorldTestAccess::SystemContext(*World);
             Context.DeltaTime = DeltaTime;
             System->OnUpdate(Context);
@@ -79,7 +79,7 @@ namespace
         ECS::FEntity SpawnWater(float X)
         {
             const ECS::FEntity Entity = Registry().Create();
-            Registry().Emplace<STransformComponent>(Entity).SetLocation(FVector3(X, 0.0f, 0.0f));
+            Registry().Emplace<STransformComponent>(Entity).SetLocalLocation(FVector3(X, 0.0f, 0.0f));
             Registry().Emplace<SWaterComponent>(Entity).Extent = FVector2(20.0f, 20.0f);
             return Entity;
         }

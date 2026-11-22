@@ -10,6 +10,7 @@ namespace Lumina
 {
     struct FNetWorldState;
     class FNetArchive;
+    class CWorld;
 
     // Exported so the replication tests can drive spawn and despawn without a transport.
     namespace NetworkSystemInternal
@@ -58,13 +59,20 @@ namespace Lumina
         NETWORKINGRUNTIME_API void RefreshNetRoles(ECS::FRegistry& Registry, const FNetWorldState& State, bool bServer);
         NETWORKINGRUNTIME_API void ApplySpawnEntity(ECS::FRegistry& Registry, FNetWorldState& State, uint32 SenderConn, const uint8* Data, SIZE_T Size);
         NETWORKINGRUNTIME_API void ApplyDespawnEntity(ECS::FRegistry& Registry, FNetWorldState& State, const uint8* Data, SIZE_T Size);
+
+        // Host, marks every networked entity dirty whose replicated component fields were written since the last scan.
+        NETWORKINGRUNTIME_API void MarkReplicatedChanges(ECS::FRegistry& Registry, FNetWorldState& State);
+
+        // Host, ends networking for the entities torn off since the last send, owing each client that held one a message to keep its copy.
+        NETWORKINGRUNTIME_API void ProcessTearOffs(CWorld* World, ECS::FRegistry& Registry, FNetWorldState& State);
+        NETWORKINGRUNTIME_API void ApplyTearOff(ECS::FRegistry& Registry, CWorld* World, FNetWorldState& State, const uint8* Data, SIZE_T Size);
         NETWORKINGRUNTIME_API void OnNetworkComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
         NETWORKINGRUNTIME_API void WriteOwnedTransforms(ECS::FRegistry& Registry, float DeltaTime, TVector<uint8>& OutBatch);
         NETWORKINGRUNTIME_API void ApplyClientTransform(ECS::FRegistry& Registry, FNetWorldState& State, uint32 SenderConn, double ServerNow, const uint8* Data, SIZE_T Size);
     }
 
     // Per-world networking driver.
-    REFLECT()
+    REFLECT(Networked)
     class CNetworkSystem : public CExclusiveSystem
     {
         GENERATED_BODY()
@@ -73,7 +81,6 @@ namespace Lumina
         void Configure() override;
 
         void OnExclusiveUpdate(const SExclusiveContext& Context) override;
-        bool HasWork(const SSystemContext& Context) override;
 
     private:
 

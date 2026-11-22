@@ -20,6 +20,42 @@ namespace Lumina
             return;
         }
 
+        // A client only hears health from the host, so it regenerates nothing and turns each arrival into the events a mutator would raise.
+        if (!Context.IsNetClient())
+        {
+            Regenerate(Context);
+            return;
+        }
+
+        TVector<ECS::FEntity> Arrived;
+        ChangedHealth.ForEach([&](ECS::FEntity Entity, const SHealthComponent& Health)
+        {
+            if (Health.HasUnobservedChange())
+            {
+                Arrived.Add(Entity);
+            }
+        });
+        if (Arrived.IsEmpty())
+        {
+            return;
+        }
+
+        Context.Defer([Arrived = Move(Arrived)](const SExclusiveContext& X)
+        {
+            ECS::FRegistry& Registry = X.GetRegistry();
+            for (ECS::FEntity Entity : Arrived)
+            {
+                SHealthComponent* Live = Registry.IsValid(Entity) ? Registry.TryGet<ECS::Write<SHealthComponent>>(Entity) : nullptr;
+                if (Live != nullptr)
+                {
+                    Live->BroadcastArrival();
+                }
+            }
+        });
+    }
+
+    void CHealthSystem::Regenerate(const SSystemContext& Context)
+    {
         const float DeltaTime = Context.GetDeltaTime();
         if (DeltaTime <= 0.0f)
         {

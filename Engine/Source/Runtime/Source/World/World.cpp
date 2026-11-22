@@ -93,6 +93,7 @@
 #include "World/Entity/Components/ExponentialHeightFogComponent.h"
 #include "World/Entity/Components/LightComponent.h"
 #include "World/Entity/Components/LocalFogVolumeComponent.h"
+#include "World/Entity/Components/GroundFogComponent.h"
 #include "World/Entity/Components/ReflectionProbeComponent.h"
 #include "World/Entity/Components/SkyLightComponent.h"
 #include "World/Entity/Components/SplineComponent.h"
@@ -123,6 +124,7 @@ namespace Lumina
             Registry.TrackChanges<SWaterComponent>();
             Registry.TrackChanges<SExponentialHeightFogComponent>();
             Registry.TrackChanges<SLocalFogVolumeComponent>();
+            Registry.TrackChanges<SGroundFogComponent>();
             Registry.TrackChanges<SCloudComponent>();
             Registry.TrackChanges<SEnvironmentComponent>();
             Registry.TrackChanges<STerrainComponent>();
@@ -1337,36 +1339,41 @@ namespace Lumina
     {
         // An unchanged write is skipped, since marking it dirty would re-sync the entity downstream for nothing.
         STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityLocation");
-        if (Transform != nullptr && Transform->GetLocalLocation() != Location)
+        if (Transform != nullptr && Transform->GetWorldLocation() != Location)
         {
-            Transform->SetLocation(Location);
+            Transform->SetWorldLocation(Location);
         }
     }
 
     void CWorld::SetEntityRotation(ECS::FEntity Entity, FQuat Rotation)
     {
         STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityRotation");
-        if (Transform != nullptr && !(Transform->GetLocalRotation() == Rotation))
+        if (Transform != nullptr && !(Transform->GetWorldRotation() == Rotation))
         {
-            Transform->SetRotation(Rotation);
+            Transform->SetWorldRotation(Rotation);
         }
     }
 
     void CWorld::SetEntityScale(ECS::FEntity Entity, FVector3 Scale)
     {
         STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityScale");
-        if (Transform != nullptr && Transform->GetLocalScale() != Scale)
+        if (Transform != nullptr && Transform->GetWorldScale() != Scale)
         {
-            Transform->SetLocalScale(Scale);
+            Transform->SetWorldScale(Scale);
         }
     }
 
     void CWorld::SetEntityLocationAndRotation(ECS::FEntity Entity, FVector3 Location, FQuat Rotation)
     {
         STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityLocationAndRotation");
-        if (Transform != nullptr && (Transform->GetLocalLocation() != Location || !(Transform->GetLocalRotation() == Rotation)))
+        if (Transform == nullptr)
         {
-            Transform->SetLocalLocationAndRotation(Location, Rotation);
+            return;
+        }
+        const FTransform Current = Transform->GetWorldTransform();
+        if (Current.GetLocation() != Location || !(Current.GetRotation() == Rotation))
+        {
+            Transform->SetWorldLocationAndRotation(Location, Rotation);
         }
     }
 
@@ -1384,7 +1391,7 @@ namespace Lumina
         {
             if (STransformComponent* Transform = EntityRegistry.TryGet<STransformComponent>(Entities[Index]))
             {
-                Transform->SetLocalTransform(Transforms[Index]);
+                Transform->SetWorldTransform(Transforms[Index]);
             }
         }
     }
@@ -1392,7 +1399,13 @@ namespace Lumina
     FVector3 CWorld::TranslateEntity(ECS::FEntity Entity, FVector3 Translation)
     {
         STransformComponent* Transform = FindScriptTransform(Entity, "TranslateEntity");
-        return Transform != nullptr ? Transform->Translate(Translation) : FVector3(0.0f);
+        if (Transform == nullptr)
+        {
+            return FVector3(0.0f);
+        }
+        const FVector3 Moved = Transform->GetWorldLocation() + Translation;
+        Transform->SetWorldLocation(Moved);
+        return Moved;
     }
 
     uint32 CWorld::GetNumEntities() const
@@ -2480,7 +2493,7 @@ namespace Lumina
 
         if (STransformComponent* Transform = EntityRegistry.TryGet<STransformComponent>(Entity))
         {
-            Transform->SetLocalTransform(NewTransform);
+            Transform->SetWorldTransform(NewTransform);
             return;
         }
         EntityRegistry.Emplace<STransformComponent>(Entity, NewTransform);

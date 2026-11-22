@@ -823,11 +823,6 @@ namespace Lumina
         // Grass blocks hold no visibility words, so a terrain whose grass arrives after the meshes would not move the extent.
         if (Jumped(VisibilityWords, LastSceneVisibilityWords) || Jumped(Upload.GrassSlotCount, LastSceneGrassSlots))
         {
-            if (SceneFloorFramesLeft == 0u)
-            {
-                LOG_INFO("RenderScene: meshlet lists floored at the scene, {} visibility words and {} largest-LOD meshlets, plus {} words and {} meshlets for {} grass blades, across {} cull views.",
-                         VisibilityWords, Upload.LargestLODMeshlets, Upload.GrassMeshlets.Words, Upload.GrassMeshlets.Meshlets, Upload.GrassSlotCount, Frame.Views.CullViews.Num());
-            }
             LastSceneVisibilityWords = VisibilityWords;
             LastSceneGrassSlots      = Upload.GrassSlotCount;
             SceneFloorFramesLeft     = RHI::kFramesInFlight + 2u;

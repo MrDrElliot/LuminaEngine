@@ -31,8 +31,13 @@ namespace Lumina
         // Trivial default ctor leaves it uninitialized, so use TMat::Identity() for identity.
         TMat() = default;
 
-        explicit constexpr TMat(T Diagonal) : Cols{}
+        // Zeroed through each column's named members, since a constant evaluation reads those and Cols{} would only set the union's array.
+        explicit constexpr TMat(T Diagonal)
         {
+            for (int c = 0; c < C; ++c)
+            {
+                Cols[c] = ColumnType(T(0));
+            }
             constexpr int N = C < R ? C : R;
             for (int i = 0; i < N; ++i)
             {
@@ -98,7 +103,7 @@ namespace Lumina
     template<typename T, int C, int R>
     constexpr TVec<T, R> operator*(const TMat<T, C, R>& M, const TVec<T, C>& V)
     {
-        TVec<T, R> Result{};
+        TVec<T, R> Result(T(0));
         for (int c = 0; c < C; ++c)
         {
             Result += M.Cols[c] * V[c];
@@ -119,8 +124,12 @@ namespace Lumina
     }
 
     // Exact-type SIMD overloads for 4x4 float win over the generic templates and match their result.
-    [[nodiscard]] inline TVec<float, 4> operator*(const TMat<float, 4, 4>& M, const TVec<float, 4>& V)
+    [[nodiscard]] constexpr TVec<float, 4> operator*(const TMat<float, 4, 4>& M, const TVec<float, 4>& V)
     {
+        if consteval
+        {
+            return operator*<float, 4, 4>(M, V);
+        }
         using namespace SIMD;
         const VFloat4 C0 = VFloat4::LoadAligned(&M.Cols[0][0]);
         const VFloat4 C1 = VFloat4::LoadAligned(&M.Cols[1][0]);
@@ -136,8 +145,12 @@ namespace Lumina
     }
 
     // Two result columns per 256-bit register, with each lane's operations in the same order as the 4-wide form.
-    [[nodiscard]] inline TMat<float, 4, 4> operator*(const TMat<float, 4, 4>& A, const TMat<float, 4, 4>& B)
+    [[nodiscard]] constexpr TMat<float, 4, 4> operator*(const TMat<float, 4, 4>& A, const TMat<float, 4, 4>& B)
     {
+        if consteval
+        {
+            return operator*<float, 4, 4, 4>(A, B);
+        }
         const __m256 A0 = _mm256_broadcast_ps(reinterpret_cast<const __m128*>(&A.Cols[0][0]));
         const __m256 A1 = _mm256_broadcast_ps(reinterpret_cast<const __m128*>(&A.Cols[1][0]));
         const __m256 A2 = _mm256_broadcast_ps(reinterpret_cast<const __m128*>(&A.Cols[2][0]));

@@ -283,6 +283,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const uint DrawID   = Cull.DrawID;
     const bool bInRange = DrawID < Pass().NumBatches;
     const bool bShadowCached = IsShadowCached(SlotIdx);
+    const bool bMover        = IsMover(bSkinned, Cull.bShadowCacheable, bShadowCached);
 
     // A skinned instance needs a pre-skin slice only when some view emits it.
     bool bNeedsSkin = false;
@@ -299,7 +300,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     {
         const FCullView View = GetCullView(v);
         if (!IsCameraProxyView(View, v, bProxied)
-            && IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFoliage, bCustomDepth, Layers, bShadowCached))
+            && IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFoliage, bCustomDepth, Layers, bShadowCached, bMover))
         {
             FirstVisibleView = v;
             break;
@@ -357,7 +358,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         // Views before the first visible one already failed the test above, and that view already passed it.
         const bool bVisible = v == FirstVisibleView
                            || (v > FirstVisibleView && !IsCameraProxyView(View, v, bProxied)
-                               && IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFoliage, bCustomDepth, Layers, bShadowCached));
+                               && IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFoliage, bCustomDepth, Layers, bShadowCached, bMover));
         if (bVisible)
         {
             // View 0 reuses the camera's pick above.
@@ -448,7 +449,8 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     Inst.RenderLayers            = Layers;
 
     // Decided once from the camera, so the visbuffer, shadow and deferred passes all draw the instance with the same offset.
-    uint FrameBits = (Cull.bNoShadowWPO ? GPU_INSTANCE_NO_SHADOW_WPO_BIT : 0u) | (bShadowCached ? GPU_INSTANCE_SHADOW_CACHED_BIT : 0u);
+    uint FrameBits = (Cull.bNoShadowWPO ? GPU_INSTANCE_NO_SHADOW_WPO_BIT : 0u) | (bShadowCached ? GPU_INSTANCE_SHADOW_CACHED_BIT : 0u)
+                   | (bMover ? GPU_INSTANCE_MOVER_BIT : 0u);
     const float WPODisableDistance = Static.WPODisableDistance;
     if (WPODisableDistance > 0.0 && DistSq > WPODisableDistance * WPODisableDistance)
     {

@@ -418,8 +418,8 @@ namespace Lumina
         STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
         STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
-        const FQuat LookAt = Math::FindLookAtRotation(MeshTransform.GetWorldLocation() + FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocation());
-        EditorTransform.SetRotation(LookAt);
+        const FQuat LookAt = Math::FindLookAtRotation(MeshTransform.GetWorldLocation() + FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocalLocation());
+        EditorTransform.SetLocalRotation(LookAt);
     }
 
     void FPhysicsAssetEditorTool::OnAssetDataChangedExternally()
@@ -1404,7 +1404,7 @@ namespace Lumina
             const STransformComponent& FloorTransform = World->GetComponent<STransformComponent>(FloorBodyEntity);
             if (const SBoxColliderComponent* FloorBox = World->TryGetComponent<SBoxColliderComponent>(FloorBodyEntity))
             {
-                World->GetDebugInterface()->DrawBox(FloorTransform.GetLocation(), FloorBox->HalfExtent, FloorTransform.GetRotation(),
+                World->GetDebugInterface()->DrawBox(FloorTransform.GetLocalLocation(), FloorBox->HalfExtent, FloorTransform.GetLocalRotation(),
                     FVector4(0.25f, 1.0f, 0.45f, 1.0f), 2.0f, false);
             }
 
@@ -1414,7 +1414,7 @@ namespace Lumina
             {
                 bFloorBodyReported = true;
                 LOG_INFO("PhysicsAsset sim: floor body {} created at {}, half extent {}", FloorBodyEntity.Value,
-                    FloorTransform.GetLocation().y, World->GetComponent<SBoxColliderComponent>(FloorBodyEntity).HalfExtent.y);
+                    FloorTransform.GetLocalLocation().y, World->GetComponent<SBoxColliderComponent>(FloorBodyEntity).HalfExtent.y);
             }
             else if (!bFloorBodyReported && SimulationFrames == 60)
             {
@@ -1470,7 +1470,7 @@ namespace Lumina
 
         // The visual floor plane carries no collider, so the ragdoll needs something to land on.
         FloorBodyEntity = World->ConstructEntity("Simulation Floor");
-        World->GetComponent<STransformComponent>(FloorBodyEntity).SetLocation(FVector3(0.0f, -0.5f, 0.0f));
+        World->GetComponent<STransformComponent>(FloorBodyEntity).SetLocalLocation(FVector3(0.0f, -0.5f, 0.0f));
 
         // The body is built from what the component holds at construction, so pass values in.
         SRigidBodyComponent BodyDesc;
@@ -1520,7 +1520,7 @@ namespace Lumina
                 MeshComponent.bRenderBonesDirty = true;
             }
 
-            World->GetComponent<STransformComponent>(MeshEntity).SetLocation(FVector3(0.0f));
+            World->GetComponent<STransformComponent>(MeshEntity).SetLocalLocation(FVector3(0.0f));
         }
 
         if (FloorBodyEntity != ECS::NullEntity)

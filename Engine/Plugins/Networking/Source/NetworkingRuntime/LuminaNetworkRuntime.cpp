@@ -294,6 +294,87 @@ namespace Lumina
         return State != nullptr && IsServerWorld(World) && NetSimulation::StartSession(World, *State, InputStruct, Seed);
     }
 
+    bool FLuminaNetworkRuntime::SendNetMessage(CWorld* World, ENetMessageTarget Target, uint32 Connection, ECS::FComponentTypeID TypeID, const void* Message)
+    {
+        FNetWorldState* State = StateOf(World);
+        const bool bHost = State == nullptr || IsServerWorld(World);
+        const bool bHere = bHost && (Target == ENetMessageTarget::Host || Target == ENetMessageTarget::Everyone
+                                     || (Target == ENetMessageTarget::Client && Connection == 0));
+        if (bHere)
+        {
+            NetMessages::Deliver(World->GetEventQueues(), ScriptNetMessages, TypeID, Message, 0);
+        }
+        if (State == nullptr || State->Transport == nullptr || (bHost && Target == ENetMessageTarget::Host))
+        {
+            return bHere;
+        }
+        if (!bHost && Target != ENetMessageTarget::Host)
+        {
+            LOG_WARN_ONCE("[Net] A client sends net messages only to the host, which can pass them on to other clients.");
+            return false;
+        }
+
+        TVector<uint8> Msg;
+        if (!NetMessages::Write(*State, ScriptNetMessages, TypeID, Message, Msg))
+        {
+            LOG_WARN_ONCE("[Net] {} cannot be sent, since it neither derives from SNetMessage nor is a C# INetMessage, or it is too large.",
+                          *ECS::FComponentTypeRegistry::Get().GetInfo(TypeID).Name.ToString());
+            return false;
+        }
+
+        TScopeLock Scope(State->MessageLock);
+        auto Queue = [&](uint32 To)
+        {
+            Net::AppendFramedMessage(State->PendingMessages[To], Msg.GetData(), static_cast<SIZE_T>(Msg.Num()));
+        };
+        if (!bHost)
+        {
+            if (!State->bClientConnected)
+            {
+                return false;
+            }
+            Queue(State->ServerConnection.Value);
+            return true;
+        }
+        if (Target == ENetMessageTarget::Client)
+        {
+            if (Connection == 0)
+            {
+                return true;
+            }
+            if (!State->ReadyClientIds.Contains(Connection))
+            {
+                return false;
+            }
+            Queue(Connection);
+            return true;
+        }
+        for (uint32 Client : State->ReadyClientIds)
+        {
+            Queue(Client);
+        }
+        return true;
+    }
+
+    void FLuminaNetworkRuntime::RegisterScriptNetMessage(ECS::FComponentTypeID TypeID, uint32 SenderOffset, TSpan<const uint32> EntityOffsets)
+    {
+        ScriptNetMessages.Register(TypeID, SenderOffset, EntityOffsets);
+    }
+
+    void FLuminaNetworkRuntime::TearOff(CWorld* World, ECS::FEntity Entity)
+    {
+        if (World == nullptr || !IsServerWorld(World))
+        {
+            return;
+        }
+        FNetWorldState* State = StateOf(World);
+        ECS::FRegistry& Registry = RegistryOf(World);
+        if (State != nullptr && Registry.IsValid(Entity) && Registry.HasAll<SNetworkComponent>(Entity))
+        {
+            State->PendingTearOffs.Add(Entity);
+        }
+    }
+
     void FLuminaNetworkRuntime::MarkEntityDirty(CWorld* World, ECS::FEntity Entity)
     {
         if (World == nullptr || !IsServerWorld(World))

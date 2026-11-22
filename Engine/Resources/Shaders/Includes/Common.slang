@@ -32,6 +32,8 @@ static const float INV_PI = 0.31830988618;
 #define CULL_VIEW_FLAG_SHADOW_CACHE_DYNAMIC BIT(13)
 // A level of the sun's virtual shadow, whose ShadowLevel names the level and whose casters land only in pages the masks keep.
 #define CULL_VIEW_FLAG_VIRTUAL_SHADOW   BIT(14)
+// Only skinned instances and, while the sun's cache holds the still ones, everything it does not hold.
+#define CULL_VIEW_FLAG_MOVERS_ONLY      BIT(15)
 
 
 #define BIT(X) (1u << (X))
@@ -532,6 +534,7 @@ struct FInstanceCullEntry
     property uint CustomDepthStencil { get { return (FlagsAndThinning >> INSTANCE_CUSTOM_DEPTH_SHIFT) & CUSTOM_DEPTH_WORD_MASK; } }
 
     property bool bNoShadowWPO { get { return (FlagsAndThinning & INSTANCE_NO_SHADOW_WPO_BIT) != 0u; } }
+    property bool bShadowCacheable { get { return (FlagsAndThinning & INSTANCE_SHADOW_CACHEABLE_BIT) != 0u; } }
 
     bool HasFlag(EInstanceFlags Flag)
     {
@@ -813,6 +816,7 @@ struct FGPUInstance
     property bool bApplyWPO       { get { return (CustomDepthStencil & GPU_INSTANCE_NO_WPO_BIT) == 0u; } }
     property bool bApplyShadowWPO { get { return (CustomDepthStencil & (GPU_INSTANCE_NO_WPO_BIT | GPU_INSTANCE_NO_SHADOW_WPO_BIT)) == 0u; } }
     property bool bShadowCached   { get { return (CustomDepthStencil & GPU_INSTANCE_SHADOW_CACHED_BIT) != 0u; } }
+    property bool bMover          { get { return (CustomDepthStencil & GPU_INSTANCE_MOVER_BIT) != 0u; } }
 
     // Matches Lumina::PackDrawIDAndFlags, DrawID in the low 16 bits and flags in the high 16.
     bool HasFlag(EInstanceFlags Flag)

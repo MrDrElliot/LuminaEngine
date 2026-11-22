@@ -37,6 +37,11 @@ struct FPushConstants
     FTexture2D FogShaftDepth;        // raw depth each half-res shaft texel was marched against
     FTexture2D CloudDepth;           // raw depth each half-res cloud texel was marched against
     float      CloudFloor;                // altitude of the cloud layer's base
+
+    FTexture2D GroundFog;            // kAtmosphereTermOff when no ground fog layer is in view
+    FTexture2D GroundFogDepth;       // raw depth each half-res ground fog texel was marched against
+    uint       _Pad0;
+    uint       _Pad1;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -153,6 +158,7 @@ float4 UpsampleHalfRes(FTexture2D Source, FTexture2D SourceDepth, float2 UV, flo
 [vk::constant_id(15)] const uint SPEC_ATMOS_FOG        = 1;
 [vk::constant_id(16)] const uint SPEC_ATMOS_VOLUMETRIC = 1;
 [vk::constant_id(17)] const uint SPEC_ATMOS_SHAFTS     = 1;
+[vk::constant_id(18)] const uint SPEC_ATMOS_GROUND_FOG = 1;
 
 float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth, float3 SurfaceViewPos)
 {
@@ -297,6 +303,16 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         if (Cloud.a <= 0.999)
         {
             ComposeTerm(Total, float3(Cloud.a), Cloud.rgb);
+        }
+    }
+
+    // Nearer than the clouds and inside the height fog, so it composes between the two.
+    if (SPEC_ATMOS_GROUND_FOG != 0 && Pass().GroundFog.IsValid())
+    {
+        const float4 Ground = UpsampleHalfRes(Pass().GroundFog, Pass().GroundFogDepth, UV, Depth);
+        if (Ground.a <= 0.999)
+        {
+            ComposeTerm(Total, float3(Ground.a), Ground.rgb);
         }
     }
 

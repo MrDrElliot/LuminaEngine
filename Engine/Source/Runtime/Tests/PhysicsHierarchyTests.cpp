@@ -57,7 +57,7 @@ namespace
         {
             ECS::FRegistry& R = Registry();
             const ECS::FEntity Entity = R.Create();
-            R.Emplace<STransformComponent>(Entity).SetLocation(Location);
+            R.Emplace<STransformComponent>(Entity).SetLocalLocation(Location);
             if (!Parent.IsNull())
             {
                 ECS::Utils::ReparentEntity(R, Entity, Parent, false);
@@ -111,7 +111,7 @@ TEST(PhysicsHierarchy, AChildColliderFollowsItsParent)
     W.AddBox(Child, EBodyType::Static);
     W.Step();
 
-    W.Registry().Get<STransformComponent>(Parent).SetLocation(FVector3(20.0f, 0.0f, 0.0f));
+    W.Registry().Get<STransformComponent>(Parent).SetLocalLocation(FVector3(20.0f, 0.0f, 0.0f));
     W.Step();
 
     EXPECT_TRUE(W.HitsAt(Child, 22.0f));

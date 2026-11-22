@@ -20,6 +20,7 @@ namespace Lumina::NetRealm
         static const FName HostOnlyName("HostOnly");
         static const FName ClientOnlyName("ClientOnly");
         static const FName CosmeticName("Cosmetic");
+        static const FName NetworkedName("Networked");
 
         ENetRealm Realm = ENetRealm::Any;
         for (const CClass* Current = Class; Current != nullptr; Current = Current->GetSuperClass())
@@ -36,17 +37,21 @@ namespace Lumina::NetRealm
             {
                 Realm |= ENetRealm::Cosmetic;
             }
+            if (Current->HasMeta(NetworkedName))
+            {
+                Realm |= ENetRealm::Networked;
+            }
         }
         return Realm;
     }
 
     bool Allows(ENetRealm Realm, CWorld* World)
     {
-        if (Realm == ENetRealm::Any)
-        {
-            return true;
-        }
-        const ENetMode Mode = World != nullptr ? World->GetNetMode() : ENetMode::Standalone;
+        return Realm == ENetRealm::Any || Allows(Realm, World != nullptr ? World->GetNetMode() : ENetMode::Standalone, HasPresentation(World));
+    }
+
+    bool Allows(ENetRealm Realm, ENetMode Mode, bool bHasPresentation)
+    {
         if (EnumHasAnyFlags(Realm, ENetRealm::HostOnly) && Mode == ENetMode::Client)
         {
             return false;
@@ -55,7 +60,11 @@ namespace Lumina::NetRealm
         {
             return false;
         }
-        return !EnumHasAnyFlags(Realm, ENetRealm::Cosmetic) || HasPresentation(World);
+        if (EnumHasAnyFlags(Realm, ENetRealm::Networked) && Mode == ENetMode::Standalone)
+        {
+            return false;
+        }
+        return !EnumHasAnyFlags(Realm, ENetRealm::Cosmetic) || bHasPresentation;
     }
 
     uint32 KeyOf(CWorld* World)

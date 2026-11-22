@@ -636,6 +636,25 @@ namespace Lumina
                 TVector<FWeatherWaterBodyGPU>    WaterBodies;
             } WeatherInteraction;
 
+            // Ground fog layers the camera can see, and what this frame does to the flow parting them.
+            struct FGroundFog
+            {
+                TVector<FGPUGroundFogLayer>      Layers;
+                // An interactive layer overlaps the window around the camera, so the flow runs.
+                bool                             bSimulate                = false;
+                // The flow was idle or its window changed shape, so its images are cleared before this frame's steps.
+                bool                             bReset                   = false;
+                uint32                           Steps                    = 0;
+                uint32                           JacobiIterations         = 0;
+                // State images the first step reads and the last step writes.
+                uint32                           InputParity              = 0;
+                uint32                           OutputParity             = 0;
+                FGPUGroundFogSim                 Sim                      = {};
+                int32                            ObstacleShadowDataIndex  = Constants::kIndexNone;
+                uint32                           ObstacleCullView         = Constants::kIndexNoneU32;
+                FMatrix4                         ObstacleViewProjection   = FMatrix4(1.0f);
+            } GroundFog;
+
             // World space throughout: SSplineComponent authors in entity-local space and the extract bakes the transform in.
             struct FSplines
             {
@@ -726,6 +745,8 @@ namespace Lumina
             SSRMipLevel,
             FogShaft,
             FogShaftDepth,
+            GroundFog,
+            GroundFogDepth,
             DepthAttachment,
             DepthPyramid,
             Picker,
@@ -1041,7 +1062,8 @@ namespace Lumina
 
         // Sets bOutStandIn when the batch casts the default material's shadow because its own pipeline is still compiling.
         bool BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
-                                    FShaderH PixelShader, bool* bOutStandIn = nullptr, EFormat DepthFormat = EFormat::D32);
+                                    FShaderH PixelShader, bool* bOutStandIn = nullptr, EFormat DepthFormat = EFormat::D32,
+                                    bool bBothFaces = false);
 
         void DrawShadowBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, bool bUseMesh,
                              uint32 CullViewIndex, int32 ShadowDataIndex, int32 ShadowViewIndex,
@@ -1298,6 +1320,7 @@ namespace Lumina
         void ExtractSkyLight(ECS::FRegistry& Registry, FFrameData& Frame, const SEnvironmentComponent* ActiveEnv);
         void ExtractWeather(ECS::FRegistry& Registry, FFrameData& Frame);
         void ExtractWeatherInteraction(ECS::FRegistry& Registry, FFrameData& Frame);
+        void ExtractGroundFog(ECS::FRegistry& Registry, FFrameData& Frame);
         void ApplyWeatherToClouds(FFrameData& Frame);
 
         // Render-phase half: buffer resize + upload commands; reads extract-phase state.
@@ -1806,6 +1829,8 @@ namespace Lumina
             uint32 CloudDepthIndex          = Constants::kIndexNoneU32;
             uint32 FogShaftIndex            = Constants::kIndexNoneU32;
             uint32 FogShaftDepthIndex       = Constants::kIndexNoneU32;
+            uint32 GroundFogIndex           = Constants::kIndexNoneU32;
+            uint32 GroundFogDepthIndex      = Constants::kIndexNoneU32;
         };
         FAtmosphereTerms                        AtmosphereTerms = {};
         
@@ -2131,6 +2156,30 @@ namespace Lumina
         // Rain streaks and splashes, snow flakes and interaction splashes, all in one pass over the HDR target.
         void WeatherDrawPass(RHI::FCmdListH CL);
         void ReleaseIdleWeatherResources();
+
+        // The flow parting the ground fog around the camera, stepped at a fixed rate and kept between frames.
+        struct FGroundFogState
+        {
+            FSceneImage Flow[2];
+            FSceneImage Fill[2];
+            FSceneImage Pressure[2];
+            FSceneImage DivCurl;
+            FSceneImage Obstacles;
+            uint32      PressureParity = 0;
+            // Kept by the extract, which decides each frame's steps and window ahead of the render.
+            uint32      Parity         = 0;
+            float       Accumulator    = 0.0f;
+            FIntVector2 OriginTexel    = FIntVector2(0);
+            uint32      Resolution     = 0;
+            float       TexelWorld     = 0.0f;
+            uint32      IdleFrames     = ~0u;
+        };
+        FGroundFogState GroundFogState;
+
+        void GroundFogObstaclePass(RHI::FCmdListH CL);
+        void GroundFogSimPass(RHI::FCmdListH CL);
+        void GroundFogMarchPass(RHI::FCmdListH CL);
+        void ReleaseIdleGroundFogResources();
 
         float                                               ShadowMinTexels = 0.0f;
 

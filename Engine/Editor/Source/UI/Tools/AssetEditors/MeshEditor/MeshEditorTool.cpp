@@ -355,11 +355,11 @@ namespace Lumina
         World->EmplaceComponent<SStaticMeshComponent>(MeshEntity).SetStaticMesh(StaticMesh);
         STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
 
-        float FloorY = MeshTransform.GetLocation().y + StaticMesh->GetAABB().Min.y;
+        float FloorY = MeshTransform.GetLocalLocation().y + StaticMesh->GetAABB().Min.y;
         CreateFloorPlane(FloorY);
 
         const SAABB Bounds = StaticMesh->GetAABB();
-        const FVector3 Center = MeshTransform.GetLocation() + Bounds.GetCenter();
+        const FVector3 Center = MeshTransform.GetLocalLocation() + Bounds.GetCenter();
         const float Radius = Math::Max(Math::Length(Bounds.GetSize() * 0.5f), 0.5f);
         SetOrbitTarget(Center, Radius * 3.0f);
         SetCameraMode(EEditorCameraMode::Orbit);

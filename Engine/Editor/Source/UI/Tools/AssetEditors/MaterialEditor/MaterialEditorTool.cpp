@@ -182,11 +182,11 @@ namespace Lumina
         Spot.Attenuation    = 10.0f;
         Spot.OuterConeAngle = 30.0f;
         Spot.InnerConeAngle = 28.0f;
-        const FVector3 SpotPosition = MeshTransform.GetLocation() + FVector3(0.0f, 2.0f, 3.0f);
+        const FVector3 SpotPosition = MeshTransform.GetLocalLocation() + FVector3(0.0f, 2.0f, 3.0f);
         STransformComponent& SpotTransform = World->GetComponent<STransformComponent>(LightFunctionSpotEntity);
-        SpotTransform.SetLocation(SpotPosition);
-        SpotTransform.SetRotation(Math::FindLookAtRotation(MeshTransform.GetLocation(), SpotPosition));
-        SetOrbitTarget(MeshTransform.GetLocation(), 2.0f);
+        SpotTransform.SetLocalLocation(SpotPosition);
+        SpotTransform.SetLocalRotation(Math::FindLookAtRotation(MeshTransform.GetLocalLocation(), SpotPosition));
+        SetOrbitTarget(MeshTransform.GetLocalLocation(), 2.0f);
         SetCameraMode(EEditorCameraMode::Orbit);
 
         ApplyMaterialToPreview();

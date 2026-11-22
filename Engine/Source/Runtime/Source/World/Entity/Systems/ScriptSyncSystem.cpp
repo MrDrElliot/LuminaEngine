@@ -14,11 +14,7 @@ namespace Lumina
 
     void CScriptSyncSystem::OnExclusiveUpdate(const SExclusiveContext& Context)
     {
-        CWorld* World = Context.GetWorld();
-        if (World == nullptr || World->GetNetMode() == ENetMode::Standalone)
-        {
-            return;
-        }
+        CWorld& World = *Context.GetWorld();
 
         // A change handler may add components, so the walk runs over a snapshot of the entities.
         ECS::FRegistry& Registry = Context.GetRegistry();
@@ -30,7 +26,7 @@ namespace Lumina
             FScriptSyncState* State = Registry.TryGet<FScriptSyncState>(Entity);
             if (Scripts != nullptr && State != nullptr)
             {
-                ScriptNet::PollSync(*World, Entity, *Scripts, *State);
+                ScriptNet::PollSync(World, Entity, *Scripts, *State);
             }
         }
     }

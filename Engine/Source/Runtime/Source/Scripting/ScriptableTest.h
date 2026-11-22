@@ -522,6 +522,10 @@ namespace Lumina
         FUNCTION(Rpc = Host)
         virtual void Ping(int32 Value, const FString& Label) { Received.Add(Lumina::Format("base {} {}", Value, Label)); }
 
+        // Any client may call it, as for a door every player can open.
+        FUNCTION(Rpc = Host, NetFlags = AnyCaller)
+        virtual void Knock(int32 Value) { Received.Add(Lumina::Format("knock {}", Value)); }
+
         TVector<FString> Received;
     };
 

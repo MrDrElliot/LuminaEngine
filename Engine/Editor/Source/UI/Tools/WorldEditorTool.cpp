@@ -1106,8 +1106,8 @@ namespace Lumina
             ? DemoWorld->TryGetComponent<STransformComponent>(Camera) : nullptr;
         if (Transform != nullptr)
         {
-            Transform->SetLocation(Pose.Location);
-            Transform->SetRotation(Math::FindLookAtRotation(Pose.Target, Pose.Location));
+            Transform->SetLocalLocation(Pose.Location);
+            Transform->SetLocalRotation(Math::FindLookAtRotation(Pose.Target, Pose.Location));
         }
     }
 
@@ -3668,25 +3668,29 @@ namespace Lumina
             }
         }
 
-        // Bound straight to the CVars the transport reads, so dragging these takes effect live.
+        // Bound straight to the CVars the transport reads, so edits take effect live. Typed values are clamped to the same range as dragged ones.
         ImGui::Separator();
         ImGui::TextUnformatted("Network Simulation");
         {
+            constexpr int32 kMaxSimLatencyMs  = 1000;
+            // Past this a session stops resembling any real link, and reliable traffic stalls on retransmits.
+            constexpr float kMaxSimPacketLoss = 50.0f;
+
             FConsoleRegistry& Console = FConsoleRegistry::Get();
             ImGui::BeginDisabled(PlaySettings.NetMode == ENetMode::Standalone);
 
             int32 LatencyMs = Console.GetAs<int32>("Net.Sim.LatencyMs");
             ImGui::SetNextItemWidth(170.0f);
-            if (ImGui::SliderInt("Latency (ms)", &LatencyMs, 0, 500))
+            if (ImGui::InputInt("Latency (ms)", &LatencyMs, 5, 50))
             {
-                Console.SetAs<int32>("Net.Sim.LatencyMs", LatencyMs < 0 ? 0 : LatencyMs);
+                Console.SetAs<int32>("Net.Sim.LatencyMs", Math::Clamp(LatencyMs, 0, kMaxSimLatencyMs));
             }
 
             float LossPct = Console.GetAs<float>("Net.Sim.PacketLossPct");
             ImGui::SetNextItemWidth(170.0f);
-            if (ImGui::SliderFloat("Packet Loss", &LossPct, 0.0f, 100.0f, "%.0f%%"))
+            if (ImGui::InputFloat("Packet Loss (%)", &LossPct, 0.5f, 5.0f, "%.1f"))
             {
-                Console.SetAs<float>("Net.Sim.PacketLossPct", LossPct < 0.0f ? 0.0f : (LossPct > 100.0f ? 100.0f : LossPct));
+                Console.SetAs<float>("Net.Sim.PacketLossPct", Math::Clamp(LossPct, 0.0f, kMaxSimPacketLoss));
             }
 
             ImGui::EndDisabled();
@@ -5363,10 +5367,10 @@ namespace Lumina
         const float Distance = (Radius / Math::Tan(Math::Max(HalfFov, Math::Radians(1.0f)))) * 1.5f;
 
         STransformComponent& EditorTransform = Registry.Get<STransformComponent>(EditorEntity);
-        const FVector3 Forward = EditorTransform.GetForward();
+        const FVector3 Forward = EditorTransform.GetLocalForward();
         const FVector3 NewPos  = Center - Forward * Distance;
-        EditorTransform.SetLocation(NewPos);
-        EditorTransform.SetRotation(Math::FindLookAtRotation(Center, NewPos));
+        EditorTransform.SetLocalLocation(NewPos);
+        EditorTransform.SetLocalRotation(Math::FindLookAtRotation(Center, NewPos));
     }
 
     void FWorldEditorTool::CopyTransformFromLastSelected()

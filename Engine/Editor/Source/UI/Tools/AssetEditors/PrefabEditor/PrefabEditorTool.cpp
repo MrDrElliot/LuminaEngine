@@ -815,9 +815,9 @@ namespace Lumina
         const float Distance = (Radius / Math::Tan(Math::Max(HalfFov, Math::Radians(1.0f)))) * 1.5f;
 
         STransformComponent& EditorTransform = Registry.Get<STransformComponent>(EditorEntity);
-        const FVector3 Forward = EditorTransform.GetForward();
-        EditorTransform.SetLocation(Center - Forward * Distance);
-        EditorTransform.SetRotation(Math::FindLookAtRotation(Center, Center - Forward * Distance));
+        const FVector3 Forward = EditorTransform.GetLocalForward();
+        EditorTransform.SetLocalLocation(Center - Forward * Distance);
+        EditorTransform.SetLocalRotation(Math::FindLookAtRotation(Center, Center - Forward * Distance));
     }
 
     bool FPrefabEditorTool::IsOutlinerEntityVisible(ECS::FEntity Entity) const

@@ -61,11 +61,11 @@ namespace Lumina
         float GetHealthFraction() const { return MaxHealth > 0.0f ? Health / MaxHealth : 0.0f; }
 
         /** Current health points. Clamped to 0 through MaxHealth by every mutator here. */
-        PROPERTY(Editable, Category = "Health")
+        PROPERTY(Editable, Replicated, Category = "Health")
         float Health = 100.0f;
 
         /** Maximum health capacity. Health is clamped to this value. */
-        PROPERTY(Editable, Category = "Health")
+        PROPERTY(Editable, Replicated, Category = "Health")
         float MaxHealth = 100.0f;
 
         /** Points restored per second by CHealthSystem; unset means the entity does not regenerate. */
@@ -85,10 +85,29 @@ namespace Lumina
         TScriptDelegate<SHealthChangedEvent> OnDied;
 
         /** True once health has reached zero, until Revive. */
-        PROPERTY(ReadOnly, Category = "Health")
+        PROPERTY(ReadOnly, Replicated, Category = "Health")
         bool bDead = false;
 
         /** Counts down from RegenDelay on damage; regeneration is held off while it is positive. */
         float RegenCooldown = 0.0f;
+
+        // What listeners on this peer last heard, so a client raises the events for values that arrive from the host.
+        float ObservedHealth = 0.0f;
+        bool  bObservedDead  = false;
+        bool  bObserved      = false;
+
+        // Records the current values as heard, after a mutator here or an arrival has told the listeners.
+        void Observe()
+        {
+            ObservedHealth = Health;
+            bObservedDead  = bDead;
+            bObserved      = true;
+        }
+
+        // True when replicated values differ from what listeners last heard.
+        bool HasUnobservedChange() const { return !bObserved || ObservedHealth != Health || bObservedDead != bDead; }
+
+        // Tells listeners on a client about values the host replicated. The first values are taken as the start, not as a change.
+        void BroadcastArrival();
     };
 }

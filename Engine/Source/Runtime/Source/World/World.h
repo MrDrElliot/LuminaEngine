@@ -353,7 +353,7 @@ namespace Lumina
         FUNCTION()
         void SetEntityTag(ECS::FEntity Entity, const FName& Tag);
 
-        //~ Transforms. Getters read world space, and setters write the entity's own space under its parent.
+        //~ Transforms, read and written in world space like the component's World accessors.
 
         FUNCTION()
         FTransform GetEntityTransform(ECS::FEntity Entity);

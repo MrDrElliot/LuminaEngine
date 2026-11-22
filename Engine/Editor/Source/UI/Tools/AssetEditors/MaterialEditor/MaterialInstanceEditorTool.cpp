@@ -62,7 +62,7 @@ namespace Lumina
         StaticMeshComponent.SetStaticMesh(CPrimitiveManager::Get().SphereMesh.Get());
 
         const STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
-        SetOrbitTarget(MeshTransform.GetLocation(), 2.0f);
+        SetOrbitTarget(MeshTransform.GetLocalLocation(), 2.0f);
         SetCameraMode(EEditorCameraMode::Orbit);
 
         CMaterialInterface* Material = CastAsserted<CMaterialInterface>(Asset.Get());

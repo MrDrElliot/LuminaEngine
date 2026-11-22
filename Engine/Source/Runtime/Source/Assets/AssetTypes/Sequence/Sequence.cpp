@@ -84,17 +84,17 @@ namespace Lumina
         // Each channel group is opt-in, so a track can drive rotation while gameplay keeps owning position.
         if (Location.bEnabled)
         {
-            Transform->SetLocation(Location.Evaluate(Context.Time));
+            Transform->SetLocalLocation(Location.Evaluate(Context.Time));
         }
 
         if (Rotation.bEnabled)
         {
-            Transform->SetRotation(Math::FromYawFirstEuler(Math::Radians(Rotation.Evaluate(Context.Time))));
+            Transform->SetLocalRotation(Math::FromYawFirstEuler(Math::Radians(Rotation.Evaluate(Context.Time))));
         }
 
         if (Scale.bEnabled)
         {
-            Transform->SetScale(Scale.Evaluate(Context.Time));
+            Transform->SetLocalScale(Scale.Evaluate(Context.Time));
         }
     }
 
@@ -516,7 +516,7 @@ namespace Lumina
         }
 
         const FQuat Aim = Math::FindLookAtRotation(To, From);
-        Transform->SetRotation(Amount >= 1.0f ? Aim : Math::Slerp(Transform->GetRotation(), Aim, Amount));
+        Transform->SetLocalRotation(Amount >= 1.0f ? Aim : Math::Slerp(Transform->GetLocalRotation(), Aim, Amount));
     }
 
     void FSequenceInstance::Bind(const CSequence* Sequence, CWorld* World)
@@ -599,9 +599,9 @@ namespace Lumina
             {
                 FRestoreEntry Entry;
                 Entry.Entity = Entity;
-                Entry.Location = Transform->GetLocation();
-                Entry.Rotation = Transform->GetRotation();
-                Entry.Scale = Transform->GetScale();
+                Entry.Location = Transform->GetLocalLocation();
+                Entry.Rotation = Transform->GetLocalRotation();
+                Entry.Scale = Transform->GetLocalScale();
                 RestoreState.Add(Entry);
             }
         }
@@ -650,9 +650,9 @@ namespace Lumina
 
                     if (STransformComponent* Transform = World->TryGetComponent<STransformComponent>(Entry.Entity))
                     {
-                        Transform->SetLocation(Entry.Location);
-                        Transform->SetRotation(Entry.Rotation);
-                        Transform->SetScale(Entry.Scale);
+                        Transform->SetLocalLocation(Entry.Location);
+                        Transform->SetLocalRotation(Entry.Rotation);
+                        Transform->SetLocalScale(Entry.Scale);
                     }
                 }
             }

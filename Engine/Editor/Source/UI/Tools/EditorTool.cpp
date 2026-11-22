@@ -603,8 +603,8 @@ namespace Lumina
         GetDefaultCameraPose(CameraLocation, CameraTarget);
 
         STransformComponent& CameraTransform = World->GetComponent<STransformComponent>(EditorEntity);
-        CameraTransform.SetLocation(CameraLocation);
-        CameraTransform.SetRotation(Math::FindLookAtRotation(CameraTarget, CameraLocation));
+        CameraTransform.SetLocalLocation(CameraLocation);
+        CameraTransform.SetLocalRotation(Math::FindLookAtRotation(CameraTarget, CameraLocation));
 
         World->GetCamera()->SetActiveCamera(EditorEntity);
     }
@@ -827,8 +827,8 @@ namespace Lumina
 
         STransformComponent& Transform = World->GetComponent<STransformComponent>(EditorEntity);
 
-        const FVector3 StartLocation = Transform.GetLocation();
-        const FQuat    StartRotation = Transform.GetRotation();
+        const FVector3 StartLocation = Transform.GetLocalLocation();
+        const FQuat    StartRotation = Transform.GetLocalRotation();
 
         FVector3 Pivot = CameraState.OrbitTarget;
         if (CameraState.Mode == EEditorCameraMode::Free)
@@ -845,7 +845,7 @@ namespace Lumina
                     }
                 }
 
-                CameraState.ViewGizmoPivot = StartLocation + Transform.GetForward() * PivotDistance;
+                CameraState.ViewGizmoPivot = StartLocation + Transform.GetLocalForward() * PivotDistance;
             }
 
             Pivot = CameraState.ViewGizmoPivot;
@@ -927,8 +927,8 @@ namespace Lumina
             Location -= DollyDelta;
         }
 
-        Transform.SetLocation(Location);
-        Transform.SetRotation(Rotation);
+        Transform.SetLocalLocation(Location);
+        Transform.SetLocalRotation(Rotation);
 
         // Carry both free-mode pivots along so a following tumble doesn't snap the view.
         CameraState.ViewGizmoPivot += PanDelta;
@@ -1552,7 +1552,7 @@ namespace Lumina
             return;
         }
 
-        FVector3 CurrentForward = EditorTransform.GetForward();
+        FVector3 CurrentForward = EditorTransform.GetLocalForward();
         CameraState.FocusFreePosition = EntityWorldLocation - CurrentForward * FocusDistance;
         CameraState.FocusFreeRotation = Math::FindLookAtRotation(EntityWorldLocation, CameraState.FocusFreePosition);
         CameraState.bFocusInterp      = true;
@@ -1570,7 +1570,7 @@ namespace Lumina
             && World->IsValidEntity(EditorEntity))
         {
             const STransformComponent& Transform = World->GetComponent<STransformComponent>(EditorEntity);
-            const FVector3 Position = Transform.GetLocation();
+            const FVector3 Position = Transform.GetLocalLocation();
             const FVector3 Offset   = Position - CameraState.OrbitTarget;
             const float Distance = Math::Length(Offset);
 
@@ -1626,7 +1626,7 @@ namespace Lumina
             && EditorEntity != ECS::NullEntity && World->IsValidEntity(EditorEntity)
             && World->HasComponent<STransformComponent>(EditorEntity))
         {
-            const FVector3 Location = World->GetComponent<STransformComponent>(EditorEntity).GetLocation();
+            const FVector3 Location = World->GetComponent<STransformComponent>(EditorEntity).GetLocalLocation();
             const float Distance = Math::Distance(Location, CameraState.LastFocusPoint);
             if (Distance > 0.1f)
             {
@@ -1679,7 +1679,7 @@ namespace Lumina
         }
 
         STransformComponent& Transform = World->GetComponent<STransformComponent>(EditorEntity);
-        Transform.SetLocation(Transform.GetLocation() + Delta);
+        Transform.SetLocalLocation(Transform.GetLocalLocation() + Delta);
     }
 
     void FEditorTool::ApplyOrbitTransform()
@@ -1702,8 +1702,8 @@ namespace Lumina
 
         const FVector3 NewPosition = CameraState.OrbitTarget + Offset;
         STransformComponent& Transform = World->GetComponent<STransformComponent>(EditorEntity);
-        Transform.SetLocation(NewPosition);
-        Transform.SetRotation(Math::FindLookAtRotation(CameraState.OrbitTarget, NewPosition));
+        Transform.SetLocalLocation(NewPosition);
+        Transform.SetLocalRotation(Math::FindLookAtRotation(CameraState.OrbitTarget, NewPosition));
     }
 
     void FEditorTool::DrawCameraModeSelector(float ItemWidth)
@@ -1860,15 +1860,15 @@ namespace Lumina
                 const float Alpha = 1.0f - std::exp(-CameraState.FocusInterpRate * static_cast<float>(DeltaTime));
                 if (CameraState.Mode == EEditorCameraMode::Free)
                 {
-                    const FVector3 NewLoc = Math::Mix(Transform.GetLocation(), CameraState.FocusFreePosition, Alpha);
-                    const FQuat NewRot = Math::Slerp(Transform.GetRotation(), CameraState.FocusFreeRotation, Alpha);
-                    Transform.SetLocation(NewLoc);
-                    Transform.SetRotation(NewRot);
+                    const FVector3 NewLoc = Math::Mix(Transform.GetLocalLocation(), CameraState.FocusFreePosition, Alpha);
+                    const FQuat NewRot = Math::Slerp(Transform.GetLocalRotation(), CameraState.FocusFreeRotation, Alpha);
+                    Transform.SetLocalLocation(NewLoc);
+                    Transform.SetLocalRotation(NewRot);
 
                     if (Math::Distance(NewLoc, CameraState.FocusFreePosition) < 1e-3f)
                     {
-                        Transform.SetLocation(CameraState.FocusFreePosition);
-                        Transform.SetRotation(CameraState.FocusFreeRotation);
+                        Transform.SetLocalLocation(CameraState.FocusFreePosition);
+                        Transform.SetLocalRotation(CameraState.FocusFreeRotation);
                         CameraState.bFocusInterp = false;
                     }
                 }
@@ -1906,9 +1906,9 @@ namespace Lumina
                     CameraState.OrthoFreeDistance - static_cast<float>(WheelDelta) * Zoom, 0.05f);
             }
 
-            const FVector3 Forward = Transform.GetForward();
-            const FVector3 Right   = Transform.GetRight();
-            const FVector3 Up      = Transform.GetUp();
+            const FVector3 Forward = Transform.GetLocalForward();
+            const FVector3 Right   = Transform.GetLocalRight();
+            const FVector3 Up      = Transform.GetLocalUp();
 
             // The pivot is captured once on the rising edge and owns the transform for the whole drag.
             if (bWantOrbitDrag)
@@ -1919,21 +1919,21 @@ namespace Lumina
                     float PivotDistance = 10.0f;
                     if (CameraState.bHasLastFocusPoint)
                     {
-                        const float FocusDistance = Math::Distance(Transform.GetLocation(), CameraState.LastFocusPoint);
+                        const float FocusDistance = Math::Distance(Transform.GetLocalLocation(), CameraState.LastFocusPoint);
                         if (FocusDistance > 0.1f)
                         {
                             PivotDistance = FocusDistance;
                         }
                     }
 
-                    CameraState.FreeOrbitPivot       = Transform.GetLocation() + Forward * PivotDistance;
+                    CameraState.FreeOrbitPivot       = Transform.GetLocalLocation() + Forward * PivotDistance;
                     CameraState.FreeOrbitDistance    = PivotDistance;
                     CameraState.bFreeOrbitPivotValid = true;
                     CameraState.bFreeOrbitActive     = true;
                     CameraState.Velocity             = FVector3(0.0f);
                 }
 
-                const FVector3 Offset = Transform.GetLocation() - CameraState.FreeOrbitPivot;
+                const FVector3 Offset = Transform.GetLocalLocation() - CameraState.FreeOrbitPivot;
                 const float Distance  = Math::Max(Math::Length(Offset), 0.05f);
 
                 // Spherical form and 0.4 sensitivity match ApplyOrbitTransform so both modes tumble identically.
@@ -1953,8 +1953,8 @@ namespace Lumina
                     Distance * std::cos(PitchRad) * std::cos(YawRad));
 
                 const FVector3 NewLocation = CameraState.FreeOrbitPivot + NewOffset;
-                Transform.SetLocation(NewLocation);
-                Transform.SetRotation(Math::FindLookAtRotation(CameraState.FreeOrbitPivot, NewLocation));
+                Transform.SetLocalLocation(NewLocation);
+                Transform.SetLocalRotation(Math::FindLookAtRotation(CameraState.FreeOrbitPivot, NewLocation));
                 CameraState.FreeOrbitDistance = Distance;
                 return;
             }
@@ -1989,7 +1989,7 @@ namespace Lumina
             // Analytic decay; explicit Euler (v -= v*Drag*dt) flips sign below 10 FPS and stutters.
             CameraState.Velocity *= std::exp(-Drag * static_cast<float>(DeltaTime));
 
-            Transform.Translate(CameraState.Velocity * static_cast<float>(DeltaTime) * CameraState.SpeedScale);
+            Transform.AddLocalLocation(CameraState.Velocity * static_cast<float>(DeltaTime) * CameraState.SpeedScale);
 
             // Signs match the orbit pan so both modes feel the same, scaled to stay sane at any working scale.
             if (bWantPanDrag)
@@ -2003,7 +2003,7 @@ namespace Lumina
                 const float PanScale = PanReference * 0.002f;
                 const FVector3 PanDelta = (Up * static_cast<float>(Raw.GetMouseDeltaY()) * PanScale)
                                         + (Right * static_cast<float>(Raw.GetMouseDeltaX()) * PanScale);
-                Transform.Translate(PanDelta);
+                Transform.AddLocalLocation(PanDelta);
 
                 if (CameraState.bFreeOrbitPivotValid)
                 {
@@ -2042,8 +2042,8 @@ namespace Lumina
                 if (bWantPan || bWantPanDrag)
                 {
                     const float PanScale = CameraState.OrbitDistance * 0.002f;
-                    const FVector3 Right = Transform.GetRight();
-                    const FVector3 Up    = Transform.GetUp();
+                    const FVector3 Right = Transform.GetLocalRight();
+                    const FVector3 Up    = Transform.GetLocalUp();
                     CameraState.OrbitTarget += Right * static_cast<float>(Raw.GetMouseDeltaX()) * PanScale;
                     CameraState.OrbitTarget += Up    * static_cast<float>(Raw.GetMouseDeltaY()) * PanScale;
                 }
@@ -2693,7 +2693,7 @@ namespace Lumina
             FVector3 TerrainOrigin(0.0f);
             if (const STransformComponent* TerrainTransform = Registry.TryGet<STransformComponent>(Entity))
             {
-                TerrainOrigin = TerrainTransform->GetLocation();
+                TerrainOrigin = TerrainTransform->GetLocalLocation();
             }
 
             FVector3 TerrainHit;

@@ -1443,6 +1443,7 @@ namespace Lumina
             ShadowCacheStatic  = BIT(12),
             ShadowCacheDynamic = BIT(13),
             VirtualShadow      = BIT(14),
+            MoversOnly         = BIT(15),
         };
     }
 

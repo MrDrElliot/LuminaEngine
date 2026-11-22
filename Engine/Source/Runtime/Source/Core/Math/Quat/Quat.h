@@ -43,10 +43,10 @@ namespace Lumina
         constexpr TQuat(T InW, const TVec<T, 3>& V) : x(V.x), y(V.y), z(V.z), w(InW) {}
 
         // From euler angles in radians.
-        explicit TQuat(const TVec<T, 3>& EulerRadians)
+        constexpr explicit TQuat(const TVec<T, 3>& EulerRadians)
         {
-            const TVec<T, 3> C(std::cos(EulerRadians.x * T(0.5)), std::cos(EulerRadians.y * T(0.5)), std::cos(EulerRadians.z * T(0.5)));
-            const TVec<T, 3> S(std::sin(EulerRadians.x * T(0.5)), std::sin(EulerRadians.y * T(0.5)), std::sin(EulerRadians.z * T(0.5)));
+            const TVec<T, 3> C(Math::Cos(EulerRadians.x * T(0.5)), Math::Cos(EulerRadians.y * T(0.5)), Math::Cos(EulerRadians.z * T(0.5)));
+            const TVec<T, 3> S(Math::Sin(EulerRadians.x * T(0.5)), Math::Sin(EulerRadians.y * T(0.5)), Math::Sin(EulerRadians.z * T(0.5)));
 
             w = C.x * C.y * C.z + S.x * S.y * S.z;
             x = S.x * C.y * C.z - C.x * S.y * S.z;
@@ -141,13 +141,13 @@ namespace Lumina::Math
     }
 
     template<typename T>
-    [[nodiscard]] T Length(const TQuat<T>& Q)
+    [[nodiscard]] constexpr T Length(const TQuat<T>& Q)
     {
-        return static_cast<T>(std::sqrt(LengthSquared(Q)));
+        return Sqrt(LengthSquared(Q));
     }
 
     template<typename T>
-    [[nodiscard]] TQuat<T> Normalize(const TQuat<T>& Q)
+    [[nodiscard]] constexpr TQuat<T> Normalize(const TQuat<T>& Q)
     {
         const T Len = Length(Q);
         return Len > T(0) ? Q * (T(1) / Len) : TQuat<T>::Identity();
@@ -168,28 +168,28 @@ namespace Lumina::Math
     }
 
     template<typename T>
-    [[nodiscard]] TQuat<T> FromAxisAngle(const TVec<T, 3>& Axis, T AngleRadians)
+    [[nodiscard]] constexpr TQuat<T> FromAxisAngle(const TVec<T, 3>& Axis, T AngleRadians)
     {
         const T Half = AngleRadians * T(0.5);
-        const T S = static_cast<T>(std::sin(Half));
+        const T S = Sin(Half);
         const TVec<T, 3> A = Normalize(Axis) * S;
-        return TQuat<T>(static_cast<T>(std::cos(Half)), A.x, A.y, A.z);
+        return TQuat<T>(Cos(Half), A.x, A.y, A.z);
     }
 
     // Euler angles (radians) as (pitch=x, yaw=y, roll=z).
     template<typename T>
-    [[nodiscard]] TVec<T, 3> EulerAngles(const TQuat<T>& Q)
+    [[nodiscard]] constexpr TVec<T, 3> EulerAngles(const TQuat<T>& Q)
     {
-        const T Pitch = static_cast<T>(std::atan2(T(2) * (Q.y * Q.z + Q.w * Q.x), Q.w * Q.w - Q.x * Q.x - Q.y * Q.y + Q.z * Q.z));
+        const T Pitch = Atan2(T(2) * (Q.y * Q.z + Q.w * Q.x), Q.w * Q.w - Q.x * Q.x - Q.y * Q.y + Q.z * Q.z);
         const T SinYaw = static_cast<T>(-2) * (Q.x * Q.z - Q.w * Q.y);
-        const T Yaw = static_cast<T>(std::asin(SinYaw < T(-1) ? T(-1) : (SinYaw > T(1) ? T(1) : SinYaw)));
-        const T Roll = static_cast<T>(std::atan2(T(2) * (Q.x * Q.y + Q.w * Q.z), Q.w * Q.w + Q.x * Q.x - Q.y * Q.y - Q.z * Q.z));
+        const T Yaw = Asin(SinYaw < T(-1) ? T(-1) : (SinYaw > T(1) ? T(1) : SinYaw));
+        const T Roll = Atan2(T(2) * (Q.x * Q.y + Q.w * Q.z), Q.w * Q.w + Q.x * Q.x - Q.y * Q.y - Q.z * Q.z);
         return TVec<T, 3>(Pitch, Yaw, Roll);
     }
 
     // Yaw about world up, then pitch, then roll, as (pitch=x, yaw=y, roll=z) radians, so a heading spans the full circle.
     template<typename T>
-    [[nodiscard]] TQuat<T> FromYawFirstEuler(const TVec<T, 3>& EulerRadians)
+    [[nodiscard]] constexpr TQuat<T> FromYawFirstEuler(const TVec<T, 3>& EulerRadians)
     {
         return FromAxisAngle(TVec<T, 3>(T(0), T(1), T(0)), EulerRadians.y)
              * FromAxisAngle(TVec<T, 3>(T(1), T(0), T(0)), EulerRadians.x)
@@ -198,24 +198,24 @@ namespace Lumina::Math
 
     // The inverse of FromYawFirstEuler, singular only looking straight up or down rather than along a world axis.
     template<typename T>
-    [[nodiscard]] TVec<T, 3> YawFirstEulerAngles(const TQuat<T>& Q)
+    [[nodiscard]] constexpr TVec<T, 3> YawFirstEulerAngles(const TQuat<T>& Q)
     {
         const T SinPitch = T(2) * (Q.w * Q.x - Q.y * Q.z);
-        const T Pitch = static_cast<T>(std::asin(SinPitch < T(-1) ? T(-1) : (SinPitch > T(1) ? T(1) : SinPitch)));
-        const T Yaw   = static_cast<T>(std::atan2(T(2) * (Q.x * Q.z + Q.w * Q.y), T(1) - T(2) * (Q.x * Q.x + Q.y * Q.y)));
-        const T Roll  = static_cast<T>(std::atan2(T(2) * (Q.x * Q.y + Q.w * Q.z), T(1) - T(2) * (Q.x * Q.x + Q.z * Q.z)));
+        const T Pitch = Asin(SinPitch < T(-1) ? T(-1) : (SinPitch > T(1) ? T(1) : SinPitch));
+        const T Yaw   = Atan2(T(2) * (Q.x * Q.z + Q.w * Q.y), T(1) - T(2) * (Q.x * Q.x + Q.y * Q.y));
+        const T Roll  = Atan2(T(2) * (Q.x * Q.y + Q.w * Q.z), T(1) - T(2) * (Q.x * Q.x + Q.z * Q.z));
         return TVec<T, 3>(Pitch, Yaw, Roll);
     }
 
     // Double cover means -Q is the same orientation, so the sign of the dot carries no information.
     template<typename T>
-    [[nodiscard]] bool IsSameRotation(const TQuat<T>& A, const TQuat<T>& B, T Epsilon = T(1e-6))
+    [[nodiscard]] constexpr bool IsSameRotation(const TQuat<T>& A, const TQuat<T>& B, T Epsilon = T(1e-6))
     {
         return Abs(Dot(A, B)) >= T(1) - Epsilon;
     }
 
     template<typename T>
-    [[nodiscard]] TQuat<T> Slerp(const TQuat<T>& A, const TQuat<T>& B, T Alpha)
+    [[nodiscard]] constexpr TQuat<T> Slerp(const TQuat<T>& A, const TQuat<T>& B, T Alpha)
     {
         T CosTheta = Dot(A, B);
         TQuat<T> End = B;
@@ -233,10 +233,10 @@ namespace Lumina::Math
             return Normalize(A + (End + (-A)) * Alpha);
         }
 
-        const T Theta = static_cast<T>(std::acos(CosTheta));
-        const T SinTheta = static_cast<T>(std::sin(Theta));
-        const T WA = static_cast<T>(std::sin((T(1) - Alpha) * Theta)) / SinTheta;
-        const T WB = static_cast<T>(std::sin(Alpha * Theta)) / SinTheta;
+        const T Theta = Acos(CosTheta);
+        const T SinTheta = Sin(Theta);
+        const T WA = Sin((T(1) - Alpha) * Theta) / SinTheta;
+        const T WB = Sin(Alpha * Theta) / SinTheta;
         return A * WA + End * WB;
     }
 

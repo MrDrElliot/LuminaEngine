@@ -58,6 +58,8 @@ namespace Lumina
         PropertyPacket    = 19,// host to client, numbered unreliable PropertyUpdates
         PropertyAck       = 20,// client to host, which property packets arrived
         PropertyFence     = 21,// host to client, reliably after spawns, the first property packet that may touch them
+        TearOffEntity     = 22,// host to clients, the entity stops being networked and stays as a local copy
+        EventMessage      = 23,// either way, a net message raised as an event where it lands
     };
 
     // CObject-ref net-index cache, exported once over a reliable stream and replayed to late joiners.
@@ -277,6 +279,16 @@ namespace Lumina
         // Server side, adopted stable NetGUIDs still live, diffed each tick so a destroyed level entity despawns for clients.
         TVector<uint32>               KnownStableGuids;
 
+        // Net messages queued per destination connection, sent with the RPCs. Locked, since a parallel system may send.
+        FMutex                           MessageLock;
+        THashMap<uint32, TVector<uint8>> PendingMessages;
+
+        // The event type each arriving message names, found once by scanning the registered types.
+        THashMap<uint32, ECS::FComponentTypeID> MessageTypes;
+
+        // Server, entities torn off since the last send, whose networking ends before anything replicates this tick.
+        TVector<ECS::FEntity>         PendingTearOffs;
+
         // Server side, stable NetGUIDs destroyed at runtime, replayed to late joiners so they remove copies.
         TVector<uint32>               DestroyedStableGuids;
 
@@ -322,6 +334,11 @@ namespace Lumina
         
         // Per-connection relevancy and send schedule, created on connect and erased on disconnect without touching GuidTable.
         THashMap<uint32, FNetClientView> ClientViews;
+
+        // Host, the change tick of the last scan for writes to replicated component fields, and each pool's write epoch then, so an untouched pool is skipped.
+        uint32                           ReplicatedChangeTick = 0;
+        TVector<uint64>                  ReplicatedWriteEpochs;
+        TVector<ECS::FEntity>            ReplicatedChangeScratch;
 
         // Map entities exist on every client, while a spawned one only on clients it is relevant to.
         bool HoldsEntity(uint32 Connection, uint32 Guid) const

@@ -44,7 +44,7 @@ namespace
             Dt = 1.0f / Math::Max(10.0f, SavedSettings.PhysicsHz);
 
             const ECS::FEntity Ground = Registry->Create();
-            Registry->Emplace<STransformComponent>(Ground).SetLocation(FVector3(0.0f, -0.5f, 0.0f));
+            Registry->Emplace<STransformComponent>(Ground).SetLocalLocation(FVector3(0.0f, -0.5f, 0.0f));
             Registry->Emplace<SRigidBodyComponent>(Ground).BodyType = EBodyType::Static;
             Registry->Emplace<SBoxColliderComponent>(Ground).HalfExtent = FVector3(100.0f, 0.5f, 100.0f);
         }
@@ -100,7 +100,7 @@ namespace
             Constraint.ChildBone  = FName("limb");
 
             const ECS::FEntity Owner = Registry->Create();
-            Registry->Emplace<STransformComponent>(Owner).SetLocation(At);
+            Registry->Emplace<STransformComponent>(Owner).SetLocalLocation(At);
             SRagdollComponent& Ragdoll = Registry->Emplace<SRagdollComponent>(Owner);
             Ragdoll.State = ERagdollState::Simulated;
 

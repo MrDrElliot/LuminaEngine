@@ -718,6 +718,8 @@ namespace Lumina
 
                 WeatherOcclusionPass(CL);
                 WeatherInteractionPass(CL);
+                GroundFogObstaclePass(CL);
+                GroundFogSimPass(CL);
 
                 LightFunctionPass(CL);
 
@@ -752,6 +754,7 @@ namespace Lumina
                 FroxelInjectPass(CL);
                 FroxelIntegratePass(CL);
                 FogShaftPass(CL);
+                GroundFogMarchPass(CL);
 
                 // Here rather than at the end, since nothing later reads the past and the next frame's cull may rewrite the present after this.
                 RHI::CmdBarrier(CL,
@@ -852,6 +855,7 @@ namespace Lumina
 
                 WeatherDrawPass(CL);
                 ReleaseIdleWeatherResources();
+                ReleaseIdleGroundFogResources();
 
                 {
                     SCENE_GPU_SCOPE(CL, "Billboards");
@@ -1049,6 +1053,7 @@ namespace Lumina
         FroxelInjectPass(CL);
         FroxelIntegratePass(CL);
         FogShaftPass(CL);
+        GroundFogMarchPass(CL);
         AtmosphereCompositePass(CL);
         WaterPass(CL);
         TransparentPass(CL);
@@ -1427,6 +1432,8 @@ namespace Lumina
         case ENamedImage::SSRMipLevel:        return "Scene.SSRMipLevel";
         case ENamedImage::FogShaft:           return "Scene.FogShaft";
         case ENamedImage::FogShaftDepth:      return "Scene.FogShaftDepth";
+        case ENamedImage::GroundFog:          return "Scene.GroundFog";
+        case ENamedImage::GroundFogDepth:     return "Scene.GroundFogDepth";
         case ENamedImage::DepthAttachment:    return "Scene.DepthAttachment";
         case ENamedImage::DepthPyramid:       return "Scene.DepthPyramid";
         case ENamedImage::Picker:             return "Scene.Picker";
@@ -1538,6 +1545,8 @@ namespace Lumina
         case ENamedImage::SSRMipLevel:
         case ENamedImage::FogShaft:
         case ENamedImage::FogShaftDepth:
+        case ENamedImage::GroundFog:
+        case ENamedImage::GroundFogDepth:
         case ENamedImage::CustomDepth:
         case ENamedImage::CustomDepthVis:
         case ENamedImage::CustomStencil:
@@ -1688,8 +1697,10 @@ namespace Lumina
         // Half resolution, the far-field fog segment AtmosphereComposite upsamples by the depth each texel marched against.
         case ENamedImage::FogShaft:
         case ENamedImage::FogShaftDepth:
+        case ENamedImage::GroundFog:
+        case ENamedImage::GroundFogDepth:
             OutDesc.Dimension = FUIntVector3((Extent.x + 1u) / 2u, (Extent.y + 1u) / 2u, 1);
-            OutDesc.Format    = (Image == ENamedImage::FogShaft) ? EFormat::RGBA16_FLOAT : EFormat::R32_FLOAT;
+            OutDesc.Format    = (Image == ENamedImage::FogShaft || Image == ENamedImage::GroundFog) ? EFormat::RGBA16_FLOAT : EFormat::R32_FLOAT;
             OutDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             return true;
 
@@ -1836,6 +1847,10 @@ namespace Lumina
         const bool bFogShafts = Frame.Volumetrics.bHasFog && Frame.Volumetrics.FarShaftSteps > 0u;
         Want(ENamedImage::FogShaft,         bFogShafts, /*bMipUAVs*/ true);
         Want(ENamedImage::FogShaftDepth,    bFogShafts, /*bMipUAVs*/ true);
+
+        const bool bGroundFog = !Frame.GroundFog.Layers.IsEmpty();
+        Want(ENamedImage::GroundFog,        bGroundFog, /*bMipUAVs*/ true);
+        Want(ENamedImage::GroundFogDepth,   bGroundFog, /*bMipUAVs*/ true);
 
         const bool bCustomDepth = View.bIsPrimary && Frame.Views.CustomDepthCullView != Constants::kIndexNoneU32;
         Want(ENamedImage::CustomDepth,      bCustomDepth);
