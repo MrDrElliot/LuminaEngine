@@ -109,20 +109,43 @@ internal static class SystemParams
     }
 }
 
-// One component a query names and how it may touch it: Read<T> or Write<T>.
-public interface IQueryTerm<TSelf> where TSelf : struct, IQueryTerm<TSelf>
+[EditorBrowsable(EditorBrowsableState.Never)]
+public enum QueryArgKind
+{
+    Read,
+    Write,
+    With,
+    Without,
+    Changed,
+    Added,
+}
+
+// One argument of a TQuery, either a term the callback receives or a filter that only narrows the walk.
+public interface IQueryArg<TSelf> where TSelf : struct, IQueryArg<TSelf>
 {
     [EditorBrowsable(EditorBrowsableState.Never)]
     static abstract IntPtr Token { get; }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
-    static abstract bool IsWrite { get; }
+    static abstract QueryArgKind Kind { get; }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
     static abstract string ComponentName { get; }
+}
+
+// One component a query hands its callback and how it may touch it, Read<T> or Write<T>.
+public interface IQueryTerm<TSelf> : IQueryArg<TSelf> where TSelf : struct, IQueryTerm<TSelf>
+{
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    static abstract bool IsWrite { get; }
 
     [EditorBrowsable(EditorBrowsableState.Never)]
     static abstract unsafe TSelf At(nint Component, uint* Tick, uint Now);
+}
+
+// A component a query matches on without handing it to the callback, With<T>, Without<T>, Changed<T> or Added<T>.
+public interface IQueryFilter<TSelf> : IQueryArg<TSelf> where TSelf : struct, IQueryFilter<TSelf>
+{
 }
 
 // A query term that reads T in place, so the system runs beside any other reader of T. Its Value, T.ReadOnly, is a generated extension.
@@ -138,9 +161,10 @@ public readonly unsafe struct Read<T> : IQueryTerm<Read<T>> where T : struct, IC
     [EditorBrowsable(EditorBrowsableState.Never)]
     public nint Address => Pointer;
 
-    static IntPtr IQueryTerm<Read<T>>.Token => ComponentOps<T>.Token;
+    static IntPtr IQueryArg<Read<T>>.Token => ComponentOps<T>.Token;
+    static QueryArgKind IQueryArg<Read<T>>.Kind => QueryArgKind.Read;
+    static string IQueryArg<Read<T>>.ComponentName => T.NativeName;
     static bool IQueryTerm<Read<T>>.IsWrite => false;
-    static string IQueryTerm<Read<T>>.ComponentName => T.NativeName;
     static Read<T> IQueryTerm<Read<T>>.At(nint Component, uint* Tick, uint Now) => new(Component);
 }
 
@@ -196,56 +220,43 @@ public readonly unsafe struct Write<T> : IQueryTerm<Write<T>> where T : struct, 
     // For a write no Changed<T> reader should see.
     public ref T BypassChangeDetection() => ref Unsafe.AsRef<T>((void*)Pointer);
 
-    static IntPtr IQueryTerm<Write<T>>.Token => ComponentOps<T>.Token;
+    static IntPtr IQueryArg<Write<T>>.Token => ComponentOps<T>.Token;
+    static QueryArgKind IQueryArg<Write<T>>.Kind => QueryArgKind.Write;
+    static string IQueryArg<Write<T>>.ComponentName => T.NativeName;
     static bool IQueryTerm<Write<T>>.IsWrite => true;
-    static string IQueryTerm<Write<T>>.ComponentName => T.NativeName;
     static Write<T> IQueryTerm<Write<T>>.At(nint Component, uint* Tick, uint Now) => new(Component, Tick, Now);
 }
 
-internal interface IQueryExclude
+// Leaves out entities carrying T, like ECS::Without.
+public readonly struct Without<T> : IQueryFilter<Without<T>> where T : struct, IComponent<T>
 {
-    IntPtr Token { get; }
+    static IntPtr IQueryArg<Without<T>>.Token => ComponentOps<T>.Token;
+    static QueryArgKind IQueryArg<Without<T>>.Kind => QueryArgKind.Without;
+    static string IQueryArg<Without<T>>.ComponentName => T.NativeName;
 }
 
-internal interface IQueryRequire
+// Keeps only entities carrying T without reading it, like ECS::With, so the query runs beside systems writing T.
+public readonly struct With<T> : IQueryFilter<With<T>> where T : struct, IComponent<T>
 {
-    IntPtr Token { get; }
+    static IntPtr IQueryArg<With<T>>.Token => ComponentOps<T>.Token;
+    static QueryArgKind IQueryArg<With<T>>.Kind => QueryArgKind.With;
+    static string IQueryArg<With<T>>.ComponentName => T.NativeName;
 }
 
-internal interface IQueryTickFilter
+// Keeps only entities whose T was written since the query's last full run, like ECS::Changed. T need not be a term, and reads as one.
+public readonly struct Changed<T> : IQueryFilter<Changed<T>> where T : struct, IComponent<T>
 {
-    IntPtr Token { get; }
-    bool bAdded { get; }
+    static IntPtr IQueryArg<Changed<T>>.Token => ComponentOps<T>.Token;
+    static QueryArgKind IQueryArg<Changed<T>>.Kind => QueryArgKind.Changed;
+    static string IQueryArg<Changed<T>>.ComponentName => T.NativeName;
 }
 
-// Leaves entities carrying T out of the query field it marks, like ECS::Without.
-[AttributeUsage(AttributeTargets.Field, AllowMultiple = true)]
-public sealed class WithoutAttribute<T> : Attribute, IQueryExclude where T : struct, IComponent<T>
+// Keeps only entities that gained T since the query's last full run, like ECS::Added.
+public readonly struct Added<T> : IQueryFilter<Added<T>> where T : struct, IComponent<T>
 {
-    IntPtr IQueryExclude.Token => ComponentOps<T>.Token;
-}
-
-// Keeps only entities carrying T without reading it, like ECS::With, so the field runs beside systems writing T.
-[AttributeUsage(AttributeTargets.Field, AllowMultiple = true)]
-public sealed class WithAttribute<T> : Attribute, IQueryRequire where T : struct, IComponent<T>
-{
-    IntPtr IQueryRequire.Token => ComponentOps<T>.Token;
-}
-
-// Keeps only entities whose T was written since the field's last full run, like ECS::Changed. T need not be a term, and reads as one.
-[AttributeUsage(AttributeTargets.Field, AllowMultiple = true)]
-public sealed class ChangedAttribute<T> : Attribute, IQueryTickFilter where T : struct, IComponent<T>
-{
-    IntPtr IQueryTickFilter.Token => ComponentOps<T>.Token;
-    bool IQueryTickFilter.bAdded => false;
-}
-
-// Keeps only entities that gained T since the field's last full run, like ECS::Added.
-[AttributeUsage(AttributeTargets.Field, AllowMultiple = true)]
-public sealed class AddedAttribute<T> : Attribute, IQueryTickFilter where T : struct, IComponent<T>
-{
-    IntPtr IQueryTickFilter.Token => ComponentOps<T>.Token;
-    bool IQueryTickFilter.bAdded => true;
+    static IntPtr IQueryArg<Added<T>>.Token => ComponentOps<T>.Token;
+    static QueryArgKind IQueryArg<Added<T>>.Kind => QueryArgKind.Added;
+    static string IQueryArg<Added<T>>.ComponentName => T.NativeName;
 }
 
 public delegate ref TField FieldOf<T, TField>(in T Row);
@@ -255,9 +266,52 @@ public delegate void QueryFunc<T1, T2>(FEntity Entity, T1 First, T2 Second);
 public delegate void QueryFunc<T1, T2, T3>(FEntity Entity, T1 First, T2 Second, T3 Third);
 public delegate void QueryFunc<T1, T2, T3, T4>(FEntity Entity, T1 First, T2 Second, T3 Third, T4 Fourth);
 
-internal readonly record struct QueryTermInfo(IntPtr Token, bool bWrite, string Name)
+// A ForEach body as a struct, which the JIT compiles into the walk itself rather than calling through a delegate. Passed by ref, so its fields carry back what it gathered.
+public interface IQueryFunc<T1>
 {
-    public static QueryTermInfo Of<T>() where T : struct, IQueryTerm<T> => new(T.Token, T.IsWrite, T.ComponentName);
+    void Invoke(FEntity Entity, T1 First);
+}
+
+public interface IQueryFunc<T1, T2>
+{
+    void Invoke(FEntity Entity, T1 First, T2 Second);
+}
+
+public interface IQueryFunc<T1, T2, T3>
+{
+    void Invoke(FEntity Entity, T1 First, T2 Second, T3 Third);
+}
+
+public interface IQueryFunc<T1, T2, T3, T4>
+{
+    void Invoke(FEntity Entity, T1 First, T2 Second, T3 Third, T4 Fourth);
+}
+
+internal readonly struct DelegateFunc<T1>(QueryFunc<T1> Func) : IQueryFunc<T1>
+{
+    public void Invoke(FEntity Entity, T1 First) => Func(Entity, First);
+}
+
+internal readonly struct DelegateFunc<T1, T2>(QueryFunc<T1, T2> Func) : IQueryFunc<T1, T2>
+{
+    public void Invoke(FEntity Entity, T1 First, T2 Second) => Func(Entity, First, Second);
+}
+
+internal readonly struct DelegateFunc<T1, T2, T3>(QueryFunc<T1, T2, T3> Func) : IQueryFunc<T1, T2, T3>
+{
+    public void Invoke(FEntity Entity, T1 First, T2 Second, T3 Third) => Func(Entity, First, Second, Third);
+}
+
+internal readonly struct DelegateFunc<T1, T2, T3, T4>(QueryFunc<T1, T2, T3, T4> Func) : IQueryFunc<T1, T2, T3, T4>
+{
+    public void Invoke(FEntity Entity, T1 First, T2 Second, T3 Third, T4 Fourth) => Func(Entity, First, Second, Third, Fourth);
+}
+
+internal readonly record struct QueryArgInfo(IntPtr Token, QueryArgKind Kind, string Name)
+{
+    public static QueryArgInfo Of<T>() where T : struct, IQueryArg<T> => new(T.Token, T.Kind, T.ComponentName);
+
+    public bool bTerm => Kind is QueryArgKind.Read or QueryArgKind.Write;
 }
 
 // What every arity of TQuery shares: the view it opens, the access it declares and the parallel split.
@@ -272,11 +326,17 @@ public abstract unsafe class QueryParam : SystemParam
     {
     }
 
-    private protected abstract QueryTermInfo[] Terms { get; }
+    private protected abstract QueryArgInfo[] Args { get; }
+
+    private IntPtr[] TokensOf(QueryArgKind Kind) => Args.Where(Arg => Arg.Kind == Kind).Select(Arg => Arg.Token).Distinct().ToArray();
 
     private protected override void Describe(SystemParamBlock* Into, FieldInfo Field)
     {
-        QueryTermInfo[] Named = Terms;
+        QueryArgInfo[] Named = Args.TakeWhile(Arg => Arg.bTerm).ToArray();
+        if (Named.Length == 0 || Args.Skip(Named.Length).Any(Arg => Arg.bTerm))
+        {
+            throw new InvalidOperationException($"Query field '{Field.Name}' must list its Read and Write terms first, then its filters.");
+        }
         Tokens = new IntPtr[Named.Length];
         Into->Kind = SystemParamBlock.KindQuery;
         Into->NumIncludes = Named.Length;
@@ -284,10 +344,10 @@ public abstract unsafe class QueryParam : SystemParam
         {
             Tokens[Index] = Named[Index].Token;
             Into->Includes[Index] = Named[Index].Token;
-            Into->WriteMask |= Named[Index].bWrite ? 1u << Index : 0u;
+            Into->WriteMask |= Named[Index].Kind == QueryArgKind.Write ? 1u << Index : 0u;
         }
 
-        ExcludeTokens = Field.GetCustomAttributes().OfType<IQueryExclude>().Select(Without => Without.Token).Distinct().ToArray();
+        ExcludeTokens = TokensOf(QueryArgKind.Without);
         if (ExcludeTokens.Length > SystemParamBlock.MaxExcludes)
         {
             throw new InvalidOperationException($"Query field '{Field.Name}' excludes {ExcludeTokens.Length} components; at most {SystemParamBlock.MaxExcludes} are supported.");
@@ -298,7 +358,7 @@ public abstract unsafe class QueryParam : SystemParam
             Into->Excludes[Index] = ExcludeTokens[Index];
         }
 
-        RequireTokens = Field.GetCustomAttributes().OfType<IQueryRequire>().Select(With => With.Token).Distinct().ToArray();
+        RequireTokens = TokensOf(QueryArgKind.With);
         if (RequireTokens.Length > SystemParamBlock.MaxRequires)
         {
             throw new InvalidOperationException($"Query field '{Field.Name}' requires {RequireTokens.Length} components through With; at most {SystemParamBlock.MaxRequires} are supported.");
@@ -313,7 +373,7 @@ public abstract unsafe class QueryParam : SystemParam
             Into->Requires[Index] = RequireTokens[Index];
         }
 
-        IQueryTickFilter[] Filters = Field.GetCustomAttributes().OfType<IQueryTickFilter>().DistinctBy(Filter => (Filter.Token, Filter.bAdded)).ToArray();
+        QueryArgInfo[] Filters = Args.Where(Arg => Arg.Kind is QueryArgKind.Changed or QueryArgKind.Added).Distinct().ToArray();
         if (Filters.Length > SystemParamBlock.MaxFilters)
         {
             throw new InvalidOperationException($"Query field '{Field.Name}' has {Filters.Length} Changed or Added filters; at most {SystemParamBlock.MaxFilters} are supported.");
@@ -324,7 +384,7 @@ public abstract unsafe class QueryParam : SystemParam
         {
             FilterTokens[Index] = Filters[Index].Token;
             Into->Filters[Index] = Filters[Index].Token;
-            Into->AddedMask |= Filters[Index].bAdded ? 1u << Index : 0u;
+            Into->AddedMask |= Filters[Index].Kind == QueryArgKind.Added ? 1u << Index : 0u;
         }
     }
 
@@ -334,6 +394,8 @@ public abstract unsafe class QueryParam : SystemParam
     }
 
     private bool HasFilters => FilterTokens.Length > 0;
+
+    private QueryWalk OpenWalk() => Block != null ? new QueryWalk(Block, bApplyFilters: true) : default;
 
     private protected ViewCursor Open(bool bApplyFilters = true) => Block != null ? new ViewCursor(Block, bApplyFilters) : new ViewCursor(0, Tokens, default);
 
@@ -410,9 +472,9 @@ public abstract unsafe class QueryParam : SystemParam
 
     private void RequireTerm<TTerm>() where TTerm : struct, IQueryTerm<TTerm>
     {
-        foreach (QueryTermInfo Term in Terms)
+        foreach (QueryArgInfo Term in Args)
         {
-            if (Term.Token == TTerm.Token && (Term.bWrite || !TTerm.IsWrite))
+            if (Term.bTerm && Term.Token == TTerm.Token && (Term.Kind == QueryArgKind.Write || !TTerm.IsWrite))
             {
                 return;
             }
@@ -495,6 +557,224 @@ public abstract unsafe class QueryParam : SystemParam
         Array = Larger;
     }
 
+    internal void Each<T1, TFunc>(ref TFunc Func) where T1 : struct, IQueryTerm<T1> where TFunc : struct, IQueryFunc<T1>
+    {
+        QueryWalk Walk = OpenWalk();
+        try
+        {
+            uint* Snapshot = Walk.Snapshot;
+            RowProbe* Probes = Walk.Probes;
+            int InPlace = Walk.InPlaceInclude;
+            uint* Generation = Walk.GenerationSlot;
+            uint Seen = Walk.Seen;
+            bool bMembership = Walk.HasMembershipProbes;
+            for (int Slot = Walk.Count; Slot-- > 0;)
+            {
+                uint Entity = Snapshot[Slot];
+                if (Entity >> RowProbe.EntityIndexBits == RowProbe.TombstoneVersion)
+                {
+                    continue;
+                }
+                if (*Generation != Seen)
+                {
+                    if (Walk.Revalidate())
+                    {
+                        InPlace = Walk.InPlaceInclude;
+                    }
+                    Seen = Walk.Seen;
+                }
+                uint Dense1 = InPlace == 0 ? (uint)Slot : Probes[0].FindLiveDense(Entity);
+                if (Dense1 == RowProbe.InvalidDense)
+                {
+                    continue;
+                }
+                if (!bMembership || Walk.PassesMembership(Entity))
+                {
+                    Func.Invoke(new FEntity(Entity), T1.At(Probes[0].PayloadAt(Dense1), Probes[0].TickAt(Dense1), Walk.Now));
+                }
+            }
+        }
+        finally
+        {
+            Walk.Dispose();
+        }
+        CompleteRun();
+    }
+
+    internal void EachParallel<T1>(QueryFunc<T1> Func, int MinRange) where T1 : struct, IQueryTerm<T1>
+        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row)));
+
+    internal void Each<T1, T2, TFunc>(ref TFunc Func) where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where TFunc : struct, IQueryFunc<T1, T2>
+    {
+        QueryWalk Walk = OpenWalk();
+        try
+        {
+            uint* Snapshot = Walk.Snapshot;
+            RowProbe* Probes = Walk.Probes;
+            int InPlace = Walk.InPlaceInclude;
+            uint* Generation = Walk.GenerationSlot;
+            uint Seen = Walk.Seen;
+            bool bMembership = Walk.HasMembershipProbes;
+            for (int Slot = Walk.Count; Slot-- > 0;)
+            {
+                uint Entity = Snapshot[Slot];
+                if (Entity >> RowProbe.EntityIndexBits == RowProbe.TombstoneVersion)
+                {
+                    continue;
+                }
+                if (*Generation != Seen)
+                {
+                    if (Walk.Revalidate())
+                    {
+                        InPlace = Walk.InPlaceInclude;
+                    }
+                    Seen = Walk.Seen;
+                }
+                uint Dense1 = InPlace == 0 ? (uint)Slot : Probes[0].FindLiveDense(Entity);
+                if (Dense1 == RowProbe.InvalidDense)
+                {
+                    continue;
+                }
+                uint Dense2 = InPlace == 1 ? (uint)Slot : Probes[1].FindLiveDense(Entity);
+                if (Dense2 == RowProbe.InvalidDense)
+                {
+                    continue;
+                }
+                if (!bMembership || Walk.PassesMembership(Entity))
+                {
+                    Func.Invoke(new FEntity(Entity), T1.At(Probes[0].PayloadAt(Dense1), Probes[0].TickAt(Dense1), Walk.Now), T2.At(Probes[1].PayloadAt(Dense2), Probes[1].TickAt(Dense2), Walk.Now));
+                }
+            }
+        }
+        finally
+        {
+            Walk.Dispose();
+        }
+        CompleteRun();
+    }
+
+    internal void EachParallel<T1, T2>(QueryFunc<T1, T2> Func, int MinRange) where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2>
+        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row), Rows.At<T2>(Row + 1)));
+
+    internal void Each<T1, T2, T3, TFunc>(ref TFunc Func) where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where TFunc : struct, IQueryFunc<T1, T2, T3>
+    {
+        QueryWalk Walk = OpenWalk();
+        try
+        {
+            uint* Snapshot = Walk.Snapshot;
+            RowProbe* Probes = Walk.Probes;
+            int InPlace = Walk.InPlaceInclude;
+            uint* Generation = Walk.GenerationSlot;
+            uint Seen = Walk.Seen;
+            bool bMembership = Walk.HasMembershipProbes;
+            for (int Slot = Walk.Count; Slot-- > 0;)
+            {
+                uint Entity = Snapshot[Slot];
+                if (Entity >> RowProbe.EntityIndexBits == RowProbe.TombstoneVersion)
+                {
+                    continue;
+                }
+                if (*Generation != Seen)
+                {
+                    if (Walk.Revalidate())
+                    {
+                        InPlace = Walk.InPlaceInclude;
+                    }
+                    Seen = Walk.Seen;
+                }
+                uint Dense1 = InPlace == 0 ? (uint)Slot : Probes[0].FindLiveDense(Entity);
+                if (Dense1 == RowProbe.InvalidDense)
+                {
+                    continue;
+                }
+                uint Dense2 = InPlace == 1 ? (uint)Slot : Probes[1].FindLiveDense(Entity);
+                if (Dense2 == RowProbe.InvalidDense)
+                {
+                    continue;
+                }
+                uint Dense3 = InPlace == 2 ? (uint)Slot : Probes[2].FindLiveDense(Entity);
+                if (Dense3 == RowProbe.InvalidDense)
+                {
+                    continue;
+                }
+                if (!bMembership || Walk.PassesMembership(Entity))
+                {
+                    Func.Invoke(new FEntity(Entity), T1.At(Probes[0].PayloadAt(Dense1), Probes[0].TickAt(Dense1), Walk.Now), T2.At(Probes[1].PayloadAt(Dense2), Probes[1].TickAt(Dense2), Walk.Now), T3.At(Probes[2].PayloadAt(Dense3), Probes[2].TickAt(Dense3), Walk.Now));
+                }
+            }
+        }
+        finally
+        {
+            Walk.Dispose();
+        }
+        CompleteRun();
+    }
+
+    internal void EachParallel<T1, T2, T3>(QueryFunc<T1, T2, T3> Func, int MinRange) where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3>
+        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row), Rows.At<T2>(Row + 1), Rows.At<T3>(Row + 2)));
+
+    internal void Each<T1, T2, T3, T4, TFunc>(ref TFunc Func) where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4> where TFunc : struct, IQueryFunc<T1, T2, T3, T4>
+    {
+        QueryWalk Walk = OpenWalk();
+        try
+        {
+            uint* Snapshot = Walk.Snapshot;
+            RowProbe* Probes = Walk.Probes;
+            int InPlace = Walk.InPlaceInclude;
+            uint* Generation = Walk.GenerationSlot;
+            uint Seen = Walk.Seen;
+            bool bMembership = Walk.HasMembershipProbes;
+            for (int Slot = Walk.Count; Slot-- > 0;)
+            {
+                uint Entity = Snapshot[Slot];
+                if (Entity >> RowProbe.EntityIndexBits == RowProbe.TombstoneVersion)
+                {
+                    continue;
+                }
+                if (*Generation != Seen)
+                {
+                    if (Walk.Revalidate())
+                    {
+                        InPlace = Walk.InPlaceInclude;
+                    }
+                    Seen = Walk.Seen;
+                }
+                uint Dense1 = InPlace == 0 ? (uint)Slot : Probes[0].FindLiveDense(Entity);
+                if (Dense1 == RowProbe.InvalidDense)
+                {
+                    continue;
+                }
+                uint Dense2 = InPlace == 1 ? (uint)Slot : Probes[1].FindLiveDense(Entity);
+                if (Dense2 == RowProbe.InvalidDense)
+                {
+                    continue;
+                }
+                uint Dense3 = InPlace == 2 ? (uint)Slot : Probes[2].FindLiveDense(Entity);
+                if (Dense3 == RowProbe.InvalidDense)
+                {
+                    continue;
+                }
+                uint Dense4 = InPlace == 3 ? (uint)Slot : Probes[3].FindLiveDense(Entity);
+                if (Dense4 == RowProbe.InvalidDense)
+                {
+                    continue;
+                }
+                if (!bMembership || Walk.PassesMembership(Entity))
+                {
+                    Func.Invoke(new FEntity(Entity), T1.At(Probes[0].PayloadAt(Dense1), Probes[0].TickAt(Dense1), Walk.Now), T2.At(Probes[1].PayloadAt(Dense2), Probes[1].TickAt(Dense2), Walk.Now), T3.At(Probes[2].PayloadAt(Dense3), Probes[2].TickAt(Dense3), Walk.Now), T4.At(Probes[3].PayloadAt(Dense4), Probes[3].TickAt(Dense4), Walk.Now));
+                }
+            }
+        }
+        finally
+        {
+            Walk.Dispose();
+        }
+        CompleteRun();
+    }
+
+    internal void EachParallel<T1, T2, T3, T4>(QueryFunc<T1, T2, T3, T4> Func, int MinRange) where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4>
+        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row), Rows.At<T2>(Row + 1), Rows.At<T3>(Row + 2), Rows.At<T4>(Row + 3)));
+
     private sealed class RowBody : ScriptClosure
     {
         private readonly RowFunc Body;
@@ -521,86 +801,330 @@ public abstract unsafe class QueryParam : SystemParam
     }
 }
 
-// A system field over every entity holding the named components, for example TQuery<Write<SVelocity>, Read<STransformComponent>>.
-public sealed class TQuery<T1> : QueryParam where T1 : struct, IQueryTerm<T1>
+// A system field over every entity holding the named components, for example TQuery<Write<SVelocity>, Read<STransformComponent>, Without<SDisabledTag>>. Filters follow the terms and stay out of the callback.
+public sealed class TQuery<T1> : QueryParam where T1 : struct, IQueryArg<T1>
 {
-    private static readonly QueryTermInfo[] TermList = { QueryTermInfo.Of<T1>() };
+    private static readonly QueryArgInfo[] ArgList = { QueryArgInfo.Of<T1>() };
 
-    private protected override QueryTermInfo[] Terms => TermList;
-
-    public unsafe void ForEach(QueryFunc<T1> Func)
-    {
-        using ViewCursor Cursor = Open();
-        while (Cursor.MoveNext())
-        {
-            Func(Cursor.Entity, Cursor.Term<T1>(0));
-        }
-        CompleteRun();
-    }
-
-    public void ParallelForEach(QueryFunc<T1> Func, int MinRange = 64)
-        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row)));
+    private protected override QueryArgInfo[] Args => ArgList;
 }
 
-public sealed class TQuery<T1, T2> : QueryParam where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2>
+public sealed class TQuery<T1, T2> : QueryParam where T1 : struct, IQueryArg<T1> where T2 : struct, IQueryArg<T2>
 {
-    private static readonly QueryTermInfo[] TermList = { QueryTermInfo.Of<T1>(), QueryTermInfo.Of<T2>() };
+    private static readonly QueryArgInfo[] ArgList = { QueryArgInfo.Of<T1>(), QueryArgInfo.Of<T2>() };
 
-    private protected override QueryTermInfo[] Terms => TermList;
-
-    public unsafe void ForEach(QueryFunc<T1, T2> Func)
-    {
-        using ViewCursor Cursor = Open();
-        while (Cursor.MoveNext())
-        {
-            Func(Cursor.Entity, Cursor.Term<T1>(0), Cursor.Term<T2>(1));
-        }
-        CompleteRun();
-    }
-
-    public void ParallelForEach(QueryFunc<T1, T2> Func, int MinRange = 64)
-        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row), Rows.At<T2>(Row + 1)));
+    private protected override QueryArgInfo[] Args => ArgList;
 }
 
-public sealed class TQuery<T1, T2, T3> : QueryParam where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3>
+public sealed class TQuery<T1, T2, T3> : QueryParam where T1 : struct, IQueryArg<T1> where T2 : struct, IQueryArg<T2> where T3 : struct, IQueryArg<T3>
 {
-    private static readonly QueryTermInfo[] TermList = { QueryTermInfo.Of<T1>(), QueryTermInfo.Of<T2>(), QueryTermInfo.Of<T3>() };
+    private static readonly QueryArgInfo[] ArgList = { QueryArgInfo.Of<T1>(), QueryArgInfo.Of<T2>(), QueryArgInfo.Of<T3>() };
 
-    private protected override QueryTermInfo[] Terms => TermList;
-
-    public unsafe void ForEach(QueryFunc<T1, T2, T3> Func)
-    {
-        using ViewCursor Cursor = Open();
-        while (Cursor.MoveNext())
-        {
-            Func(Cursor.Entity, Cursor.Term<T1>(0), Cursor.Term<T2>(1), Cursor.Term<T3>(2));
-        }
-        CompleteRun();
-    }
-
-    public void ParallelForEach(QueryFunc<T1, T2, T3> Func, int MinRange = 64)
-        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row), Rows.At<T2>(Row + 1), Rows.At<T3>(Row + 2)));
+    private protected override QueryArgInfo[] Args => ArgList;
 }
 
-public sealed class TQuery<T1, T2, T3, T4> : QueryParam
-    where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4>
+public sealed class TQuery<T1, T2, T3, T4> : QueryParam where T1 : struct, IQueryArg<T1> where T2 : struct, IQueryArg<T2> where T3 : struct, IQueryArg<T3> where T4 : struct, IQueryArg<T4>
 {
-    private static readonly QueryTermInfo[] TermList = { QueryTermInfo.Of<T1>(), QueryTermInfo.Of<T2>(), QueryTermInfo.Of<T3>(), QueryTermInfo.Of<T4>() };
+    private static readonly QueryArgInfo[] ArgList = { QueryArgInfo.Of<T1>(), QueryArgInfo.Of<T2>(), QueryArgInfo.Of<T3>(), QueryArgInfo.Of<T4>() };
 
-    private protected override QueryTermInfo[] Terms => TermList;
+    private protected override QueryArgInfo[] Args => ArgList;
+}
 
-    public unsafe void ForEach(QueryFunc<T1, T2, T3, T4> Func)
+public sealed class TQuery<T1, T2, T3, T4, T5> : QueryParam where T1 : struct, IQueryArg<T1> where T2 : struct, IQueryArg<T2> where T3 : struct, IQueryArg<T3> where T4 : struct, IQueryArg<T4> where T5 : struct, IQueryArg<T5>
+{
+    private static readonly QueryArgInfo[] ArgList = { QueryArgInfo.Of<T1>(), QueryArgInfo.Of<T2>(), QueryArgInfo.Of<T3>(), QueryArgInfo.Of<T4>(), QueryArgInfo.Of<T5>() };
+
+    private protected override QueryArgInfo[] Args => ArgList;
+}
+
+public sealed class TQuery<T1, T2, T3, T4, T5, T6> : QueryParam where T1 : struct, IQueryArg<T1> where T2 : struct, IQueryArg<T2> where T3 : struct, IQueryArg<T3> where T4 : struct, IQueryArg<T4> where T5 : struct, IQueryArg<T5> where T6 : struct, IQueryArg<T6>
+{
+    private static readonly QueryArgInfo[] ArgList = { QueryArgInfo.Of<T1>(), QueryArgInfo.Of<T2>(), QueryArgInfo.Of<T3>(), QueryArgInfo.Of<T4>(), QueryArgInfo.Of<T5>(), QueryArgInfo.Of<T6>() };
+
+    private protected override QueryArgInfo[] Args => ArgList;
+}
+
+// ForEach and ParallelForEach for each split of a TQuery into terms then filters, the callback taking only the terms. One class per term count, since the struct overloads differ only in their constraints.
+public static class QueryOneTermWalks
+{
+    public static void ForEach<T1>(this TQuery<T1> Query, QueryFunc<T1> Func)
+        where T1 : struct, IQueryTerm<T1>
     {
-        using ViewCursor Cursor = Open();
-        while (Cursor.MoveNext())
-        {
-            Func(Cursor.Entity, Cursor.Term<T1>(0), Cursor.Term<T2>(1), Cursor.Term<T3>(2), Cursor.Term<T4>(3));
-        }
-        CompleteRun();
+        DelegateFunc<T1> Adapter = new(Func);
+        Query.Each<T1, DelegateFunc<T1>>(ref Adapter);
     }
 
-    public void ParallelForEach(QueryFunc<T1, T2, T3, T4> Func, int MinRange = 64)
-        => RunParallel(MinRange, (Entity, Rows, Row) => Func(Entity, Rows.At<T1>(Row), Rows.At<T2>(Row + 1), Rows.At<T3>(Row + 2), Rows.At<T4>(Row + 3)));
+    public static void ForEach<T1, TFunc>(this TQuery<T1> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where TFunc : struct, IQueryFunc<T1>
+        => Query.Each<T1, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1>(this TQuery<T1> Query, QueryFunc<T1> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, F1>(this TQuery<T1, F1> Query, QueryFunc<T1> Func)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1>
+    {
+        DelegateFunc<T1> Adapter = new(Func);
+        Query.Each<T1, DelegateFunc<T1>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, F1, TFunc>(this TQuery<T1, F1> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where TFunc : struct, IQueryFunc<T1>
+        => Query.Each<T1, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, F1>(this TQuery<T1, F1> Query, QueryFunc<T1> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, F1, F2>(this TQuery<T1, F1, F2> Query, QueryFunc<T1> Func)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2>
+    {
+        DelegateFunc<T1> Adapter = new(Func);
+        Query.Each<T1, DelegateFunc<T1>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, F1, F2, TFunc>(this TQuery<T1, F1, F2> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where TFunc : struct, IQueryFunc<T1>
+        => Query.Each<T1, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, F1, F2>(this TQuery<T1, F1, F2> Query, QueryFunc<T1> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, F1, F2, F3>(this TQuery<T1, F1, F2, F3> Query, QueryFunc<T1> Func)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3>
+    {
+        DelegateFunc<T1> Adapter = new(Func);
+        Query.Each<T1, DelegateFunc<T1>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, F1, F2, F3, TFunc>(this TQuery<T1, F1, F2, F3> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where TFunc : struct, IQueryFunc<T1>
+        => Query.Each<T1, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, F1, F2, F3>(this TQuery<T1, F1, F2, F3> Query, QueryFunc<T1> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, F1, F2, F3, F4>(this TQuery<T1, F1, F2, F3, F4> Query, QueryFunc<T1> Func)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where F4 : struct, IQueryFilter<F4>
+    {
+        DelegateFunc<T1> Adapter = new(Func);
+        Query.Each<T1, DelegateFunc<T1>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, F1, F2, F3, F4, TFunc>(this TQuery<T1, F1, F2, F3, F4> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where F4 : struct, IQueryFilter<F4> where TFunc : struct, IQueryFunc<T1>
+        => Query.Each<T1, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, F1, F2, F3, F4>(this TQuery<T1, F1, F2, F3, F4> Query, QueryFunc<T1> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where F4 : struct, IQueryFilter<F4>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, F1, F2, F3, F4, F5>(this TQuery<T1, F1, F2, F3, F4, F5> Query, QueryFunc<T1> Func)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where F4 : struct, IQueryFilter<F4> where F5 : struct, IQueryFilter<F5>
+    {
+        DelegateFunc<T1> Adapter = new(Func);
+        Query.Each<T1, DelegateFunc<T1>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, F1, F2, F3, F4, F5, TFunc>(this TQuery<T1, F1, F2, F3, F4, F5> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where F4 : struct, IQueryFilter<F4> where F5 : struct, IQueryFilter<F5> where TFunc : struct, IQueryFunc<T1>
+        => Query.Each<T1, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, F1, F2, F3, F4, F5>(this TQuery<T1, F1, F2, F3, F4, F5> Query, QueryFunc<T1> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where F4 : struct, IQueryFilter<F4> where F5 : struct, IQueryFilter<F5>
+        => Query.EachParallel(Func, MinRange);
+}
+
+public static class QueryTwoTermWalks
+{
+    public static void ForEach<T1, T2>(this TQuery<T1, T2> Query, QueryFunc<T1, T2> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2>
+    {
+        DelegateFunc<T1, T2> Adapter = new(Func);
+        Query.Each<T1, T2, DelegateFunc<T1, T2>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, TFunc>(this TQuery<T1, T2> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where TFunc : struct, IQueryFunc<T1, T2>
+        => Query.Each<T1, T2, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2>(this TQuery<T1, T2> Query, QueryFunc<T1, T2> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, T2, F1>(this TQuery<T1, T2, F1> Query, QueryFunc<T1, T2> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1>
+    {
+        DelegateFunc<T1, T2> Adapter = new(Func);
+        Query.Each<T1, T2, DelegateFunc<T1, T2>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, F1, TFunc>(this TQuery<T1, T2, F1> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1> where TFunc : struct, IQueryFunc<T1, T2>
+        => Query.Each<T1, T2, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, F1>(this TQuery<T1, T2, F1> Query, QueryFunc<T1, T2> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, T2, F1, F2>(this TQuery<T1, T2, F1, F2> Query, QueryFunc<T1, T2> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2>
+    {
+        DelegateFunc<T1, T2> Adapter = new(Func);
+        Query.Each<T1, T2, DelegateFunc<T1, T2>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, F1, F2, TFunc>(this TQuery<T1, T2, F1, F2> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where TFunc : struct, IQueryFunc<T1, T2>
+        => Query.Each<T1, T2, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, F1, F2>(this TQuery<T1, T2, F1, F2> Query, QueryFunc<T1, T2> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, T2, F1, F2, F3>(this TQuery<T1, T2, F1, F2, F3> Query, QueryFunc<T1, T2> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3>
+    {
+        DelegateFunc<T1, T2> Adapter = new(Func);
+        Query.Each<T1, T2, DelegateFunc<T1, T2>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, F1, F2, F3, TFunc>(this TQuery<T1, T2, F1, F2, F3> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where TFunc : struct, IQueryFunc<T1, T2>
+        => Query.Each<T1, T2, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, F1, F2, F3>(this TQuery<T1, T2, F1, F2, F3> Query, QueryFunc<T1, T2> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, T2, F1, F2, F3, F4>(this TQuery<T1, T2, F1, F2, F3, F4> Query, QueryFunc<T1, T2> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where F4 : struct, IQueryFilter<F4>
+    {
+        DelegateFunc<T1, T2> Adapter = new(Func);
+        Query.Each<T1, T2, DelegateFunc<T1, T2>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, F1, F2, F3, F4, TFunc>(this TQuery<T1, T2, F1, F2, F3, F4> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where F4 : struct, IQueryFilter<F4> where TFunc : struct, IQueryFunc<T1, T2>
+        => Query.Each<T1, T2, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, F1, F2, F3, F4>(this TQuery<T1, T2, F1, F2, F3, F4> Query, QueryFunc<T1, T2> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where F4 : struct, IQueryFilter<F4>
+        => Query.EachParallel(Func, MinRange);
+}
+
+public static class QueryThreeTermWalks
+{
+    public static void ForEach<T1, T2, T3>(this TQuery<T1, T2, T3> Query, QueryFunc<T1, T2, T3> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3>
+    {
+        DelegateFunc<T1, T2, T3> Adapter = new(Func);
+        Query.Each<T1, T2, T3, DelegateFunc<T1, T2, T3>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, T3, TFunc>(this TQuery<T1, T2, T3> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where TFunc : struct, IQueryFunc<T1, T2, T3>
+        => Query.Each<T1, T2, T3, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, T3>(this TQuery<T1, T2, T3> Query, QueryFunc<T1, T2, T3> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, T2, T3, F1>(this TQuery<T1, T2, T3, F1> Query, QueryFunc<T1, T2, T3> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where F1 : struct, IQueryFilter<F1>
+    {
+        DelegateFunc<T1, T2, T3> Adapter = new(Func);
+        Query.Each<T1, T2, T3, DelegateFunc<T1, T2, T3>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, T3, F1, TFunc>(this TQuery<T1, T2, T3, F1> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where F1 : struct, IQueryFilter<F1> where TFunc : struct, IQueryFunc<T1, T2, T3>
+        => Query.Each<T1, T2, T3, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, T3, F1>(this TQuery<T1, T2, T3, F1> Query, QueryFunc<T1, T2, T3> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where F1 : struct, IQueryFilter<F1>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, T2, T3, F1, F2>(this TQuery<T1, T2, T3, F1, F2> Query, QueryFunc<T1, T2, T3> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2>
+    {
+        DelegateFunc<T1, T2, T3> Adapter = new(Func);
+        Query.Each<T1, T2, T3, DelegateFunc<T1, T2, T3>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, T3, F1, F2, TFunc>(this TQuery<T1, T2, T3, F1, F2> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where TFunc : struct, IQueryFunc<T1, T2, T3>
+        => Query.Each<T1, T2, T3, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, T3, F1, F2>(this TQuery<T1, T2, T3, F1, F2> Query, QueryFunc<T1, T2, T3> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, T2, T3, F1, F2, F3>(this TQuery<T1, T2, T3, F1, F2, F3> Query, QueryFunc<T1, T2, T3> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3>
+    {
+        DelegateFunc<T1, T2, T3> Adapter = new(Func);
+        Query.Each<T1, T2, T3, DelegateFunc<T1, T2, T3>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, T3, F1, F2, F3, TFunc>(this TQuery<T1, T2, T3, F1, F2, F3> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3> where TFunc : struct, IQueryFunc<T1, T2, T3>
+        => Query.Each<T1, T2, T3, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, T3, F1, F2, F3>(this TQuery<T1, T2, T3, F1, F2, F3> Query, QueryFunc<T1, T2, T3> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where F3 : struct, IQueryFilter<F3>
+        => Query.EachParallel(Func, MinRange);
+}
+
+public static class QueryFourTermWalks
+{
+    public static void ForEach<T1, T2, T3, T4>(this TQuery<T1, T2, T3, T4> Query, QueryFunc<T1, T2, T3, T4> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4>
+    {
+        DelegateFunc<T1, T2, T3, T4> Adapter = new(Func);
+        Query.Each<T1, T2, T3, T4, DelegateFunc<T1, T2, T3, T4>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, T3, T4, TFunc>(this TQuery<T1, T2, T3, T4> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4> where TFunc : struct, IQueryFunc<T1, T2, T3, T4>
+        => Query.Each<T1, T2, T3, T4, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, T3, T4>(this TQuery<T1, T2, T3, T4> Query, QueryFunc<T1, T2, T3, T4> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, T2, T3, T4, F1>(this TQuery<T1, T2, T3, T4, F1> Query, QueryFunc<T1, T2, T3, T4> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4> where F1 : struct, IQueryFilter<F1>
+    {
+        DelegateFunc<T1, T2, T3, T4> Adapter = new(Func);
+        Query.Each<T1, T2, T3, T4, DelegateFunc<T1, T2, T3, T4>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, T3, T4, F1, TFunc>(this TQuery<T1, T2, T3, T4, F1> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4> where F1 : struct, IQueryFilter<F1> where TFunc : struct, IQueryFunc<T1, T2, T3, T4>
+        => Query.Each<T1, T2, T3, T4, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, T3, T4, F1>(this TQuery<T1, T2, T3, T4, F1> Query, QueryFunc<T1, T2, T3, T4> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4> where F1 : struct, IQueryFilter<F1>
+        => Query.EachParallel(Func, MinRange);
+
+    public static void ForEach<T1, T2, T3, T4, F1, F2>(this TQuery<T1, T2, T3, T4, F1, F2> Query, QueryFunc<T1, T2, T3, T4> Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2>
+    {
+        DelegateFunc<T1, T2, T3, T4> Adapter = new(Func);
+        Query.Each<T1, T2, T3, T4, DelegateFunc<T1, T2, T3, T4>>(ref Adapter);
+    }
+
+    public static void ForEach<T1, T2, T3, T4, F1, F2, TFunc>(this TQuery<T1, T2, T3, T4, F1, F2> Query, ref TFunc Func)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2> where TFunc : struct, IQueryFunc<T1, T2, T3, T4>
+        => Query.Each<T1, T2, T3, T4, TFunc>(ref Func);
+
+    public static void ParallelForEach<T1, T2, T3, T4, F1, F2>(this TQuery<T1, T2, T3, T4, F1, F2> Query, QueryFunc<T1, T2, T3, T4> Func, int MinRange = 64)
+        where T1 : struct, IQueryTerm<T1> where T2 : struct, IQueryTerm<T2> where T3 : struct, IQueryTerm<T3> where T4 : struct, IQueryTerm<T4> where F1 : struct, IQueryFilter<F1> where F2 : struct, IQueryFilter<F2>
+        => Query.EachParallel(Func, MinRange);
 }
 
 // A system field that reads every T sent since it last read, like ECS::TEventReader. Read and ReadViews come from SystemEvents.

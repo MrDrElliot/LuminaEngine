@@ -55,7 +55,7 @@ public readonly unsafe struct NativeRef : IEquatable<NativeRef>
     public bool IsValid
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => EpochSlot == null ? Base != 0 : (*EpochSlot == Epoch && Base != 0) || Resolve(false) != 0;
+        get => EpochSlot == null ? Base != 0 : (*EpochSlot == Epoch && Base != 0) || Resolve(EpochSlot, WorldHandle, EntityId, Ops, false) != 0;
     }
 
     public bool IsTracked => EpochSlot != null;
@@ -78,7 +78,7 @@ public readonly unsafe struct NativeRef : IEquatable<NativeRef>
                 return Base + Offset;
             }
             // A tracked reference to a component that was not there yet has no base, and looks again until one is.
-            return (*EpochSlot == Epoch && Base != 0 ? Base : Resolve(true)) + Offset;
+            return (*EpochSlot == Epoch && Base != 0 ? Base : Resolve(EpochSlot, WorldHandle, EntityId, Ops, true)) + Offset;
         }
     }
 
@@ -89,9 +89,9 @@ public readonly unsafe struct NativeRef : IEquatable<NativeRef>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void* At(int FieldOffset) => (void*)(Address + FieldOffset);
 
-    // A handle kept past a pool move resolves again on every access, since a readonly copy cannot cache the new address.
+    // A handle kept past a pool move resolves again on every access, since a readonly copy cannot cache the new address. Static, so the fast path never takes the handle's address and the JIT can keep its fields in registers.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private nint Resolve(bool bThrow)
+    private static nint Resolve(uint* EpochSlot, ulong WorldHandle, uint EntityId, nint Ops, bool bThrow)
     {
         nint Pointer = 0;
         if (*EpochSlot != DeadEpoch)

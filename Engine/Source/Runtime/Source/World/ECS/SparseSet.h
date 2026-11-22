@@ -51,6 +51,42 @@ namespace Lumina::ECS
 
     static_assert(std::is_trivially_copyable_v<FMembershipProbe>, "a probe is copied into every filter loop.");
 
+    // A pool's lookup and payload layout hoisted out of a walk, good until the pool's layout epoch moves.
+    struct FRowProbe
+    {
+        static constexpr uint32 InvalidDense = FEntity::IndexMask;
+
+        FMembershipProbe Membership;
+        uint8* const* PayloadPages = nullptr;
+        uint8* Packed = nullptr;
+        uint32 ElementSize = 0;
+        uint32 PageShift = 0;
+        uint32 PageMask = 0;
+        bool bPaged = false;
+
+        NODISCARD FORCEINLINE uint32 FindLiveDense(FEntity Entity) const
+        {
+            const uint32 EntityIndex = Entity.GetIndex();
+            const uint32 Page = EntityIndex / 4096u;
+            if (Page >= Membership.PageCount || Membership.Pages[Page] == nullptr)
+            {
+                return InvalidDense;
+            }
+            const FEntity Slot = Membership.Pages[Page][EntityIndex % 4096u];
+            return Slot.GetVersion() == Entity.GetVersion() ? Slot.GetIndex() : InvalidDense;
+        }
+
+        NODISCARD FORCEINLINE void* PayloadAt(uint32 DenseIndex) const
+        {
+            if (ElementSize == 0)
+            {
+                return nullptr;
+            }
+            return bPaged ? PayloadPages[DenseIndex >> PageShift] + static_cast<size_t>(DenseIndex & PageMask) * ElementSize
+                          : Packed + static_cast<size_t>(DenseIndex) * ElementSize;
+        }
+    };
+
     // One component pool, entity mapping and payload together. No virtuals, so nothing here dispatches.
     class FSparseSet
     {
@@ -197,6 +233,7 @@ namespace Lumina::ECS
 
         // Parallel to the dense array, or null while untracked, so a parallel walk can test its own slice.
         NODISCARD FORCEINLINE const uint32* GetChangeTickData() const { return bTrackChanges ? ChangeTicks.GetData() : nullptr; }
+        NODISCARD FORCEINLINE uint32* GetMutableChangeTickData() { return bTrackChanges ? ChangeTicks.GetData() : nullptr; }
 
         // The tick each element was added at, parallel to the dense array like the change ticks.
         NODISCARD FORCEINLINE const uint32* GetAddedTickData() const { return bTrackChanges ? AddedTicks.GetData() : nullptr; }
@@ -341,6 +378,11 @@ namespace Lumina::ECS
             return FMembershipProbe{ SparsePages.GetData(), static_cast<size_t>(SparsePages.Num()) };
         }
 
+        NODISCARD FORCEINLINE FRowProbe MakeRowProbe() const
+        {
+            return FRowProbe{ MakeProbe(), PayloadPages.GetData(), PackedData, ElementSize, PayloadPageShift, PayloadPageMask, bPaged };
+        }
+
         // The block a typed accessor reinterprets. Only one of these is meaningful, per IsPaged.
         NODISCARD FORCEINLINE uint8* GetPackedBlock() const { return PackedData; }
         NODISCARD FORCEINLINE uint8* GetPayloadPage(int32 PageIndex) const { return PayloadPages[PageIndex]; }
@@ -439,6 +481,7 @@ namespace Lumina::ECS
         FComponentTypeInfo TypeInfo;
 
         uint32* LayoutEpoch = nullptr;
+        std::atomic<uint32>* LayoutGeneration = nullptr;
 
         // Starts in a range of its own per pool, so a swapped-in pool never repeats an epoch a reader cached.
         std::atomic<uint64> WriteEpoch{ 0 };

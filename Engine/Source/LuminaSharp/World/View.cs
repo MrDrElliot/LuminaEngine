@@ -184,19 +184,13 @@ internal unsafe struct ViewCursor : IDisposable
         {
             if (++Index >= Count)
             {
-                Count = Native.ViewNextChunk(State, Entities, Pointers, Ticks, ChunkSize, Header->Includes);
                 Index = 0;
-                if (Count == 0)
+                if (NextChunk() == 0)
                 {
                     return false;
                 }
-                for (int i = 0; i < Header->Includes; ++i)
-                {
-                    uint* Slot = (uint*)Header->EpochSlots[i];
-                    Header->ChunkEpochs[i] = Slot != null ? *Slot : 0;
-                }
             }
-            if (Revalidate())
+            if (RowLive(Index))
             {
                 return true;
             }
@@ -204,21 +198,25 @@ internal unsafe struct ViewCursor : IDisposable
         return false;
     }
 
-    // Only after a pool changed since the chunk was gathered, so the common row costs one compare per include.
-    private bool Revalidate()
+    private int NextChunk()
     {
-        int Includes = Header->Includes;
-        bool bChanged = false;
-        for (int i = 0; i < Includes && !bChanged; ++i)
+        Count = State != IntPtr.Zero ? Native.ViewNextChunk(State, Entities, Pointers, Ticks, ChunkSize, Header->Includes) : 0;
+        for (int i = 0; i < Header->Includes; ++i)
         {
             uint* Slot = (uint*)Header->EpochSlots[i];
-            bChanged = Slot != null && *Slot != Header->ChunkEpochs[i];
+            Header->ChunkEpochs[i] = Slot != null ? *Slot : 0;
         }
-        if (!bChanged)
-        {
-            return true;
-        }
+        return Count;
+    }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool RowLive(int Row) => PoolsUnchanged() || Revalidate(Row);
+
+    // Only after a pool changed since the chunk was gathered, so the common row costs one compare per include.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool Revalidate(int Index)
+    {
+        int Includes = Header->Includes;
         uint EntityId = Entities[Index];
         nint* Row = Pointers + Index * Includes;
         for (int i = 0; i < Includes; ++i)

@@ -132,6 +132,9 @@ namespace Lumina::ECS
 
         RUNTIME_API uint64 AcquireWriteEpochBase();
 
+        // Moves whenever any pool's layout epoch does, so a walk over several pools learns that nothing moved from one compare.
+        NODISCARD FORCEINLINE std::atomic<uint32>* GetLayoutGeneration() { return &LayoutGeneration; }
+
         NODISCARD RUNTIME_API uint32 GetChangeTick() const;
         RUNTIME_API uint32 AdvanceChangeTick();
 
@@ -155,6 +158,7 @@ namespace Lumina::ECS
         uint32 LayoutEpochUsed = LayoutEpochSlotsPerChunk;
 
         std::atomic<uint32> NextWriteEpochPool{ 1 };
+        std::atomic<uint32> LayoutGeneration{ 1 };
         std::atomic<uint32> ChangeClock{ 1 };
     };
 

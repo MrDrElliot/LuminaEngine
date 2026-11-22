@@ -152,6 +152,8 @@ public static unsafe partial class Native
     [NativeCall(SuppressGCTransition = true)] public static partial uint AdvanceChangeTick();
     [NativeCall] public static partial int ViewNextChunk(IntPtr State, uint* OutEntities, IntPtr* OutPtrs, uint** OutTicks, int MaxCount, int NInclude);
     [NativeCall] public static partial void ViewIncludeEpochs(IntPtr State, uint** OutSlots, int NInclude);
+    [NativeCall(SuppressGCTransition = true)] public static partial int ViewSnapshot(IntPtr State, uint** OutEntities, int* OutDriverInclude);
+    [NativeCall(SuppressGCTransition = true)] public static partial int ViewRowProbes(IntPtr State, void* OutProbes, int MaxProbes, int* OutExcludes, int* OutRequires, uint** OutGeneration, uint* OutSeenGeneration);
     [NativeCall] public static partial void ViewEnd(IntPtr State);
 
     // The strong reference a canonical wrapper owns.

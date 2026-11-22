@@ -21,7 +21,11 @@
 #include "Scripting/ScriptFunctionMint.h"
 #include "Scripting/ScriptStruct.h"
 #include "Scripting/ScriptableObject.h"
+#include "Scripting/ScriptableTest.h"
+#include "World/ECS/Query.h"
 #include "World/Entity/Components/BuoyancyComponent.h"
+#include "World/Entity/Components/EntityTags.h"
+#include "World/Entity/Components/LifetimeComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/World.h"
 
@@ -803,6 +807,124 @@ namespace LuminaInteropBench
             ReportRow("C# view native snapshot and chunk gather", BestGather, NativeWalk);
         }
 
+        SUCCEED();
+    }
+
+    // The float C#'s LocalTransform.Location.X names, since VFloat4 has no scalar members.
+    FORCEINLINE float& LocationX(Lumina::STransformComponent& Transform)
+    {
+        return *reinterpret_cast<float*>(&Transform.LocalTransform.Location);
+    }
+
+    // The same TQuery ForEach written in C++ and in C#, from a thousand entities to a million.
+    TEST_F(FInteropBench, QueryForEachScaling)
+    {
+        using namespace Lumina;
+        using FBindFn    = void*(*)(void*);
+        using FForEachFn = double(*)(void*, int32, int32, int32);
+        using FReleaseFn = void(*)(void*);
+        auto* Bind    = (FBindFn)DotNet::ResolveManagedExport("Bench_QueryBind");
+        auto* Walk    = (FForEachFn)DotNet::ResolveManagedExport("Bench_QueryForEach");
+        auto* Release = (FReleaseFn)DotNet::ResolveManagedExport("Bench_QueryRelease");
+        ASSERT_NE(Bind, nullptr);
+        ASSERT_NE(Walk, nullptr);
+        ASSERT_NE(Release, nullptr);
+
+        TStrongObjectPtr<CWorld> World(NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient));
+        TStrongObjectPtr<CEntitySystemTest> System(NewObject<CEntitySystemTest>(nullptr, NAME_None, FGuid::New(), OF_Transient));
+        System->SetOwningWorld(World.Get());
+        System->ConfigureSystem();
+        void* Managed = Bind(System.Get());
+        ASSERT_NE(Managed, nullptr);
+
+        ECS::FRegistry& Registry = World->GetEntityRegistry();
+        ECS::TQuery<ECS::Write<STransformComponent>> One;
+        ECS::TQuery<ECS::Write<STransformComponent>, ECS::Read<SBuoyancyComponent>> Two;
+        ECS::TQuery<ECS::Write<STransformComponent>, ECS::Read<SBuoyancyComponent>, ECS::Read<SLifetimeComponent>> Three;
+        ECS::TQuery<ECS::Write<STransformComponent>, ECS::Read<SLifetimeComponent>, ECS::Without<SDisabledTag>> TwoWithout;
+
+        auto RunNative = [&](int32 Which)
+        {
+            switch (Which)
+            {
+            case 0:
+                One.ForEach(Registry, [](ECS::FEntity, ECS::TMut<STransformComponent> Transform) { LocationX(Transform.GetMut()) += 1.0f; });
+                break;
+            case 1:
+                Two.ForEach(Registry, [](ECS::FEntity, ECS::TMut<STransformComponent> Transform, const SBuoyancyComponent& Buoyancy)
+                {
+                    LocationX(Transform.GetMut()) += Buoyancy.Buoyancy;
+                });
+                break;
+            case 2:
+                Three.ForEach(Registry, [](ECS::FEntity, ECS::TMut<STransformComponent> Transform, const SBuoyancyComponent& Buoyancy, const SLifetimeComponent& Lifetime)
+                {
+                    LocationX(Transform.GetMut()) += Buoyancy.Buoyancy * Lifetime.Lifetime;
+                });
+                break;
+            default:
+                TwoWithout.ForEach(Registry, [](ECS::FEntity, ECS::TMut<STransformComponent> Transform, const SLifetimeComponent& Lifetime)
+                {
+                    LocationX(Transform.GetMut()) += Lifetime.Lifetime;
+                });
+                break;
+            }
+        };
+
+        constexpr int32 kCases = 4;
+        constexpr const char* CaseNames[kCases] = { "Write<Transform>", "+ Read<Buoyancy>", "+ Read<Buoyancy>, Read<Lifetime>", "+ Read<Lifetime>, Without<Disabled>" };
+        constexpr int32 kCounts[] = { 1000, 10000, 100000, 1000000 };
+        constexpr int64 kVisitsPerPass = 4000000;
+
+        std::printf("\nTQuery ForEach, C++ against C#, ns per entity, best of %d\n", kRepeats);
+        std::printf("  %-10s %-36s %8s %8s %8s %8s %8s\n", "entities", "terms", "C++", "C#", "C#/C++", "struct", "s/C++");
+
+        bool bWarm = false;
+        int32 Created = 0;
+        for (int32 Count : kCounts)
+        {
+            for (; Created < Count; ++Created)
+            {
+                const ECS::FEntity Entity = Registry.Create();
+                Registry.Emplace<STransformComponent>(Entity);
+                Registry.Emplace<SBuoyancyComponent>(Entity);
+                Registry.Emplace<SLifetimeComponent>(Entity).Lifetime = 1.0f;
+            }
+            const int32 Ticks = (int32)Math::Max<int64>(5, kVisitsPerPass / Count);
+
+            if (!bWarm)
+            {
+                for (int32 Which = 0; Which < kCases * 2; ++Which)
+                {
+                    Walk(Managed, Which, 40, Count);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(600));
+                bWarm = true;
+            }
+
+            for (int32 Which = 0; Which < kCases; ++Which)
+            {
+                const double Native = BestNanosOf(kRepeats, Ticks * Count, [&]
+                {
+                    for (int32 Tick = 0; Tick < Ticks; ++Tick)
+                    {
+                        RunNative(Which);
+                    }
+                });
+                double Script = 1e30;
+                double Struct = 1e30;
+                for (int32 Attempt = 0; Attempt < kRepeats; ++Attempt)
+                {
+                    const double Nanos = Walk(Managed, Which, Ticks, Count);
+                    Script = Nanos < Script ? Nanos : Script;
+                    const double StructNanos = Walk(Managed, Which + kCases, Ticks, Count);
+                    Struct = StructNanos < Struct ? StructNanos : Struct;
+                }
+                std::printf("  %-10d %-36s %8.2f %8.2f %7.1fx %8.2f %7.1fx\n", Count, CaseNames[Which], Native, Script, Script / Native, Struct, Struct / Native);
+            }
+        }
+
+        Release(Managed);
         SUCCEED();
     }
 }

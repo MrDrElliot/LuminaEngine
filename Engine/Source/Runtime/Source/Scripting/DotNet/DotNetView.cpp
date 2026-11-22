@@ -28,7 +28,41 @@ namespace Lumina::DotNetViewInternal
         uint32                     StampMask = 0;
         uint32                     StampTick = 0;
         uint32                     TickSink = 0;
+
+        // Set when the snapshot is the driver's dense array as it stood, so an unmoved driver finds each row at its snapshot slot.
+        bool                       bSnapshotIsDriver = false;
     };
+
+    // Mirrors RowProbe in View.cs, one pool's lookup, payload and stamp layout for a walk that finds its rows in C#.
+    struct FManagedRowProbe
+    {
+        const ECS::FEntity* const* Pages;
+        uint64 PageCount;
+        uint8* const* PayloadPages;
+        uint8* Packed;
+        uint32* TickBase;
+        const uint32* EpochSlot;
+        uint32 ElementSize;
+        uint32 PageShift;
+        uint32 PageMask;
+        uint32 TickStride;
+        uint32 bPaged;
+        uint32 Epoch;
+    };
+
+    static_assert(sizeof(FManagedRowProbe) == 72, "RowProbe in View.cs mirrors this layout");
+
+    // Written in place, since a packed pool reads as one page whose pointer is the probe's own Packed field.
+    void WriteManagedProbe(FManagedRowProbe& Out, const ECS::FSparseSet& Pool, uint32* TickBase, uint32 TickStride)
+    {
+        constexpr uint32 PackedAsOnePageShift = 31;
+        const ECS::FRowProbe Row = Pool.MakeRowProbe();
+        const bool bOnePage = !Row.bPaged || Row.ElementSize == 0;
+        Out = FManagedRowProbe{ Row.Membership.Pages, Row.Membership.PageCount, nullptr, Row.ElementSize != 0 ? Row.Packed : nullptr, TickBase, Pool.GetLayoutEpoch(),
+                                Row.ElementSize, bOnePage ? PackedAsOnePageShift : Row.PageShift, bOnePage ? (1u << PackedAsOnePageShift) - 1u : Row.PageMask, TickStride,
+                                Row.bPaged ? 1u : 0u, *Pool.GetLayoutEpoch() };
+        Out.PayloadPages = bOnePage ? &Out.Packed : Row.PayloadPages;
+    }
 
     NODISCARD uint32 AllIncludes(int NInc)
     {
@@ -103,6 +137,7 @@ namespace Lumina::DotNetViewInternal
         State.Entities.Reset();
         State.Entities.Append(Dense, Dense + State.Driver->GetDenseSize());
         State.Remaining = State.Entities.Num();
+        State.bSnapshotIsDriver = true;
     }
 
     // TQuery's filtered walk: the first filter's pool by its ticks, then every other filter, with the chunk walk matching the includes after.
@@ -152,6 +187,95 @@ namespace Lumina::DotNetViewInternal
             }
         }
         State.Remaining = State.Entities.Num();
+    }
+
+    // Every pool's layout is read once per chunk into locals, so the output writes cannot force a reload per row.
+    template<int N>
+    int GatherChunk(FViewState& State, uint32* RESTRICT OutEntities, void** RESTRICT OutPtrs, uint32** RESTRICT OutTicks, int MaxCount)
+    {
+        ECS::FRowProbe Probes[N];
+        uint32* TickBases[N];
+        uint32 TickStrides[N];
+        for (int k = 0; k < N; ++k)
+        {
+            ECS::FSparseSet* Pool = State.IncludeStorages[k];
+            Probes[k] = Pool->MakeRowProbe();
+            const bool bStamps = (State.StampMask & (1u << k)) != 0;
+            uint32* Tracked = bStamps ? Pool->GetChangeTickSlot(0, State.TickSink) : nullptr;
+            TickBases[k] = Tracked;
+            TickStrides[k] = bStamps && Pool->IsTrackingChanges() ? 1u : 0u;
+        }
+
+        constexpr int32 MaxMembershipProbes = 4;
+        ECS::FMembershipProbe Excludes[MaxMembershipProbes];
+        ECS::FMembershipProbe Requires[MaxMembershipProbes];
+        const int32 NumExcludes = Math::Min(State.ExcludeStorages.Num(), MaxMembershipProbes);
+        const int32 NumRequires = Math::Min(State.RequireStorages.Num(), MaxMembershipProbes);
+        for (int32 e = 0; e < NumExcludes; ++e)
+        {
+            Excludes[e] = State.ExcludeStorages[e]->MakeProbe();
+        }
+        for (int32 r = 0; r < NumRequires; ++r)
+        {
+            Requires[r] = State.RequireStorages[r]->MakeProbe();
+        }
+
+        const int32 DriverInclude = State.DriverInclude;
+        const ECS::FEntity* DriverDense = State.Driver->GetDenseData();
+        const size_t DriverSize = State.Driver->GetDenseSize();
+        const ECS::FEntity* Snapshot = State.Entities.GetData();
+
+        size_t Remaining = State.Remaining;
+        int Count = 0;
+        while (Count < MaxCount && Remaining > 0)
+        {
+            const size_t Slot = --Remaining;
+            const ECS::FEntity Entity = Snapshot[Slot];
+            if (Entity.IsTombstone())
+            {
+                continue;
+            }
+
+            uint32 Dense[N];
+            bool bMatches = true;
+            for (int k = 0; k < N; ++k)
+            {
+                const bool bDriverSlot = k == DriverInclude && Slot < DriverSize && DriverDense[Slot] == Entity;
+                Dense[k] = bDriverSlot ? static_cast<uint32>(Slot) : Probes[k].FindLiveDense(Entity);
+                bMatches &= Dense[k] != ECS::FRowProbe::InvalidDense;
+            }
+            for (int32 e = 0; e < NumExcludes && bMatches; ++e)
+            {
+                bMatches = !Excludes[e].Contains(Entity);
+            }
+            for (int32 r = 0; r < NumRequires && bMatches; ++r)
+            {
+                bMatches = Requires[r].Contains(Entity);
+            }
+            if (!bMatches)
+            {
+                continue;
+            }
+
+            void** Row = OutPtrs + static_cast<size_t>(Count) * N;
+            for (int k = 0; k < N; ++k)
+            {
+                Row[k] = Probes[k].PayloadAt(Dense[k]);
+            }
+            if (OutTicks != nullptr)
+            {
+                uint32** TickRow = OutTicks + static_cast<size_t>(Count) * N;
+                for (int k = 0; k < N; ++k)
+                {
+                    TickRow[k] = TickBases[k] != nullptr ? TickBases[k] + static_cast<size_t>(Dense[k]) * TickStrides[k] : nullptr;
+                }
+            }
+            OutEntities[Count] = static_cast<uint32>(Entity.Value);
+            ++Count;
+        }
+
+        State.Remaining = Remaining;
+        return Count;
     }
 }
 
@@ -209,99 +333,81 @@ LUMINA_DOTNET_EXPORT(uint32, AdvanceChangeTick)()
 // Pointers resolve fresh per chunk, so a storage realloc between chunks is harmless. OutTicks, when given, gets each row's change-tick slot per include, null where nothing stamps.
 LUMINA_DOTNET_EXPORT(int, ViewNextChunk)(void* StatePtr, uint32* OutEntities, void** OutPtrs, uint32** OutTicks, int MaxCount, int NInclude)
 {
-    Lumina::DotNetViewInternal::FViewState* State = static_cast<Lumina::DotNetViewInternal::FViewState*>(StatePtr);
-    if (State == nullptr || OutEntities == nullptr || OutPtrs == nullptr || MaxCount <= 0 || State->Driver == nullptr)
+    using namespace Lumina::DotNetViewInternal;
+    FViewState* State = static_cast<FViewState*>(StatePtr);
+    if (State == nullptr || OutEntities == nullptr || OutPtrs == nullptr || MaxCount <= 0 || State->Driver == nullptr || NInclude != State->IncludeStorages.Num())
     {
         return 0;
     }
 
-    const int N = State->IncludeStorages.Num();
-    const int K = NInclude < N ? NInclude : N;
-    Lumina::ECS::FSparseSet* const* Includes = State->IncludeStorages.GetData();
-    Lumina::ECS::FSparseSet* const* Excludes = State->ExcludeStorages.GetData();
-    const int32 NumExcludes = State->ExcludeStorages.Num();
-    Lumina::ECS::FSparseSet* const* Requires = State->RequireStorages.GetData();
-    const int32 NumRequires = State->RequireStorages.Num();
-    const Lumina::ECS::FEntity* Snapshot = State->Entities.GetData();
-
-    const Lumina::ECS::FSparseSet* Driver = State->Driver;
-    const int32 DriverInclude = State->DriverInclude;
-    const Lumina::ECS::FEntity* DriverDense = Driver->GetDenseData();
-    const size_t DriverSize = Driver->GetDenseSize();
-
-    // An unpaged driver's payload is one block, so a row still in its snapshot slot costs a multiply.
-    const bool bDriverBlock = !Driver->IsTagOnly() && !Driver->IsPaged();
-    uint8* const DriverBlock = Driver->GetPackedBlock();
-    const size_t DriverStride = Driver->GetElementSize();
-
-    // A local, since the row writes could alias State and would pin the cursor in memory.
-    size_t Remaining = State->Remaining;
-    int Count = 0;
-    while (Count < MaxCount && Remaining > 0)
+    switch (NInclude)
     {
-        const size_t Slot = --Remaining;
-        const Lumina::ECS::FEntity Entity = Snapshot[Slot];
-        if (Entity.IsTombstone())
-        {
-            continue;
-        }
+    case 1: return GatherChunk<1>(*State, OutEntities, OutPtrs, OutTicks, MaxCount);
+    case 2: return GatherChunk<2>(*State, OutEntities, OutPtrs, OutTicks, MaxCount);
+    case 3: return GatherChunk<3>(*State, OutEntities, OutPtrs, OutTicks, MaxCount);
+    case 4: return GatherChunk<4>(*State, OutEntities, OutPtrs, OutTicks, MaxCount);
+    case 5: return GatherChunk<5>(*State, OutEntities, OutPtrs, OutTicks, MaxCount);
+    case 6: return GatherChunk<6>(*State, OutEntities, OutPtrs, OutTicks, MaxCount);
+    case 7: return GatherChunk<7>(*State, OutEntities, OutPtrs, OutTicks, MaxCount);
+    case 8: return GatherChunk<8>(*State, OutEntities, OutPtrs, OutTicks, MaxCount);
+    default: return 0;
+    }
+}
 
-        // Written before the match is known, since a row the loop rejects is simply overwritten by the next.
-        void** Row = OutPtrs + (size_t)Count * (size_t)NInclude;
-        uint32** TickRow = OutTicks != nullptr ? OutTicks + (size_t)Count * (size_t)NInclude : nullptr;
-        const auto EmitInclude = [&](int k, uint32 DenseIndex, void* Payload)
-        {
-            if (k >= K)
-            {
-                return;
-            }
-            Row[k] = Payload;
-            if (TickRow != nullptr)
-            {
-                TickRow[k] = (State->StampMask & (1u << k)) != 0 ? Includes[k]->GetChangeTickSlot(DenseIndex, State->TickSink) : nullptr;
-            }
-        };
+// The entities a walk that finds its own rows visits, back to front, valid until ViewEnd. OutDriverInclude is the include whose dense slots they are, or -1.
+LUMINA_DOTNET_EXPORT(int, ViewSnapshot)(void* StatePtr, const uint32** OutEntities, int* OutDriverInclude)
+{
+    const Lumina::DotNetViewInternal::FViewState* State = static_cast<const Lumina::DotNetViewInternal::FViewState*>(StatePtr);
+    const bool bLive = State != nullptr && State->Driver != nullptr;
+    *OutEntities = bLive ? reinterpret_cast<const uint32*>(State->Entities.GetData()) : nullptr;
+    *OutDriverInclude = bLive && State->bSnapshotIsDriver ? State->DriverInclude : -1;
+    return bLive ? static_cast<int>(State->Remaining) : 0;
+}
 
-        const uint32 DriverIndex = Slot < DriverSize && DriverDense[Slot] == Entity ? (uint32)Slot : Driver->FindLiveDense(Entity);
-        if (DriverIndex == Lumina::ECS::FSparseSet::InvalidDenseIndex)
-        {
-            continue;
-        }
-        EmitInclude(DriverInclude, DriverIndex, bDriverBlock ? DriverBlock + DriverIndex * DriverStride : Driver->GetRawAtDense(DriverIndex));
+// Every include's probe, then every exclude's, then every With pool's, fetched again once any of their epochs moves.
+LUMINA_DOTNET_EXPORT(int, ViewRowProbes)(void* StatePtr, void* OutProbes, int MaxProbes, int* OutExcludes, int* OutRequires, const uint32** OutGeneration, uint32* OutSeenGeneration)
+{
+    using namespace Lumina::DotNetViewInternal;
+    FViewState* State = static_cast<FViewState*>(StatePtr);
+    FManagedRowProbe* Out = static_cast<FManagedRowProbe*>(OutProbes);
+    *OutExcludes = 0;
+    *OutRequires = 0;
 
-        bool bMatches = true;
-        for (int k = 0; k < N && bMatches; ++k)
-        {
-            if (k == DriverInclude)
-            {
-                continue;
-            }
-            const uint32 DenseIndex = Includes[k]->FindLiveDense(Entity);
-            bMatches = DenseIndex != Lumina::ECS::FSparseSet::InvalidDenseIndex;
-            if (bMatches)
-            {
-                EmitInclude(k, DenseIndex, Includes[k]->GetRawAtDense(DenseIndex));
-            }
-        }
-        for (int32 e = 0; e < NumExcludes && bMatches; ++e)
-        {
-            bMatches = !Excludes[e]->Contains(Entity);
-        }
-        for (int32 r = 0; r < NumRequires && bMatches; ++r)
-        {
-            bMatches = Requires[r]->Contains(Entity);
-        }
-        if (!bMatches)
-        {
-            continue;
-        }
-
-        OutEntities[Count] = static_cast<uint32>(Entity.Value);
-        ++Count;
+    // Read before the probes, so a move while they are built still shows as a newer generation.
+    std::atomic<Lumina::uint32>* Generation = Lumina::ECS::FComponentTypeRegistry::Get().GetLayoutGeneration();
+    *OutGeneration = reinterpret_cast<const Lumina::uint32*>(Generation);
+    *OutSeenGeneration = Generation->load(std::memory_order_relaxed);
+    if (State == nullptr || State->Driver == nullptr)
+    {
+        return 0;
     }
 
-    State->Remaining = Remaining;
-    return Count;
+    const int Includes = State->IncludeStorages.Num();
+    const int Excludes = State->ExcludeStorages.Num();
+    const int Requires = State->RequireStorages.Num();
+    if (Includes + Excludes + Requires > MaxProbes)
+    {
+        return 0;
+    }
+
+    int Written = 0;
+    for (int k = 0; k < Includes; ++k)
+    {
+        Lumina::ECS::FSparseSet* Pool = State->IncludeStorages[k];
+        const bool bStamps = (State->StampMask & (1u << k)) != 0;
+        WriteManagedProbe(Out[Written++], *Pool, bStamps ? Pool->GetChangeTickSlot(0, State->TickSink) : nullptr, bStamps && Pool->IsTrackingChanges() ? 1u : 0u);
+    }
+    for (Lumina::ECS::FSparseSet* Pool : State->ExcludeStorages)
+    {
+        WriteManagedProbe(Out[Written++], *Pool, nullptr, 0);
+    }
+    for (Lumina::ECS::FSparseSet* Pool : State->RequireStorages)
+    {
+        WriteManagedProbe(Out[Written++], *Pool, nullptr, 0);
+    }
+    *OutExcludes = Excludes;
+    *OutRequires = Requires;
+    return Written;
 }
 
 // Each include's layout epoch, so a handle the view hands out can tell when its pool has moved.
@@ -332,5 +438,7 @@ LUMINA_DOTNET_SIGNATURES(
     LUMINA_DOTNET_SIG(AdvanceChangeTick),
     LUMINA_DOTNET_SIG(ViewNextChunk),
     LUMINA_DOTNET_SIG(ViewIncludeEpochs),
+    LUMINA_DOTNET_SIG(ViewSnapshot),
+    LUMINA_DOTNET_SIG(ViewRowProbes),
     LUMINA_DOTNET_SIG(ViewEnd)
 );

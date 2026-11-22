@@ -114,6 +114,27 @@ namespace Lumina::ECS
 
         NODISCARD FEachRange Each() const requires CDataComponent<T> { return FEachRange{ this }; }
 
+        // The pool's layout read once for a walk, so a callback's writes cannot make the walk reload it per element. Stale once the layout generation moves.
+        struct FWalkCursor
+        {
+            FRowProbe Probe;
+            uint32* Ticks = nullptr;
+
+            NODISCARD FORCEINLINE T& At(uint32 DenseIndex) const requires CDataComponent<T>
+            {
+                if constexpr (bPaged)
+                {
+                    return reinterpret_cast<T*>(Probe.PayloadPages[DenseIndex / PageSize])[DenseIndex % PageSize];
+                }
+                else
+                {
+                    return reinterpret_cast<T*>(Probe.Packed)[DenseIndex];
+                }
+            }
+        };
+
+        NODISCARD FORCEINLINE FWalkCursor MakeWalkCursor() const { return FWalkCursor{ Set->MakeRowProbe(), Set->GetMutableChangeTickData() }; }
+
         // sizeof(T) is known here, so this compiles to the same address math a hand-written array would.
         NODISCARD FORCEINLINE T& GetAtDense(uint32 DenseIndex) const requires CDataComponent<T>
         {

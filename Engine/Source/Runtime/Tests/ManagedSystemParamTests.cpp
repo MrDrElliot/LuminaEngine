@@ -7,6 +7,7 @@
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Scripting/ScriptableTest.h"
 #include "World/ECS/EventQueue.h"
+#include "World/Entity/Components/BuoyancyComponent.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/LifetimeComponent.h"
@@ -112,7 +113,7 @@ TEST_F(FManagedSystemParamTest, CSharpFieldsDeclareBindAndIterateLikeCppMembers)
     ECS::SendEvent(World->GetEvents(), Jump);
     World->FlushCommands();
 
-    int32 Results[10] = {};
+    int32 Results[11] = {};
     ASSERT_EQ(Run(Managed, (uint32)Mover, (uint32)Disabled, Results), 1);
     EXPECT_EQ(Results[0], 1) << "ForEach visits only the entity that has every include and no exclude";
     EXPECT_EQ(Results[1], 1) << "ParallelForEach sees the same matches";
@@ -124,6 +125,7 @@ TEST_F(FManagedSystemParamTest, CSharpFieldsDeclareBindAndIterateLikeCppMembers)
     EXPECT_EQ(Results[7], 0);
     EXPECT_EQ(Results[8], 1) << "a With field visits only entities carrying the component";
     EXPECT_EQ(Results[9], 0) << "Contains honours With";
+    EXPECT_EQ(Results[10], 1) << "a struct callback walks the same rows and its count comes back through the ref";
     EXPECT_NEAR(Registry.Get<STransformComponent>(Mover).GetLocalLocation().x, 1.0f, 1e-4f) << "a Write term writes the pool in place";
     EXPECT_NEAR(Registry.Get<STransformComponent>(Disabled).GetLocalLocation().x, 0.0f, 1e-4f);
 
@@ -133,4 +135,80 @@ TEST_F(FManagedSystemParamTest, CSharpFieldsDeclareBindAndIterateLikeCppMembers)
     EXPECT_EQ(Pings->NumUnread(0), 1u) << "the writer's send lands after the flush";
 
     Release(Managed);
+}
+
+// Rows removed mid-walk are skipped, rows added are not visited, and Write terms on later rows land in live memory after the written pool grew.
+TEST_F(FManagedSystemParamTest, CSharpQuerySurvivesMidWalkStructuralChanges)
+{
+    using FMutateFn = int32(*)(void*, void*, uint32*, int32, uint32*, int32, uint32*, int32, uint32*, double*);
+    auto* Mutate = (FMutateFn)DotNet::ResolveManagedExport("Test_QueryMutatesMidWalk");
+    ASSERT_NE(Mutate, nullptr);
+
+    RegisterPendingTypes();
+    TStrongObjectPtr<CWorld> World(NewObject<CWorld>(nullptr, FName("ManagedQueryMutationWorld"), FGuid::New(), OF_Transient));
+    TStrongObjectPtr<CEntitySystemTest> System(NewObject<CEntitySystemTest>(nullptr, NAME_None, FGuid::New(), OF_Transient));
+    System->SetOwningWorld(World.Get());
+    System->ConfigureSystem();
+    ECS::FRegistry& Registry = World->GetEntityRegistry();
+    Registry.TrackChanges<STransformComponent>();
+
+    constexpr int32 kMembers = 64;
+    TVector<uint32> Members;
+    for (int32 i = 0; i < kMembers; ++i)
+    {
+        const ECS::FEntity Entity = Registry.Create();
+        Registry.Emplace<STransformComponent>(Entity);
+        Registry.Emplace<SBuoyancyComponent>(Entity).Buoyancy = (float)(i + 1);
+        Members.Add((uint32)Entity);
+    }
+
+    TVector<uint32> Joiners;
+    for (int32 i = 0; i < 256; ++i)
+    {
+        const ECS::FEntity Entity = Registry.Create();
+        Registry.Emplace<STransformComponent>(Entity);
+        Joiners.Add((uint32)Entity);
+    }
+
+    // Bare and far past the first sparse page, so giving them transforms mid-walk moves that pool's page table, ticks and payload.
+    constexpr int32 kSparsePagesToCross = 3;
+    TVector<uint32> Spawned;
+    while (Registry.Create().GetIndex() < (uint32)(ECS::FSparseSet::SparsePageSize * kSparsePagesToCross))
+    {
+    }
+    for (int32 i = 0; i < 1024; ++i)
+    {
+        Spawned.Add((uint32)Registry.Create());
+    }
+
+    TVector<uint32> Doomed;
+    for (int32 i = 0; i < kMembers; i += 4)
+    {
+        Doomed.Add(Members[i]);
+    }
+
+    uint32 First = 0;
+    double Sum = 0.0;
+    const int32 Visited = Mutate(System.Get(), World.Get(), Doomed.GetData(), Doomed.Num(), Joiners.GetData(), Joiners.Num(), Spawned.GetData(), Spawned.Num(), &First, &Sum);
+
+    double Expected = 0.0;
+    int32 ExpectedVisits = 0;
+    for (int32 i = 0; i < kMembers; ++i)
+    {
+        const bool bDoomed = (i % 4) == 0 && Members[i] != First;
+        if (bDoomed)
+        {
+            continue;
+        }
+        Expected += (double)(i + 1);
+        ++ExpectedVisits;
+        if (Members[i] != First)
+        {
+            EXPECT_NEAR(Registry.Get<STransformComponent>(ECS::FEntity(Members[i])).GetLocalLocation().x, 7.0f, 1e-4f) << "a Write term after the pool grew must reach live memory";
+        }
+    }
+
+    EXPECT_EQ(Visited, ExpectedVisits);
+    EXPECT_DOUBLE_EQ(Sum, Expected);
+    EXPECT_TRUE(Registry.Get<STransformComponent>(ECS::FEntity(Spawned[0])).GetLocalLocation().x == 0.0f) << "an entity the walk never matched is untouched";
 }

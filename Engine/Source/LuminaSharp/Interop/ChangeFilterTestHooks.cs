@@ -10,14 +10,11 @@ namespace LuminaSharp;
 internal sealed class ChangeFilterTestSystem : CEntitySystem
 #pragma warning restore LUM0112
 {
-    [Changed<SNameComponent>]
-    public TQuery<Read<SNameComponent>> Renamed = new();
+    public TQuery<Read<SNameComponent>, Changed<SNameComponent>> Renamed = new();
 
-    [Added<STransformComponent>]
-    public TQuery<Read<STransformComponent>> Spawned = new();
+    public TQuery<Read<STransformComponent>, Added<STransformComponent>> Spawned = new();
 
-    [Changed<SNameComponent>]
-    public TQuery<Read<STransformComponent>> PlacedAndRenamed = new();
+    public TQuery<Read<STransformComponent>, Changed<SNameComponent>> PlacedAndRenamed = new();
 
     public TQuery<Read<SNameComponent>> Names = new();
 
@@ -28,8 +25,7 @@ internal sealed class ChangeFilterTestSystem : CEntitySystem
 internal sealed class ParallelWriteTestSystem : CEntitySystem
 #pragma warning restore LUM0112
 {
-    [Changed<STransformComponent>]
-    public TQuery<Read<STransformComponent>> Moved = new();
+    public TQuery<Read<STransformComponent>, Changed<STransformComponent>> Moved = new();
 
     public TQuery<Write<STransformComponent>> Movers = new();
 }

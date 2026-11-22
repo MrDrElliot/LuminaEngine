@@ -33,6 +33,7 @@ namespace Lumina::ECS
         ApplyLayout(InTypeInfo);
         WriteEpoch.store(FComponentTypeRegistry::Get().AcquireWriteEpochBase(), std::memory_order_relaxed);
         LayoutEpoch = FComponentTypeRegistry::Get().AcquireLayoutEpochSlot();
+        LayoutGeneration = FComponentTypeRegistry::Get().GetLayoutGeneration();
         if (TypeInfo.bRuntimeLayout)
         {
             FComponentTypeRegistry::Get().TrackPool(this);
@@ -46,6 +47,7 @@ namespace Lumina::ECS
             FComponentTypeRegistry::Get().UntrackPool(this);
         }
         *LayoutEpoch = DeadLayoutEpoch;
+        LayoutGeneration->fetch_add(1u, std::memory_order_relaxed);
         DestroyLiveElements();
         FreePayload();
 
@@ -332,7 +334,12 @@ namespace Lumina::ECS
         const uint32 Page = EntityIndex / SparsePageSize;
         if (Page >= static_cast<uint32>(SparsePages.Num()))
         {
+            const FEntity* const* PreviousPages = SparsePages.GetData();
             SparsePages.SetNum(Page + 1u, nullptr);
+            if (SparsePages.GetData() != PreviousPages)
+            {
+                BumpLayoutEpoch();
+            }
         }
 
         FEntity*& Slots = SparsePages[Page];
@@ -351,6 +358,7 @@ namespace Lumina::ECS
     {
         const uint32 Next = *LayoutEpoch + 1u;
         *LayoutEpoch = Next == DeadLayoutEpoch ? 1u : Next;
+        LayoutGeneration->fetch_add(1u, std::memory_order_relaxed);
     }
 
     void FSparseSet::GrowPayloadTo(int32 ElementCount)
@@ -364,10 +372,15 @@ namespace Lumina::ECS
         {
             const int32 PageSize = static_cast<int32>(PayloadPageMask) + 1;
             const int32 NeededPages = (ElementCount + PageSize - 1) / PageSize;
+            const uint8* const* PreviousPages = PayloadPages.GetData();
             while (PayloadPages.Num() < NeededPages)
             {
                 PayloadPages.Add(static_cast<uint8*>(
                     Memory::Malloc(static_cast<size_t>(ElementSize) * PageSize, SparseSetInternal::PayloadAlignment(ElementAlignment))));
+            }
+            if (PayloadPages.GetData() != PreviousPages)
+            {
+                BumpLayoutEpoch();
             }
             return;
         }
@@ -421,8 +434,13 @@ namespace Lumina::ECS
         Dense.Reserve(Count);
         if (bTrackChanges)
         {
+            const uint32* PreviousTicks = ChangeTicks.GetData();
             ChangeTicks.Reserve(Count);
             AddedTicks.Reserve(Count);
+            if (ChangeTicks.GetData() != PreviousTicks)
+            {
+                BumpLayoutEpoch();
+            }
         }
         GrowPayloadTo(Count);
     }
@@ -455,9 +473,15 @@ namespace Lumina::ECS
             Dense.Add(Entity);
             if (bTrackChanges)
             {
+                // A write handle holds a slot in ChangeTicks, so moving the array has to send it back for a fresh one.
+                const uint32* PreviousTicks = ChangeTicks.GetData();
                 const uint32 Tick = GetChangeTick();
                 ChangeTicks.Add(Tick);
                 AddedTicks.Add(Tick);
+                if (ChangeTicks.GetData() != PreviousTicks)
+                {
+                    BumpLayoutEpoch();
+                }
             }
         }
 
