@@ -207,8 +207,7 @@ namespace Lumina
                 }
             }
 
-            // Every mip is above the threshold (a chain that stops short of 256px). Keep the last one inline
-            // so there is always something to draw.
+            // Every mip is above the threshold, so keep the last one inline to always have something to draw.
             return (uint8)(NumMips - 1);
         }
 
@@ -227,22 +226,14 @@ namespace Lumina
 
         friend FArchive& operator << (FArchive& Ar, FTextureResource& Data)
         {
-            // An archive with nowhere to put bulk data (duplication, transient, network) has to fall back to
-            // a fully inline chain. That fallback describes the BYTES BEING WRITTEN, not this object: the
-            // BulkRefs the mips already carry still address the package they were loaded from, and the
-            // streamer's cached TailFirstMip still matches it. Stamping 0 onto the live description would
-            // flip IsStreamable() false and desynchronize both, so it is restored below.
+            // The inline fallback describes the bytes written, so stamping 0 onto the live description would desynchronize the streamer.
             const uint8 PrevFirstInlineMip = Data.ImageDescription.FirstInlineMip;
             const bool  bRestoreInlineMip  = Ar.IsWriting() && !Ar.SupportsBulkData();
 
-            // A passthrough save copies the OLD region verbatim, so the split that produced it is the only
-            // one the copied bytes agree with. Recomputing could move a mip from bulk to inline -- and a
-            // streamed-out mip has no Pixels to write inline, so that lands as an empty payload. Today's
-            // policy usually agrees with the file's, but "usually" is not a thing to serialize on.
+            // A passthrough save copies the old region verbatim, and recomputing the split could inline a streamed-out mip with no Pixels.
             if (Ar.IsWriting() && !Ar.IsBulkPassthrough())
             {
-                // Recomputed on every save rather than carried on the object: it is purely a function of the
-                // description.
+                // Recomputed on every save since it is purely a function of the description.
                 Data.ImageDescription.FirstInlineMip = Ar.SupportsBulkData()
                     ? ComputeFirstInlineMip(Data.ImageDescription)
                     : 0;

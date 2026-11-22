@@ -11,8 +11,7 @@ public class RHITestsTarget : LuminaTargetRules
 
         PreBuildTargetNames.Add("Reflector");
 
-        // Never monolithic: the point is to exercise the same Runtime DLL the editor loads, not a
-        // separately linked copy of it.
+        // Never monolithic, so the tests exercise the same Runtime DLL the editor loads.
         bMonolithic = false;
 
         // Built on demand, not as part of every solution build.

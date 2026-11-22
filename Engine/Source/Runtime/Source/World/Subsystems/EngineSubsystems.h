@@ -13,7 +13,7 @@
 #include "World/Subsystems/SequenceSubsystem.h"
 #include "World/Subsystems/NetSubsystem.h"
 #include "World/Subsystems/UISubsystem.h"
-#include "World/Subsystems/DebugDrawSubsystem.h"
+#include "World/Subsystems/DebugSubsystem.h"
 #include "World/Subsystems/SpawnSubsystem.h"
 #include "World/Subsystems/EnvironmentSubsystem.h"
 #include "World/Subsystems/SaveGameSubsystem.h"

@@ -14,11 +14,8 @@
 #include "Core/Reflection/Type/Properties/ComponentRefProperty.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/Components/ComponentRef.h"
-#include "Core/Reflection/PropertySnapshot.h"
-#include "Core/Serialization/NetArchive.h"
 #include "Networking/INetworkRuntime.h"
 #include "Networking/NetRealm.h"
-#include "DotNet/NetScriptBridge.h"
 #include "UI/UIScript.h"
 #include "World/WorldContext.h"
 #include "Core/Engine/GameLibrary.h"
@@ -27,7 +24,6 @@
 #include "ScriptableObject.h"
 #include "Core/Object/ScriptClass.h"
 #include "DotNet/DotNetHost.h"
-#include "Input/InputActionMap.h"
 #include "ScriptStruct.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "Core/Serialization/ObjectArchiver.h"
@@ -37,11 +33,6 @@
 #endif
 #include "Log/Log.h"
 #include "TaskSystem/TaskSystem.h"
-
-#if USING(WITH_DEV_UI)
-#include <imgui.h>
-#include <imgui_internal.h>
-#endif
 
 namespace Lumina
 {
@@ -190,7 +181,33 @@ namespace Lumina
     {
         EntityScripts::NoteStructureChange();
         UIScripts::Forget(this);
-        delete SyncSnapshot;
+        if (BindingToken != nullptr)
+        {
+            BindingToken->End();
+            BindingToken->Release();
+        }
+    }
+
+    FBindingToken* FEntityScriptAccess::BindingToken(CEntityScript& Script)
+    {
+        if (Script.BindingToken == nullptr)
+        {
+            Script.BindingToken = FBindingToken::Create();
+            if (Script.bBindingsEnded)
+            {
+                Script.BindingToken->End();
+            }
+        }
+        return Script.BindingToken;
+    }
+
+    void FEntityScriptAccess::EndBindings(CEntityScript& Script)
+    {
+        Script.bBindingsEnded = true;
+        if (Script.BindingToken != nullptr)
+        {
+            Script.BindingToken->End();
+        }
     }
 
     // A fault is not a broken promise, so it stops a parallel pass without being reported as one.
@@ -206,6 +223,9 @@ namespace Lumina
         bReady       = Original->bReady;
         bFaulted     = Original->bFaulted;
         UIScripts::Replace(Original, this);
+
+        // The original's handlers would keep running on it, so a reload rebinds through OnReloaded instead.
+        FEntityScriptAccess::EndBindings(*Original);
 
         // A reload can add a reference the original never had, and OnAttach does not run again to bind it.
         BindComponentRefs();
@@ -254,668 +274,9 @@ namespace Lumina
         UpdatePriority = InPriority;
 
         // The claim rebuild is what sorts an entity's scripts, so an attached script's change has to trigger one.
-        if (IsAttached())
+        if (OwningEntity != ECS::NullEntity)
         {
             EntityScripts::NoteStructureChange();
-        }
-    }
-
-    namespace
-    {
-        thread_local bool   GArrivingRpc = false;
-        thread_local int32  GRpcDepth    = 0;
-        thread_local uint32 GRpcCaller   = 0;
-
-        // Marks this thread as applying something that arrived, so a write it makes is not sent straight back.
-        struct FReceiveScope
-        {
-            explicit FReceiveScope(uint32 CallerId)
-                : OuterCaller(GRpcCaller)
-            {
-                GRpcCaller = CallerId;
-                ++GRpcDepth;
-            }
-
-            ~FReceiveScope()
-            {
-                --GRpcDepth;
-                GRpcCaller = OuterCaller;
-            }
-            FReceiveScope(const FReceiveScope&) = delete;
-            FReceiveScope& operator=(const FReceiveScope&) = delete;
-            FReceiveScope(FReceiveScope&&) = delete;
-            FReceiveScope& operator=(FReceiveScope&&) = delete;
-
-            uint32 OuterCaller;
-        };
-
-        // FNV-1a, so an id is the same on every peer and needs no table to agree on.
-        uint32 HashInto(uint32 Hash, const char* Text)
-        {
-            for (; *Text != '\0'; ++Text)
-            {
-                Hash ^= static_cast<uint8>(*Text);
-                Hash *= 16777619u;
-            }
-            return Hash;
-        }
-
-        uint32 RpcIdOf(const CClass* Class, const FFunction& Function)
-        {
-            uint32 Hash = HashInto(2166136261u, *Class->GetName());
-            Hash = HashInto(Hash, ".");
-            return HashInto(Hash, *Function.GetFunctionName());
-        }
-
-        ERpcTarget TargetOf(const FFunction& Function)
-        {
-            const EFunctionFlags Flags = Function.GetFunctionFlags();
-            if (EnumHasAnyFlags(Flags, EFunctionFlags::RpcHost))
-            {
-                return ERpcTarget::Host;
-            }
-            return EnumHasAnyFlags(Flags, EFunctionFlags::RpcOwner) ? ERpcTarget::Owner : ERpcTarget::Broadcast;
-        }
-
-        struct FRpcRoute
-        {
-            const FFunction* Function = nullptr;
-            FProperty* SyncField = nullptr;
-            bool bCorrection = false;
-        };
-
-        FRpcRoute FindRpcRoute(const CEntityScript* Script, uint32 RpcId)
-        {
-            const CClass* Class = Script->GetClass();
-            for (const FFunction* Function : Class->GetFunctions())
-            {
-                if (Function->IsRpc() && RpcIdOf(Class, *Function) == RpcId)
-                {
-                    return { Function, nullptr, false };
-                }
-            }
-
-            TVector<FProperty*> Fields;
-            Class->GetNetReplicatedProperties(Fields);
-            for (FProperty* Field : Fields)
-            {
-                if (!CEntityScript::IsSyncFromOwner(Field))
-                {
-                    continue;
-                }
-                if (RpcId == Script->SyncFieldId(Field, true))
-                {
-                    return { nullptr, Field, true };
-                }
-                if (RpcId == Script->SyncFieldId(Field, false))
-                {
-                    return { nullptr, Field, false };
-                }
-            }
-
-            return {};
-        }
-
-        // One value of a property outside any container, for a write that has not been accepted yet.
-        struct FValueBuffer
-        {
-            explicit FValueBuffer(const FProperty& InField)
-                : Field(InField)
-                , Storage(Memory::MallocOrThrow(InField.GetElementSize(), FFunction::kFrameAlignment))
-            {
-                Memory::Memzero(Storage, Field.GetElementSize());
-                Field.ConstructValue(Storage);
-            }
-
-            ~FValueBuffer()
-            {
-                Field.DestructValue(Storage);
-                Memory::Free(Storage);
-            }
-
-            LE_NO_COPYMOVE(FValueBuffer);
-
-            void* Data() const { return Storage; }
-
-            const FProperty& Field;
-            void* Storage;
-        };
-
-        // Only entity ids are bound, so names, objects and assets travel inline and a relayed call reads the same on every peer.
-        void BindCallArchive(FNetArchive& Archive, const CWorld* World)
-        {
-            if (INetworkRuntime* Net = GetNetworkRuntime())
-            {
-                Net->BindEntityIds(World, Archive);
-            }
-        }
-
-        const FFunction* FindNamedFunction(const CEntityScript* Script, const FProperty* Field, FStringView Key)
-        {
-            const FCStringView Name = Field->GetMetadata(Key);
-            if (Name.IsEmpty())
-            {
-                return nullptr;
-            }
-            const FFunction* Function = Script->GetClass()->FindFunction(FName(*FString(Name.GetData(), Name.Len())));
-            if (Function == nullptr)
-            {
-                LOG_WARN("{}.{} names {} function '{}', which is not a reflected function of the script.",
-                    *Script->GetClass()->GetName(), *Field->GetPropertyName(), *FString(Key.GetData(), Key.Len()),
-                    *FString(Name.GetData(), Name.Len()));
-            }
-            return Function;
-        }
-    }
-
-    bool CEntityScript::IsHost() const
-    {
-        return OwningWorld == nullptr || OwningWorld->GetNetMode() != ENetMode::Client;
-    }
-
-    bool CEntityScript::IsOwner() const
-    {
-        INetworkRuntime* Net = GetNetworkRuntime();
-        if (Net == nullptr || OwningWorld == nullptr || !Net->IsEntityNetworked(OwningWorld, OwningEntity))
-        {
-            return true;
-        }
-        return Net->GetEntityOwner(OwningWorld, OwningEntity) == Net->GetLocalConnectionId(OwningWorld);
-    }
-
-    uint32 CEntityScript::GetRpcCaller() const
-    {
-        if (GRpcDepth > 0)
-        {
-            return GRpcCaller;
-        }
-        INetworkRuntime* Net = GetNetworkRuntime();
-        return (Net != nullptr && OwningWorld != nullptr) ? Net->GetLocalConnectionId(OwningWorld) : 0u;
-    }
-
-    bool CEntityScript::IsReceivingRpc()
-    {
-        return GRpcDepth > 0;
-    }
-
-    uint32 CEntityScript::GetReceivingCaller()
-    {
-        return GRpcDepth > 0 ? GRpcCaller : 0u;
-    }
-
-    void CEntityScript::MarkNetDirty()
-    {
-        if (INetworkRuntime* Net = GetNetworkRuntime(); Net != nullptr && OwningWorld != nullptr && IsAttached())
-        {
-            Net->MarkEntityDirty(OwningWorld, OwningEntity);
-        }
-    }
-
-    void* CEntityScript::FindRpcFunction(FName Name) const
-    {
-        const FFunction* Function = GetClass() != nullptr ? GetClass()->FindFunction(Name) : nullptr;
-        return Function != nullptr && Function->IsRpc() ? const_cast<FFunction*>(Function) : nullptr;
-    }
-
-    ERpcRoute CEntityScript::PlanRpcCall(void* Function)
-    {
-        return Function != nullptr ? PlanRpc(*static_cast<const FFunction*>(Function)) : ERpcRoute::RunHere;
-    }
-
-    void* CEntityScript::MakeRpcFrame(void* Function)
-    {
-        const FFunction* Typed = static_cast<const FFunction*>(Function);
-        if (Typed == nullptr)
-        {
-            return nullptr;
-        }
-        const size_t Size = Math::Max<size_t>(Typed->GetParmsSize(), 1);
-        void* Frame = Memory::Malloc(Size, FFunction::kFrameAlignment);
-        Memory::Memzero(Frame, Size);
-        Typed->InitializeFrame(Frame);
-        return Frame;
-    }
-
-    void CEntityScript::SendRpcCall(void* Function, void* Frame)
-    {
-        const FFunction* Typed = static_cast<const FFunction*>(Function);
-        if (Typed == nullptr || Frame == nullptr)
-        {
-            return;
-        }
-        SendRpcFrame(*Typed, Frame);
-        Typed->DestructFrame(Frame);
-        Memory::Free(Frame);
-    }
-
-    void CEntityScript::DiscardRpcFrame(void* Function, void* Frame)
-    {
-        const FFunction* Typed = static_cast<const FFunction*>(Function);
-        if (Typed == nullptr || Frame == nullptr)
-        {
-            return;
-        }
-        Typed->DestructFrame(Frame);
-        Memory::Free(Frame);
-    }
-
-    void* CEntityScript::FindSyncField(FName Name) const
-    {
-        FProperty* Field = GetClass() != nullptr ? GetClass()->GetProperty(Name) : nullptr;
-        return Field != nullptr && IsSyncFromOwner(Field) ? Field : nullptr;
-    }
-
-    void CEntityScript::ForwardSyncField(void* Field)
-    {
-        if (Field != nullptr)
-        {
-            SendSync(static_cast<FProperty*>(Field), false);
-        }
-    }
-
-    ERpcRoute CEntityScript::PlanRpc(const FFunction& Function)
-    {
-        // The mark belongs to exactly one call, so an RPC made from inside a received one still routes.
-        if (GArrivingRpc)
-        {
-            GArrivingRpc = false;
-            return ERpcRoute::RunHere;
-        }
-
-        INetworkRuntime* Net = GetNetworkRuntime();
-        if (Net == nullptr || OwningWorld == nullptr || OwningWorld->GetNetMode() == ENetMode::Standalone)
-        {
-            return ERpcRoute::RunHere;
-        }
-
-        switch (TargetOf(Function))
-        {
-            case ERpcTarget::Host:
-                return IsHost() ? ERpcRoute::RunHere : ERpcRoute::SendOnly;
-
-            case ERpcTarget::Owner:
-                return Net->GetEntityOwner(OwningWorld, OwningEntity) == Net->GetLocalConnectionId(OwningWorld)
-                    ? ERpcRoute::RunHere : ERpcRoute::SendOnly;
-
-            default:
-                return ERpcRoute::SendAndRunHere;
-        }
-    }
-
-    void CEntityScript::SendRpc(const FFunction& Function, const void* const* Values)
-    {
-        INetworkRuntime* Net = GetNetworkRuntime();
-        if (Net == nullptr || OwningWorld == nullptr)
-        {
-            return;
-        }
-
-        TVector<uint8> Payload;
-        FNetArchive Writer(Payload);
-        BindCallArchive(Writer, OwningWorld);
-        const TSpan<FProperty* const> Arguments = Function.GetArguments();
-        for (int32 Index = 0; Index < Arguments.Num(); ++Index)
-        {
-            Arguments[Index]->NetSerialize(Writer, const_cast<void*>(Values[Index]));
-        }
-        Writer.AlignToByte();
-
-        const bool bUnreliable = EnumHasAnyFlags(Function.GetFunctionFlags(), EFunctionFlags::NetUnreliable);
-        const uint8 Flags = static_cast<uint8>(bUnreliable ? ENetFlags::Unreliable : ENetFlags::None);
-        Net->SendScriptRpc(this, RpcIdOf(GetClass(), Function), TargetOf(Function), Flags, Payload.GetData(), static_cast<uint32>(Payload.Num()));
-    }
-
-    void CEntityScript::SendRpcFrame(const FFunction& Function, const void* Frame)
-    {
-        const TSpan<FProperty* const> Arguments = Function.GetArguments();
-        TVector<const void*> Values(Arguments.Num());
-        for (int32 Index = 0; Index < Arguments.Num(); ++Index)
-        {
-            Values[Index] = Arguments[Index]->GetValuePtr<void>(Frame);
-        }
-        SendRpc(Function, Values.GetData());
-    }
-
-    bool CEntityScript::RouteRpcValues(const char* FunctionName, const void* const* Values, uint32 NumValues)
-    {
-        const FFunction* Function = GetClass()->FindFunction(FName(FunctionName));
-        if (Function == nullptr || !Function->IsRpc())
-        {
-            GArrivingRpc = false;
-            LOG_ERROR("NET_RPC in {}::{} needs the function declared FUNCTION(Rpc = Broadcast, Host or Owner).", *GetClass()->GetName(), FunctionName);
-            return false;
-        }
-
-        const ERpcRoute Route = PlanRpc(*Function);
-        if (Route == ERpcRoute::RunHere)
-        {
-            return false;
-        }
-
-        if (static_cast<uint32>(Function->GetArguments().Num()) != NumValues)
-        {
-            LOG_ERROR("NET_RPC in {}::{} has to pass all {} parameters, in order.", *GetClass()->GetName(), FunctionName, Function->GetArguments().Num());
-            return false;
-        }
-
-        SendRpc(*Function, Values);
-        return Route == ERpcRoute::SendOnly;
-    }
-
-    void CEntityScript::ReceiveRpc(uint32 RpcId, uint32 CallerId, const uint8* Payload, uint32 PayloadSize)
-    {
-        const FRpcRoute Route = FindRpcRoute(this, RpcId);
-        if (Route.Function != nullptr)
-        {
-            const FFunction* Function = Route.Function;
-            INetworkRuntime* Net = GetNetworkRuntime();
-
-            // Owner-only calls are refused unless they came from the entity's owner or from the host.
-            if (EnumHasAnyFlags(Function->GetFunctionFlags(), EFunctionFlags::NetOwnerOnly) && CallerId != 0
-                && (Net == nullptr || Net->GetEntityOwner(OwningWorld, OwningEntity) != CallerId))
-            {
-                return;
-            }
-
-            FFunctionFrame Frame(*Function);
-            FNetArchive Reader(Payload, PayloadSize);
-            BindCallArchive(Reader, OwningWorld);
-            for (FProperty* Argument : Function->GetArguments())
-            {
-                Argument->NetSerialize(Reader, Argument->GetValuePtr<void>(Frame.GetMemory()));
-            }
-            if (Reader.HasError())
-            {
-                LOG_WARN("[Net] RPC {}::{} arrived truncated.", *GetClass()->GetName(), *Function->GetFunctionName());
-                return;
-            }
-
-            FReceiveScope Scope(CallerId);
-            GArrivingRpc = true;
-            Frame.Invoke(this);
-            GArrivingRpc = false;
-            return;
-        }
-
-        if (Route.SyncField != nullptr)
-        {
-            ReceiveSync(Route.SyncField, Route.bCorrection, CallerId, Payload, PayloadSize);
-            return;
-        }
-
-        LOG_WARN("[Net] {} has no RPC or Sync field with id {}; the peers are running different builds.", *GetClass()->GetName(), RpcId);
-    }
-
-    bool NetScripts::FindRpcTarget(const CEntityScript* Script, uint32 RpcId, ERpcTarget& OutTarget)
-    {
-        if (Script == nullptr)
-        {
-            return false;
-        }
-
-        const FRpcRoute Route = FindRpcRoute(Script, RpcId);
-        if (Route.Function != nullptr)
-        {
-            OutTarget = TargetOf(*Route.Function);
-            return true;
-        }
-        if (Route.SyncField != nullptr)
-        {
-            OutTarget = Route.bCorrection ? ERpcTarget::Owner : ERpcTarget::Host;
-            return true;
-        }
-        return false;
-    }
-
-    void CEntityScript::ReceiveSync(FProperty* Field, bool bCorrection, uint32 CallerId, const uint8* Payload, uint32 PayloadSize)
-    {
-        INetworkRuntime* Net = GetNetworkRuntime();
-        if (Net == nullptr || OwningWorld == nullptr)
-        {
-            return;
-        }
-
-        // A proposal is the host's to judge and comes only from the owner. A correction is the owner's to take.
-        if (bCorrection == IsHost())
-        {
-            return;
-        }
-        if (!bCorrection && CallerId != 0 && Net->GetEntityOwner(OwningWorld, OwningEntity) != CallerId)
-        {
-            return;
-        }
-
-        FValueBuffer Value(*Field);
-        FNetArchive Reader(Payload, PayloadSize);
-        BindCallArchive(Reader, OwningWorld);
-        Field->NetSerialize(Reader, Value.Data());
-        if (Reader.HasError())
-        {
-            return;
-        }
-
-        FReceiveScope Scope(CallerId);
-        if (!bCorrection && !ValidateSync(Field, Value.Data()))
-        {
-            SendSync(Field, true);
-            return;
-        }
-        if (Field->Identical(Field->GetValuePtr<void>(this), Value.Data()))
-        {
-            return;
-        }
-
-        ApplySync(Field, Value.Data());
-        if (!bCorrection)
-        {
-            MarkNetDirty();
-        }
-    }
-
-    void CEntityScript::ApplySync(FProperty* Field, const void* Value)
-    {
-        const char* Name = *Field->GetPropertyName();
-        const uint32 NameSize = static_cast<uint32>(strlen(Name) + 1);
-        NetScripts::DispatchSyncChanging(this, Name, NameSize);
-        Field->CopyCompleteValue(Field->GetValuePtr<void>(this), Value);
-        NetScripts::DispatchSyncChanged(this, Name, NameSize);
-    }
-
-    uint32 CEntityScript::SyncFieldId(const FProperty* Field, bool bCorrection) const
-    {
-        uint32 Hash = HashInto(2166136261u, *GetClass()->GetName());
-        Hash = HashInto(Hash, ".");
-        Hash = HashInto(Hash, *Field->GetPropertyName());
-        return HashInto(Hash, bCorrection ? "#correct" : "#sync");
-    }
-
-    bool CEntityScript::IsSyncFromOwner(const FProperty* Field)
-    {
-        const FCStringView Sync = Field->GetMetadata("Sync");
-        return FStringView(Sync.GetData(), Sync.Len()).Find("FromOwner") != Constants::kIndexNone;
-    }
-
-    void CEntityScript::NotifySyncChanged(const FProperty* Field, const void* OldValue)
-    {
-        const FFunction* Function = FindNamedFunction(this, Field, "Change");
-        if (Function == nullptr)
-        {
-            return;
-        }
-
-        const TSpan<FProperty* const> Arguments = Function->GetArguments();
-        const bool bCallable = Arguments.IsEmpty()
-            || (Arguments.Num() == 2 && Arguments[0]->HasSameValueType(Field) && Arguments[1]->HasSameValueType(Field));
-        if (!bCallable)
-        {
-            LOG_WARN("{}::{} is a change handler, so it takes nothing or (Old, New) of {}'s type.", *GetClass()->GetName(),
-                *Function->GetFunctionName(), *Field->GetPropertyName());
-            return;
-        }
-
-        FFunctionFrame Frame(*Function);
-        if (Arguments.Num() == 2)
-        {
-            Arguments[0]->CopyCompleteValue(Arguments[0]->GetValuePtr<void>(Frame.GetMemory()), OldValue);
-            Arguments[1]->CopyCompleteValue(Arguments[1]->GetValuePtr<void>(Frame.GetMemory()), Field->GetValuePtr<void>(this));
-        }
-        Frame.Invoke(this);
-    }
-
-    bool CEntityScript::ValidateSync(const FProperty* Field, const void* Proposed)
-    {
-        const FFunction* Function = FindNamedFunction(this, Field, "Validate");
-        if (Function == nullptr)
-        {
-            return true;
-        }
-
-        const TSpan<FProperty* const> Arguments = Function->GetArguments();
-        const FProperty* Return = Function->GetReturnParam();
-        if (Arguments.Num() != 1 || !Arguments[0]->HasSameValueType(Field) || Return == nullptr || Return->GetType() != EPropertyTypeFlags::Bool)
-        {
-            LOG_WARN("{}::{} validates a Sync field, so it takes the proposed value and returns bool.", *GetClass()->GetName(), *Function->GetFunctionName());
-            return true;
-        }
-
-        FFunctionFrame Frame(*Function);
-        Arguments[0]->CopyCompleteValue(Arguments[0]->GetValuePtr<void>(Frame.GetMemory()), Proposed);
-        Frame.Invoke(this);
-        return *Return->GetValuePtr<bool>(Frame.GetMemory());
-    }
-
-    void CEntityScript::QuantizeSync(const FProperty* Field)
-    {
-        const double Step = Field->GetMetadataNumber("Quantize").Get(0.0);
-        if (Step <= 0.0)
-        {
-            return;
-        }
-
-        void* Value = Field->GetValuePtr<void>(this);
-        auto Snap = [Step](double In) { return std::round(In / Step) * Step; };
-        switch (Field->GetType())
-        {
-            case EPropertyTypeFlags::Float:  *static_cast<float*>(Value)  = static_cast<float>(Snap(*static_cast<float*>(Value))); break;
-            case EPropertyTypeFlags::Double: *static_cast<double*>(Value) = Snap(*static_cast<double*>(Value)); break;
-            case EPropertyTypeFlags::Int8:   *static_cast<int8*>(Value)   = static_cast<int8>(Snap(*static_cast<int8*>(Value))); break;
-            case EPropertyTypeFlags::Int16:  *static_cast<int16*>(Value)  = static_cast<int16>(Snap(*static_cast<int16*>(Value))); break;
-            case EPropertyTypeFlags::Int32:  *static_cast<int32*>(Value)  = static_cast<int32>(Snap(*static_cast<int32*>(Value))); break;
-            case EPropertyTypeFlags::Int64:  *static_cast<int64*>(Value)  = static_cast<int64>(Snap(static_cast<double>(*static_cast<int64*>(Value)))); break;
-            case EPropertyTypeFlags::UInt8:  *static_cast<uint8*>(Value)  = static_cast<uint8>(Snap(*static_cast<uint8*>(Value))); break;
-            case EPropertyTypeFlags::UInt16: *static_cast<uint16*>(Value) = static_cast<uint16>(Snap(*static_cast<uint16*>(Value))); break;
-            case EPropertyTypeFlags::UInt32: *static_cast<uint32*>(Value) = static_cast<uint32>(Snap(*static_cast<uint32*>(Value))); break;
-            case EPropertyTypeFlags::UInt64: *static_cast<uint64*>(Value) = static_cast<uint64>(Snap(static_cast<double>(*static_cast<uint64*>(Value)))); break;
-            default: break;
-        }
-    }
-
-    void CEntityScript::SendSync(const FProperty* Field, bool bCorrection)
-    {
-        INetworkRuntime* Net = GetNetworkRuntime();
-        if (Net == nullptr || OwningWorld == nullptr)
-        {
-            return;
-        }
-        TVector<uint8> Payload;
-        FNetArchive Writer(Payload);
-        BindCallArchive(Writer, OwningWorld);
-        const_cast<FProperty*>(Field)->NetSerialize(Writer, Field->GetValuePtr<void>(this));
-        Writer.AlignToByte();
-        Net->SendScriptRpc(this, SyncFieldId(Field, bCorrection), bCorrection ? ERpcTarget::Owner : ERpcTarget::Host,
-            static_cast<uint8>(ENetFlags::None), Payload.GetData(), static_cast<uint32>(Payload.Num()));
-    }
-
-    FPropertySnapshot& CEntityScript::EnsureSyncSnapshot()
-    {
-        if (SyncSnapshot == nullptr)
-        {
-            SyncSnapshot = new FPropertySnapshot();
-            TVector<FProperty*> Fields;
-            GetClass()->GetNetReplicatedProperties(Fields);
-            SyncSnapshot->Capture(Fields, this);
-        }
-        return *SyncSnapshot;
-    }
-
-    void CEntityScript::PollSync()
-    {
-        if (OwningWorld == nullptr || OwningWorld->GetNetMode() == ENetMode::Standalone || bFaulted)
-        {
-            return;
-        }
-
-        // The first sighting is the baseline, which the entity's initial replication already carries.
-        if (SyncSnapshot == nullptr)
-        {
-            EnsureSyncSnapshot();
-            return;
-        }
-
-        const bool bHost = IsHost();
-        const bool bOwner = !bHost && IsOwner();
-        bool bDirty = false;
-        for (int32 Index = 0; Index < SyncSnapshot->Num(); ++Index)
-        {
-            FProperty* Field = SyncSnapshot->Field(Index);
-            const bool bWriter = bHost || (bOwner && IsSyncFromOwner(Field));
-            if (bWriter)
-            {
-                QuantizeSync(Field);
-            }
-            if (SyncSnapshot->Matches(Index, this))
-            {
-                continue;
-            }
-
-            if (bHost)
-            {
-                bDirty = true;
-            }
-            else if (bWriter)
-            {
-                SendSync(Field, false);
-            }
-            NotifySyncChanged(Field, SyncSnapshot->Slot(Index));
-            SyncSnapshot->Store(Index, this);
-        }
-
-        if (bDirty)
-        {
-            MarkNetDirty();
-        }
-    }
-
-    void CEntityScript::SyncArriving()
-    {
-        EnsureSyncSnapshot();
-    }
-
-    void CEntityScript::SyncArrived(const char* Names, uint32 NamesSize)
-    {
-        if (SyncSnapshot == nullptr)
-        {
-            return;
-        }
-
-        for (uint32 Start = 0; Start < NamesSize;)
-        {
-            const char* Name = Names + Start;
-            Start += static_cast<uint32>(strlen(Name) + 1);
-            for (int32 Index = 0; Index < SyncSnapshot->Num(); ++Index)
-            {
-                FProperty* Field = SyncSnapshot->Field(Index);
-                if (strcmp(*Field->GetPropertyName(), Name) != 0)
-                {
-                    continue;
-                }
-                if (!SyncSnapshot->Matches(Index, this))
-                {
-                    NotifySyncChanged(Field, SyncSnapshot->Slot(Index));
-                    SyncSnapshot->Store(Index, this);
-                }
-                break;
-            }
         }
     }
 
@@ -1496,7 +857,7 @@ namespace Lumina
             {
                 return false;
             }
-            Script->SetOwner(Entity, World);
+            FEntityScriptAccess::SetOwner(*Script, Entity, World);
 
             // A loaded C# script with no callbacks would otherwise never get its instance, and lookups would wrap it as the base class.
             if (Cast<CScriptClass>(Script->GetClass()) != nullptr)
@@ -1505,14 +866,14 @@ namespace Lumina
             }
 
             LUMINA_PROFILE_SECTION_NAMED(*Script->GetClass()->GetName());
-            Script->BindComponentRefs();
+            FEntityScriptAccess::BindComponentRefs(*Script);
             Script->OnAttach();
             return true;
         }
 
         void ReadyScript(CEntityScript* Script)
         {
-            Script->MarkReady();
+            FEntityScriptAccess::MarkReady(*Script);
 
             // Readiness decides what ticks, so a cached claim has to see it.
             BumpStructureEpoch();
@@ -1524,7 +885,7 @@ namespace Lumina
             UIScripts::Open(Script);
 
             // Bound again, since a Get reference made at attach misses a component added before this first tick.
-            Script->BindComponentRefs();
+            FEntityScriptAccess::BindComponentRefs(*Script);
             Script->OnReady();
         }
 
@@ -1535,7 +896,7 @@ namespace Lumina
 
         NODISCARD bool NeedsReady(const CEntityScript* Script)
         {
-            return Script != nullptr && Script->GetOwningEntity() != ECS::NullEntity && !Script->IsReady() && !Script->IsFaulted();
+            return Script != nullptr && Script->GetOwningEntity() != ECS::NullEntity && !FEntityScriptAccess::IsReady(*Script) && !FEntityScriptAccess::IsFaulted(*Script);
         }
 
         // Where an entity sits in the scene tree, as a sort key. An entity outside any hierarchy is a tree of its own.
@@ -1689,7 +1050,7 @@ namespace Lumina
 
         NODISCARD bool TicksIn(const CEntityScript* Script, const FClassFacts& Facts, EClaimPass Pass)
         {
-            return Script->ShouldTick() && (Pass == EClaimPass::Fixed || Facts.Phase == static_cast<EScriptUpdatePhase>(Pass));
+            return FEntityScriptAccess::ShouldTick(*Script) && (Pass == EClaimPass::Fixed || Facts.Phase == static_cast<EScriptUpdatePhase>(Pass));
         }
 
         // Queues the entity's ticking scripts when all of them promised to touch nothing else and owe no lifecycle.
@@ -1715,7 +1076,7 @@ namespace Lumina
             for (const TStrongObjectPtr<CEntityScript>& Held : Component->Scripts)
             {
                 const CEntityScript* Script = Held.Get();
-                if (Script == nullptr || (bDrainLifecycle && (Script->GetOwningEntity() == ECS::NullEntity || (!Script->IsFaulted() && !Script->IsReady()))))
+                if (Script == nullptr || (bDrainLifecycle && (Script->GetOwningEntity() == ECS::NullEntity || (!FEntityScriptAccess::IsFaulted(*Script) && !FEntityScriptAccess::IsReady(*Script)))))
                 {
                     return EClaimResult::Serial;
                 }
@@ -1750,7 +1111,7 @@ namespace Lumina
                 if (Facts.bManaged && Pass != EClaimPass::Fixed)
                 {
                     const uint32 Generation = ManagedInstances::GetHandleGeneration();
-                    Handle = Script->CachedHandleGeneration == Generation ? Script->CachedManagedHandle : nullptr;
+                    Handle = FEntityScriptAccess::CachedHandleGeneration(*Script) == Generation ? FEntityScriptAccess::CachedManagedHandle(*Script) : nullptr;
                     if (Handle == nullptr)
                     {
                         // Creating one runs a managed constructor, which only the serial pass may do.
@@ -1762,8 +1123,8 @@ namespace Lumina
                             return EClaimResult::NeedsInstance;
                         }
                         Handle = Scriptable::GetOrCreateInstance(Script);
-                        Script->CachedManagedHandle    = Handle;
-                        Script->CachedHandleGeneration = Generation;
+                        FEntityScriptAccess::CachedManagedHandle(*Script)    = Handle;
+                        FEntityScriptAccess::CachedHandleGeneration(*Script) = Generation;
                     }
                     if (Handle == nullptr)
                     {
@@ -1919,12 +1280,10 @@ namespace Lumina
         }
     }
 
-    #if USING(WITH_DEV_UI)
-    namespace
+    namespace EntityScripts
     {
-        // Every live script in the world, with an owner lent for the call to one that has none, as in a prefab editor's preview.
-        template<typename TFunc>
-        void ForEachLiveScript(ECS::FRegistry& Registry, TFunc&& Func)
+        #if USING(WITH_EDITOR)
+        void DebugDraw(ECS::FRegistry& Registry)
         {
             CWorld** WorldPtr = Registry.Ctx().Find<CWorld*>();
             if (WorldPtr == nullptr || *WorldPtr == nullptr)
@@ -1940,67 +1299,31 @@ namespace Lumina
             for (ECS::FEntity Entity : Entities)
             {
                 SnapshotScripts(Registry, Entity, Scripts);
+                const bool bSelected = Registry.HasAll<FSelectedInEditorComponent>(Entity);
                 for (const TStrongObjectPtr<CEntityScript>& Held : Scripts)
                 {
                     CEntityScript* Script = Held.Get();
-                    if (Script == nullptr || Script->IsFaulted() || !IsStillAttached(Registry, Entity, Script)
+                    if (Script == nullptr || FEntityScriptAccess::IsFaulted(*Script) || !IsStillAttached(Registry, Entity, Script)
                         || IsOutsideRealm(Script, World))
                     {
                         continue;
                     }
 
-                    const bool bNeedsOwner = Script->GetOwningEntity() == ECS::NullEntity;
-                    if (bNeedsOwner)
+                    // An editor world never attaches its scripts, so the owner is lent for the call and taken back.
+                    const bool bLendOwner = !FEntityScriptAccess::IsAttached(*Script);
+                    if (bLendOwner)
                     {
-                        Script->SetOwner(Entity, World);
+                        FEntityScriptAccess::SetOwner(*Script, Entity, World);
                     }
 
-                    Func(Script, Entity);
+                    Script->OnDebugDraw(bSelected);
 
-                    if (bNeedsOwner)
+                    if (bLendOwner)
                     {
-                        Script->SetOwner(ECS::NullEntity, nullptr);
+                        FEntityScriptAccess::SetOwner(*Script, ECS::NullEntity, nullptr);
                     }
                 }
             }
-        }
-    }
-    #endif
-
-    namespace EntityScripts
-    {
-        #if USING(WITH_EDITOR)
-        void DebugDraw(ECS::FRegistry& Registry)
-        {
-            ForEachLiveScript(Registry, [&Registry](CEntityScript* Script, ECS::FEntity Entity)
-            {
-                Script->OnDebugDraw(Registry.HasAll<FSelectedInEditorComponent>(Entity));
-            });
-        }
-        #endif
-
-        #if USING(WITH_DEV_UI)
-        void DebugGui(ECS::FRegistry& Registry)
-        {
-            if (ImGui::GetCurrentContext() == nullptr)
-            {
-                return;
-            }
-
-            // A script's unbalanced Begin is recovered rather than asserted on, then the host's own setting comes back.
-            ImGuiIO& IO = ImGui::GetIO();
-            const bool bAssertOnRecovery = IO.ConfigErrorRecoveryEnableAssert;
-            IO.ConfigErrorRecoveryEnableAssert = false;
-
-            ForEachLiveScript(Registry, [](CEntityScript* Script, ECS::FEntity)
-            {
-                ImGuiErrorRecoveryState Recovery;
-                ImGui::ErrorRecoveryStoreState(&Recovery);
-                Script->OnDebugGui();
-                ImGui::ErrorRecoveryTryToRecoverState(&Recovery);
-            });
-
-            IO.ConfigErrorRecoveryEnableAssert = bAssertOnRecovery;
         }
         #endif
 
@@ -2038,7 +1361,7 @@ namespace Lumina
                 return nullptr;
             }
 
-            Script->SetOwner(Entity, WorldPtr != nullptr ? *WorldPtr : nullptr);
+            FEntityScriptAccess::SetOwner(*Script, Entity, WorldPtr != nullptr ? *WorldPtr : nullptr);
 
             SEntityScriptComponent& Component = Registry.GetOrEmplace<SEntityScriptComponent>(Entity);
             Component.Scripts.Add(Script);
@@ -2047,7 +1370,7 @@ namespace Lumina
             // By the first tick every sibling script added the same frame exists, so OnReady can reference them.
             {
                 LUMINA_PROFILE_SECTION_NAMED(*Script->GetClass()->GetName());
-                Script->BindComponentRefs();
+                FEntityScriptAccess::BindComponentRefs(*Script);
                 Script->OnAttach();
             }
             return Script;
@@ -2129,12 +1452,12 @@ namespace Lumina
                         }
                     }
 
-                    if (Script->IsFaulted())
+                    if (FEntityScriptAccess::IsFaulted(*Script))
                     {
                         continue;
                     }
 
-                    if (bDrainLifecycle && !Script->IsReady())
+                    if (bDrainLifecycle && !FEntityScriptAccess::IsReady(*Script))
                     {
                         ReadyScript(Script);
                         bUserCodeRan = true;
@@ -2145,7 +1468,7 @@ namespace Lumina
                         }
                     }
 
-                    if (Script->ShouldTick() && ScriptUpdatePhase == Phase)
+                    if (FEntityScriptAccess::ShouldTick(*Script) && ScriptUpdatePhase == Phase)
                     {
                         // Named by class, so a capture splits the script system's time by script and not just in total.
                         LUMINA_PROFILE_SECTION_NAMED(*Script->GetClass()->GetName());
@@ -2181,7 +1504,7 @@ namespace Lumina
                     }
 
                     // Attach and OnReady are owed whatever the script's phase, and only the checked path runs them.
-                    if (bDrainLifecycle && (Script->GetOwningEntity() == ECS::NullEntity || (!Script->IsFaulted() && !Script->IsReady())))
+                    if (bDrainLifecycle && (Script->GetOwningEntity() == ECS::NullEntity || (!FEntityScriptAccess::IsFaulted(*Script) && !FEntityScriptAccess::IsReady(*Script))))
                     {
                         return false;
                     }
@@ -2194,7 +1517,7 @@ namespace Lumina
                         bCachedManaged = HasManagedUpdate(Class);
                         CachedPhase    = ScriptPhase(Script);
                     }
-                    if (!Script->ShouldTick() || CachedPhase != Phase)
+                    if (!FEntityScriptAccess::ShouldTick(*Script) || CachedPhase != Phase)
                     {
                         continue;
                     }
@@ -2210,19 +1533,19 @@ namespace Lumina
                 {
                     CEntityScript* Script = Held.Get();
                     const EScriptUpdatePhase ScriptUpdatePhase = Script->GetClass() == CachedClass ? CachedPhase : ScriptPhase(Script);
-                    if (!Script->ShouldTick() || ScriptUpdatePhase != Phase)
+                    if (!FEntityScriptAccess::ShouldTick(*Script) || ScriptUpdatePhase != Phase)
                     {
                         continue;
                     }
 
                     // Creating the managed instance runs its constructor, which could in principle touch this very list.
                     const uint32 Generation = ManagedInstances::GetHandleGeneration();
-                    void* Handle = Script->CachedHandleGeneration == Generation ? Script->CachedManagedHandle : nullptr;
+                    void* Handle = FEntityScriptAccess::CachedHandleGeneration(*Script) == Generation ? FEntityScriptAccess::CachedManagedHandle(*Script) : nullptr;
                     if (Handle == nullptr)
                     {
                         Handle = Scriptable::GetOrCreateInstance(Script);
-                        Script->CachedManagedHandle    = Handle;
-                        Script->CachedHandleGeneration = Generation;
+                        FEntityScriptAccess::CachedManagedHandle(*Script)    = Handle;
+                        FEntityScriptAccess::CachedHandleGeneration(*Script) = Generation;
                     }
                     if (Handle == nullptr || GStructureEpoch.load(std::memory_order_relaxed) != EpochBefore)
                     {
@@ -2275,7 +1598,7 @@ namespace Lumina
                     for (; Index < Total && BatchEntities[Index] == Interrupted; ++Index)
                     {
                         CEntityScript* Script = BatchScripts[Index];
-                        if (IsStillAttached(Registry, Interrupted, Script) && Script->ShouldTick() && ScriptPhase(Script) == Phase)
+                        if (IsStillAttached(Registry, Interrupted, Script) && FEntityScriptAccess::ShouldTick(*Script) && ScriptPhase(Script) == Phase)
                         {
                             LUMINA_PROFILE_SECTION_NAMED(*Script->GetClass()->GetName());
                             Script->OnUpdate(DeltaTime);
@@ -2298,7 +1621,7 @@ namespace Lumina
 
             auto RunInterrupted = [&](ECS::FEntity Entity, CEntityScript* Script)
             {
-                if (IsStillAttached(Registry, Entity, Script) && Script->ShouldTick() && ScriptPhase(Script) == Phase)
+                if (IsStillAttached(Registry, Entity, Script) && FEntityScriptAccess::ShouldTick(*Script) && ScriptPhase(Script) == Phase)
                 {
                     LUMINA_PROFILE_SECTION_NAMED(*Script->GetClass()->GetName());
                     Script->OnUpdate(DeltaTime);
@@ -2371,7 +1694,7 @@ namespace Lumina
                 {
                     // Fixed update only runs on a readied script, so none sees a fixed step before its OnReady.
                     CEntityScript* Script = Held.Get();
-                    if (Script != nullptr && Script->ShouldTick() && IsStillAttached(Registry, Entity, Script))
+                    if (Script != nullptr && FEntityScriptAccess::ShouldTick(*Script) && IsStillAttached(Registry, Entity, Script))
                     {
                         Script->OnFixedUpdate(FixedDeltaTime);
                     }
@@ -2392,7 +1715,7 @@ namespace Lumina
                     return Index - Begin;
                 }, [&](ECS::FEntity Entity, CEntityScript* Script)
                 {
-                    if (IsStillAttached(Registry, Entity, Script) && Script->ShouldTick())
+                    if (IsStillAttached(Registry, Entity, Script) && FEntityScriptAccess::ShouldTick(*Script))
                     {
                         Script->OnFixedUpdate(FixedDeltaTime);
                     }
@@ -2465,10 +1788,11 @@ namespace Lumina
             TStrongObjectPtr<CEntityScript> Pinned(Script);
             NoteStructureChange();
 
-            if (Script->IsAttached())
+            if (FEntityScriptAccess::IsAttached(*Script))
             {
                 Script->OnDetach();
             }
+            FEntityScriptAccess::EndBindings(*Script);
             UIScripts::Close(Script);
             
             SEntityScriptComponent* Component = Registry.TryGet<SEntityScriptComponent>(Entity);
@@ -2488,48 +1812,6 @@ namespace Lumina
             return true;
         }
 
-        void DispatchInput(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputEvent& Event)
-        {
-            FScriptSnapshot Scripts;
-            SnapshotScripts(Registry, Entity, Scripts);
-
-            for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
-            {
-                CEntityScript* Script = Held.Get();
-                if (IsStillAttached(Registry, Entity, Script) && !Script->IsFaulted())
-                {
-                    Script->OnInput(Event);
-                }
-            }
-        }
-
-        void DispatchActions(ECS::FRegistry& Registry, ECS::FEntity Entity, const SInputActionState* States,
-            int32 Count, TSpan<const int32> ChangedActionIndices)
-        {
-            FScriptSnapshot Scripts;
-            SnapshotScripts(Registry, Entity, Scripts);
-
-            for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
-            {
-                CEntityScript* Script = Held.Get();
-                if (!IsStillAttached(Registry, Entity, Script) || Script->IsFaulted())
-                {
-                    continue;
-                }
-
-                const TVector<SInputAction>& Actions = FInputActionMap::Get().GetAllActions();
-                for (int32 i : ChangedActionIndices)
-                {
-                    if (i < Count && i < Actions.Num())
-                    {
-                        Script->OnAction(Actions[i].Name, States[i]);
-                    }
-                }
-            }
-        }
-
-
-
         namespace
         {
             // Takes the snapshot buffer from the caller, so a registry-wide teardown reuses one allocation.
@@ -2545,9 +1827,13 @@ namespace Lumina
                 for (TStrongObjectPtr<CEntityScript>& Held : Scripts)
                 {
                     // For a C# script the call would mint a managed instance purely to tear it down again.
-                    if (CEntityScript* Script = Held.Get(); Script != nullptr && Script->IsAttached())
+                    if (CEntityScript* Script = Held.Get(); Script != nullptr)
                     {
-                        Script->OnDetach();
+                        if (FEntityScriptAccess::IsAttached(*Script))
+                        {
+                            Script->OnDetach();
+                        }
+                        FEntityScriptAccess::EndBindings(*Script);
                     }
                     UIScripts::Close(Held.Get());
                 }
@@ -2622,7 +1908,7 @@ namespace Lumina
                     // A C++ script's instance never went anywhere, and a restored one has not attached yet.
                     for (const TStrongObjectPtr<CEntityScript>& Script : Component.Scripts)
                     {
-                        if (Script.Get() != nullptr && Script->IsAttached() && ToScriptClass(Script->GetClass()) != nullptr)
+                        if (Script.Get() != nullptr && FEntityScriptAccess::IsAttached(*Script) && ToScriptClass(Script->GetClass()) != nullptr)
                         {
                             OutTargets->Add({ Entity, Script });
                         }

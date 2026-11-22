@@ -6,8 +6,7 @@
 
 namespace Lumina
 {
-    // Reflected THashMap<K,V>: the associative analogue of FArrayProperty. Holds a Key and a Value inner property
-    // and operates on the container through a type-erased FMapOps table.
+    // Reflected THashMap, the associative analogue of FArrayProperty, operating through a type-erased FMapOps table.
     class LUMINA_VISIBLE_TYPE FMapProperty : public FProperty
     {
     public:
@@ -34,8 +33,7 @@ namespace Lumina
         RUNTIME_API bool Identical(const void* ValueA, const void* ValueB) const override;
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
-        // See FArrayProperty: the container owns heap memory, and the ops table is what makes this work for a
-        // compile-time THashMap and a script runtime map alike.
+        // Zeroed bytes are not a valid value, and the ops table covers both THashMap and script maps.
         void ConstructValue(void* Value) const override { if (Ops && Ops->ConstructContainer) { Ops->ConstructContainer(Value, Ops->ContainerContext); } }
         void DestructValue(void* Value) const override  { if (Ops && Ops->DestructContainer)  { Ops->DestructContainer(Value, Ops->ContainerContext); } }
         bool OwnsStorage() const override { return Ops != nullptr && Ops->ConstructContainer != nullptr; }
@@ -57,8 +55,7 @@ namespace Lumina
 
         uint32 GetKeySize()   const { return Ops->KeySize; }
 
-        // Index-based access into the mutation-stable iteration order, re-resolved each call, so an editor can
-        // address entries across container reallocations.
+        // Index-based access re-resolved each call so an editor can address entries across reallocations.
         const void* GetKeyAt(void* InContainer, int32 Index)   const { const void* K = nullptr; Ops->At(InContainer, Index, &K, nullptr); return K; }
         void*       GetValueAt(void* InContainer, int32 Index) const { void* V = nullptr; Ops->At(InContainer, Index, nullptr, &V); return V; }
 

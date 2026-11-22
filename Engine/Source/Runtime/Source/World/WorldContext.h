@@ -19,8 +19,7 @@ namespace Lumina
         DedicatedServer,
     };
 
-    // Per-world runtime state owned by FWorldManager (one world = one context). Holds the world's role
-    // (type, net mode, PIE) so systems branch on it without CWorld carrying editor/network concerns.
+    // Per-world role (type, net mode, PIE) owned by FWorldManager, so CWorld carries no editor or network concerns.
     struct FWorldContext
     {
         TStrongObjectPtr<CWorld> World;
@@ -28,13 +27,10 @@ namespace Lumina
         ENetMode                NetMode         = ENetMode::Standalone;
         bool                    bPIE            = false;
 
-        // Loadable map path this world represents (e.g. "/Game/Maps/NewWorld"). Used for the networked
-        // Welcome handshake: the server sends it, the client compares + travels if it differs. For a PIE
-        // world this is the editor source map; for a runtime world it's the path it was opened from.
+        // Loadable map path this world represents, compared by the client in the Welcome handshake.
         FString                 MapPath;
 
-        // Networking target. Server: the port to listen on. Client: the host/port to connect to.
-        // Default loopback:7777 keeps the existing editor PIE flow working without an explicit URL.
+        // Server port to listen on or client host and port to connect to, defaulting to loopback 7777 for editor PIE.
         FString                 NetHost         = "127.0.0.1";
         uint16                  NetPort         = 7777;
 

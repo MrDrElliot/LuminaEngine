@@ -44,8 +44,7 @@ namespace Lumina
         // Horizontal only -- that is the axis ImGui's drag behavior reads.
         const float Pixels = Math::Abs(ImGui::GetIO().MouseDelta.x);
 
-        // Under the reference speed the multiplier drops below 1 and the drag gets finer than the base;
-        // over it, the exponent makes it climb faster than the raw pixel count already does.
+        // Under the reference speed the drag gets finer than the base, and over it the exponent climbs faster than pixel count.
         constexpr float ReferencePixels = 5.0f;
         constexpr float Exponent        = 1.5f;
         constexpr float MinScale        = 0.05f;   // ~20x finer than the base at a crawl
@@ -67,16 +66,14 @@ namespace Lumina
         return Delta ? *Delta : FallbackSpeed;
     }
 
-    // Step for a click-drag: the base, scaled by cursor speed unless the property authored a Delta.
-    // Single place so every numeric widget agrees on the rule.
+    // Step for a click-drag, scaled by cursor speed unless the property authored a Delta.
     inline float ResolveDragSpeed(const FProperty* Prop, float FallbackSpeed)
     {
         const TOptional<float> Delta = Prop != nullptr ? Prop->GetMetadataNumber<float>("Delta") : TOptional<float>();
         return Delta ? *Delta : FallbackSpeed * MouseAdaptiveDragScale();
     }
 
-    // Default printf format ImGui uses for each scalar type, so we can append a
-    // unit suffix without losing the type's natural precision.
+    // Default printf format ImGui uses for each scalar type, so a unit suffix keeps natural precision.
     inline const char* DefaultScalarFormat(ImGuiDataType dt)
     {
         switch (dt)
@@ -92,10 +89,7 @@ namespace Lumina
         }
     }
 
-    // If the property carries a "Units" metadata, returns a printf format that
-    // renders the value followed by the unit (e.g. "%.3f m"); otherwise returns
-    // an empty string, signaling the caller to pass nullptr (ImGui default).
-    // The unit's '%' chars are escaped so a "%" unit can't corrupt the format.
+    // Printf format with the "Units" metadata appended, or empty so the caller passes nullptr. Percent signs in the unit are escaped.
     inline FString BuildUnitFormat(const FProperty* Prop, const char* BaseFormat)
     {
         if (!Prop->HasMetadata("Units"))
@@ -148,8 +142,7 @@ namespace Lumina
             ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x);
             if (Prop->HasEditorFlag(EPropertyEditorFlags::NoDrag))
             {
-                // Type-only entry; +/- buttons step by Delta, no click-drag scrubbing. The UNSCALED base:
-                // a button press must step by the same amount every time.
+                // Type-only entry stepping by the unscaled base, so a button press is always the same amount.
                 ValueType Step = static_cast<ValueType>(ResolveBaseStep(Prop, IsFloatType(DT) ? 0.01f : 1.0f));
                 ImGuiX::InputScalar("##Value", DT, &DisplayValue, &Step, nullptr, Format);
                 if (Min && DisplayValue < *Min)
@@ -318,13 +311,11 @@ namespace Lumina
         ImGuiTextFilter SearchFilter;
         AssetPickerFilter::FAssetsOfClassCache AssetsOfClass;
 
-        // Object edits (clear/pick/drop) are one-frame events: emit Started on the change
-        // frame, Finished the next, so they form a proper undo transaction.
+        // Object edits are one-frame events, so Started and Finished land on consecutive frames to form an undo transaction.
         bool bFinishPending = false;
     };
 
-    // Soft-object asset picker: identical UX to FCObjectPropertyCustomization but edits the
-    // FSoftObjectPath by string path and never loads the asset (discovers via FAssetRegistry).
+    // Soft-object asset picker that edits the FSoftObjectPath by string and never loads the asset.
     class FSoftObjectPropertyCustomization : public IPropertyTypeCustomization
     {
     public:
@@ -346,8 +337,7 @@ namespace Lumina
         bool bFinishPending = false;
     };
 
-    // TSubclassOf<T> picker: searchable dropdown over every CClass that is MetaClass (T) or derived.
-    // Stores the chosen CClass* directly (the TSubclassOf member is a single CClass* at offset 0).
+    // TSubclassOf<T> picker, searchable over every CClass derived from MetaClass and stored as the CClass* at offset 0.
     class FClassPropertyCustomization : public IPropertyTypeCustomization
     {
     public:
@@ -639,8 +629,7 @@ namespace Lumina
         FVector3 EulerDegrees = FVector3(0.0f);
         FQuat EulerRotationSource = FQuat::Identity();
 
-        // Clicking an axis tag resets that component to 0, a discrete edit, so we open the
-        // transaction the click frame (Started) and commit it the next (Finished).
+        // Clicking an axis tag resets that component to 0 as a discrete edit, Started on the click frame and Finished the next.
         bool bFinishPending = false;
 
         // Scale-row lock: edits carry to the other two axes by ratio. Session-only, per widget.

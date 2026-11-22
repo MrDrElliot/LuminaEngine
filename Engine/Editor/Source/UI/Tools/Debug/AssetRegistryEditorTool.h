@@ -11,8 +11,7 @@ namespace Lumina
 {
     class CObject;
 
-    // Dockable Asset Registry view: every known asset grouped by class with loaded state, ref-count,
-    // CPU/disk size, and (for the selected asset) which loaded objects reference it.
+    // Dockable view of every known asset grouped by class, with the loaded objects referencing the selected one.
     class FAssetRegistryEditorTool : public FEditorTool
     {
     public:
@@ -68,8 +67,7 @@ namespace Lumina
         void DrawAssetTable();
         void DrawDetailsPanel();
 
-        // BaseIndex maps a row's position in this slice back to its index in VisibleRows, which is what
-        // shift-range selection needs -- without it a range could not span two category groups.
+        // BaseIndex maps a row back to VisibleRows so shift-range selection can span category groups.
         void DrawAssetTableRows(const FAssetRow* const* GroupRows, uint32 Count, uint32 BaseIndex);
 
         // Snapshots the registry into Rows and both sort orders, which only a registry change makes stale.
@@ -81,8 +79,7 @@ namespace Lumina
         // Filters a presorted order into VisibleRows/VisibleGroups, only when a filter or the rows changed.
         void BuildVisibleRows();
 
-        // Ctrl+A over the whole visible set. Ignored while a text field has focus, or typing "a" into
-        // the search box with Ctrl held would silently select the project.
+        // Ctrl+A is ignored while a text field has focus, or it would select the whole project.
         void HandleSelectionShortcuts();
 
         void ApplyRowClick(uint32 VisibleIndex);
@@ -91,12 +88,10 @@ namespace Lumina
         void DrawTypeFilterMenu();
         uint32 CountHiddenTypes() const;
 
-        // Opens the confirm -> progress -> results modal over the current selection (or, with nothing
-        // selected, everything currently visible).
+        // Covers the current selection, or everything visible when nothing is selected.
         void OpenResaveModal();
 
-        // Saves a bounded number of packages and returns; called once per frame while the modal runs, so
-        // a project-wide resave stays interactive instead of freezing the editor for minutes.
+        // Saves a bounded number of packages per frame so a project-wide resave stays interactive.
         void TickResave();
 
         // Sums approximate CPU-side bulk data held by a loaded asset (textures/meshes/materials).
@@ -110,12 +105,10 @@ namespace Lumina
 
         bool PassesFilter(const FAssetRow& Row) const;
 
-        // Focus row: drives the details pane and is the anchor for shift-range. Always a member of
-        // SelectedGUIDs while a selection exists.
+        // Focus row that drives the details pane and anchors shift-range, and is always in SelectedGUIDs.
         FGuid           SelectedGUID;
 
-        // Multi-selection. Keyed by GUID rather than row index because the row list is rebuilt every
-        // frame from the registry and indices move whenever a filter changes.
+        // Keyed by GUID because row indices move whenever the list is rebuilt or a filter changes.
         THashSet<FGuid> SelectedGUIDs;
 
         // Index into VisibleRows of the last plain/ctrl click; Constants::kIndexNone when there is no anchor.
@@ -142,8 +135,7 @@ namespace Lumina
         double                      NextRowsRebuildSeconds  = 0.0;
         FDelegateHandle             RegistryUpdatedHandle;
 
-        // Per-class visibility. Absent == visible; only classes the user has hidden are stored false,
-        // so a newly imported asset type shows up rather than being silently filtered out.
+        // Absent means visible, so a newly imported asset type is not silently filtered out.
         THashMap<FName, bool> TypeVisibility;
 
         bool            bShowLoadedOnly   = false;

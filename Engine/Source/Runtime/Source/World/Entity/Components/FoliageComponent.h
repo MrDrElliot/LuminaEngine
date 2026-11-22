@@ -177,8 +177,10 @@ namespace Lumina
         // False keeps instances, collision and nav but leaves the whole set out of the render scene. Change it through SetFoliageRendered.
         bool bRendered = true;
 
-        // Transient physics bake, owned by CFoliageCollisionSystem. Never serialized.
-        // Static body group handle, 0 for none.
+        // Set before the first sync on a far forest tile, so every type with an impostor draws as bare points that never become meshes.
+        bool bImpostorPoints = false;
+
+        // Transient physics bake owned by CFoliageCollisionSystem, with a static body group handle of 0 for none.
         uint32 CollisionGroupID     = 0;
         uint32 CollisionBakedVersion = 0;
 

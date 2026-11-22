@@ -6,9 +6,7 @@ namespace Lumina
 {
     class CClass;
 
-    // Backs TSubclassOf<T>: a property whose value is a CClass* constrained to MetaClass (T) or a
-    // subclass. Stores a single CClass* (the type is a permanent singleton, so no refcount/copy
-    // handling is needed); serialized by class name and re-resolved on load.
+    // Backs TSubclassOf<T>. Stores a bare CClass* since the type is a permanent singleton, serialized by class name.
     class LUMINA_VISIBLE_TYPE FClassProperty : public FProperty
     {
     public:
@@ -27,9 +25,7 @@ namespace Lumina
 
     private:
 
-        // Resolves a serialized class name to a CClass*, enforcing the MetaClass (TSubclassOf<T>) constraint that
-        // the raw-pointer write in Serialize/SerializeItem otherwise bypasses. Returns null for none / unknown /
-        // not-a-subclass so a malformed or stale config can never yield a wrong-typed class.
+        // Enforces the MetaClass constraint that the raw pointer write bypasses, returning null for unknown or non-subclass names.
         CClass* ResolveSerializedClass(const FName& ClassName) const;
 
         CClass* MetaClass = nullptr;

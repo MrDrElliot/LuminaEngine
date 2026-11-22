@@ -5,8 +5,7 @@
 
 namespace Lumina
 {
-    // A cook reachability entry point; the cooker BFS's from every root and drops anything unreachable.
-    // Sourced from .lproject + plugin "CookRoots" arrays (+ a legacy GameStartupMap shim).
+    // A cook reachability entry point, since the cooker drops anything unreachable from every root.
     struct FCookRoot
     {
         // VFS path; ".lasset" suffix optional (resolver handles either).

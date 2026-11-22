@@ -62,8 +62,7 @@ namespace Lumina
             Old->RemoveFromRoot();
         }
 
-        // Tagged, so a property the new shape added, dropped or moved is matched by name and the rest of the
-        // values survive a layout change that a raw copy could not.
+        // Tagged so properties are matched by name and survive a layout change that a raw copy would not.
         TVector<uint8> Bytes;
         {
             FMemoryWriter Writer(Bytes);
@@ -123,8 +122,7 @@ namespace Lumina
         }
         Object::Internal::AddReinstanceRedirects(Redirects);
 
-        // The classes go in the same table, so a TSubclassOf or a TSubStructOf naming the retired class is
-        // repointed by the very same walk that repoints the instances.
+        // Classes share the table so TSubclassOf and TSubStructOf references are repointed by the same walk.
         for (const auto& [Old, New] : ClassMap)
         {
             ObjectMap.Add(static_cast<CObject*>(Old), static_cast<CObject*>(New));
@@ -199,9 +197,7 @@ namespace Lumina
                 continue;   // an earlier destroy in this loop already took it
             }
 
-            // Forcing it down while a strong reference survives would dangle that holder. The original is
-            // already renamed aside and resolves to nothing, so leaving it to its refcount is safe, and a
-            // reference the walk could not reach keeps working until its owner lets go.
+            // Forcing it down while a strong reference survives would dangle that holder, and the renamed original is safe to leave to its refcount.
             if (Object::Internal::GetStrongRefCountByIndex(Entry.Key.Index) == 0)
             {
                 Entry.Value->ForceDestroyNow();

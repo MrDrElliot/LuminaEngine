@@ -4,42 +4,7 @@
 #include <type_traits>
 #include <utility>
 
-// Reach a private/protected member of any class without modifying it.
-//
-//
-//   class FFoo
-//   {
-//       int  Counter = 0;
-//       int  Compute(int X) const;
-//       void Reset();
-//       void Reset(int To);                 // overloaded
-//       static inline int sCount = 0;
-//       static int sBump(int By);
-//       template<typename T> T Cast(int X); // template method
-//   };
-//
-//   LUMINA_PRIVATE_MEMBER(FFoo, Counter, int);                  // Data Member
-//   LUMINA_PRIVATE_MEMBER(FFoo, Compute, int(int) const);       // Method
-//   LUMINA_PRIVATE_MEMBER(FFoo, Reset,   void());               // Overload: Reset()
-//   LUMINA_PRIVATE_MEMBER(FFoo, Reset,   void(int));            // Overload: Reset(int)
-//   LUMINA_PRIVATE_STATIC(FFoo, sCount,  int);                  // Static Data
-//   LUMINA_PRIVATE_STATIC(FFoo, sBump,   int(int));             // Static Function
-//   LUMINA_PRIVATE_TEMPLATE_MEMBER(FFoo, Cast, (float), float(int));  // Cast<float>
-//   LUMINA_PRIVATE_TEMPLATE_STATIC(FFoo, sMake, (int), int(int));     // sMake<int>
-//
-//   namespace PA = Lumina::PrivateAccess;
-//   FFoo Foo;
-//   PA::Counter<FFoo>(Foo) = 42;          // Data -> int&
-//   int R = PA::Compute<FFoo>(Foo, 5);    // Method Call
-//   PA::Reset<FFoo>(Foo);                 // Resolves to Reset() at the call site
-//   PA::Reset<FFoo>(Foo, 7);              // Resolves to Reset(int) at the call site
-//   PA::sCount<FFoo>() = 7;               // Static Data -> int&
-//   PA::sBump<FFoo>(2);                   // Static Function
-//   PA::Cast<FFoo>(Foo, 3);               // Cast<float>(3)
-//
-// For template members, the template arguments are passed parenthesized so the
-// signature may contain commas.
-//
+// Reaches a private member without modifying the class. Template arguments are parenthesized so signatures may contain commas.
 
 namespace Lumina::PrivateAccess
 {

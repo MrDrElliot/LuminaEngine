@@ -11,7 +11,7 @@
 #include "Systems/NetMovementInterpSystem.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Systems/DebugDrawSystem.h"
-#include "World/Subsystems/DebugDrawSubsystem.h"
+#include "World/Subsystems/DebugSubsystem.h"
 #include "World/Subsystems/WorldSettings.h"
 #include "World/World.h"
 
@@ -92,7 +92,7 @@ namespace Lumina
     void CNetDebugDrawSystem::DrawInterest(const SExclusiveContext& Context)
     {
         CWorld* World = Context.GetWorld();
-        CDebugDrawSubsystem* Draw = World->GetDebugDraw();
+        CDebugSubsystem* Draw = World->GetDebug();
         ECS::FRegistry& Registry = Context.GetRegistry();
         const FNetWorldState* Net = Registry.Ctx().Find<FNetWorldState>();
         if (Net == nullptr || !World->IsNetServer())
@@ -152,7 +152,7 @@ namespace Lumina
 
     void CNetDebugDrawSystem::DrawLagCompensation(const SExclusiveContext& Context)
     {
-        CDebugDrawSubsystem* Draw = Context.GetWorld()->GetDebugDraw();
+        CDebugSubsystem* Draw = Context.GetWorld()->GetDebug();
         const FLagCompensationHistory* History = Context.GetRegistry().Ctx().Find<FLagCompensationHistory>();
         if (History == nullptr || History->Count == 0)
         {
@@ -180,7 +180,7 @@ namespace Lumina
     void CNetDebugDrawSystem::DrawProxies(const SExclusiveContext& Context)
     {
         ECS::FRegistry& Registry = Context.GetRegistry();
-        CDebugDrawSubsystem* Draw = Context.GetWorld()->GetDebugDraw();
+        CDebugSubsystem* Draw = Context.GetWorld()->GetDebug();
         const FNetInterpClock* Clock = Registry.Ctx().Find<FNetInterpClock>();
         if (Clock == nullptr || !Clock->bInitialized)
         {
@@ -227,7 +227,7 @@ namespace Lumina
     void CNetDebugDrawSystem::DrawStats(const SExclusiveContext& Context)
     {
         CWorld* World = Context.GetWorld();
-        CDebugDrawSubsystem* Draw = World->GetDebugDraw();
+        CDebugSubsystem* Draw = World->GetDebug();
         const FNetWorldState* Net = Context.GetRegistry().Ctx().Find<FNetWorldState>();
         if (Net == nullptr || Net->Transport == nullptr)
         {

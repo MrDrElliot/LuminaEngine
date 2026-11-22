@@ -27,8 +27,7 @@ namespace Lumina
 
     private:
 
-        // Face rasterized from the asset's bytes via ImGui's dynamic atlas. Owned by
-        // the atlas registration, not the asset; removed on deinitialize.
+        // Owned by the atlas registration rather than the asset, and removed on deinitialize.
         ImFont* PreviewFont = nullptr;
         TVector<uint8> PreviewFontBytes;
         bool bPreviewFontStale = false;

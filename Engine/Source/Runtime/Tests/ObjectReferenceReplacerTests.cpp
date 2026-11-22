@@ -18,8 +18,7 @@
 
 using namespace Lumina;
 
-// Retargeting references used to be a serialize pass, which could not see a NoSerialize property or a holder
-// that is not a CObject. It walks the reflected shape now, so these cover both directions it has to get right.
+// Retargeting walks the reflected shape, so it must see NoSerialize properties and holders that are not a CObject.
 
 TEST(ObjectReferenceReplacer, RepointsAHardReferenceAndClearsWhenTheReplacementIsNull)
 {
@@ -158,8 +157,7 @@ namespace
     };
 }
 
-// Retiring a minted class relies on this: it used to walk only the reflected graph, so a class still named by
-// a provider was freed with that provider left pointing at it.
+// Retiring a minted class used to free it while a provider still named it, because only the reflected graph was walked.
 TEST(ObjectReferenceReplacer, ClearsAReferenceHeldOnlyByAProvider)
 {
     Scripting::FScriptExportSchema Schema;

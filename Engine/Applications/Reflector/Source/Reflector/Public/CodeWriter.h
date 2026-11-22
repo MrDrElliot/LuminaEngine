@@ -48,8 +48,7 @@ namespace Lumina::Reflection
         FCodeWriter& Macro(const char* Text);
         FCodeWriter& Macrof(const char* Fmt, ...);
 
-        // Strip the trailing " \\\n" - useful when the last line of a #define shouldn't
-        // have a continuation backslash.
+        // Strips the trailing continuation backslash from the last line of a #define.
         void FinalizeMacro();
 
         // Indent control

@@ -2,9 +2,7 @@ using System;
 
 namespace LuminaSharp.Rendering;
 
-// 1:1 mirrors of the engine RHI enums (Runtime/Renderer/RHI.h + Format.h). Underlying types match C++ exactly
-// so these embed correctly inside the blittable descriptor structs; when passed as a bare argument the binding
-// layer widens them to int (the thunk ABI). Keep values/order in lockstep with the native enums.
+// Underlying types match the native RHI enums exactly so they embed in blittable structs, and values and order must stay in lockstep.
 
 public enum EBackend : byte { Vulkan, Metal, DX12, Default = Vulkan }
 

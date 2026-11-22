@@ -142,8 +142,7 @@ namespace Lumina
         uint16            ParmsSize   = 0;
         uint16            NumMetadata = 0;
 
-        // Mutable because dispatch holds the function by const reference, and publishing is a cache fill
-        // rather than a change to what the function is.
+        // Mutable because dispatch holds the function by const reference and publishing is only a cache fill.
         mutable void*         ManagedInvoker = nullptr;
         mutable const int32*  ManagedOffsets = nullptr;
     };

@@ -6,8 +6,7 @@
 
 namespace Lumina
 {
-    // HideInDetails as well as HideInComponentList: the details header already shows the name and
-    // offers Rename, so a component row for it would be a second way to edit the same field.
+    // Hidden from details too, since the details header already shows the name and offers Rename.
     REFLECT(Component, HideInComponentList, HideInDetails)
     struct RUNTIME_API SNameComponent
     {

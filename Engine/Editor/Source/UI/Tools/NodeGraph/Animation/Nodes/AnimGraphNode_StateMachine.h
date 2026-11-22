@@ -8,8 +8,7 @@ namespace Lumina
 {
     class CAnimStateMachineGraph;
 
-    // A state machine inside a blend-tree graph (double-click for its own canvas of State
-    // nodes + transition wires); outputs the resolved pose of whichever state is active.
+    // A state machine inside a blend-tree graph that outputs the pose of the active state.
     REFLECT()
     class CAnimGraphNode_StateMachine : public CAnimGraphNode
     {
@@ -36,8 +35,7 @@ namespace Lumina
         bool GetRenameText(FString& OutText) const override;
         void SetRenameText(const FString& InText) override;
 
-        // Double-click descends into the state machine canvas, creating it on
-        // first access.
+        // Double-click descends into the canvas, creating it on first access.
         CEdNodeGraph* GetEnterableSubGraph() override;
 
         // Returns (creating if needed) the state machine canvas graph.

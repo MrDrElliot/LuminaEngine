@@ -239,12 +239,12 @@ threshold, which is how to see the rejection dialog on hardware that passes.
    Setup.bat
    ```
    It downloads one prebuilt dependency bundle
-   (`External-Win64.zip`, ~192 MB), verifies it against a SHA-256 hash pinned in this
+   (`External-Win64-r2.zip`, ~165 MB), verifies it against a SHA-256 hash pinned in this
    repo (once the maintainer records it, see
    [`DEPENDENCIES.md`](DEPENDENCIES.md)), configures git hooks, registers the
    `.lproject` file type, and generates `Lumina.slnx`.
 
-   The bundle contains the .NET 10 runtime (C# scripting), LLVM/Clang 19
+   The bundle contains the .NET 10 runtime (C# scripting), LLVM/Clang 23
    (reflection codegen), the Slang shader compiler, RenderDoc, and Tracy. Each
    is open source; [`DEPENDENCIES.md`](DEPENDENCIES.md) lists every component
    with its version, purpose, upstream source, and license, and explains how to
@@ -252,7 +252,7 @@ threshold, which is how to see the rejection dialog on hardware that passes.
 
    To skip the prompt for unattended/CI runs, pass `--yes` (or set
    `LUMINA_SETUP_YES=1`). If the download fails, manually download
-   [External-Win64.zip](https://github.com/MrDrElliot/LuminaEngine/releases/download/external-deps/External-Win64.zip),
+   [External-Win64-r2.zip](https://github.com/MrDrElliot/LuminaEngine/releases/download/external-deps/External-Win64-r2.zip),
    extract it into the `LuminaEngine/` folder, then run
    `GenerateProjectFiles.bat`.
 
@@ -292,10 +292,10 @@ takes the same arguments.
    ```
 
    It checks the prerequisites above, downloads one prebuilt dependency bundle
-   (`External-Linux64.tar.gz`, ~186 MB), verifies it against a SHA-256 hash
+   (`External-Linux64-r2.tar.gz`, ~196 MB), verifies it against a SHA-256 hash
    pinned in this repo, and configures git hooks.
 
-   The bundle contains the .NET 10 runtime (C# scripting), LLVM/Clang 19
+   The bundle contains the .NET 10 runtime (C# scripting), LLVM/Clang 23
    (reflection codegen), the Slang shader compiler, RenderDoc, and Tracy. Each
    is open source; [`DEPENDENCIES.md`](DEPENDENCIES.md) lists every component
    with its version, purpose, upstream source, and license, and explains how to
@@ -304,7 +304,7 @@ takes the same arguments.
    To skip the prompts for unattended/CI runs, pass `-Yes` (or set
    `LUMINA_SETUP_YES=1`); an unattended run never edits your shell profile. If
    the download fails, fetch
-   [External-Linux64.tar.gz](https://github.com/MrDrElliot/LuminaEngine/releases/download/external-deps/External-Linux64.tar.gz)
+   [External-Linux64-r2.tar.gz](https://github.com/MrDrElliot/LuminaEngine/releases/download/external-deps/External-Linux64-r2.tar.gz)
    by hand and extract it into the `LuminaEngine/` folder.
 
 3. **Build**

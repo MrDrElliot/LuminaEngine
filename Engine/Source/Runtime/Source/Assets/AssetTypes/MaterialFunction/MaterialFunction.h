@@ -10,12 +10,7 @@
 
 namespace Lumina
 {
-    // Material function pin value type. Mapped to/from the editor's EMaterialInputType by
-    // ToMaterialInputType / ToMaterialValueType, which restate these ordinals -- APPEND ONLY, and add the
-    // matching MaterialValueOrdinal entry (MaterialGraphTypes.h) when you do.
-    //
-    // A sampled texture is not a value type here: it is a float4, which Float4 already covers. TextureHandle
-    // is the bindless index itself (a uint), so hand-written Slang inside a function can sample it directly.
+    // Pin value type whose ordinals are restated by ToMaterialInputType, so append only and add the matching MaterialValueOrdinal entry.
     REFLECT()
     enum class EMaterialValueType : uint8
     {
@@ -26,8 +21,7 @@ namespace Lumina
         TextureHandle,
     };
 
-    // One declared function input; mirrored from the editor's FunctionInput nodes on save so a call
-    // node can build pins without loading the function's editor graph.
+    // One declared function input, mirrored from the editor's FunctionInput nodes on save.
     REFLECT()
     struct RUNTIME_API SMaterialFunctionInput
     {
@@ -63,8 +57,7 @@ namespace Lumina
         FString Description;
     };
 
-    // Reusable material subgraph, inlined into the host material's shader at compile time. Runtime only
-    // needs the I/O signature + description; the editable node graph is a child object in this package.
+    // Reusable material subgraph inlined into the host shader, with the editable graph kept as a child object.
     REFLECT()
     class RUNTIME_API CMaterialFunction : public CObject
     {

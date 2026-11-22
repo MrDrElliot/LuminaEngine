@@ -11,8 +11,7 @@ namespace Lumina
 {
 	class FProceduralAudioStream;
 
-	// Streams PCM audio supplied at runtime, typically synthesized in script, through a lock-free
-	// ring buffer to the audio thread. Use for engine sounds, synths, network audio, etc.
+	// Streams PCM audio supplied at runtime through a lock-free ring buffer to the audio thread.
 	REFLECT(Component, Category = "Audio")
 	struct RUNTIME_API SProceduralAudioComponent
 	{
@@ -63,16 +62,14 @@ namespace Lumina
 		// The stream is shared with the audio thread. Producer is the script/game thread.
 		TSharedPtr<FProceduralAudioStream> Stream;
 
-		// Begin streaming. Allocates the ring buffer on first call and starts an ma_sound on the
-		// audio thread that pulls from it.
+		// Begin streaming, allocating the ring buffer on first call.
 		FUNCTION()
 		void Start();
 
 		FUNCTION()
 		void Stop();
 
-		// Push interleaved float samples to the ring buffer. Returns the number of frames actually
-		// written (may be less than requested if the buffer is full).
+		// Push interleaved float samples and return the frames written, fewer than requested if the buffer is full.
 		FUNCTION()
 		uint32 QueueSamples(const TVector<float>& Samples);
 

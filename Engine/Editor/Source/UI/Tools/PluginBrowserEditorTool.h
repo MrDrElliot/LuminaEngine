@@ -10,8 +10,7 @@ namespace Lumina
 {
     class FPlugin;
 
-    // View + per-project enable/disable for plugins. "Apply & Restart" rewrites the .lproject
-    // "Plugins" array; takes effect next start (no hot-unload). Read-only with no project loaded.
+    // Per-project plugin toggles that rewrite the .lproject Plugins array and apply next start, with no hot-unload.
     class FPluginBrowserEditorTool : public FEditorTool
     {
     public:
@@ -46,21 +45,18 @@ namespace Lumina
         // Stage / clear a pending toggle.
         void SetPendingEnabled(FName PluginName, bool bEnabled);
 
-        // Persist staged toggles to <Project>/<Name>.lproject. Returns false
-        // + populates OutError on JSON parse / write failure.
+        // Returns false and fills OutError on a JSON parse or write failure.
         bool ApplyAndPersist(FString& OutError);
 
         // Open the "restart required" modal via the editor's modal manager.
         void PromptRestart();
 
-        // Open the "create plugin" modal (name + description → scaffold into
-        // <Project>/Plugins/ and regenerate the project). Project must be loaded.
+        // Scaffolds into the project's Plugins folder and regenerates the project, so a project must be loaded.
         void OpenCreatePluginDialog();
 
     private:
 
-        // Plugin name (FName) → desired enabled. Sparse: only contains
-        // entries that differ from the current state.
+        // Sparse, holding only entries that differ from the current state.
         THashMap<FName, bool> PendingChanges;
 
         FName    SelectedPlugin;
@@ -68,12 +64,10 @@ namespace Lumina
         bool     bShowEngine  = true;
         bool     bShowProject = true;
 
-        // After ApplyAndPersist succeeds, sticky banner that says
-        // "<N> change(s) saved; restart to apply".
+        // Sticky banner shown after ApplyAndPersist succeeds.
         bool     bChangesSavedBanner = false;
 
-        // Create-plugin modal state. CreatePluginResult holds the post-create
-        // confirmation; non-empty switches the modal to its "done" view.
+        // Create-plugin modal state, where a non-empty CreatePluginResult switches to the done view.
         char     NewPluginNameBuf[64]  = {};
         char     NewPluginDescBuf[160] = {};
         FString  NewPluginError;

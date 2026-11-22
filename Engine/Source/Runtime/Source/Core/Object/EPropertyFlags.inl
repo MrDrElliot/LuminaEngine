@@ -1,9 +1,4 @@
-// The reflected property-flag vocabulary, single-sourced so the enum, its name table and the C# mirror can
-// never drift. LE_PROPERTY_FLAG(Name, BitIndex).
-//
-// Mirrored by LuminaSharp.EPropertyFlags, which is checked member-by-member at bootstrap against the name
-// lookup built from this file. Appending is safe; renumbering an existing flag is not, because a bit is what
-// a cooked package and a replicated field already agree on.
+// Single source for the property flags and the C# mirror. Append only, since cooked packages and replicated fields already agree on each bit.
 
 LE_PROPERTY_FLAG(Editable,            0)   // shown in the details panel
 LE_PROPERTY_FLAG(ReadOnly,            1)   // shown but not editable

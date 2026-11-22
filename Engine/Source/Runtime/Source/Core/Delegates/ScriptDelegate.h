@@ -5,6 +5,7 @@
 #include "Containers/Vector.h"
 #include "Core/Delegates/Delegate.h"
 #include "Core/LuminaMacros.h"
+#include "Core/Threading/Atomic.h"
 #include "Platform/GenericPlatform.h"
 
 namespace Lumina
@@ -18,12 +19,37 @@ namespace Lumina
      *  in the script load context, so it cannot outlive a reload; this is what lets that context unload. */
     RUNTIME_API void ClearAllManagedDelegateBindings();
 
+    // Shared by an owner and every listener bound under it, so ending it stops them all without the owner knowing where they live.
+    class FBindingToken
+    {
+    public:
+
+        RUNTIME_API static FBindingToken* Create();
+
+        void AddRef() { Refs.fetch_add(1, Atomic::MemoryOrderRelaxed); }
+        RUNTIME_API void Release();
+
+        // Game thread only. A listener under an ended token is retired by the next broadcast or bind instead of called.
+        void End() { bEnded = true; }
+        NODISCARD bool HasEnded() const { return bEnded; }
+
+    private:
+
+        FBindingToken() = default;
+
+        TAtomic<uint32> Refs{ 1 };
+        bool bEnded = false;
+    };
+
     // Non-templated base of every reflectable script delegate; sits at offset 0 of TScriptDelegate<T>.
     class FScriptDelegateBase
     {
     public:
 
         using FThunk = void(*)(void* Context, const void* Payload);
+
+        // Runs in place of each listener's plain call, so a broadcaster can keep one handler's mess from reaching the next.
+        using FListenerGuard = void(*)(FThunk Thunk, void* Context, const void* Payload);
 
         FScriptDelegateBase() = default;
         RUNTIME_API ~FScriptDelegateBase();
@@ -40,10 +66,10 @@ namespace Lumina
         RUNTIME_API static bool UnbindManagedAnywhere(const void* LastKnownAddress, uint64 Id);
 
         // Registers a managed listener, which the delegate owns and releases when it retires. Game thread only.
-        RUNTIME_API uint64 BindManaged(SScriptCallback Callback);
+        RUNTIME_API uint64 BindManaged(SScriptCallback Callback, FBindingToken* Token = nullptr);
 
         // The same with the invoke step supplied, which is what lets a test drive a listener with no .NET host.
-        RUNTIME_API uint64 BindManaged(FThunk Thunk, void* Context);
+        RUNTIME_API uint64 BindManaged(FThunk Thunk, void* Context, FBindingToken* Token = nullptr);
 
         // Removes a managed listener by id. Reentrancy-safe.
         RUNTIME_API bool UnbindManaged(uint64 Id);
@@ -74,6 +100,7 @@ namespace Lumina
             FThunk Thunk    = nullptr;
             void*  Context  = nullptr;
             void (*Destroy)(void*) = nullptr;
+            FBindingToken* Token = nullptr;
         };
 
         // Every broadcast open on this delegate, so destroying the owner can flag all of them at once.
@@ -85,17 +112,21 @@ namespace Lumina
             bool                 bAlive   = true;
         };
 
-        RUNTIME_API uint64 AddListener(FThunk Thunk, void* Context, void (*Destroy)(void*));
+        RUNTIME_API uint64 AddListener(FThunk Thunk, void* Context, void (*Destroy)(void*), FBindingToken* Token = nullptr);
         RUNTIME_API bool   RemoveListener(uint64 Id);
 
         // Fans out to every listener; Payload points at the blittable arg, or nullptr for no payload.
-        RUNTIME_API bool BroadcastAll(const void* Payload);
+        RUNTIME_API bool BroadcastAll(const void* Payload, FListenerGuard Guard = nullptr);
 
         RUNTIME_API static uint64 GenerateId();
 
     private:
 
+        static bool OwnsResources(const FListener& Listener);
+        static void DiscardListener(const FListener& Listener);
+
         void RetireAt(int32 Index);
+        void RetireEnded();
         void Compact();
         void EndOpenBroadcasts();
         FBroadcastFrame* OutermostBroadcast() const;
@@ -244,10 +275,16 @@ namespace Lumina
         template<typename TLambda>
         FDelegateHandle AddLambda(TLambda&& Lambda) { return AddCallable(std::forward<TLambda>(Lambda)); }
 
+        // An object with a BindingTokenFor overload, such as a script, drops this binding by itself when its token ends.
         template<typename TObject, typename TMemFunc>
         FDelegateHandle AddMember(TObject* Object, TMemFunc Method)
         {
-            return AddCallable([Object, Method](const TArgs&... Args) { (Object->*Method)(Args...); });
+            FBindingToken* Token = nullptr;
+            if constexpr (requires { BindingTokenFor(Object); })
+            {
+                Token = BindingTokenFor(Object);
+            }
+            return AddCallable([Object, Method](const TArgs&... Args) { (Object->*Method)(Args...); }, Token);
         }
 
         bool Remove(FDelegateHandle Handle) { return RemoveListener(Handle.ID); }
@@ -264,6 +301,18 @@ namespace Lumina
             return BroadcastAll(&Pack);
         }
 
+        // Broadcast with every listener's call made through Guard.
+        bool BroadcastGuarded(FListenerGuard Guard, const TArgs&... Args)
+        {
+            if (!IsBound())
+            {
+                return true;
+            }
+
+            const FPack Pack{ Args... };
+            return BroadcastAll(&Pack, Guard);
+        }
+
         /** Broadcasts then drops every listener, for a one-shot event such as engine startup. */
         void BroadcastAndClear(const TArgs&... Args)
         {
@@ -276,7 +325,7 @@ namespace Lumina
     private:
 
         template<typename TCallable>
-        FDelegateHandle AddCallable(TCallable&& Callable)
+        FDelegateHandle AddCallable(TCallable&& Callable, FBindingToken* Token = nullptr)
         {
             using FOwned = std::decay_t<TCallable>;
 
@@ -288,7 +337,8 @@ namespace Lumina
                         *static_cast<FOwned*>(Context), *static_cast<const FPack*>(Payload));
                 },
                 Owned,
-                [](void* Context) { delete static_cast<FOwned*>(Context); });
+                [](void* Context) { delete static_cast<FOwned*>(Context); },
+                Token);
 
             return FDelegateHandle{ Id };
         }

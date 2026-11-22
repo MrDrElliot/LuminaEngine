@@ -599,37 +599,46 @@ namespace Lumina::RHI
             }
 
             const bool bAsyncTransfer = SupportsAsyncTransfer();
+            const bool bHasUploads    = Upload::HasQueuedOps();
 
-            const FCmdListH ImageCL  = OpenCommandList(EQueueType::Graphics);
-            const FCmdListH BufferCL = bAsyncTransfer ? OpenCommandList(EQueueType::Transfer) : ImageCL;
+            const FCmdListH ImageCL  = bHasUploads ? OpenCommandList(EQueueType::Graphics) : FCmdListH{};
+            const FCmdListH BufferCL = bHasUploads && bAsyncTransfer ? OpenCommandList(EQueueType::Transfer) : ImageCL;
 
             uint64 Batch = 0;
-            const uint32 Used = Upload::FlushSplit(BufferCL, ImageCL, UploadStaging, &Batch);
+            const uint32 Used = bHasUploads ? Upload::FlushSplit(BufferCL, ImageCL, UploadStaging, &Batch) : 0u;
 
             auto SubmitUpload = [&](EQueueType Queue, FCmdListH CL) -> uint64
             {
                 const uint32 QueueIndex = (uint32)Queue;
 
-                FScopeLock Lock(GCore.SubmitMutex);
-                const uint64 Value = GCore.QueueCounter[QueueIndex].fetch_add(1, std::memory_order_release) + 1;
-                const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value };
-
                 // Buffer uploads rewrite live tables in place, so the copy engine must not start while graphics still reads them.
                 constexpr uint32 GraphicsIndex = (uint32)EQueueType::Graphics;
-                const uint64 GraphicsSubmitted = GCore.QueueCounter[GraphicsIndex].load(std::memory_order_acquire);
-                const FSemaphoreInfo GraphicsWait { GCore.QueueTimeline[GraphicsIndex], GraphicsSubmitted };
-                const bool bWaitGraphics = Queue == EQueueType::Transfer && GraphicsSubmitted != 0;
+                uint64 Value = 0;
+                FSemaphoreInfo GraphicsWait{};
+                bool bWaitGraphics = false;
+                {
+                    FScopeLock Lock(GCore.SubmitMutex);
+                    Value = GCore.QueueCounter[QueueIndex].fetch_add(1, std::memory_order_release) + 1;
 
+                    const uint64 GraphicsSubmitted = GCore.QueueCounter[GraphicsIndex].load(std::memory_order_acquire);
+                    GraphicsWait  = FSemaphoreInfo{ GCore.QueueTimeline[GraphicsIndex], GraphicsSubmitted };
+                    bWaitGraphics = Queue == EQueueType::Transfer && GraphicsSubmitted != 0;
+
+                    GCore.SlotWaitValue[Slot][QueueIndex] = Value;
+                    GCore.SlotCommandLists[Slot].Add(CL);
+                    if (Queue == EQueueType::Transfer)
+                    {
+                        GCore.PendingTransferWait = Value;
+                    }
+
+                    Internal::LockQueue(Queue);
+                }
+
+                const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value };
                 Internal::Submit(Queue, TSpan<const FCmdListH>{&CL, 1},
                                  bWaitGraphics ? TSpan<const FSemaphoreInfo>{&GraphicsWait, 1} : TSpan<const FSemaphoreInfo>{},
                                  TSpan<const FSemaphoreInfo>{&Signal, 1});
-                GCore.SlotWaitValue[Slot][QueueIndex] = Value;
-                GCore.SlotCommandLists[Slot].Add(CL);
-
-                if (Queue == EQueueType::Transfer)
-                {
-                    GCore.PendingTransferWait = Value;
-                }
+                Internal::UnlockQueue(Queue);
 
                 Upload::NoteFlushSubmitted(Batch, Queue, GCore.QueueTimeline[QueueIndex], Value);
                 return Value;
@@ -639,7 +648,7 @@ namespace Lumina::RHI
             {
                 SubmitUpload(EQueueType::Transfer, BufferCL);
             }
-            else if (bAsyncTransfer)
+            else if (bAsyncTransfer && IsValid(BufferCL))
             {
                 ResetCommandList(BufferCL);
             }
@@ -651,7 +660,7 @@ namespace Lumina::RHI
             {
                 SubmitUpload(EQueueType::Graphics, ImageCL);
             }
-            else
+            else if (IsValid(ImageCL))
             {
                 ResetCommandList(ImageCL);
             }
@@ -709,39 +718,47 @@ namespace Lumina::RHI
     {
         const uint32 QueueIndex = (uint32)Queue;
 
-        FScopeLock Lock(GCore.SubmitMutex);
-
-        const uint64 Value = GCore.QueueCounter[QueueIndex].fetch_add(1, std::memory_order_release) + 1;
-
+        uint64 Value = 0;
         FSemaphoreInfo WaitStorage[8];
         TSpan<const FSemaphoreInfo> EffectiveWaits = Waits;
-        if (Queue != EQueueType::Transfer
-            && GCore.PendingTransferWait != 0
-            && !GCore.bQueueTookTransferWait[QueueIndex]
-            && static_cast<size_t>(Waits.Num()) < std::size(WaitStorage))
         {
-            SIZE_T Count = 0;
-            for (const FSemaphoreInfo& Wait : Waits)
-            {
-                WaitStorage[Count++] = Wait;
-            }
-            WaitStorage[Count++] = FSemaphoreInfo{ GCore.QueueTimeline[(uint32)EQueueType::Transfer],
-                                                   GCore.PendingTransferWait };
+            FScopeLock Lock(GCore.SubmitMutex);
 
-            EffectiveWaits = TSpan<const FSemaphoreInfo>(WaitStorage, IntCastChecked<int32>(Count));
-            GCore.bQueueTookTransferWait[QueueIndex] = true;
+            Value = GCore.QueueCounter[QueueIndex].fetch_add(1, std::memory_order_release) + 1;
+
+            if (Queue != EQueueType::Transfer
+                && GCore.PendingTransferWait != 0
+                && !GCore.bQueueTookTransferWait[QueueIndex]
+                && static_cast<size_t>(Waits.Num()) < std::size(WaitStorage))
+            {
+                SIZE_T Count = 0;
+                for (const FSemaphoreInfo& Wait : Waits)
+                {
+                    WaitStorage[Count++] = Wait;
+                }
+                WaitStorage[Count++] = FSemaphoreInfo{ GCore.QueueTimeline[(uint32)EQueueType::Transfer],
+                                                       GCore.PendingTransferWait };
+
+                EffectiveWaits = TSpan<const FSemaphoreInfo>(WaitStorage, IntCastChecked<int32>(Count));
+                GCore.bQueueTookTransferWait[QueueIndex] = true;
+            }
+
+            // Relaxed, since only BeginFrame writes this and both run on the frame thread.
+            const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
+            GCore.SlotWaitValue[Slot][QueueIndex] = Value;
+            for (FCmdListH CommandList : CommandLists)
+            {
+                GCore.SlotCommandLists[Slot].Add(CommandList);
+            }
+
+            // Taken before the ordering lock drops, so values still reach each queue in the order they were handed out.
+            Internal::LockQueue(Queue);
         }
 
+        // The driver submit runs outside SubmitMutex, so another queue's submit or an async present is not held behind it.
         const FSemaphoreInfo Signal { GCore.QueueTimeline[QueueIndex], Value };
         Internal::Submit(Queue, CommandLists, EffectiveWaits, TSpan<const FSemaphoreInfo>{&Signal, 1});
-
-        // Relaxed, since only BeginFrame writes this and both run on the frame thread.
-        const uint32 Slot = GCore.CurrentSlot.load(std::memory_order_relaxed);
-        GCore.SlotWaitValue[Slot][QueueIndex] = Value;
-        for (FCmdListH CommandList : CommandLists)
-        {
-            GCore.SlotCommandLists[Slot].Add(CommandList);
-        }
+        Internal::UnlockQueue(Queue);
 
         return Value;
     }

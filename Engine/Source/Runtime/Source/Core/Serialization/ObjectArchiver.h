@@ -27,9 +27,7 @@ namespace Lumina
         {
         }
 
-        // Declaring ANY operator<< here hides every one of the base's overloads, so without this a plain
-        // `Ar << SomeInt` against this archiver does not compile at all -- the scalar, string and container
-        // forwards are all invisible. Overriding two of them is not meant to withdraw the other twenty.
+        // Declaring any operator<< here hides every base overload, so the using-declaration below keeps the rest visible.
         using FProxyArchive::operator<<;
 
         RUNTIME_API FArchive& operator<<(CObject*& Obj) override;
@@ -61,14 +59,7 @@ namespace Lumina
         }
     };
 
-    // FObjectProxyArchiver that rewrites resolved references through a source -> copy table.
-    //
-    // Object references serialize as GUIDs, so a plain property copy hands the destination the SOURCE
-    // objects: duplicate a package whose exports reference each other (a material and the node graph
-    // beside it, a graph and its nodes) and the copy points straight back into the original. Editing
-    // the duplicate then edits the original. Remapping on read is what makes a package-level duplicate
-    // self-contained; anything not in the table is left alone, which is exactly right for references to
-    // OTHER packages (textures, parent materials) that should stay shared.
+    // Rewrites resolved references through a source to copy table so a duplicated package does not point back into the original. References not in the table stay shared.
     class LUMINA_VISIBLE_TYPE FObjectRemapArchiver : public FObjectProxyArchiver
     {
     public:

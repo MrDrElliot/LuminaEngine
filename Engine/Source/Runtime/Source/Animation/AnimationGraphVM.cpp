@@ -747,8 +747,7 @@ namespace Lumina
             }
         };
 
-        // The same quintic decay with zero initial velocity, or the curves step at the transition.
-        // Generic over the record, since inertialization and dead blending smooth curves identically.
+        // Zero initial velocity quintic decay, or the curves step at the transition.
         const auto InertializeCurves = [&](auto& Inert, uint16 Dst, bool bStart)
         {
             float* D = CurvesOf(Dst);

@@ -1,7 +1,6 @@
 ﻿#pragma once
 
 #include "Containers/HashTable.h"
-#include "Containers/Vector.h"
 #include "Containers/Name.h"
 #include "Core/Templates/LuminaTemplate.h"
 #include "Core/Templates/Optional.h"
@@ -33,14 +32,9 @@ namespace Lumina
     
         NODISCARD TOptional<bool> GetBool(const FString& name) const;
     
-        const TVector<FFixedString>& GetPositionalArgs() const;
-
-        const THashMap<FName, FFixedString>& GetAll() const;
-    
     private:
     
         THashMap<FName, FFixedString>   Args;
-        TVector<FFixedString>           PositionalArgs;
     };
 
 }

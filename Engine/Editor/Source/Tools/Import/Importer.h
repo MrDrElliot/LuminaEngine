@@ -82,8 +82,7 @@ namespace Lumina
         /** Drops the parsed source data; called once the import is committed or canceled. */
         virtual void ReleaseSourceData() { }
 
-        //~ Reimport replaces the DATA of an existing asset: same CObject, same GUID, same package path, so
-        //~ every reference to it survives.
+        //~ Reimport replaces the data of an existing asset in place, so every reference to it survives.
 
         virtual bool CanReimport(const CStruct* AssetClass) const { return false; }
         virtual bool ReimportAsset(CObject* Asset, const FImportRequest& Request, FScopedSlowTask* Progress) { return false; }

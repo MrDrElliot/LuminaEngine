@@ -1013,8 +1013,7 @@ namespace Lumina
         // Resolved every frame rather than from the cache, so a released texture cannot leave a dead slot.
         ResolveBatchTextures(Batch);
 
-        // Empty arrays stay empty spans: nothing dereferences them, so there is no dummy element to
-        // upload just to keep an address non-null.
+        // Empty arrays stay empty spans, so no dummy element is uploaded just to keep an address non-null.
         const RHI::TGPUSpan<FUiDraw> DrawsSpan =
             RHI::CopyTransientArray(Batch.Draws.GetData(), Batch.Draws.Num());
 

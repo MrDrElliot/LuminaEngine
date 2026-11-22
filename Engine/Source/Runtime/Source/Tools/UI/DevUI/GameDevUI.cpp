@@ -13,7 +13,6 @@
 #include "Paths/Paths.h"
 #include "Platform/Time/PlatformTime.h"
 #include "Renderer/RenderManager.h"
-#include "Scripting/EntityScript.h"
 #include "Tools/Image/ImageWrite.h"
 #include "Tools/UI/ImGui/ImGuiRenderer.h"
 #include "World/World.h"
@@ -189,7 +188,7 @@ namespace Lumina
         {
             if (World.IsGameWorld() && !World.IsSuspended())
             {
-                EntityScripts::DebugGui(World.GetEntityRegistry());
+                World.GetDebug()->BroadcastDebugGui();
             }
         });
     }

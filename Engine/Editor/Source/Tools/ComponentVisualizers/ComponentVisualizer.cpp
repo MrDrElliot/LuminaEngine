@@ -676,8 +676,7 @@ namespace Lumina
 
             Box.HalfExtent[Face.Axis] = Clamped;
 
-            // Shift the box by half of what the face moved, so the opposite face stays where it was.
-            // Physics scales the offset by the entity, so the unscaled half delta is what moves this face by the dragged amount.
+            // Shift the box by half the face delta so the opposite face stays put, unscaled since physics scales the offset by the entity.
             Box.TranslationOffset += (LocalRotation * (UnitAxis(Face.Axis) * Face.Sign)) * HalfDelta;
 
             Context.MarkDirty();

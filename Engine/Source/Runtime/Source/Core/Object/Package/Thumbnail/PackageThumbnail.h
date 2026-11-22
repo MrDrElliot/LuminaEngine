@@ -44,8 +44,7 @@ namespace Lumina
             return LoadState.load(std::memory_order_acquire) == EState::Loaded;
         }
 
-        // ImageData is raw RGBA8 in memory; on disk it is PNG-compressed (lossless) to keep packages small.
-        // Backward-compatible with legacy uncompressed thumbnails. Impl in PackageThumbnail.cpp.
+        // Raw RGBA8 in memory and lossless PNG on disk, while legacy uncompressed thumbnails still load.
         RUNTIME_API void Serialize(FArchive& Ar);
     };
 }

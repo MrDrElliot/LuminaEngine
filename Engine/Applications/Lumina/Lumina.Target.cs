@@ -18,13 +18,10 @@ public class LuminaTarget : LuminaTargetRules
         // Nothing links it; it puts the shader tree in the generated IDE projects.
         ExtraModuleNames.Add("Shaders");
 
-        // A shipping game links every module into one executable. Editor targets stay modular
-        // even in Shipping: Runtime and Editor each carry their own copy of the stb_image_write
-        // implementation, which is fine in separate images and a duplicate symbol in one.
+        // Editor targets stay modular even in Shipping because Runtime and Editor each carry a stb_image_write copy that would collide in one image.
         bMonolithic = Target.Configuration == BuildConfiguration.Shipping && (Target.Type == TargetType.Game || Target.Type == TargetType.Server);
 
-        // The managed engine API. Not linked, but the editor loads it at startup, so a build that
-        // skipped it would leave C# scripting silently dead.
+        // Not linked, but the editor loads it at startup, so skipping it leaves C# scripting silently dead.
         AddManagedProject(
             "../../Source/LuminaSharp/LuminaSharp.csproj",
             $"../../../Binaries/{Target.PlatformName}/DotNet/Managed/LuminaSharp.dll");

@@ -5,10 +5,7 @@
 
 #define PREPROCESSOR_ENUM_PROTECT(a) ((unsigned int)(a))
 
-// Package wire format. Entries are POSITIONAL: the value is what gets stamped into every saved package,
-// so removing one renumbers every entry after it and changes what already-written files mean. Only do
-// that when the content those files hold is being regenerated wholesale -- a package stamped higher than
-// AUTOMATIC_VERSION is refused outright by LoadPackage, which is loud, but the reverse is silent.
+// Package wire format entries are positional, so removing one renumbers every later entry and silently changes what old files mean.
 enum class ELuminaEngineVersion : uint32
 {
 	INITIAL_VERSION = 1000,
@@ -19,30 +16,22 @@ enum class ELuminaEngineVersion : uint32
 	// CAnimationGraph serializes BytecodeVersion (stale programs refused instead of misparsed).
 	ANIM_GRAPH_BYTECODE_VERSION,
 
-	// FName wire format: None serializes as the empty string. Older files stored the "NAME_None"
-	// display rendering, which round-tripped into a real name whose IsNone() was false.
+	// None serializes as the empty string, where older files stored the "NAME_None" display rendering.
 	FNAME_NONE_EMPTY_STRING,
 
-	// FTextureResource::FDescription serializes LayerCount, and its mips are stored layer-major
-	// (Mips[Layer * NumMips + Mip]). Older files are single-layer, so LayerCount defaults to 1.
+	// Texture descriptions serialize LayerCount with mips stored layer-major, and older files default to 1 layer.
 	TEXTURE_ARRAY_LAYERS,
 
 	// FAnimationResource serializes authored float curves, and CAnimationGraph its curve tables.
 	ANIM_CURVES,
 
-	// CPrefab writes a variant flag before its registry. A variant serializes its DELTA against
-	// ParentPrefab there instead of resolved data; older files are always root prefabs.
+	// CPrefab writes a variant flag before its registry, and a variant stores a delta against its parent.
 	PREFAB_VARIANTS,
 
-	// Packages can carry a bulk-data region: raw bytes appended after the compressed container and
-	// located by a fixed trailer at EOF, addressed by FBulkDataRef offsets stored inline in exports.
-	// FTextureResource uses it to hold the mips above its inline tail, so a texture no longer has to
-	// be fully resident to be loaded. Older files have no trailer and store every mip inline.
+	// Packages can carry a bulk-data region located by a trailer at EOF, and older files store every mip inline.
 	PACKAGE_BULK_DATA,
 
-	// FGeometrySurface serializes TexelFactor (world size of one UV tile), which texture streaming uses
-	// to turn a distance into a required resolution. Older meshes store 0 and fall back to a bounding-
-	// sphere estimate; it cannot be recomputed at load because the source UVs are not serialized.
+	// Older meshes store a TexelFactor of 0 and fall back to a bounding sphere estimate, since source UVs are not serialized.
 	MESH_SURFACE_TEXEL_FACTOR,
 
 	// CAnimationGraph serializes SlotNames, the montage slot table its EvalSlot opcodes index.
@@ -124,6 +113,9 @@ enum class ELuminaEngineVersion : uint32
 
 	// A mesh resource carries an optional baked impostor after its distance field.
 	MESH_IMPOSTOR,
+
+	// An impostor records whether its atlases hold BC7 blocks, and older ones are RGBA8.
+	MESH_IMPOSTOR_BC7,
 
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1

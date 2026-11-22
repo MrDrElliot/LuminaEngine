@@ -2,6 +2,7 @@
 
 #include "Containers/String.h"
 #include "Containers/Vector.h"
+#include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/ObjectMacros.h"
 #include "World/Subsystems/WorldSubsystem.h"
 #include "SaveGameSubsystem.generated.h"
@@ -25,5 +26,13 @@ namespace Lumina
         // Loads the slot and restores World at the end of the frame. SSaveGameCompletedEvent and OnWorldRestored report back.
         FUNCTION()
         void RequestLoadGame(const FString& SlotName, int32 UserIndex);
+
+        // Before a save reads the world, so derived state can be folded into SaveGame fields.
+        PROPERTY(Hidden)
+        FScriptDelegate OnSaving;
+
+        // After a load wrote the saved fields back into the world, so anything built from them is stale. Respawned scripts attach later and miss it.
+        PROPERTY(Hidden)
+        FScriptDelegate OnRestored;
     };
 }

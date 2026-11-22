@@ -42,8 +42,7 @@ namespace Lumina
         // Queues moving one script to another slot, which is also the order they attach, ready and update in.
         void QueueMove(SEntityScriptComponent* Component, int32 From, int32 To);
 
-        // Per-script value editor. Rebuilt ONLY when that slot's script object or its class changes -- never
-        // per frame, or every widget inside it loses its in-progress state and nothing can be edited.
+        // Per-script value editor, rebuilt only when the slot's script or class changes since per-frame rebuilds lose widget state.
         struct FSlotView
         {
             CEntityScript*             BoundScript = nullptr;
@@ -61,13 +60,10 @@ namespace Lumina
 
         void BindView(FSlotView& View, CEntityScript* Script);
 
-        // What the nested tables reported this frame, translated into this customization's own return value so
-        // an edit to a script property reaches the scene's transaction/dirty pipeline like any other property.
+        // What the nested tables reported this frame, so a script property edit reaches the transaction and dirty pipeline.
         EPropertyChangeOp NestedChangeOp = EPropertyChangeOp::None;
 
-        // Captured during the draw and replayed from UpdatePropertyValue (after BeginTransaction), so the
-        // undo snapshot is taken BEFORE the mutation. Mutating mid-draw would also invalidate the vector the
-        // draw loop is walking.
+        // Replayed from UpdatePropertyValue after BeginTransaction, so the undo snapshot precedes the mutation and the draw loop's vector stays valid.
         TFunction<void()> PendingMutation;
 
         // Owned here, so its search and open categories last as long as this inspector does.

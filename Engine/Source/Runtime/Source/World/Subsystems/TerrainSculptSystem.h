@@ -8,8 +8,7 @@ namespace Lumina
 {
     struct STerrainComponent;
 
-    // A single brush dab captured from the editor during a stroke; the sculpt system replays many of
-    // these against the CPU heightmap and marks the touched region dirty.
+    // A single brush dab captured during a stroke and replayed against the CPU heightmap.
     struct FTerrainSculptDab
     {
         ETerrainBrushMode   Mode          = ETerrainBrushMode::Sculpt;
@@ -54,8 +53,7 @@ namespace Lumina
         FVector3 SampleNormal(float WorldX, float WorldZ) const;
     };
 
-    // Stateless utility applying brush dabs to a terrain; parallelized across footprint rows via GTaskSystem.
-    // Each apply marks only the touched rect dirty. One stroke at a time -- don't apply concurrently on one component.
+    // Stateless brush application parallelized across footprint rows, so apply one stroke at a time per component.
     class RUNTIME_API FTerrainSculptSystem
     {
     public:
@@ -65,16 +63,13 @@ namespace Lumina
         /** Convert a world-space XYZ point to heightmap sample coordinates. */
         static FIntVector2 WorldToSample(const STerrainComponent& Terrain, const FVector3& WorldPos);
 
-        // Raycast against the current heightmap, returning the hit point if any. TerrainOrigin is the
-        // entity's world position; the terrain centers on it (renderer's OriginXZ = TerrainOrigin.xz - HalfSize).
+        // Raycast against the current heightmap, where TerrainOrigin is the entity position the terrain centers on.
         static bool Raycast(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, const FVector3& RayOrigin, const FVector3& RayDir, FVector3& OutHit);
 
-        // Bilinear world-space surface height at (WorldX, WorldZ). Returns false if the point is outside the
-        // terrain footprint. TerrainOrigin is the entity world position (the terrain centers on it).
+        // Bilinear surface height at (WorldX, WorldZ), false outside the terrain footprint.
         static bool SampleHeight(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, float WorldX, float WorldZ, float& OutHeight);
 
-        // Surface normal at (WorldX, WorldZ) from the height gradient (central differences). Returns world up
-        // if the point is off the terrain.
+        // Surface normal at (WorldX, WorldZ) by central differences, world up off the terrain.
         static FVector3 SampleNormal(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, float WorldX, float WorldZ);
 
         // Null heights when the heightmap does not hold Resolution squared samples.

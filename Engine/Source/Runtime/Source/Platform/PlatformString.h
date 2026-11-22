@@ -4,8 +4,7 @@
 #include "GenericPlatform.h"
 #include "Platform.h"
 
-// Forward-declared rather than including Memory.h: this header is pulled in by Containers/String.h, and
-// Memory.h transitively re-includes String.h (via Assert.h), which the reflector rejects as a cycle.
+// Forward-declared since Memory.h re-includes String.h via Assert.h, which the reflector rejects as a cycle.
 namespace Lumina::Memory
 {
     NODISCARD RUNTIME_API void* Malloc(size_t Size, size_t Alignment);
@@ -32,8 +31,7 @@ namespace Lumina
         FORCEINLINE int32 CStringLen(const ANSICHAR* Str) { return static_cast<int32>(::strlen(Str)); }
         FORCEINLINE int32 CStringLen(const WIDECHAR* Str) { return static_cast<int32>(::wcslen(Str)); }
 
-        // Conversion trait keyed on (To, From). Only the type pairs the engine actually uses are defined;
-        // anything else is a compile error rather than a silent wrong-encoding copy.
+        // Undefined pairs are a compile error rather than a silent wrong-encoding copy.
         template <typename To, typename From>
         struct TStringConvert;
 

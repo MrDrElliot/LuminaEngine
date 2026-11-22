@@ -8,8 +8,7 @@
 
 namespace Lumina
 {
-    // Project packaging tool: cooks the asset graph into per-chunk .paks, optionally builds the
-    // Shipping exe + copies it. Cook on the main thread (GC-racy); MSBuild + copy on a worker.
+    // Cooks the asset graph into per-chunk paks on the main thread since it races the GC, then builds and copies on a worker.
     class FProjectPackagerEditorTool : public FEditorTool
     {
     public:
@@ -34,8 +33,7 @@ namespace Lumina
 
     private:
 
-        // High-level state. Cook is sub-second so it lives on the main thread
-        // for one frame; Build+Copy is the long part and runs on the worker.
+        // Cook is sub-second and stays on the main thread, while build and copy is the long part on the worker.
         enum class EStage
         {
             Idle,
@@ -85,8 +83,7 @@ namespace Lumina
         FString             LastError;
         FString             LastPakPath;       // Main chunk PAK; reused for "Open Output".
         FString             LastOutputDir;
-        // One entry per chunk PAK written by the last successful cook
-        // (Main always present; UI/Script/Primary/etc. only when in-use).
+        // One entry per chunk pak from the last successful cook, with Main always present.
         struct FChunkSummary
         {
             FString Name;

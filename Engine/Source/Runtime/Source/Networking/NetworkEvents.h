@@ -19,7 +19,7 @@ namespace Lumina
         LeftHost     = 3,
     };
 
-    // A connection joined or left, queued for systems and fanned out to every ready script's session virtuals.
+    // A connection joined or left, queued for systems and broadcast through CNetSubsystem's session delegates.
     REFLECT(Event)
     struct RUNTIME_API SNetSessionEvent
     {
@@ -110,12 +110,5 @@ namespace Lumina
 
         PROPERTY(Hidden)
         uint32 OwningConnectionId = 0;
-    };
-
-    // Defined beside the script bridge, which this header cannot see.
-    template<>
-    struct TEventFanOut<SNetSessionEvent>
-    {
-        RUNTIME_API static void Deliver(ECS::FRegistry& Registry, const SNetSessionEvent& Event);
     };
 }

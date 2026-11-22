@@ -14,8 +14,7 @@ namespace Lumina
         Object,     // an asset reference (animation, blend space) a sampler node can swap at runtime
     };
 
-    // Typed pin for the animation node graph. The graph schema only permits
-    // connections between pins of the same EAnimPinType.
+    // Typed pin for the animation node graph, connectable only to the same EAnimPinType.
     REFLECT()
     class CAnimGraphPin : public CEdNodeGraphPin
     {
@@ -25,8 +24,7 @@ namespace Lumina
         void SetPinType(EAnimPinType InType);
         EAnimPinType GetPinType() const { return PinType; }
 
-        // Draws the inline editor (when set) for an unconnected input pin, so its value/enum
-        // is editable on the node face. Bound via CAnimGraphNode::BindFloatPinEditor / BindEnumPinEditor.
+        // Draws the inline editor for an unconnected input pin, bound via the node's BindFloatPinEditor or BindEnumPinEditor.
         float DrawPin() override;
         bool HasInlineEditor() const override { return (bool)InlineEditor; }
 

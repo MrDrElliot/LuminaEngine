@@ -168,8 +168,7 @@ TEST(ManagedTypeRegistry, PreUnloadRunsInReverseRegistrationOrder)
     EXPECT_EQ(Log[2], FString("First::PreUnload"));
 }
 
-// A failed compile keeps the previous generation alive, so the teardown has to be undone rather than
-// completed. This used to be one subsystem calling itself back from inside the host's error branch.
+// A failed compile keeps the previous generation alive, so the teardown must be undone rather than completed.
 TEST(ManagedTypeRegistry, AnAbortedUnloadPutsEveryStageBackInRegistrationOrder)
 {
     const FScopedStages Scope;

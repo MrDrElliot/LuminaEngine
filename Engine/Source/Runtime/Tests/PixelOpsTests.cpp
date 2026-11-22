@@ -73,8 +73,7 @@ TEST(PixelOps, ExpandRGBToRGBA16MatchesScalar)
     }
 }
 
-// The wide step reads 16 bytes but consumes 12, so an over-read is invisible to an output check.
-// Exact-sized buffers put it in reach of a sanitizer or page-heap build instead.
+// The wide step reads 16 bytes but consumes 12, so exact-sized buffers put an over-read in reach of a sanitizer.
 TEST(PixelOps, ExpandDoesNotReadPastAnExactlySizedSource)
 {
     for (size_t Count : kCounts)

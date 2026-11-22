@@ -11,8 +11,7 @@ namespace Lumina
     struct FPose;
     struct FSkeletonResource;
 
-    // One frame of root-bone motion extracted from a clip, expressed in the root bone's local
-    // (component) space. Apply to the owning entity, then strip the root from the in-place pose.
+    // In the root bone's local space, so apply it to the owning entity then strip the root from the in-place pose.
     struct FRootMotionDelta
     {
         FVector3 Translation = FVector3(0.0f);
@@ -28,8 +27,7 @@ namespace Lumina
             return (int32)Math::Clamp(Cycles, 0.0f, 1024.0f);
         }
 
-        // Resolves the motion root bone: the named bone if NameOverride is set and present, else the
-        // first bone with ParentIndex < 0. Returns Constants::kIndexNone when the skeleton has no root.
+        // Uses NameOverride when set and present, else the first bone with ParentIndex below 0.
         RUNTIME_API int32 ResolveRootBoneIndex(const FSkeletonResource* Skeleton, const FName& NameOverride);
 
         // Pins the root bone to its bind-pose local transform so the mesh never drifts (the "lock").
@@ -45,9 +43,7 @@ namespace Lumina
                                                       float Duration,
                                                       int32 WholeLoops = 0);
 
-        // Blends two deltas by Alpha (translation lerp, rotation slerp); identity stands in for a
-        // motionless side so blending fades motion in/out. bHasMotion propagates if either side has
-        // it, marking the branch as root-motion driven through the graph.
+        // Identity stands in for a motionless side so blending fades motion in and out, and bHasMotion propagates from either side.
         RUNTIME_API FRootMotionDelta BlendRootMotion(const FRootMotionDelta& A, const FRootMotionDelta& B, float Alpha);
     }
 }

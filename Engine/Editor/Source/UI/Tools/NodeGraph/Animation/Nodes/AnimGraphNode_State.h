@@ -8,8 +8,7 @@ namespace Lumina
 {
     class CAnimationGraphNodeGraph;
 
-    // A state on the state machine canvas, owning its blend-tree graph (double-click to edit) and connected
-    // to other states via StateFlow transition wires. The State Machine node compiles it to a pose register.
+    // A state on the state machine canvas that owns its blend-tree graph and links to others by StateFlow wires.
     REFLECT()
     class CAnimGraphNode_State : public CAnimGraphNode
     {
@@ -30,16 +29,13 @@ namespace Lumina
         bool GetRenameText(FString& OutText) const override;
         void SetRenameText(const FString& InText) override;
 
-        // State nodes live on the state machine canvas; they are never visited
-        // by the blend-tree compiler's topological walk, so this is a no-op.
+        // The blend-tree compiler's topological walk never visits state nodes, so this is a no-op.
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override {}
 
-        // Double-click descends into this state's blend tree, creating it on
-        // first access.
+        // Double-click descends into the blend tree, creating it on first access.
         CEdNodeGraph* GetEnterableSubGraph() override;
 
-        // Returns (creating if needed) this state's blend-tree graph. Used by
-        // both the editor (to draw it) and the compiler (to evaluate the state).
+        // Creates the blend tree if needed, for both the editor and the compiler.
         CAnimationGraphNodeGraph* GetOrCreateBlendTree();
 
         // Without this a duplicated state shares the original's blend tree and edits track both.
@@ -66,9 +62,7 @@ namespace Lumina
         CAnimGraphPin* OutPin = nullptr;
     };
 
-    // The single entry point of a state machine canvas. Whichever State its
-    // Entry output wires to is the state the machine starts in. Not deletable.
-    // The state machine graph creates its one Entry node itself; never palette-placeable.
+    // The single entry point of a state machine canvas, created by the graph itself and not deletable.
     REFLECT(NotPlaceable)
     class CAnimGraphNode_StateEntry : public CAnimGraphNode
     {
@@ -87,8 +81,7 @@ namespace Lumina
         CAnimGraphPin* OutPin = nullptr;
     };
 
-    // Source of transitions that are checked no matter which state is active (compiles to
-    // FAnimGraphTransition::FromState = -1). Wire it to any State to add a global escape edge.
+    // Source of transitions checked from any active state, compiled as FromState -1.
     REFLECT()
     class CAnimGraphNode_StateAny : public CAnimGraphNode
     {

@@ -5,8 +5,7 @@
 
 namespace Lumina
 {
-    // Analytical two-bone IK: rotates Root + Mid so the tip (End) reaches a component-space
-    // target while a Pole vector picks the bend side. For foot/hand placement, weapon grip, etc.
+    // Analytical two-bone IK that rotates Root and Mid so End reaches a component-space target, with Pole picking the bend side.
     REFLECT()
     class CAnimGraphNode_TwoBoneIK : public CAnimGraphNode
     {

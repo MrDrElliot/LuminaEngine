@@ -1,5 +1,4 @@
 #include <atomic>
-#include <assert.h>
 #include <errno.h>
 #include <linux/perf_event.h>
 #include <stdint.h>
@@ -9,6 +8,8 @@
 #include <unistd.h>
 
 #include "TracyDebug.hpp"
+#include "../common/TracyAssert.hpp"
+#include "../common/TracyForceInline.hpp"
 
 namespace tracy
 {
@@ -18,25 +19,26 @@ class RingBuffer
 public:
     RingBuffer( unsigned int size, int fd, int id, int cpu = -1 )
         : m_size( size )
+        , m_mask( size - 1 )
         , m_id( id )
         , m_cpu( cpu )
         , m_fd( fd )
     {
         const auto pageSize = uint32_t( getpagesize() );
-        assert( size >= pageSize );
-        assert( __builtin_popcount( size ) == 1 );
+        TRACY_ASSERT( size >= pageSize );
+        TRACY_ASSERT( __builtin_popcount( size ) == 1 );
         m_mapSize = size + pageSize;
         auto mapAddr = mmap( nullptr, m_mapSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0 );
         if( mapAddr == MAP_FAILED )
         {
-            TracyDebug( "mmap failed: errno %i (%s)\n", errno, strerror( errno ) );
+            TracyDebug( "mmap failed: errno %i (%s)", errno, strerror( errno ) );
             m_fd = 0;
             m_metadata = nullptr;
             close( fd );
             return;
         }
         m_metadata = (perf_event_mmap_page*)mapAddr;
-        assert( m_metadata->data_offset == pageSize );
+        TRACY_ASSERT( m_metadata->data_offset == pageSize );
         m_buffer = ((char*)mapAddr) + pageSize;
         m_tail = m_metadata->data_tail;
     }
@@ -50,20 +52,8 @@ public:
     RingBuffer( const RingBuffer& ) = delete;
     RingBuffer& operator=( const RingBuffer& ) = delete;
 
-    RingBuffer( RingBuffer&& other )
-    {
-        memcpy( (char*)&other, (char*)this, sizeof( RingBuffer ) );
-        m_metadata = nullptr;
-        m_fd = 0;
-    }
-
-    RingBuffer& operator=( RingBuffer&& other )
-    {
-        memcpy( (char*)&other, (char*)this, sizeof( RingBuffer ) );
-        m_metadata = nullptr;
-        m_fd = 0;
-        return *this;
-    }
+    RingBuffer( RingBuffer&& other ) = delete;
+    RingBuffer& operator=( RingBuffer&& other ) = delete;
 
     bool IsValid() const { return m_metadata != nullptr; }
     int GetId() const { return m_id; }
@@ -74,10 +64,10 @@ public:
         ioctl( m_fd, PERF_EVENT_IOC_ENABLE, 0 );
     }
 
-    void Read( void* dst, uint64_t offset, uint64_t cnt )
+    tracy_force_inline void Read( void* dst, uint64_t offset, uint64_t cnt )
     {
         const auto size = m_size;
-        auto src = ( m_tail + offset ) % size;
+        auto src = ( m_tail + offset ) & m_mask;
         if( src + cnt <= size )
         {
             memcpy( dst, m_buffer + src, cnt );
@@ -128,6 +118,7 @@ private:
     }
 
     unsigned int m_size;
+    unsigned int m_mask;
     uint64_t m_tail;
     char* m_buffer;
     int m_id;

@@ -141,6 +141,7 @@ TEST(CallbackSystems, InputReachesListenerScriptsAtTheFlush)
     Fixture.Registry->Emplace<SInputComponent>(Listener);
     CEntityScriptTest* Script = static_cast<CEntityScriptTest*>(EntityScripts::Attach(*Fixture.Registry, Listener, CEntityScriptTest::StaticClass()));
     ASSERT_NE(Script, nullptr);
+    Fixture.Registry->Get<SInputComponent>(Listener).OnInput.AddMember(Script, &CEntityScriptTest::RecordInput);
     Script->EventLog = &Log;
     Script->Label = "Listener";
 
@@ -166,6 +167,7 @@ TEST(CallbackSystems, CallbackRunnersKeepTheirOrderWithinAFrame)
     Fixture.Registry->Emplace<SInputComponent>(Listener);
     CEntityScriptTest* Script = static_cast<CEntityScriptTest*>(EntityScripts::Attach(*Fixture.Registry, Listener, CEntityScriptTest::StaticClass()));
     ASSERT_NE(Script, nullptr);
+    Fixture.Registry->Get<SInputComponent>(Listener).OnInput.AddMember(Script, &CEntityScriptTest::RecordInput);
     Script->Label = "Listener";
 
     FKeyPressedEvent Event(EKey::W, false, false, false, false);

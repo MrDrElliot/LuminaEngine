@@ -23,8 +23,7 @@ namespace Lumina
         
         void SetInputType(EMaterialInputType Type) { InputType = Type; }
 
-        // Compile-only override for the shader var a consumer reads from this pin; empty means use the node's
-        // FullName. Function-call nodes set this per output pin. Not serialized; cleared/rebound each compile.
+        // Compile-only override set by function-call nodes, where empty means the node's FullName, and rebound each compile.
         FString             ResolvedVar;
 
         EMaterialInputType  InputType = EMaterialInputType::Float;

@@ -1,12 +1,11 @@
 #pragma once
 
-// Set on a slot whose impostor the pixel shader tests for coverage, which a sub-pixel quad skips.
-static const uint kProxyAlphaTestBit = 0x80000000u;
-
 struct FProxyVertexOutput
 {
-    nointerpolation uint VisID       : VISID;
-    nointerpolation uint SlotAndTest : PROXY_SLOT;
-    float3 WorldPos                  : WORLD_POS;
-    float4 Position                  : SV_Position;
+    nointerpolation uint VisID      : VISID;
+    // The proxy list entry the pixel shader tests the impostor's coverage of, when bAlphaTest is set.
+    nointerpolation uint Entry      : PROXY_ENTRY;
+    nointerpolation uint bAlphaTest : PROXY_ALPHA_TEST;
+    float3 WorldPos                 : WORLD_POS;
+    float4 Position                 : SV_Position;
 };

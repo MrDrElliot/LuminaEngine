@@ -1,7 +1,6 @@
 #pragma once
 
-// Nothing outside this plugin names any of these: the engine reaches netcode only through
-// INetworkRuntime, so none of it is exported.
+// Nothing outside this plugin names these, so none of it is exported.
 namespace Lumina
 {
     class INetworkTransport;

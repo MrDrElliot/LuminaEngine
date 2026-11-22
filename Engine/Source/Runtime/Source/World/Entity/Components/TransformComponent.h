@@ -173,9 +173,7 @@ namespace Lumina
             return Math::Degrees(Math::EulerAngles(ComputeWorldTransform().GetRotation()));
         }
 
-        // Composed on demand rather than cached: the matrix is ~20 SIMD instructions out of a
-        // WorldTransform that is already in cache here, where storing it cost 64 bytes -- a third of the
-        // component -- on every entity, paid by every pass that strides this pool for anything else.
+        // Composed on demand because storing the matrix cost 64 bytes on every entity, paid by every pass striding this pool.
         FUNCTION(NoSuppressGCTransition)
         FMatrix4 GetWorldMatrix() const
         {
@@ -309,16 +307,14 @@ namespace Lumina
         FUNCTION()
         FVector3 GetRotationAsEuler() const { return GetLocalRotationAsEuler(); }
 
-        // Bind this component to its owning entity. Called after duplication or post-load to rewire the
-        // self-referential pointers used by MarkDirty and ComputeWorldTransform. World init also does this directly via friend access.
+        // Rewires the self-referential pointers after duplication or post-load.
         void Bind(ECS::FRegistry& InRegistry, ECS::FEntity InEntity)
         {
             Registry = &InRegistry;
             Entity = InEntity;
             DirtyState = ECS::Utils::EnsureTransformDirtyGate(InRegistry);
 
-            // Re-derived rather than carried over: a bit-copied component's flag describes the SOURCE
-            // entity's hierarchy, and this copy may be parented differently.
+            // Re-derived because a bit-copied flag describes the source entity's hierarchy.
             bIsFlat = ECS::Utils::IsEntityTransformFlat(InRegistry, InEntity);
         }
         
@@ -388,10 +384,7 @@ namespace Lumina
 
         void MarkMoved(bool bQueueBody)
         {
-            // Flat fast path. For an entity with no relationship component the resolve's whole job is
-            // "world = local", so doing it here -- with the transform still in registers -- skips the dirty
-            // enqueue, the drain, and the random-access get the resolve would have paid to come back for it.
-            // The deferral cost more than the work it deferred.
+            // Flat fast path, since deferring world = local to the resolve cost more than doing it here.
             if (bIsFlat)
             {
                 // No world write: GetWorldTransformCached derives it from LocalTransform while bIsFlat holds.
@@ -430,14 +423,7 @@ namespace Lumina
         ECS::Utils::FTransformDirtyGate* DirtyState = nullptr;
     };
 
-    // CACHE_ALIGN is load-bearing, not decoration: the parallel resolve writes WorldTransform and the
-    // dirty flag for arbitrary entities across worker threads, and neighbors in the dense pool land on
-    // different threads, so anything that lets two components share a line false-shares.
-    //
-    // The corollary is that this size is QUANTIZED to 64. Shaving a few bytes off the tail buys nothing --
-    // it pads straight back up -- and only a cut that crosses a boundary changes what a pass fetches. This
-    // caught the 192 -> 128 step (deleting a cached world matrix); the next one is 128 -> 64, which needs
-    // WorldTransform to move to its own pool.
+    // CACHE_ALIGN stops the parallel resolve false-sharing, and the size is quantized to 64 so only a cut across a boundary helps (next is 128 to 64).
     static_assert(sizeof(STransformComponent) == 128,
         "STransformComponent changed size. It is quantized to 64B; see the note above before adjusting this.");
 }

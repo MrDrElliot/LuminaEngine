@@ -18,9 +18,7 @@ namespace Lumina
         Uncompressed,
     };
 
-    // Self-contained audio asset; the encoded source bytes (wav) are embedded so cooked builds
-    // need no source file. Playback shares the bytes with the audio thread via GetAudioData(),
-    // which keeps them alive for the duration of any in-flight sound.
+    // Self-contained audio asset with the encoded bytes embedded, shared with the audio thread through GetAudioData() for any in-flight sound.
     REFLECT()
     class RUNTIME_API CAudioStream : public CSoundBase
     {

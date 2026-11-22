@@ -22,8 +22,7 @@ namespace Lumina
     // Tools are built with Memory::New, so the deleter has to be the one that frees that way.
     using FEditorToolPtr = TUniquePtr<FEditorTool, smart_ptr_deleter<FEditorTool>>;
 
-    // Constrains the registration templates, so a bad type is reported at the registration
-    // rather than as a template error inside the registry.
+    // Constrains the registration templates so a bad type is reported at the call site.
 
     template<typename T>
     concept TEditorToolType = std::derived_from<T, FEditorTool>;
@@ -44,14 +43,7 @@ namespace Lumina
     using FAssetEditorFactory = TFunction<FEditorToolPtr(IEditorToolContext*, CObject*)>;
     using FFileEditorFactory  = TFunction<FEditorToolPtr(IEditorToolContext*, FStringView)>;
 
-    // Maps asset classes and file extensions to the editor tool that opens them. Built-ins register
-    // at startup; plugins register in StartupModule (EditorInit phase).
-    //
-    // A registration holds a callable whose code lives in the registering DLL, and nothing can
-    // detect that the code is gone once that DLL unloads: the pointer still looks valid and the
-    // process dies on the next lookup. A module that registers MUST unregister before it unloads.
-    // That is why the owner is a required argument and not a handle to keep: UnregisterAll(Owner)
-    // is one call in ShutdownModule that cannot fall out of step with what StartupModule did.
+    // Maps asset classes and file extensions to editor tools. A module must UnregisterAll(Owner) in ShutdownModule, or a stale callable crashes the next lookup.
     class EDITOR_API FEditorToolRegistry
     {
     public:
@@ -61,9 +53,7 @@ namespace Lumina
 
         static FEditorToolRegistry& Get();
 
-        // A later registration for the same class replaces the earlier one, which is how a plugin
-        // substitutes its own editor for a built-in. The displaced one is not remembered, so
-        // unregistering leaves the type with no editor rather than restoring what was there.
+        // A later registration replaces the earlier one, and the displaced editor is not restored on unregister.
         void RegisterAssetEditor(CClass* AssetClass, FAssetEditorFactory Factory, FName Owner);
 
         template<TEditorAssetType TAsset, TAssetEditorToolType TTool>
@@ -78,8 +68,7 @@ namespace Lumina
                 Owner);
         }
 
-        // Extension is the leading-dot form, ".rml", matched case-insensitively. Replacement
-        // behaves as it does for asset editors.
+        // Extension is the leading-dot form such as ".rml", matched case-insensitively.
         void RegisterFileEditor(FStringView Extension, FFileEditorFactory Factory, FName Owner);
 
         template<TFileEditorToolType TTool>
@@ -109,8 +98,7 @@ namespace Lumina
 
         void UnregisterFileEditors(std::initializer_list<FStringView> Extensions);
 
-        // Drops everything registered under this owner and returns how many went. The call a
-        // module's ShutdownModule wants. A default-constructed owner is refused.
+        // Drops everything registered under this owner and returns the count. A default-constructed owner is refused.
         int32 UnregisterAll(FName Owner);
 
         // The most-derived registered class wins, and an unregistered one falls back to the generic property grid.
@@ -128,8 +116,7 @@ namespace Lumina
 
     private:
 
-        // Copyable aggregate, not anything owning: it is held by value in a hash map, and the table
-        // instantiates the value's copy constructor whether or not it is used.
+        // Must stay a copyable aggregate since the hash map instantiates the copy constructor regardless of use.
         template<typename TFactory>
         struct TRegistration
         {

@@ -28,13 +28,10 @@ namespace Lumina
         static constexpr SNetGUID Invalid() { return SNetGUID{}; }
     };
 
-    // Stable (pre-placed, deterministically assigned) NetGUIDs occupy [1, NetGUID_DynamicStart);
-    // dynamic (runtime, server-spawned) NetGUIDs start at NetGUID_DynamicStart.
+    // Stable pre-placed NetGUIDs occupy [1, NetGUID_DynamicStart) and server-spawned ones start there.
     inline constexpr uint32 NetGUID_DynamicStart = 0x80000000u;
 
-    // Per-world NetGUID <-> entity map. Stable ids are derived identically on every peer from the
-    // shared loaded world (deterministic deserialization); dynamic ids are server-allocated and
-    // replicated via spawn records (later phase).
+    // Per-world NetGUID and entity map, with stable ids derived identically on every peer and dynamic ids allocated by the server.
     struct FNetGUIDTable
     {
         THashMap<uint32, ECS::FEntity> GuidToEntity;

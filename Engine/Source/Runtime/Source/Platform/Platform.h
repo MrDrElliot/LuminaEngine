@@ -162,9 +162,7 @@
 
 #else // REFLECTION_PARSER
 
-// libclang parses declarations, not code generation, so the attribute spellings above are noise to it
-// - but the macro names still appear in reflected declarations and must expand to something, or a
-// member like "FORCEINLINE FVector3 GetSize()" error-recovers into a bogus int property.
+// The macro names must still expand to something for libclang, or a member like FORCEINLINE FVector3 GetSize() recovers into a bogus int property.
 
 #define LIKELY(x)   (x)
 #define UNLIKELY(x) (x)

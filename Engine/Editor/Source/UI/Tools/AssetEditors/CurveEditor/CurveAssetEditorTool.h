@@ -6,8 +6,7 @@
 
 namespace Lumina
 {
-    // Editor for CCurveAsset: the curve canvas in the dominant window, the reflected
-    // properties in a side panel. Both edit the same SKeyedCurve live.
+    // Editor for CCurveAsset where the canvas and the side panel edit the same SKeyedCurve live.
     class FCurveAssetEditorTool : public FAssetEditorTool
     {
     public:
@@ -17,9 +16,7 @@ namespace Lumina
         FCurveAssetEditorTool(IEditorToolContext* Context, CObject* InAsset);
 
         bool IsSingleWindowTool() const override { return false; }
-        // Minted by the CPU curve painter registered in AssetTilePainters, not a viewport grab -- this tool
-        // has no 3D viewport to grab. Embeds the preview in the .lasset so a curve shows its shape in the
-        // content browser (and asset pickers) without having been loaded first.
+        // Embeds a CPU-painted preview so the curve shows in the content browser without being loaded, since there is no viewport to grab.
         bool ShouldGenerateThumbnailOnSave() const override { return true; }
         const char* GetTitlebarIcon() const override { return LE_ICON_CHART_BELL_CURVE; }
 

@@ -5,9 +5,7 @@
 
 namespace Lumina
 {
-    // Exponential height fog: density falls off with world height (thick valleys, clear peaks). One medium:
-    // the shadowed froxel volume covers the near range (when bVolumetricFog), then the same profile continues
-    // analytically to the scene depth and over the sky/horizon. Singleton: one enabled instance/frame.
+    // Exponential height fog with one medium, where the froxel volume covers the near range and the profile continues analytically. Singleton.
     REFLECT(Component, Category = "Environment")
     struct RUNTIME_API SExponentialHeightFogComponent
     {

@@ -17,6 +17,8 @@ struct FCullInstancesArgs
     GPUSpan<FInstanceCullEntry> RetainedCullEntries;
     GPUSpan<FTransform3x4>      RetainedTransforms;
     GPUSpan<FInstanceStatic>    RetainedStatic;
+    // Passed here, since the scene root this pass reads was published before the retained arrays were.
+    GPUSpan<FInstanceProxy>     RetainedProxies;
     GPUSpan<FSurfaceDesc>       SurfaceDescs;
 
     GPUSpan<FGPUInstance>      OutInstances;
@@ -211,7 +213,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     bool   bDrawsProxy  = true;
     float3 ProxyCenter  = Center;
     float  ProxyRadius  = Radius;
-    if (bProxyCandidate && Cull.HasFlag(EInstanceFlags::Impostor) && RetainedProxies().Contains(SlotIdx))
+    if (bProxyCandidate && Cull.HasFlag(EInstanceFlags::Impostor) && Pass().RetainedProxies.Contains(SlotIdx))
     {
         // Every surface measures the mesh's whole sphere and hashes the pivot, so the instance swaps to its one impostor at once.
         if (!bHasTransform)
@@ -219,7 +221,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
             Transform = Pass().RetainedTransforms.Get(SlotIdx);
             bHasTransform = true;
         }
-        const FInstanceProxy Proxy = RetainedProxies().GetAligned(SlotIdx);
+        const FInstanceProxy Proxy = Pass().RetainedProxies.GetAligned(SlotIdx);
         ProxyCenter = mul(Transform.ToMatrix(), float4(Proxy.LocalCenter, 1.0)).xyz;
         ProxyRadius = abs(Proxy.SplatHalfSize) * TransformMaxScale(Transform);
         bDrawsProxy = Proxy.SplatHalfSize > 0.0;
@@ -262,8 +264,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // A flag rather than a null-pointer test, since a slot that rejects here never loads the static payload.
     const bool bHasGeometry = Cull.HasFlag(EInstanceFlags::HasGeometry);
 
-    // Skinned ranges already fold in the header-resident test, so bHasGeometry is not applied again.
-    // A static instance starts from slot 0 here only to test it has geometry; its picks come after visibility.
+    // Skinned ranges already fold in the header-resident test, and a static instance uses slot 0 only to test for geometry.
     uint SurfaceMeshletOffset = bSkinned ? Skin.SurfaceMeshletOffset : Desc.LODMeshletOffset[0];
     uint SurfaceMeshletCount  = bSkinned ? Skin.SurfaceMeshletCount
                                          : (bHasGeometry && NumLODs > 0u ? Desc.LODMeshletCount[0] : 0u);

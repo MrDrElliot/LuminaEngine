@@ -25,6 +25,18 @@ namespace Lumina::Reflection
             return Out;
         }
 
+        // The generated type info a reflected type befriends, "FTypeInfo_CObject".
+        inline std::string TypeInfo(std::string_view DisplayName)
+        {
+            return "FTypeInfo_" + std::string(DisplayName);
+        }
+
+        // The same, qualified from the global namespace, "::Lumina::FTypeInfo_CObject".
+        inline std::string TypeInfoQualified(std::string_view Namespace, std::string_view DisplayName)
+        {
+            return Namespace.empty() ? ("::" + TypeInfo(DisplayName)) : ("::" + std::string(Namespace) + "::" + TypeInfo(DisplayName));
+        }
+
         // "Runtime" -> "RUNTIME_API".
         inline std::string ProjectApiMacro(std::string_view ProjectName)
         {
@@ -53,8 +65,7 @@ namespace Lumina::Reflection
             return Out;
         }
 
-        // A normalized identifier for a header file, suitable for use as a macro guard
-        // or symbol prefix. Replaces separators with underscores.
+        // Replaces separators with underscores so the ID works as a macro guard or symbol prefix.
         inline void SanitizeFileID(std::string& FileID)
         {
             for (auto& Ch : FileID)
@@ -79,8 +90,7 @@ namespace Lumina::Reflection
             return HeaderPath;
         }
 
-        // The frame a reflected call is made through: "<Type>_<Func>_Parms". offsetof is taken against it,
-        // so the compiler is what lays the frame out rather than the generator.
+        // offsetof is taken against this frame so the compiler lays it out rather than the generator.
         inline std::string FunctionParmsStruct(std::string_view TypeName, std::string_view FunctionName)
         {
             std::string Out(TypeName.data(), TypeName.data() + TypeName.size());

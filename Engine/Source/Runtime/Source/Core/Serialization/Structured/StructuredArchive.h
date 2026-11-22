@@ -135,8 +135,7 @@ namespace Lumina
         IStructuredArchive& StructuredArchive;
     };
 
-    // Exported like FArchiveRecord: a module outside Runtime that enters an array (the tests, an editor
-    // tool writing a structured file) needs its destructor and EnterElement, not just the slot API.
+    // Exported because modules outside Runtime that enter an array need its destructor and EnterElement.
     class RUNTIME_API FArchiveArray : protected FSlotPosition
     {
         friend class FArchiveSlot;

@@ -9,8 +9,7 @@
 
 namespace Lumina
 {
-    // Opaque handle from FTimerManager::SetTimer; safe across frames. The underlying ECS::FEntity is
-    // generational, so a stale handle reports invalid via IsTimerActive even after the slot is recycled.
+    // Opaque handle from FTimerManager::SetTimer, generational so a stale handle reports inactive after its slot is recycled.
     struct FTimerHandle
     {
         ECS::FEntity Handle = ECS::NullEntity;
@@ -21,8 +20,7 @@ namespace Lumina
         bool operator==(const FTimerHandle& Other) const { return Handle == Other.Handle; }
     };
 
-    // Per-world timer manager: one-shot + looping callbacks against the world's delta time, advancing
-    // only while unpaused. Exposed to scripts as the "Timer" global (Delay/SetTimer/ClearTimer/Wait/...).
+    // Per-world one-shot and looping callbacks against the world's delta time, advancing only while unpaused.
     class RUNTIME_API FTimerManager : public ECS::FResource
     {
     public:

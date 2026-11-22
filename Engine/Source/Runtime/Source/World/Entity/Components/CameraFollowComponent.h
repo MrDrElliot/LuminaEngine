@@ -7,8 +7,7 @@
 
 namespace Lumina
 {
-    // Makes a camera entity follow a target (CCameraRigSystem, after physics): eases toward Target + Offset,
-    // optionally facing it. Lag is frame-rate independent (0 = snap). Pair with SCameraComponent; for a wall-aware boom use SSpringArmComponent.
+    // Eases a camera entity toward Target + Offset after physics with frame-rate independent Lag, and SSpringArmComponent is the wall-aware alternative.
     REFLECT(Component, Category = "Camera")
     struct RUNTIME_API SCameraFollowComponent
     {
@@ -58,8 +57,7 @@ namespace Lumina
             bInitialized = false;
         }
 
-        // Runtime smoothing state (non-reflected). bInitialized snaps on the first tick (or after
-        // SetTarget) so the camera doesn't sweep in from a stale position.
+        // Runtime smoothing state, where bInitialized snaps on the first tick or after SetTarget.
         FVector3   CurrentPosition = FVector3(0.0f);
         FQuat   CurrentRotation = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
         bool        bInitialized = false;

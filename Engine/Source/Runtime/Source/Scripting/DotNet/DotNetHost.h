@@ -16,7 +16,7 @@ namespace Lumina
 namespace Lumina::DotNet
 {
     // Bumped whenever the native to managed boundary changes.
-    inline constexpr int32 GAbiVersion = 17;
+    inline constexpr int32 GAbiVersion = 18;
 
     // Boots the embedded runtime and runs the managed handshake.
     RUNTIME_API void Initialize();

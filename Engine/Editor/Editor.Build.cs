@@ -7,21 +7,15 @@ public class Editor : LuminaModuleRules
     {
         BinaryType = ModuleBinaryType.SharedLibrary;
 
-        // Editor sources reference APIs that WITH_EDITOR=0 strips, so this module cannot appear
-        // in a Game target at all.
+        // Editor sources reference APIs that WITH_EDITOR=0 strips, so this module cannot appear in a Game target.
         HostType = ModuleHostType.Editor;
 
-        // A module's PCH is named after the module. Every module's source root is on the include
-        // path of everything downstream, so a generic name there is a name every dependent then
-        // has to avoid: EditorPCH.h includes RuntimePCH.h, and when both were "pch.h" the quoted
-        // include resolved to the includer's own directory and Runtime's never arrived.
+        // A module's PCH is named after the module, since a generic name resolved the quoted include to the includer's own directory.
         PrecompiledHeader = new PrecompiledHeaderRules("EditorPCH.h", "Source/EditorPCH.cpp");
 
         PublicIncludePaths.Add(".");
 
-        // CMaterialFunctionGraph derives from CMaterialNodeGraph, so one unity blob holding both
-        // carries two generated bodies for the same include, and the later one wins and truncates
-        // the base class. Held back individually; the rest of the module merges.
+        // A unity blob holding both material graphs carries two generated bodies for one include, and the later truncates the base class.
         ExcludeFromUnity.Add("MaterialNodeGraph.cpp");
         ExcludeFromUnity.Add("MaterialFunctionGraph.cpp");
 
@@ -39,8 +33,7 @@ public class Editor : LuminaModuleRules
             "RPMalloc",
             "FreeType",
 
-            // Model format parsers: MeshOptimizer for the glTF importer, BasicUniversal for the
-            // texture cooker.
+            // Model format parsers for the glTF importer and the texture cooker.
             "TinyOBJLoader",
             "UFBX",
             "CGLTF",

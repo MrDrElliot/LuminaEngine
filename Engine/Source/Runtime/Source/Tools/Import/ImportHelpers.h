@@ -26,9 +26,7 @@ namespace Lumina
 
 namespace Lumina::Import
 {
-    // Clean a raw source string (a file stem, a DCC material name, ...) into a tidy asset name: keep
-    // [A-Za-z0-9], collapse every run of other characters (spaces, '.', '_', punctuation) into a single '_',
-    // and trim leading/trailing separators. An empty result falls back to Fallback.
+    // Keeps [A-Za-z0-9], collapses other runs into one underscore, and falls back to Fallback when empty.
     inline FString SanitizeAssetName(FStringView In, FStringView Fallback = "Asset")
     {
         FString Out;
@@ -58,8 +56,7 @@ namespace Lumina::Import
         return Out;
     }
 
-    // Sanitized name with Prefix (e.g. "T_") prepended, unless it already begins with Prefix (case-insensitive)
-    // so a re-import or an already-conventionally-named source never becomes "T_T_Foo".
+    // Skips the prefix when the name already begins with it (case-insensitive) so a re-import never becomes "T_T_Foo".
     inline FString MakeAssetName(FStringView Prefix, FStringView Raw, FStringView Fallback = "Asset")
     {
         FString Name = SanitizeAssetName(Raw, Fallback);
@@ -193,8 +190,7 @@ namespace Lumina::Import
             // Set when a masked material reads this image's alpha, to that material's cutoff.
             float AlphaCoverageCutoff = 0.0f;
 
-            // Total basisu encode threads for this texture (includes the calling thread; 1 = single-threaded).
-            // 0 = auto. A batch cooking many textures at once passes 1 so each doesn't spawn its own pool.
+            // Total basisu encode threads including the caller, 0 for auto. Batch cooks pass 1 to avoid a pool per texture.
             uint32 EncodeThreadBudget = 0;
 
             NODISCARD bool IsEmbedded() const { return !Bytes.IsEmpty(); }
@@ -463,8 +459,7 @@ namespace Lumina::Import
              */
             bool                                        bHasVertexColors = false;
 
-            // Out-of-line (MeshImport.cpp): the dtor releases preview thumbnails, and all of
-            // these need member TUniquePtrs' types complete, which they are not here.
+            // Out-of-line because the member TUniquePtrs need complete types.
             RUNTIME_API FMeshImportData();
             RUNTIME_API FMeshImportData(FMeshImportData&&) noexcept;
             RUNTIME_API FMeshImportData& operator=(FMeshImportData&&) noexcept;
@@ -483,8 +478,7 @@ namespace Lumina::Import
          *  When Progress is set, advances a total of ProgressBudget across the finalize pass. */
         RUNTIME_API void FinalizeMeshImportData(FMeshImportData& Data, const FMeshImportOptions& Options, FScopedSlowTask* Progress = nullptr, float ProgressBudget = 1.0f);
 
-        // Model-format parsers live in the editor's CImporter hierarchy; they pull
-        // tinyobjloader/ufbx/cgltf, which don't ship in the Game runtime.
+        // Model-format parsers live in the editor's CImporter hierarchy because tinyobjloader, ufbx and cgltf don't ship in the Game runtime.
     }
 
 }

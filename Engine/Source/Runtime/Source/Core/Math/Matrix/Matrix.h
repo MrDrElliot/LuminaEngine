@@ -28,8 +28,7 @@ namespace Lumina
 
         ColumnType Cols[C];
 
-        // Trivial default ctor: uninitialized. Use TMat(1) or
-        // TMat::Identity() for the identity matrix.
+        // Trivial default ctor leaves it uninitialized, so use TMat::Identity() for identity.
         TMat() = default;
 
         explicit constexpr TMat(T Diagonal) : Cols{}
@@ -119,8 +118,7 @@ namespace Lumina
         return Result;
     }
 
-    // SIMD fast paths for 4x4 float (hot case); exact-type overloads win over the generic
-    // templates above and match the scalar result.
+    // Exact-type SIMD overloads for 4x4 float win over the generic templates and match their result.
     [[nodiscard]] inline TVec<float, 4> operator*(const TMat<float, 4, 4>& M, const TVec<float, 4>& V)
     {
         using namespace SIMD;

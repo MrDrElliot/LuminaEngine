@@ -67,8 +67,7 @@ namespace Lumina
             bInitialized = false;
         }
 
-        // Runtime smoothing state (non-reflected). bInitialized snaps on the first
-        // tick (or after SetTarget) so the boom doesn't sweep in from a stale pose.
+        // Runtime smoothing state, where bInitialized snaps on the first tick or after SetTarget.
         FVector3   CurrentPivot = FVector3(0.0f);
         float       CurrentArmLength = 4.0f;
         bool        bInitialized = false;

@@ -10,8 +10,7 @@ namespace Lumina
 {
     class CMaterialInterface;
 
-    // Projects a Decal-domain material onto opaque surfaces inside its box (DBuffer decals). The box is
-    // the entity transform scaled by Size; the material projects along the box's local -Z.
+    // Projects a Decal-domain material onto opaque surfaces inside its Size-scaled box, along local -Z.
     REFLECT(Component, Category = "Rendering")
     struct RUNTIME_API SDecalComponent
     {

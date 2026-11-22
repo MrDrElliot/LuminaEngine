@@ -15,7 +15,7 @@ public static class SyncRuntime
     // Emitted into a Sync setter after the value actually changed. Native ignores it everywhere but on the host.
     public static void MarkDirty(Lumina.CEntityScript Script)
     {
-        Script.MarkNetDirty();
+        Script.World.Net.MarkEntityDirty(Script.Entity);
     }
 
     // Emitted into a Sync setter that names a Change handler, so the writer's own change runs the handler the same as an arriving one.
@@ -30,7 +30,7 @@ public static class SyncRuntime
     // A FromOwner write goes to the host only from the owning client, and never while an arriving value is being applied.
     public static bool ShouldForward(Lumina.CEntityScript Script)
     {
-        return !Script.Entity.IsNull && Script.World.IsClient && Script.Network.IsNetworked && Script.Network.IsOwner && !RpcRuntime.IsReceiving;
+        return !Script.Entity.IsNull && Script.World.IsClient && Script.World.Net.IsEntityNetworked(Script.Entity) && Script.World.Net.IsOwner(Script.Entity) && !RpcRuntime.IsReceiving;
     }
 
     // Native sends the stored value through the field's FProperty, then validates, applies or corrects it on the host, as for C++.
@@ -39,7 +39,7 @@ public static class SyncRuntime
         IntPtr Property = FieldOf(Script, Field);
         if (Property != IntPtr.Zero)
         {
-            Script.ForwardSyncField(Property);
+            Lumina.CScriptNetLibrary.ForwardSyncField(Script, Property);
         }
     }
 
@@ -53,7 +53,7 @@ public static class SyncRuntime
         {
             if (!ByName.TryGetValue(Field, out IntPtr Property))
             {
-                Property = Script.FindSyncField(Field);
+                Property = Lumina.CScriptNetLibrary.FindSyncField(Script, Field);
                 if (Property == IntPtr.Zero)
                 {
                     Native.Log(ELogLevel.Error, $"[Net] {Type.Name}.{Field} is not a native Sync FromOwner field, so the owner's writes stay local.");
@@ -98,7 +98,8 @@ internal static class SyncChanges
 
     private static readonly ConditionalWeakTable<Type, FTypeHandlers> Cache = new();
 
-    [ThreadStatic] private static List<(FHandler Handler, object? Old)>? Pending;
+    // Per script, since arrivals are captured inside the network system and their handlers run later, at the sync point.
+    private static readonly ConditionalWeakTable<Lumina.CEntityScript, List<(FHandler Handler, object? Old)>> Pending = new();
 
     public static void Dispatch(Lumina.CEntityScript Script, ReadOnlySpan<byte> Names, bool bAfter)
     {
@@ -110,22 +111,33 @@ internal static class SyncChanges
 
         if (!bAfter)
         {
-            Pending ??= new List<(FHandler, object?)>();
-            Pending.Clear();
-            CollectNamed(Handlers, Script, Names, Pending);
+            List<(FHandler, object?)> Captured = Pending.GetOrCreateValue(Script);
+            lock (Captured)
+            {
+                CollectNamed(Handlers, Script, Names, Captured);
+            }
             return;
         }
 
-        if (Pending == null || Pending.Count == 0)
+        if (!Pending.TryGetValue(Script, out List<(FHandler Handler, object? Old)>? Waiting))
         {
             return;
         }
 
         // Copied out, since a handler may trigger another replicated update that refills the list.
-        int Count = Pending.Count;
-        (FHandler Handler, object? Old)[] Ready = ArrayPool<(FHandler, object?)>.Shared.Rent(Count);
-        Pending.CopyTo(Ready);
-        Pending.Clear();
+        int Count;
+        (FHandler Handler, object? Old)[] Ready;
+        lock (Waiting)
+        {
+            Count = Waiting.Count;
+            if (Count == 0)
+            {
+                return;
+            }
+            Ready = ArrayPool<(FHandler, object?)>.Shared.Rent(Count);
+            Waiting.CopyTo(Ready);
+            Waiting.Clear();
+        }
         try
         {
             for (int Index = 0; Index < Count; ++Index)
@@ -161,7 +173,8 @@ internal static class SyncChanges
             }
 
             int Length = Encoding.UTF8.GetChars(Name, Scratch);
-            if (Lookup.TryGetValue(Scratch.Slice(0, Length), out FHandler? Handler))
+            // The first capture in a frame holds the value the handler last saw, so a later one for the same field is dropped.
+            if (Lookup.TryGetValue(Scratch.Slice(0, Length), out FHandler? Handler) && !Into.Exists(Entry => ReferenceEquals(Entry.Item1, Handler)))
             {
                 Into.Add((Handler, Handler.bTakesValues ? Handler.Read(Script) : null));
             }

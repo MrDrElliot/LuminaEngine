@@ -8,8 +8,7 @@ namespace Lumina
 {
     class CBlendSpace;
 
-    // Samples a blend space at the X/Y inputs. The node owns its playback phase, shared across every
-    // contributing clip, so blends between clips of different lengths stay stride-aligned.
+    // Samples a blend space with one playback phase shared across clips, so different lengths stay stride-aligned.
     REFLECT()
     class CAnimGraphNode_BlendSpace : public CAnimGraphNode
     {

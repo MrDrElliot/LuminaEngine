@@ -27,9 +27,7 @@ namespace Lumina::VFS
         return Result;
     }
 
-    // Remove every mount registered under Alias (e.g. "/Game"). No-op if nothing is mounted there.
-    // Use before re-mounting a project-scoped alias so reloads/switches don't stack duplicate mounts
-    // (the mount list is append-only and DirectoryIterator visits every entry).
+    // Use before re-mounting a project-scoped alias, since the mount list is append-only and duplicates would stack.
     RUNTIME_API void Unmount(FStringView Alias);
 
     // The info is the walk's own copy, so a callback that keeps it may move from it.
@@ -81,7 +79,6 @@ namespace Lumina::VFS
 
     RUNTIME_API bool HasExtension(FStringView Path, FStringView Ext);
 
-    // Best-effort conversion of any editor path into VFS form: '/'-prefixed inputs are normalized as-is,
-    // else matched against each native mount's BasePath; no match returns the input verbatim.
+    // Slash-prefixed inputs are normalized as-is, otherwise matched against each native mount's BasePath, and no match returns the input.
     RUNTIME_API FFixedString ResolveToVirtualPath(FStringView InputPath);
 }

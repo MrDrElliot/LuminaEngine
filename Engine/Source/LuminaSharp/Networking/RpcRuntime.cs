@@ -20,11 +20,11 @@ public static unsafe class RpcRuntime
     // Keyed weakly by type, so a hot reload's old types are not pinned. A null entry is a method that failed to bind.
     private static readonly ConditionalWeakTable<Type, Dictionary<string, FBinding?>> Bindings = new();
 
-    internal static bool IsReceiving => Lumina.CEntityScript.IsReceivingRpc();
+    internal static bool IsReceiving => Lumina.CScriptNetLibrary.IsReceivingRpc();
 
     internal static Connection CurrentCaller()
     {
-        return IsReceiving ? new Connection(Lumina.CEntityScript.GetReceivingCaller()) : Connection.Local;
+        return IsReceiving ? new Connection(Lumina.CScriptNetLibrary.GetReceivingCaller()) : Connection.Local;
     }
 
     // False runs the body here and only here. True means the call goes out once Call has its arguments.
@@ -37,13 +37,13 @@ public static unsafe class RpcRuntime
             return false;
         }
 
-        Lumina.ERpcRoute Route = Script.PlanRpcCall(Binding.Function);
+        Lumina.ERpcRoute Route = Lumina.CScriptNetLibrary.PlanRpcCall(Script, Binding.Function);
         if (Route == Lumina.ERpcRoute.RunHere)
         {
             return false;
         }
 
-        Call = new RpcCall(Script, Binding, Lumina.CEntityScript.MakeRpcFrame(Binding.Function), Route == Lumina.ERpcRoute.SendOnly);
+        Call = new RpcCall(Script, Binding, Lumina.CScriptNetLibrary.MakeRpcFrame(Binding.Function), Route == Lumina.ERpcRoute.SendOnly);
         return true;
     }
 
@@ -64,7 +64,7 @@ public static unsafe class RpcRuntime
     private static FBinding? Build(Lumina.CEntityScript Script, string Method)
     {
         Type Type = Script.GetType();
-        IntPtr Function = Script.FindRpcFunction(Method);
+        IntPtr Function = Lumina.CScriptNetLibrary.FindRpcFunction(Script, Method);
         MethodInfo? Info = Type.GetMethod(Method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy);
         if (Function == IntPtr.Zero || Info == null)
         {
@@ -91,7 +91,7 @@ public static unsafe class RpcRuntime
         return new FBinding { Function = Function, Slots = Slots };
     }
 
-    // Native brackets each replicated update with this, so a change handler sees the old value and then the new one.
+    // Called as replicated values arrive, to keep the old ones, and again at the sync point, which runs the change handlers.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvStdcall) })]
     public static void NetDispatchSync(IntPtr Handle, byte* Names, int NamesSize, int After)
@@ -143,7 +143,7 @@ public ref struct RpcCall
             catch
             {
                 // Send never runs once this throws, so the arguments already written are torn down here.
-                Lumina.CEntityScript.DiscardRpcFrame(Binding.Function, Frame);
+                Lumina.CScriptNetLibrary.DiscardRpcFrame(Binding.Function, Frame);
                 throw;
             }
         }
@@ -153,7 +153,7 @@ public ref struct RpcCall
     // Sends the call and frees the frame. True when the call does not also run here.
     public bool Send()
     {
-        Script.SendRpcCall(Binding.Function, Frame);
+        Lumina.CScriptNetLibrary.SendRpcCall(Script, Binding.Function, Frame);
         return bSendOnly;
     }
 }

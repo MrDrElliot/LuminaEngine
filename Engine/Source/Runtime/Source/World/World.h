@@ -54,7 +54,7 @@ namespace Lumina
     class CSequenceSubsystem;
     class CNetSubsystem;
     class CUISubsystem;
-    class CDebugDrawSubsystem;
+    class CDebugSubsystem;
     class CSpawnSubsystem;
     class CEnvironmentSubsystem;
     class CSaveGameSubsystem;
@@ -654,7 +654,7 @@ namespace Lumina
         CUISubsystem* GetUI();
 
         FUNCTION(ScriptProperty)
-        CDebugDrawSubsystem* GetDebugDraw();
+        CDebugSubsystem* GetDebug();
 
         FUNCTION(ScriptProperty)
         CSpawnSubsystem* GetSpawner();
@@ -716,7 +716,7 @@ namespace Lumina
         // The render scene's Extract moves the queued paints into its frame snapshot.
         void DrainRenderTargetPaints(TVector<FTexturePaintOp>& OutOps);
 
-        //~ Debug drawing, where the drawing calls themselves live on GetDebugDraw.
+        //~ Debug drawing, where the drawing calls themselves live on GetDebug.
 
         NODISCARD FWorldDebugInterface* GetDebugInterface() { return &DebugInterface; }
 
@@ -759,7 +759,7 @@ namespace Lumina
 
         using FEngineSubsystems = TTuple<CPhysicsSubsystem*, CInputSubsystem*, CTweenSubsystem*, CTimerSubsystem*,
             CMessageSubsystem*, CAnimationSubsystem*, CCameraSubsystem*, CNavigationSubsystem*, CPerceptionSubsystem*,
-            CSequenceSubsystem*, CNetSubsystem*, CUISubsystem*, CDebugDrawSubsystem*, CSpawnSubsystem*,
+            CSequenceSubsystem*, CNetSubsystem*, CUISubsystem*, CDebugSubsystem*, CSpawnSubsystem*,
             CEnvironmentSubsystem*, CSaveGameSubsystem*>;
 
         template<typename T>

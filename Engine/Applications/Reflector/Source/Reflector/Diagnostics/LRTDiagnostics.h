@@ -7,8 +7,7 @@
 
 namespace Lumina::Reflection
 {
-    // Stable, grep-able LRT diagnostic codes. Ranges: 1xxx property-type, 2xxx macro/declaration,
-    // 3xxx function-signature (reserved), 9xxx driver/tool.
+    // Stable LRT diagnostic codes in ranges 1xxx property-type, 2xxx macro, 3xxx function (reserved) and 9xxx driver.
     enum class EDiagId : uint32_t
     {
         UnknownPropertyType    = 1000,  // PROPERTY field has a type the reflector cannot map.
@@ -24,6 +23,7 @@ namespace Lumina::Reflection
         ScriptOnlyPropertyType  = 1010, // PROPERTY names a CSharpValueMirror type that reflects no members.
         SpecifierForm           = 1011, // a specifier written with a value it does not take, or without one it needs.
         EditConditionUnknown    = 1012, // an EditCondition names a property its struct does not have.
+        RpcSignature            = 1013, // a FUNCTION(Rpc = ...) is not virtual, returns a value, or drops an argument, so no override can route it.
 
         MissingGeneratedHeader = 2000,  // header has REFLECT/GENERATED_BODY/PROPERTY/FUNCTION but doesn't #include its <stem>.generated.h
         GeneratedHeaderNotLast = 2001,  // <stem>.generated.h is included but other includes follow it.
@@ -53,8 +53,7 @@ namespace Lumina::Reflection
     // Build a location from a clang cursor. Returns an empty File on failure.
     FDiagLocation MakeLocationFromCursor(const CXCursor& Cursor);
 
-    // Singleton diagnostic sink; errors are formatted as MSBuild's `path(line,col): error LRTxxxx: message`
-    // so they appear in the IDE problem list and count toward build failure.
+    // Errors use the MSBuild format so they appear in the IDE problem list and count toward build failure.
     class FDiagnostics
     {
     public:
@@ -66,8 +65,7 @@ namespace Lumina::Reflection
 
         uint32_t GetErrorCount()   const { return ErrorCount; }
 
-        // Print a one-line summary like "[LRT] 3 error(s), 1 warning(s)".
-        // No-op if both counters are zero.
+        // Prints nothing when both counters are zero.
         void PrintSummary() const;
 
     private:
@@ -81,8 +79,7 @@ namespace Lumina::Reflection
     };
 }
 
-// Convenience macros so callsites stay short. Prefer these over hitting
-// FDiagnostics::Get() directly.
+// Prefer these over calling FDiagnostics::Get() directly.
 #define LRT_ERROR(Cursor, Id, Fmt, ...) \
     ::Lumina::Reflection::FDiagnostics::Get().Errorf( \
         ::Lumina::Reflection::MakeLocationFromCursor(Cursor), (Id), Fmt, ##__VA_ARGS__)

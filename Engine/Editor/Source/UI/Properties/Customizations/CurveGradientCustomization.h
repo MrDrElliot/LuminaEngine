@@ -46,9 +46,7 @@ namespace Lumina
         TSharedPtr<IPropertyTypeCustomization> AssetPicker;
         TSharedPtr<FPropertyHandle>            AssetHandle;
 
-        // The widget writes through a pointer, so it must point at the copy this customization owns for
-        // the lifetime of the popup; rebinding every frame keeps it valid across a HandleExternalUpdate
-        // that replaces Value.
+        // The widget writes through a pointer, so it is rebound every frame to stay valid across a HandleExternalUpdate that replaces Value.
         bool                bEditorOpen = false;
         bool                bDirty      = false;
 

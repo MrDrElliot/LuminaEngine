@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Assembles External-Linux64.tar.gz, the prebuilt dependency bundle LuminaBuildTool's Setup mode
+# Assembles External-Linux64-r2.tar.gz, the prebuilt dependency bundle LuminaBuildTool's Setup mode
 # downloads on a Linux host. Run this on Linux (or WSL): the payload carries symlinks and
 # executable bits, and neither survives being staged from Windows.
 #
@@ -8,8 +8,7 @@
 #   BuildScripts/MakeLinuxBundle.sh [output-directory]
 #
 # Then publish it and pin the hash it prints:
-#   gh release upload external-deps External-Linux64.tar.gz --clobber
-#   # paste the SHA-256 into SetupMode.Bundles (the Linux64 entry's Sha256)
+#   gh release upload external-deps External-Linux64-r2.tar.gz (a new revision name each time)
 #
 # A tarball rather than a zip, deliberately. Slang's Linux libraries use versioned filenames with
 # the plain name symlinked onto them, and libclang is packaged the same way; the SONAME recorded in
@@ -34,7 +33,7 @@ VersionsFile="$(dirname "${BASH_SOURCE[0]}")/../Engine/Build/DependencyVersions.
 source "$VersionsFile"
 
 OUTPUT_DIR="${1:-$(pwd)}"
-BUNDLE_NAME="External-Linux64.tar.gz"
+BUNDLE_NAME="External-Linux64-r2.tar.gz"
 
 WORK="$(mktemp -d)"
 STAGE="$WORK/External"
@@ -72,9 +71,7 @@ fi
 
 mkdir -p "$STAGE/LLVM/lib" "$STAGE/LLVM/include"
 
-# Three libraries, matching what Reflector.Build.cs links on Linux: the C API, the C++ AST API the
-# visitors use directly, and LLVM support (which owns llvm::DisableABIBreakingChecks, referenced by
-# the clang C++ headers -- omit it and the link fails on exactly that name).
+# libclang, plus the libLLVM it loads, which the dependency sweep below skips by name.
 #
 # NOT a plain `cp -a libfoo.so*`. The distribution's lib/libclang.so is a symlink pointing OUT of
 # the llvm tree, at ../../x86_64-linux-gnu/libclang-19.so.19; copying it verbatim stages a dangling
@@ -108,7 +105,7 @@ StageLibrary()
 
     if [ -z "$Resolved" ]; then
         Fail "cannot find $Stem for LLVM $LLVM_MAJOR. Install it with:
-    sudo apt-get install -y libclang-$LLVM_MAJOR-dev libclang-cpp$LLVM_MAJOR llvm-$LLVM_MAJOR-dev"
+    sudo apt-get install -y libclang-$LLVM_MAJOR-dev llvm-$LLVM_MAJOR-dev"
     fi
 
     local Base
@@ -121,20 +118,13 @@ StageLibrary()
 }
 
 StageLibrary "libclang"     "libclang.so"
-StageLibrary "libclang-cpp" "libclang-cpp.so"
 StageLibrary "libLLVM"      "libLLVM-$LLVM_MAJOR.so"
 
-# clang-c alone is not enough. The Reflector's visitors include <clang/AST/Decl.h> directly, and
-# those headers include llvm/ ones in turn, so the C++ trees have to come along or the bundle builds
-# only on a host that happens to have libclang-dev installed.
-#
-# Resolved and dereferenced, for the same reason libclang.so is: include/llvm and include/llvm-c are
-# themselves symlinks out of the tree (../../../include/llvm-19/llvm), so cp -a stages dangling
-# links that only resolve on a machine with the -dev packages installed.
-for HeaderTree in clang-c clang llvm-c llvm; do
+# Only clang-c, dereferenced since the include trees can be symlinks out of the llvm tree.
+for HeaderTree in clang-c; do
     Resolved="$(readlink -f "$LlvmRoot/include/$HeaderTree" 2>/dev/null || true)"
     [ -n "$Resolved" ] && [ -d "$Resolved" ] \
-        || Fail "$LlvmRoot/include/$HeaderTree is missing. Install libclang-$LLVM_MAJOR-dev and llvm-$LLVM_MAJOR-dev."
+        || Fail "$LlvmRoot/include/$HeaderTree is missing. Install libclang-$LLVM_MAJOR-dev."
     cp -RL "$Resolved" "$STAGE/LLVM/include/$HeaderTree"
 done
 
@@ -267,8 +257,6 @@ Optional()
 
 Require "LLVM/lib/libclang.so"        "Reflector links -lclang and stages this; declared non-optional"
 Require "LLVM/include/clang-c/Index.h" "Reflector's parse headers"
-Require "LLVM/include/clang/AST/Decl.h" "Reflector's visitors use the C++ AST API, not just clang-c"
-Require "LLVM/include/llvm/Support/Casting.h" "pulled in by the clang C++ headers"
 Require "LLVM/lib/clang/$LLVM_MAJOR/include/stddef.h" "clang's builtin headers; the Reflector parse has no ptrdiff_t or NULL without them"
 Require "LLVM/lib/clang/$LLVM_MAJOR/include/immintrin.h" "clang's builtin headers; the engine's SIMD headers include these"
 Require "SLang/lib/libslang.so"       "linked as -lslang"

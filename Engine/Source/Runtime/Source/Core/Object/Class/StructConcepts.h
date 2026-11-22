@@ -17,8 +17,7 @@ namespace Lumina::Concepts
         { V.Serialize(Ar) } -> std::same_as<bool>;
     };
 
-    // A type opting into custom/tight network serialization: a dedicated NetSerialize that takes the
-    // bit archive (distinct from the disk Serialize above). Lets math types quantize on the wire.
+    // A type opting into a dedicated NetSerialize on the bit archive, distinct from disk Serialize.
     template<typename T>
     concept THasNetSerialize = requires(T& V, FNetArchive& Ar)
     {
@@ -51,10 +50,7 @@ namespace Lumina::Concepts
     
     #if USING(WITH_EDITOR)
     
-    // Non-const on purpose: reacting to an edit means mutating -- invalidating a cache, clamping a
-    // value, recomputing derived state. Requiring a const hook would force every implementation into
-    // mutable members or a const_cast, and because these are `if constexpr` tested, a non-const hook
-    // silently fails the concept and is never wired up rather than failing to compile.
+    // Non-const on purpose since reacting to an edit mutates state, and a const hook would silently fail this concept rather than fail to compile.
     template<typename T>
     concept THasPreEdit = requires(T& A, const FPropertyChangedEvent& PropertyEvent)
     {

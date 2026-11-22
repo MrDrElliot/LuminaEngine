@@ -103,8 +103,7 @@ namespace Lumina
         // The project Icon setting as LoadWindowIcon reads it, a mounted path as is and anything else under the project.
         NODISCARD RUNTIME_API FFixedString GetProjectIconPath() const;
 
-        // Union of project + enabled-plugin cook roots; legacy GameStartupMap auto-converts
-        // to a single root when no explicit roots exist. Cooker iterates this for BFS seeds.
+        // Union of project and enabled-plugin cook roots, where a legacy GameStartupMap becomes one root when none exist.
         RUNTIME_API TVector<FCookRoot> GetCookRoots() const;
 
         // A tool's temporary frame rate cap, which wins over the saved setting until set back to a negative value.
@@ -141,8 +140,7 @@ namespace Lumina
         /** Convenience: connect to Host:Port as a client. The server tells us which level to load (Welcome). */
         RUNTIME_API void ConnectToServer(FStringView Host, uint16 Port = 7777);
 
-        //~ Client connection carried across a Welcome-driven travel (so we don't disconnect+reconnect). The
-        //  travel moves the live transport out of the old world; the new world's net system adopts it.
+        //~ Client connection carried across a Welcome-driven travel so it does not reconnect.
         RUNTIME_API bool HasCarriedConnection() const { return bHasCarriedConnection; }
         RUNTIME_API TUniquePtr<INetworkTransport> TakeCarriedConnection(FConnectionHandle& OutConnection, uint32& OutLocalPeerId);
 
@@ -222,8 +220,7 @@ namespace Lumina
         bool                    bPendingHostDedicated = false;
         uint16                  PendingHostPort       = 7777;
 
-        // Set while ProcessPendingTravel runs a Welcome-driven client travel: the new world's net system
-        // adopts this live transport instead of opening a fresh connection.
+        // Set during a Welcome-driven client travel so the new world's net system adopts this transport.
         TUniquePtr<INetworkTransport> CarriedTransport;
         FConnectionHandle             CarriedServerConnection;
         uint32                        CarriedLocalPeerId = 0;

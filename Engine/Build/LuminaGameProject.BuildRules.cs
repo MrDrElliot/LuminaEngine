@@ -41,12 +41,10 @@ public abstract class LuminaGameTargetRules : LuminaTargetRules
         Type = Target.Type;
         PreBuildTargetNames.Add("Reflector");
 
-        // A project builds a library; without the engine's application there is nothing to run it, and no
-        // managed engine assembly, so C# scripting comes up silently dead.
+        // Without the engine application nothing runs the library and no managed engine assembly exists, so C# scripting dies silently.
         RequiredTargetNames.Add("Lumina");
 
-        // A project reads the engine's reflection manifest; publishing one would replace the
-        // engine's list with one that includes this project's own modules.
+        // Publishing would replace the engine's manifest with one that includes this project's own modules.
         bPublishesEngineReflectionManifest = false;
 
         // A packaged Shipping game links into the engine executable, since a game library would load a second runtime beside it.
@@ -56,8 +54,7 @@ public abstract class LuminaGameTargetRules : LuminaTargetRules
             ExtraModuleNames.Add("Lumina");
         }
 
-        // This target builds a library the editor loads, so running it means running the editor
-        // with this project opened rather than launching the library.
+        // Running this library target means running the editor with the project opened.
         string EngineBinaries = Path.Combine(Target.EngineDirectory, "Binaries", Target.PlatformName);
 
         // Through OutputSuffix so an editor target launches the editor app rather than the game one.

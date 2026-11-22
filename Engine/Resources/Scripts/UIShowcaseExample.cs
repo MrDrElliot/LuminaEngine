@@ -160,8 +160,7 @@ public sealed class UIShowcaseExample : CEntityScript
             Clock = $"{(Seconds / 60) % 60:00}:{Seconds % 60:00}";
             Score = Seconds * 17;
 
-            // so quantising a continuous value to what the eye can resolve is the difference between
-            // one reflow per frame and one per visible step.
+            // Quantizing to what the eye can resolve costs one reflow per visible step instead of one per frame.
             Ratio = MathF.Round(0.5f * (1.0f + MathF.Sin(Time * 0.7f)), 2);
 
             bool bMembersChanged = false;

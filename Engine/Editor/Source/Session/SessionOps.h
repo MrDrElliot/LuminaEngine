@@ -113,8 +113,7 @@ namespace Lumina::SessionOps
     EDITOR_API bool RemoveComponentTransacted(FName Label, ECS::FEntity Entity, CStruct* ComponentType,
         FString& OutError);
 
-    // Transacts through whichever open editor owns Object; false when none does, so undo cannot see it.
-    // EditedProperty, when given, gets the response a panel edit of it would, such as a texture recook.
+    // Transacts through whichever open editor owns Object, returning false when none does so undo cannot see it.
     EDITOR_API bool RunObjectTransacted(CObject* Object, FName Label, const TFunction<void()>& Mutate,
         FProperty* EditedProperty = nullptr);
 
@@ -151,7 +150,18 @@ namespace Lumina::SessionOps
 
     EDITOR_API void ForEachTab(const TFunction<void(const FTabInfo&)>& Functor);
     EDITOR_API bool FocusTab(FStringView Name, FString& OutError);
+
+    //~ Windows the Tools and File menus toggle, such as Profiler, Memory, Settings or a plugin's tool.
+
+    struct FToolPanelInfo
+    {
+        FString Name;
+        bool    bOpen = false;
+    };
+
+    EDITOR_API void ForEachToolPanel(const TFunction<void(const FToolPanelInfo&)>& Functor);
     EDITOR_API bool OpenToolPanel(FStringView Name, FString& OutError);
+    EDITOR_API bool CloseToolPanel(FStringView Name, FString& OutError);
 
     //~ The node graph canvas a tab shows, such as a material or animation graph editor's.
 

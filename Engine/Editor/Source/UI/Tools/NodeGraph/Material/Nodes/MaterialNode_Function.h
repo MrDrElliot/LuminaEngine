@@ -10,19 +10,16 @@ namespace Lumina
 {
     class CMaterialInput;
 
-    // ToMaterialInputType / ToMaterialValueType / FullMaskForType / ZeroLiteral live in
-    // MaterialGraphTypes.h so any node can use them without including this header.
+    // The type helpers live in MaterialGraphTypes.h so any node can use them without this header.
 
-    // Declares one input of the owning material function (function graph only). Its output feeds the body;
-    // on inline the call node binds it to the caller's argument, so GenerateDefinition only runs in validation.
+    // Declares one input of the owning material function, bound to the caller's argument on inline.
     REFLECT()
     class CMaterialExpression_FunctionInput : public CMaterialExpression
     {
         GENERATED_BODY()
     public:
 
-        // Narrows the material-node default: a function's own input declaration only means something
-        // inside a function graph, so it stays out of a plain material's palette.
+        // Only meaningful inside a function graph, so it stays out of a plain material's palette.
         CClass* GetSupportedGraphClass() const override;
 
         void BuildNode() override;
@@ -55,8 +52,7 @@ namespace Lumina
         void DrawNodeTitleBar() override;
     };
 
-    // Declares one output of the owning material function (one node per output). Its input is what the body
-    // drives; the call node reads the resolved value on inline, so GenerateDefinition only validates the type.
+    // Declares one output of the owning material function, read by the call node on inline.
     REFLECT()
     class CMaterialFunctionOutput : public CMaterialGraphNode
     {
@@ -92,8 +88,7 @@ namespace Lumina
         CMaterialInput* Input = nullptr;
     };
 
-    // Calls a material function: at compile time inlines the referenced function's body, binding this node's
-    // argument pins to the function inputs and exposing the function outputs as this node's output pins.
+    // Calls a material function by inlining its body at compile time.
     REFLECT()
     class CMaterialExpression_MaterialFunctionCall : public CMaterialGraphNode
     {
@@ -115,8 +110,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Material Function")
         TStrongObjectPtr<CMaterialFunction> Function;
 
-        // (Re)creates input/output pins from the current Function's signature, preserving any existing
-        // connections that still match by pin name. Pin IDs are name-hashed so they survive save/load.
+        // Keeps connections that still match by pin name, and name-hashed pin IDs survive save and load.
         void RebuildPins();
         bool NeedsPinRebuild() const;
 

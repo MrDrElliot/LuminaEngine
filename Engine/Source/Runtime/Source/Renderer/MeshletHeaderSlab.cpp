@@ -366,8 +366,7 @@ namespace Lumina::MeshletHeaderSlab
         // Bumped BEFORE the upload, so a queued reset recognizes that the contents have changed.
         ++GSlotVersion[Slot];
 
-        // No address reaches a shader as 0. An array the mesh does not carry points at the null page and
-        // is spelled by its count, so no consumer has to test a pointer before dereferencing it.
+        // A missing array points at the null page and is spelled by its count, so no shader tests a pointer for 0.
         FMeshletHeaderGPU Mapped = Header;
         for (uint64* Address : { &Mapped.MeshletsAddress, &Mapped.SpheresAddress, &Mapped.VerticesAddress,
                                  &Mapped.PositionsAddress, &Mapped.VertexRefsAddress, &Mapped.VertexUV1sAddress,

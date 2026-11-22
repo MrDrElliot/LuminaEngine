@@ -57,8 +57,8 @@ public: \
         } \
     }
 
-// Allocates the class object, which the generated descriptor later fills with properties and functions.
-#define IMPLEMENT_CLASS(TNamespace, TClass) \
+// Allocates the class object, which the generated descriptor later fills with properties and functions. The factory builds TConstructed, the class itself or the generated subclass that routes its RPCs.
+#define IMPLEMENT_CLASS_CONSTRUCTING(TNamespace, TClass, TConstructed) \
     NO_API Lumina::CClass* TNamespace::TClass::CreateStaticClass() \
     { \
         static Lumina::CClass* Class = nullptr; \
@@ -66,10 +66,12 @@ public: \
         { \
             Lumina::AllocateStaticClass(TNamespace::TClass::StaticPackage(), TEXT(#TClass), &Class, \
                 sizeof(TNamespace::TClass), alignof(TNamespace::TClass), \
-                &TNamespace::TClass::Super::StaticClass, TNamespace::TClass::__Factory()); \
+                &TNamespace::TClass::Super::StaticClass, TNamespace::TClass::__Factory<TConstructed>()); \
         } \
         return Class; \
     }
+
+#define IMPLEMENT_CLASS(TNamespace, TClass) IMPLEMENT_CLASS_CONSTRUCTING(TNamespace, TClass, TNamespace::TClass)
 
 // A class the reflection system is built from, so nothing generates it and it registers itself.
 #define IMPLEMENT_INTRINSIC_CLASS(TClass, TBaseClass, TAPI) \

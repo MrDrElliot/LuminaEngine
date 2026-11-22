@@ -10,8 +10,7 @@ namespace Lumina
 
 namespace Lumina
 {
-    // NotPlaceable: this is the family base, not a node anyone drops on a canvas. The specifier does not
-    // inherit, so every concrete node below it stays discoverable.
+    // NotPlaceable does not inherit, so every concrete node below stays discoverable.
     REFLECT(NotPlaceable, Abstract)
     class CMaterialGraphNode : public CEdGraphNode
     {

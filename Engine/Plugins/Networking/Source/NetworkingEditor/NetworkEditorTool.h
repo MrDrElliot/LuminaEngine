@@ -6,8 +6,7 @@ namespace Lumina
 {
     class CWorld;
 
-    // Visualizes the live network system: every networked world (server + clients), their transport
-    // byte/packet counters + bandwidth, per-connection RTT/loss/throughput, and replication state.
+    // Visualizes the live network system per world, with transport counters, per-connection RTT and loss, and replication state.
     class FNetworkEditorTool : public FEditorTool
     {
     public:

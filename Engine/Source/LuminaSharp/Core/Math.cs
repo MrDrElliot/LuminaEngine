@@ -4,10 +4,7 @@ using System.Runtime.InteropServices;
 
 namespace Lumina;
 
-// Blittable mirrors of the engine's core math types. Field layout (declared first, in order) is validated
-// against the native types by static_asserts in CSharpLayoutChecks.cpp. Conventions mirror C++ (Core/Math):
-// left-handed, +Z forward, +Y up, +X right. Angles are radians; tolerances match LE_SMALL_NUMBER (1e-8) and
-// LE_KINDA_SMALL_NUMBER (1e-4).
+// Blittable math mirrors checked by CSharpLayoutChecks.cpp, left-handed with +Z forward, +Y up and angles in radians.
 
 [StructLayout(LayoutKind.Sequential)]
 [LuminaSharp.NativeLayout("FVector2")]

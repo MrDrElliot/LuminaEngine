@@ -15,8 +15,7 @@
 #endif
 
 
-// Standard library: language support and the few C headers everything reaches for. The containers,
-// algorithms and function objects are ours now, so their std counterparts are deliberately absent.
+// The containers, algorithms and function objects are ours, so their std counterparts are deliberately absent.
 #include <utility>
 #include <type_traits>
 #include <initializer_list>

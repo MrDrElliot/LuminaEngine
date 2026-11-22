@@ -13,8 +13,7 @@ namespace Lumina
         // Axis-aligned-in-local-space box. The workhorse for interiors: rooms, corridors, courtyards.
         Box,
 
-        // Sphere of radius = Extent.x. Cheaper intersection, no orientation to get wrong; suits
-        // open areas and props where a box would be arbitrary.
+        // Sphere of radius Extent.x, cheaper to intersect and suited to open areas.
         Sphere,
     };
 
@@ -22,13 +21,10 @@ namespace Lumina
     REFLECT()
     enum class EReflectionProbeUpdateMode : uint8
     {
-        // Capture once, then only when the probe itself changes or a rebuild is requested. Free after
-        // the initial bake. Correct for anything whose surroundings are static.
+        // Capture once, then only when the probe changes or a rebuild is requested.
         Once,
 
-        // Recapture continuously. Costs six scene renders every time this probe's turn comes up, so it
-        // is a per-probe opt-in rather than a global mode. Multiple Always probes take turns, one per
-        // frame, so ten of them each refresh every tenth frame.
+        // Recapture continuously at six scene renders per turn, with Always probes taking one turn per frame.
         Always,
     };
 
@@ -36,13 +32,10 @@ namespace Lumina
     REFLECT()
     enum class EReflectionProbeClearMode : uint8
     {
-        // Render the sky. Correct outdoors, and the reason an interior probe whose walls have gaps
-        // (or single-sided walls the capture sees straight through) reflects bright sky.
+        // Render the sky, which makes an interior probe with gaps in its walls reflect bright sky.
         Sky,
 
-        // Fill with BackgroundColor instead. For sealed interiors, where any sky reaching the capture
-        // is by definition a leak. Also the fastest way to tell whether a capture saw ANY geometry:
-        // clear to black and whatever is left is real captured surface.
+        // Fill with BackgroundColor instead, for sealed interiors where any sky is a leak.
         SolidColor,
     };
 

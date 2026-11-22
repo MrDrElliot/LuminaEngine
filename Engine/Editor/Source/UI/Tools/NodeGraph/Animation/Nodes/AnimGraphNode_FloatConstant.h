@@ -5,8 +5,7 @@
 
 namespace Lumina
 {
-    // Emits a constant scalar value. Useful as a fixed blend alpha or speed
-    // multiplier when no parameter drive is needed.
+    // Emits a constant scalar, such as a fixed blend alpha or speed multiplier.
     REFLECT()
     class CAnimGraphNode_FloatConstant : public CAnimGraphNode
     {

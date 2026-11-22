@@ -5,8 +5,7 @@
 
 namespace Lumina
 {
-    // Per-bone blend of Base and Overlay via a bone mask: each bone's alpha is the global Alpha times its
-    // mask weight (e.g. an upper-body mask keeps the lower body on the base). Mask referenced by name.
+    // Blends Base and Overlay per bone, with each bone's alpha being the global Alpha times its named mask weight.
     REFLECT()
     class CAnimGraphNode_LayeredBlendPerBone : public CAnimGraphNode
     {

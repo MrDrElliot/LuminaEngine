@@ -26,8 +26,7 @@ namespace Lumina
         ImGuiTextFilter TableFilter;
         AssetPickerFilter::FAssetsOfClassCache AssetsOfClass;
 
-        // Picks are one-frame edits: Started on the change frame, Finished the next, so they pair
-        // into one undo transaction.
+        // Picks are one-frame edits, with Started and Finished on consecutive frames pairing into one undo transaction.
         bool bFinishPending = false;
     };
 }

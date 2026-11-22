@@ -449,8 +449,7 @@ namespace Lumina
                 case EAnimTransitionSource::Parameter:
                     Term.Name = Condition.ParameterName;
 
-                    // Warns when the name does not match a parameter struct field, renamed or retyped.
-                    // An empty name is the unconditional term, so it registers no parameter of its own.
+                    // An empty name is the unconditional term, so it registers no parameter.
                     if (!Term.Name.IsNone())
                     {
                         Compiler.ValidateParameterKey(Term.Name, this);

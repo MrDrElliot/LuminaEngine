@@ -155,11 +155,15 @@ uint VirtualShadowPageEntry(uint Level, int2 GlobalPage)
     return GetSceneRoot().VirtualShadowPages.At(VirtualShadowPageIndex(Level, GlobalPage)).Entry;
 }
 
+bool IsVirtualShadowPageDrawn(uint PageEntry, bool bStatic)
+{
+    return (PageEntry & (bStatic ? VSM_PAGE_RENDER_STATIC : VSM_PAGE_REQUESTED)) != 0u;
+}
+
 // The raster's write of one virtual texel through its page's entry, which lands only in pages the layer draws this frame.
 void WriteVirtualShadowPageTexel(uint PageEntry, bool bStatic, uint2 Texel, float Depth)
 {
-    const uint Needed = bStatic ? VSM_PAGE_RENDER_STATIC : VSM_PAGE_REQUESTED;
-    if ((PageEntry & Needed) == 0u || Depth < 0.0 || Depth > 1.0)
+    if (!IsVirtualShadowPageDrawn(PageEntry, bStatic) || Depth < 0.0 || Depth > 1.0)
     {
         return;
     }
@@ -168,11 +172,14 @@ void WriteVirtualShadowPageTexel(uint PageEntry, bool bStatic, uint2 Texel, floa
     GetSceneRoot().VirtualShadowPoolRW.InterlockedMin(Physical, asuint(Depth));
 }
 
+uint VirtualShadowFragmentEntry(uint Level, float4 Position)
+{
+    return VirtualShadowPageEntry(Level, VirtualShadowLevel(Level).PageOrigin + int2(uint2(Position.xy) >> VSM_PAGE_SHIFT));
+}
+
 void WriteVirtualShadowLevelDepth(uint Level, bool bStatic, float4 Position)
 {
-    const uint2 Texel = uint2(Position.xy);
-    const int2  Page  = VirtualShadowLevel(Level).PageOrigin + int2(Texel >> VSM_PAGE_SHIFT);
-    WriteVirtualShadowPageTexel(VirtualShadowPageEntry(Level, Page), bStatic, Texel, Position.z);
+    WriteVirtualShadowPageTexel(VirtualShadowFragmentEntry(Level, Position), bStatic, uint2(Position.xy), Position.z);
 }
 
 // A mesh caster's write, whose cull view names its level and layer.
@@ -183,6 +190,14 @@ void WriteVirtualShadowDepth(uint CullViewIndex, float4 Position)
     {
         WriteVirtualShadowLevelDepth(View.ShadowLevel, View.HasFlag(CULL_VIEW_FLAG_SHADOW_CACHE_STATIC), Position);
     }
+}
+
+// True for a virtual view's fragment in a page its layer leaves alone this frame, and pages hold whole quads, so derivatives survive the skip.
+bool IsVirtualShadowFragmentSkipped(uint CullViewIndex, float4 Position)
+{
+    const FCullView View = CullViews().GetAligned(CullViewIndex);
+    return View.HasFlag(CULL_VIEW_FLAG_VIRTUAL_SHADOW)
+        && !IsVirtualShadowPageDrawn(VirtualShadowFragmentEntry(View.ShadowLevel, Position), View.HasFlag(CULL_VIEW_FLAG_SHADOW_CACHE_STATIC));
 }
 
 // Coarser levels a lookup climbs through when its own level holds no page there.

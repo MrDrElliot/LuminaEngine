@@ -69,14 +69,12 @@ public class ScriptPropertyTypeTest : CEntityScript
     [Property(Category = "Scalars")]
     public ulong UInt64Value = 12345678901;
 
-    //~ An enum. The native slot is int64 wide whatever the C# underlying type is, so the accessor goes through
-    //~ a long -- a 4-byte access would leave the top half of the slot stale on every write.
+    //~ The native enum slot is int64 wide, so the accessor goes through a long or the top half goes stale on write.
 
     [Property(Category = "Enum")]
     public ETestMode Mode = ETestMode.Slow;
 
-    //~ Blittable struct mirrors: laid out identically on both sides, so they are read in place too. Their
-    //~ initializers prove a default is not limited to what an attribute argument could have expressed.
+    //~ Blittable struct mirrors are read in place, and their initializers prove a default is not limited to attribute arguments.
 
     [Property(Category = "Structs")]
     public FVector2 Vector2Value = new FVector2(10.0f, 20.0f);
@@ -93,35 +91,27 @@ public class ScriptPropertyTypeTest : CEntityScript
     [Property(Category = "Structs")]
     public SDataTableRowHandle RowHandle;
 
-    //~ Storage-owning kinds: these need per-instance construction over the appended block. A memzeroed FString
-    //~ reads as a plausible empty string and corrupts on the first assignment, which is what makes them the
-    //~ interesting case rather than just another type.
+    //~ Storage-owning kinds need per-instance construction, since a memzeroed FString reads as empty and corrupts on first assignment.
 
     [Property(Category = "Text", ToolTip = "An FString living in native memory.")]
     public string StringValue = "declared default";
 
-    // An interned name. POD on both sides -- an id, not text -- so it is read and written in place exactly
-    // like FVector3 above, and only ToString()/FromString() ever touch the name table.
+    // An FName is an id and not text, so it is read and written in place and only ToString and FromString touch the name table.
     [Property(Category = "Text", ToolTip = "An interned FName.")]
     public FName NameValue = new FName("DeclaredName");
 
     [Property(Category = "References", ToolTip = "An asset reference, drawn as an asset picker.")]
     public FSoftObjectPath AssetValue = new FSoftObjectPath("/Engine/Resources/Content/DefaultMaterial");
 
-    // A TYPED soft reference. Stored natively as the same single FSoftObjectPath the bare one above is, and
-    // differing only in filtering the picker to CTexture -- which is the whole point of routing asset
-    // references by the ISoftObjectReference interface rather than by type name: this needed no rewriter change.
+    // Stored as the same FSoftObjectPath as the bare one, differing only in the picker filter, since references route by ISoftObjectReference.
     [Property(Category = "References", ToolTip = "A typed soft reference, drawn as a CTexture picker.")]
     public TSoftObjectPtr<CTexture> TextureRef = new TSoftObjectPtr<CTexture>("/Engine/Resources/Content/DefaultTexture");
 
-    // A HARD reference, and a different kind entirely: a native object property, so it holds a live pointer
-    // that keeps its target alive and can name any CObject rather than only something with an asset path.
-    // No initializer -- null is the only default a hard reference can express.
+    // A hard reference holds a live pointer that keeps its target alive, and null is the only default it can express.
     [Property(Category = "References", ToolTip = "A hard object reference, drawn as an object picker.")]
     public TStrongObjectPtr<CWorld> WorldRef;
 
-    //~ Containers hand out a VIEW over the native container rather than a managed copy, because there is only
-    //~ ever one copy of the value and native owns it. No initializer: assigning the view is meaningless.
+    //~ Containers hand out a view over the native container since native owns the only copy, so assigning one is meaningless.
 
     [Property(Category = "Containers")]
     public TVector<int> IntList;
@@ -132,20 +122,15 @@ public class ScriptPropertyTypeTest : CEntityScript
     [Property(Category = "Containers")]
     public THashMap<int, float> WeightByIndex;
 
-    // FName needs no marshalling to be an element: it is POD, so the blittable path carries it and the
-    // native stride is sizeof(FName) on both sides.
+    // FName is POD, so the blittable path carries it with a native stride of sizeof(FName).
     [Property(Category = "Containers")]
     public TVector<FName> Tags;
 
-    // A list of FStrings. Its own view type rather than TVector<string>, which cannot exist: a managed
-    // reference cannot live in native memory.
+    // TVector<string> cannot exist because a managed reference cannot live in native memory.
     [Property(Category = "Containers")]
     public TVector<FString> Names;
 
-    // A list of object references. Its own view type rather than TVector<TStrongObjectPtr<T>>, which the
-    // classifier refuses: a TStrongObjectPtr is a bare pointer, so it passes the unmanaged test and would be copied
-    // as 8 raw bytes -- storing the pointer without taking a reference, and without releasing the one it
-    // replaced. Writes here go through the native assignment, which does both.
+    // A bare TStrongObjectPtr would be copied as raw bytes without refcounting, so writes here go through native assignment.
     [Property(Category = "Containers")]
     public TVector<TStrongObjectPtr<CWorld>> Worlds;
 
@@ -162,9 +147,7 @@ public class ScriptPropertyTypeTest : CEntityScript
 
         ReportAuthoredValues();
 
-        // Each check restores what it found, so the sweep is non-destructive as a whole. Doing it per check
-        // rather than with one snapshot up here is what keeps it honest: a field added to a check but missed
-        // in a central snapshot would be silently clobbered, and the value it ate would be yours.
+        // Each check restores its own fields because a central snapshot could miss one and silently clobber your value.
         CheckScalars();
         CheckEnum();
         CheckStructs();
@@ -263,8 +246,7 @@ public class ScriptPropertyTypeTest : CEntityScript
     {
         ETestMode Saved = Mode;
 
-        // Fast is the last member, so a truncated read or write of the int64 slot shows up here rather than
-        // passing by accident on a zero value.
+        // Fast is the last member, so a truncated int64 slot access cannot pass by accident on zero.
         Mode = ETestMode.Fast;
         Check("enum", Mode == ETestMode.Fast, Mode.ToString());
 
@@ -305,8 +287,7 @@ public class ScriptPropertyTypeTest : CEntityScript
     {
         string Saved = StringValue;
 
-        // Long enough to need heap storage rather than fitting in the small-string buffer, which is the case
-        // that actually proves the FString was constructed and not just memzeroed.
+        // Long enough to need heap storage, which proves the FString was constructed and not just memzeroed.
         const string Long = "a script string long enough to need heap storage rather than the small-string buffer";
 
         StringValue = "short";
@@ -328,13 +309,10 @@ public class ScriptPropertyTypeTest : CEntityScript
         NameValue = new FName("Renamed");
         Check("FName", NameValue == new FName("Renamed"), NameValue.ToString());
 
-        // Interning is case-insensitive, so these are the SAME name -- comparing ids rather than text is the
-        // whole reason an FName is not just a string, and this is what proves the id survived the round trip
-        // rather than the characters.
+        // Interning is case-insensitive, so this proves the id survived the round trip rather than the characters.
         Check("FName case-insensitive", NameValue == new FName("RENAMED"), "Renamed == RENAMED");
 
-        // Text out has to come back through the name table; a value that round-tripped as raw bytes but lost
-        // its interning would compare equal above and still fail here.
+        // A value that kept its bytes but lost its interning would compare equal above and still fail here.
         Check("FName resolves to text", NameValue.ToString() == "Renamed", NameValue.ToString());
 
         NameValue = FName.None;
@@ -355,10 +333,7 @@ public class ScriptPropertyTypeTest : CEntityScript
 
         AssetValue = Saved;
 
-        // The typed soft reference goes through the same single native FSoftObjectPath, so what this proves
-        // beyond the above is that the ISoftObjectReference routing reconstructs the WRAPPER type on read -- a path that
-        // came back as a bare FSoftObjectPath would not compile here, and one that came back default would
-        // read as empty.
+        // This proves the ISoftObjectReference routing rebuilds the wrapper type on read.
         TSoftObjectPtr<CTexture> SavedTexture = TextureRef;
 
         TextureRef = new TSoftObjectPtr<CTexture>("/Engine/Resources/Content/SomeTexture");
@@ -385,9 +360,7 @@ public class ScriptPropertyTypeTest : CEntityScript
         WorldRef = new TStrongObjectPtr<CWorld>(Live);
         Check("TStrongObjectPtr assign", WorldRef.IsValid, WorldRef.IsValid ? "valid" : "null");
 
-        // Reference equality, not merely a non-null pointer. Reading an object property has to hand back the
-        // ONE canonical wrapper for that native object, or `==` between two reads would silently be false and
-        // every identity comparison a script author writes would be wrong.
+        // Reads must return one canonical wrapper per native object or identity comparisons silently fail.
         Check("TStrongObjectPtr identity", ReferenceEquals(WorldRef.Value, Live), "same wrapper instance as World");
         Check("TStrongObjectPtr identity (re-read)", ReferenceEquals(WorldRef.Value, WorldRef.Value), "stable across reads");
 
@@ -399,10 +372,7 @@ public class ScriptPropertyTypeTest : CEntityScript
 
     private void CheckContainers()
     {
-        // A view over the native container: mutating through it mutates the one copy of the value, so
-        // re-reading the property has to see the same contents. Cleared at the end rather than restored --
-        // a container has no authored default to put back, and leaving test data in it would look like state
-        // the scene saved.
+        // Containers are cleared at the end rather than restored, since they have no authored default to put back.
         TVector<int> Ints = IntList;
         Ints.Clear();
         Ints.Add(10);
@@ -448,15 +418,11 @@ public class ScriptPropertyTypeTest : CEntityScript
         WeightByIndex.Remove(2);
         Check("THashMap remove", WeightByIndex.Count == 1 && !WeightByIndex.ContainsKey(2), WeightByIndex.Count.ToString());
 
-        // A list of FStrings. One TVector like every other -- the element is Lumina.FString, the explicit
-        // mirror of the native string, and the view reads and writes each slot through the native container rather than by
-        // bytes. Get/Set rather than the indexer: a ref into the slot would let a plain assignment copy the
-        // string's heap pointer, which is exactly the aliasing the marshal exists to prevent.
+        // Get and Set are used over the indexer since a ref into the slot would let assignment copy the string's heap pointer.
         TVector<FString> Strings = Names;
         Strings.Clear();
         Strings.Add("first");
-        // Long enough to need heap storage, which is what proves the element was constructed rather than
-        // memzeroed: a zeroed FString reads as a plausible empty string and corrupts on assignment.
+        // Long enough to need heap storage, which proves the element was constructed rather than memzeroed.
         Strings.Add("a name long enough to need heap storage rather than the small-string buffer");
 
         Check("TVector<FString> count", Names.Count == 2, Names.Count.ToString());
@@ -473,14 +439,12 @@ public class ScriptPropertyTypeTest : CEntityScript
         Names.RemoveAt(0);
         Check("TVector<FString> remove", Names.Count == 2 && Names.Get(0) == "inserted", Names.Get(0));
 
-        // The indexer IS available for a plain element, and refuses a marshalled one rather than handing out
-        // a reference an assignment could corrupt.
+        // The indexer refuses a marshalled element rather than hand out a reference an assignment could corrupt.
         bool bRefused = false;
         try { _ = Names[0]; } catch (System.NotSupportedException) { bRefused = true; }
         Check("TVector<FString> refuses ref", bRefused, "indexer throws, Get/Set is the way in");
 
-        // FName elements ride the blittable path -- no Get/Set needed, the indexer works, because the
-        // element really is its bytes.
+        // FName elements ride the blittable path so the indexer works.
         TVector<FName> TagList = Tags;
         TagList.Clear();
         TagList.Add(new FName("Alpha"));
@@ -532,8 +496,7 @@ public class ScriptPropertyTypeTest : CEntityScript
             "canonical wrapper");
         Check("TVector<TStrongObjectPtr> null element", Worlds.Count == 2 && !Worlds.Get(1).IsValid, "null");
 
-        // Overwriting a slot has to release what it held and take a reference on the new object; assigning
-        // over the null slot is the direction that would silently under-release if it byte-copied.
+        // Overwriting a slot must release the old object and retain the new one.
         Worlds.Set(1, Ref);
         Check("TVector<TStrongObjectPtr> set", ReferenceEquals(Worlds.Get(1).Value, Live), "assigned over null");
 

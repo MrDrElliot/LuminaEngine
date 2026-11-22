@@ -13,7 +13,7 @@ namespace Lumina
 
     namespace ForestSystemInternal
     {
-        // A tile of plants, in the near band that holds every species or the far one that leaves out those culled before it.
+        // A tile of plants, in the near band that holds every species, the mid band that leaves out those culled before it, or the far band of impostor points.
         struct FTileKey
         {
             int32 Band = 0;
@@ -63,6 +63,8 @@ namespace Lumina
             TVector<TSharedPtr<FBuild>>                        Running;
             TVector<FTerrainTrack>                             Terrains;
             uint64                                             PaintHash = ~0ull;
+            // Where tiles switch to impostor points, never past the component's ImpostorDistance.
+            float                                              PointBandStart = 0.0f;
             // Paint is hashed again only when the component was written after this tick.
             uint32                                             CheckedTick = 0;
         };
@@ -75,7 +77,7 @@ namespace Lumina
         };
     }
 
-    // Streams each forest in tiles of real foliage around the view, scattered on worker threads; far plants draw as the renderer's proxies.
+    // Streams each forest in tiles around the view, scattered on worker threads, with real foliage near and impostor points far.
     REFLECT()
     class RUNTIME_API CForestSystem : public CExclusiveSystem
     {
@@ -92,8 +94,8 @@ namespace Lumina
         void UpdateForest(CWorld& World, ECS::FEntity Entity, const SForestComponent& Forest, bool bWritten, ForestSystemInternal::FForestState& State);
         bool RefreshState(CWorld& World, const SForestComponent& Forest, const FVector3& Center, bool bWritten, ForestSystemInternal::FForestState& State);
         void ReleaseTiles(CWorld& World, ForestSystemInternal::FForestState& State);
-        void ApplyBuild(CWorld& World, ForestSystemInternal::FTile& Tile, ForestSystemInternal::FForestState& State);
-        void GatherWanted(CWorld& World, const SForestComponent& Forest, const FVector3& Center, const Forest::FRules& Rules, TVector<ForestSystemInternal::FWanted>& Out);
+        void ApplyBuild(CWorld& World, const ForestSystemInternal::FTileKey& Key, ForestSystemInternal::FTile& Tile, ForestSystemInternal::FForestState& State);
+        void GatherWanted(CWorld& World, const SForestComponent& Forest, const FVector3& Center, const ForestSystemInternal::FForestState& State, TVector<ForestSystemInternal::FWanted>& Out);
         void StartBuilds(const SForestComponent& Forest, const TVector<ForestSystemInternal::FWanted>& Wanted, ForestSystemInternal::FForestState& State,
                          THashSet<uint64>& OutWantedSet, TVector<ForestSystemInternal::FTileKey>& OutUnready);
         void ApplyFinishedBuilds(CWorld& World, const TVector<ForestSystemInternal::FWanted>& Wanted, ForestSystemInternal::FForestState& State);

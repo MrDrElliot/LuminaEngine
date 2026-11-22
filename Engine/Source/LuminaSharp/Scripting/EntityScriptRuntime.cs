@@ -15,7 +15,7 @@ internal sealed class EntityScriptRuntime
         this.Library = Library;
     }
 
-    // Registers an instance created by ScriptableRuntime, so FreeAll can detach it. Description is set first, since OnAction and the profiler labels read it.
+    // Registers an instance created by ScriptableRuntime, so FreeAll can detach it. Description is set first, since the input bindings and the profiler labels read it.
     internal void Adopt(Lumina.CEntityScript Script, GCHandle Handle)
     {
         Script.Description = Library.Describe(Script.GetType());
@@ -32,11 +32,11 @@ internal sealed class EntityScriptRuntime
 
         try
         {
-            Script.Description.EnsureInputComponent(Script);
+            Script.ListenForInputBindings();
         }
         catch (Exception Exception)
         {
-            Native.Log(ELogLevel.Error, $"CEntityScript component injection threw: {Exception}");
+            Native.Log(ELogLevel.Error, $"CEntityScript input bindings threw: {Exception}");
         }
     }
 

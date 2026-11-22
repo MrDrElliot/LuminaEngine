@@ -5,8 +5,7 @@
 #include "Core/LuminaMacros.h"
 #include "Platform/GenericPlatform.h"
 
-// The Lumina math hub. Pulls in the in-house vector/quat/matrix library and adds
-// the scalar utilities that don't belong to a single type.
+// The Lumina math hub, adding scalar utilities that belong to no single type.
 #include "Core/Math/Scalar.h"
 #include "Core/Math/Vector/Vector.h"
 #include "Core/Math/Quat/Quat.h"
@@ -36,8 +35,7 @@ namespace Lumina::Math
         return T((static_cast<uint64>(InV) + InAlignment - 1) & ~(InAlignment - 1));
     }
 
-    // Generic linear interpolation for any type with +, - and *scalar (scalars,
-    // FColor, ...). Vectors resolve to the more specialized overload in VectorMath.h.
+    // Generic lerp for any type with +, - and scalar multiply, while vectors resolve to the overload in VectorMath.h.
     template<typename T>
     [[nodiscard]] constexpr T Lerp(const T& A, const T& B, float Alpha)
     {

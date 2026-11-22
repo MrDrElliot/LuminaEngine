@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace LuminaSharp;
 
-// An action name a [Property] picks from the project's input actions, fed from OnAction before OnUpdate.
+// An action name a [Property] picks from the project's input actions, fed by the entity's SInputComponent.OnAction before OnUpdate.
 public abstract partial class SInputBinding
 {
     // The interned form of ActionName, so a dispatch compares ids instead of crossing to resolve text.
@@ -66,7 +66,7 @@ public abstract partial class SInputBinding
         return !ActionId.IsNone && ActionId == Action;
     }
 
-    // Called from CEntityScript.OnAction every frame the bound action changes, never from game code.
+    // Called by the script's SInputComponent.OnAction listener every frame the bound action changes, never from game code.
     internal void Apply(in Lumina.SInputActionState Next)
     {
         // The first delivery is its own previous state, so a key held at bind time does not read as a fresh press.

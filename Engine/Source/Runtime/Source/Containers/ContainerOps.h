@@ -7,17 +7,7 @@
 
 namespace Lumina
 {
-    // Type-erased operation table for a TVector<T>: a vtable of pure function pointers that operate on a
-    // TVector<T> instance (the vector pointer itself, NOT the owning object) without knowing T. One static
-    // table per element type, produced by GetVectorOps<T>(). This is the single source of truth for "how to
-    // operate on a reflected vector," shared by:
-    //   - FArrayProperty (Core reflection): serialization / net / copy / editor property table.
-    //   - Lumina.TVector<T> (C#): reads decode the vector header in place; mutators call these fn-ptrs.
-    //
-    // It is deliberately decoupled from reflection: any TVector<T> -- a reflected member, a function return, a
-    // plain local -- is operated on the same way. The field order/layout MUST match LuminaSharp.VectorOps
-    // (Core/ContainerOps.cs); the C# side reads Add/RemoveAt/Reset at fixed offsets. Captureless lambdas
-    // convert to plain function pointers whose calling convention matches C#'s delegate* unmanaged[Cdecl].
+    // Field order must match LuminaSharp.VectorOps (Core/ContainerOps.cs), which reads Add/RemoveAt/Reset at fixed offsets.
     struct FVectorOps
     {
         int32  (*Num)(const void* Vector);
@@ -29,15 +19,7 @@ namespace Lumina
         void   (*Reserve)(void* Vector, int32 Number);
         void   (*Swap)(void* Vector, int32 A, int32 B);
         uint32 ElementSize;
-        // Bring the CONTAINER itself up / tear it down in caller-owned raw memory (as opposed to the element
-        // ops above, which all assume a live container). This is what lets FArrayProperty implement
-        // ConstructValue/DestructValue without knowing whether it is looking at a TVector<T> or a script
-        // runtime array. New fields go HERE, after ElementSize: LuminaSharp.VectorOps reads the earlier
-        // fields at fixed offsets, so appending is safe and inserting is not.
-        //
-        // Context is handed back to both, opaque to everything in between. A compile-time TVector<T> needs
-        // none (the type is baked into the lambda); a runtime script array needs it to reach the element
-        // description it must wire into the freshly-constructed container.
+        // Construct and destruct the container in raw memory, so new fields must be appended after ElementSize.
         void   (*ConstructContainer)(void* Vector, const void* Context);
         void   (*DestructContainer)(void* Vector, const void* Context);
         const void* ContainerContext;
@@ -48,9 +30,7 @@ namespace Lumina
         uint32 CountDivisor;
     };
 
-    // Ops for a specific vector-like CONTAINER type, not just its element type. TInlineVector<T, N> reflects as
-    // a TVector<T>, but it embeds its buffer and carries a fixed allocator, so the table must construct and
-    // grow the real type: operating on one through TVector<T>'s table would free the inline buffer as heap.
+    // TInlineVector reflects as a TVector but embeds its buffer, so going through TVector's table would free it as heap.
     template <typename TContainer>
     const FVectorOps* GetVectorOpsFor()
     {
@@ -84,9 +64,7 @@ namespace Lumina
         return GetVectorOpsFor<TVector<T>>();
     }
 
-    // Type-erased op table for a THashMap<K,V>, the associative analogue of FVectorOps; one static table per
-    // (K,V) via GetMapOps<K,V>(). Not index-addressable, so no GetData/GetAt/Swap/SetNum. Each captureless lambda
-    // casts void* back to concrete K/V, so hashing/equality run on the real types.
+    // Not index-addressable, so no GetData/GetAt/Swap/SetNum.
     struct FMapOps
     {
         int32  (*Num)(const void* Map);
@@ -97,18 +75,14 @@ namespace Lumina
         void   (*Reset)(void* Map);
         void   (*Reserve)(void* Map, int32 Number);
         void   (*ForEach)(const void* Map, void (*Visitor)(const void* KeyPtr, void* ValuePtr, void* UserData), void* UserData);
-        // Placement construct/destruct a scratch key (deserialize path). Map is passed so a type-erased runtime
-        // map can reach its key element description; the compile-time map ignores it.
+        // Map is passed so a type-erased runtime map can reach its key element description.
         void   (*ConstructKey)(void* Map, void* Dst);
         void   (*DestructKey)(void* Map, void* Dst);
-        // Key/value slot for the pair at iteration index (null out-params if out of range). Iteration order is
-        // stable between mutations, so an editor can address entries by index. O(index) here, O(1) for the script map.
+        // Iteration order is stable between mutations, so an editor can address entries by index.
         void   (*At)(void* Map, int32 Index, const void** OutKey, void** OutValue);
         uint32 KeySize;
         uint32 ValueSize;
-        // The map counterpart of FVectorOps::Construct/DestructContainer, Context and all: brings the MAP
-        // itself up / tears it down in caller-owned raw memory, so FMapProperty can implement
-        // ConstructValue/DestructValue without knowing whether it holds a THashMap<K,V> or a script map.
+        // Construct and destruct the map in raw memory, so FMapProperty need not know if it holds a script map.
         void   (*ConstructContainer)(void* Map, const void* Context);
         void   (*DestructContainer)(void* Map, const void* Context);
         const void* ContainerContext;
@@ -117,8 +91,7 @@ namespace Lumina
         bool   (*Next)(void* Map, int32* Cursor, const void** OutKey, void** OutValue);
     };
 
-    // The map counterpart of GetVectorOpsFor: keyed on the container type so a TInlineHashMap<K, V, N>, which
-    // reflects as a THashMap<K, V>, is still constructed and grown as the type it actually is.
+    // Keyed on the container type so a TInlineHashMap is still constructed as the type it actually is.
     template <typename TContainer>
     const FMapOps* GetMapOpsFor()
     {

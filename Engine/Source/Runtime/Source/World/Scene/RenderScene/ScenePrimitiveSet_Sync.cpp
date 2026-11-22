@@ -418,6 +418,7 @@ namespace Lumina
         FoliageByEntity.Clear();
         FoliageInstanceCount = 0;
         PendingFoliageReleases.Reset();
+        ImpostorPointSet.Reset();
 
         ResetStreamState();
         bResolveTableChanged = false;

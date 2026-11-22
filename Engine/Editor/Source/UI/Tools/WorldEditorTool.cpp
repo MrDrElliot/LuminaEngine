@@ -873,7 +873,7 @@ namespace Lumina
         // Scripts' debug windows join the editor's own while playing, as a game build's overlay shows them.
         if (World != nullptr && HasSimulatingWorld())
         {
-            EntityScripts::DebugGui(World->GetEntityRegistry());
+            World->GetDebug()->BroadcastDebugGui();
         }
 
         ProcessComponentEditRequests();

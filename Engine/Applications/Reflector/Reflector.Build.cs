@@ -31,18 +31,7 @@ public class Reflector : ModuleRules
         PublicLibraryPaths.Add(ModulePath("../../../External/LLVM/lib"));
         PublicLibraryPaths.Add(ModulePath("../../../External/LLVM/bin"));
 
-        // Windows has no rpath: the loader searches the executable's directory, so libclang.dll has to
-        // be staged beside it. Deliberately NOT optional -- a missing copy means Setup never fetched
-        // External/LLVM, and failing here names the file instead of surfacing as an access violation
-        // inside the Reflector.
-        //
-        // ELF does NOT get the same treatment, and staging the libraries there is actively wrong. The
-        // distribution's libLLVM.so.19.1 carries DT_RUNPATH=$ORIGIN/../lib, and DT_RUNPATH on an object
-        // suppresses the inherited DT_RPATH of everything above it when resolving THAT object's own
-        // dependencies. Copied into Binaries/Linux64 its $ORIGIN/../lib becomes Binaries/lib, which does
-        // not exist, so libLLVM's libxml2.so.2 falls through to the system path and fails -- the host
-        // ships libxml2.so.16. Left in External/LLVM/lib the same RUNPATH resolves to that directory,
-        // which is exactly where the bundle stages the closure. See the rpath block below.
+        // Windows has no rpath so libclang.dll must sit beside the exe. ELF must not stage libLLVM into Binaries because its RUNPATH would then miss the bundled libs.
         if (Target.Platform == BuildPlatform.Windows64)
         {
             AddRuntimeDependency("../../../External/LLVM/bin/libclang.dll");
@@ -50,65 +39,18 @@ public class Reflector : ModuleRules
 
         if (Target.Platform != BuildPlatform.Windows64)
         {
-            // The bundle carries LLVM's own dependencies (libxml2, ICU, libedit, ...) because the
-            // versions it was built against are not the versions a current distribution ships:
-            // Ubuntu 26.04 has libxml2.so.16, and nothing there can satisfy the libxml2.so.2 that an
-            // LLVM 19 built on 22.04 asks for.
-            //
-            // -rpath-link resolves them while linking (a plain -L does not apply to the transitive
-            // needs of a shared library); the $ORIGIN rpath resolves them at load time, and stays
-            // relative so the tree can move.
+            // The bundle carries LLVM's own dependencies because current distributions ship newer libxml2 than the packaged LLVM asks for.
             PrivateLinkerOptions.Add($"-Wl,-rpath-link,{ModulePath("../../../External/LLVM/lib")}");
             PrivateLinkerOptions.Add("-Wl,-rpath,$ORIGIN/../../External/LLVM/lib");
 
-            // DT_RPATH, not the DT_RUNPATH modern linkers default to. RUNPATH applies only to an
-            // object's OWN direct dependencies, so it resolves libclang and libLLVM and then leaves
-            // the loader to find libLLVM's libxml2 on its own -- which fails with the library sitting
-            // in the very directory just named. RPATH is inherited down the dependency chain.
-            //
-            // Inherited, but not unconditionally: the chain stops at any object that has a RUNPATH of
-            // its own, and the distribution's libLLVM has one. That is why the LLVM libraries are not
-            // staged into Binaries -- see the runtime-dependency block above. This flag is still what
-            // resolves the transitive needs of the bundle's RUNPATH-less libraries (libedit's libtinfo,
-            // libbsd's libmd).
+            // DT_RPATH is inherited down the dependency chain but RUNPATH covers only direct dependencies, so libLLVM's libxml2 would not resolve.
             PrivateLinkerOptions.Add("-Wl,--disable-new-dtags");
 
             // A loaded Reflection module resolves the generator API against the executable's own symbols.
             PrivateLinkerOptions.Add("-rdynamic");
         }
 
-        if (Target.Platform == BuildPlatform.Windows64)
-        {
-            PublicSystemLibraries.AddRange(new[]
-            {
-                "clangBasic",
-                "clangLex",
-                "clangAST",
-                "libclang",
-                "LLVMAnalysis",
-                "LLVMBinaryFormat",
-                "LLVMBitReader",
-                "LLVMBitstreamReader",
-                "LLVMDemangle",
-                "LLVMFrontendOffloading",
-                "LLVMFrontendOpenMP",
-                "LLVMMC",
-                "LLVMProfileData",
-                "LLVMRemarks",
-                "LLVMScalarOpts",
-                "LLVMTargetParser",
-                "LLVMTransformUtils",
-                "LLVMCore",
-                "LLVMSupport",
-            });
-
-            PrivateLinkerOptions.Add("/NODEFAULTLIB:MSVCRTD");
-        }
-        else
-        {
-            PublicSystemLibraries.Add("clang");
-            PublicSystemLibraries.Add("clang-cpp");
-            PublicSystemLibraries.Add("LLVM-19");
-        }
+        // Only libclang's stable C API, so the Reflector never depends on LLVM's internal layout.
+        PublicSystemLibraries.Add(Target.Platform == BuildPlatform.Windows64 ? "libclang" : "clang");
     }
 }

@@ -37,8 +37,7 @@ namespace Lumina::PlatformTime
             return State;
         }
 
-        // Sub-millisecond waits without raising the whole process's scheduler tick. Windows 10 1803+;
-        // an older kernel refuses the flag and leaves a null handle for the caller to fall back on.
+        // Needs Windows 10 1803, and an older kernel refuses the flag and leaves a null handle for the caller to fall back on.
         #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
         #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
         #endif

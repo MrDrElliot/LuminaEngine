@@ -3,7 +3,7 @@ using LuminaSharp;
 namespace Lumina;
 
 // The C# side of a script attached to one entity, the same CEntityScript a C++ script derives. Created by attaching it to an entity, never with new.
-[DispatchWhen(nameof(OnAction), nameof(FeedsInputBindings))]
+[DispatchWhen(nameof(OnTraveled), nameof(AlwaysDispatched))]
 public partial class CEntityScript
 {
     // Set when the managed instance is created, so dispatch reads cached labels and callback flags instead of reflecting.
@@ -129,22 +129,28 @@ public partial class CEntityScript
         return World.RemoveScript<T>(Entity);
     }
 
-    // The entity and world were set again by the level change, so the cached ones belong to a world that is gone.
+    // The entity and world were set again by the level change, so the cached ones belong to a world that is gone, as does the component the bindings listened on.
     partial void __BeforeScriptEvent_OnTraveled()
     {
         CachedEntity = FEntity.Null;
         CachedWorld = null;
         CachedTransform = default;
+        ListenForInputBindings();
     }
 
-    // Feeds the script's SInputAction and SInputAxis bindings before its own OnAction runs.
-    partial void __BeforeScriptEvent_OnAction(FName Action, SInputActionState State)
-    {
-        if (Description == null || !Description.HasInputBindings)
-        {
-            return;
-        }
+    private static bool AlwaysDispatched(TypeLibrary Library, System.Type ScriptType) => true;
 
+    // A script method, so the binding ends by itself when this script detaches.
+    internal void ListenForInputBindings()
+    {
+        if (Description != null && Description.HasInputBindings)
+        {
+            World.GetOrEmplaceComponent<SInputComponent>(Entity).OnAction += FeedInputBindings;
+        }
+    }
+
+    private void FeedInputBindings(FName Action, SInputActionState State)
+    {
         try
         {
             using var Scope = LuminaSharp.Engine.Push(World, Entity, this);
@@ -156,17 +162,20 @@ public partial class CEntityScript
         }
     }
 
-    private static bool FeedsInputBindings(TypeLibrary Library, System.Type ScriptType) => Library.Describe(ScriptType).HasInputBindings;
-
-    // Add (idempotently) and return this entity's SInputComponent so it can receive input. Call in OnReady.
+    // Adds this entity's SInputComponent if missing and turns it on, so its OnInput and OnAction fire.
     protected ref SInputComponent EnableInput()
     {
-        return ref World.GetOrEmplaceComponent<SInputComponent>(Entity);
+        ref SInputComponent Input = ref World.GetOrEmplaceComponent<SInputComponent>(Entity);
+        Input.bEnabled = true;
+        return ref Input;
     }
 
-    // Remove this entity's SInputComponent, stopping OnInput and the input queries.
+    // Turns input off while keeping the component, so every listener on it, input bindings included, is still there when it comes back.
     protected void DisableInput()
     {
-        World.RemoveComponent<SInputComponent>(Entity);
+        if (World.TryGetComponent<SInputComponent>(Entity) is { } Input)
+        {
+            Input.Get().bEnabled = false;
+        }
     }
 }

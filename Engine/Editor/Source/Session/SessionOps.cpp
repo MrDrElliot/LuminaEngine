@@ -471,10 +471,31 @@ namespace Lumina::SessionOps
         return UI != nullptr && UI->FocusTab(Name, OutError);
     }
 
+    void ForEachToolPanel(const TFunction<void(const FToolPanelInfo&)>& Functor)
+    {
+        FString Error;
+        FEditorUI* UI = RequireUI(Error);
+        if (UI == nullptr)
+        {
+            return;
+        }
+
+        UI->ForEachToolPanel([&](FStringView Name, bool bOpen)
+        {
+            Functor(FToolPanelInfo{ FString(Name), bOpen });
+        });
+    }
+
     bool OpenToolPanel(FStringView Name, FString& OutError)
     {
         FEditorUI* UI = RequireUI(OutError);
         return UI != nullptr && UI->OpenToolPanel(Name, OutError);
+    }
+
+    bool CloseToolPanel(FStringView Name, FString& OutError)
+    {
+        FEditorUI* UI = RequireUI(OutError);
+        return UI != nullptr && UI->CloseToolPanel(Name, OutError);
     }
 
     namespace

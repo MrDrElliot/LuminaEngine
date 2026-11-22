@@ -2,7 +2,6 @@
 
 namespace Lumina::SlowTaskModal
 {
-    // Blocking progress popup for live FScopedSlowTasks. Call only from
-    // FEditorModalManager::DrawDialogue so it never becomes a competing sibling modal.
+    // Blocking progress popup for live FScopedSlowTasks, called only from FEditorModalManager::DrawDialogue so it never competes as a sibling modal.
     void Render();
 }

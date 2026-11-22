@@ -10,8 +10,7 @@ namespace Lumina
     // Instancable structs deriving from Base, or every instancable struct when Base is null; Base itself only when bIncludeBase.
     RUNTIME_API TVector<CStruct*> GatherInstancableStructSubtypes(const CStruct* Base, bool bIncludeBase = false);
 
-    // A value type an FInstancedStruct may own: reflected, and NOT a CObject. A CObject has identity
-    // and is referenced through TStrongObjectPtr, never copied into an inline value slot.
+    // A reflected value type that is not a CObject, since a CObject has identity and is never copied into an inline slot.
 #if defined(REFLECTION_PARSER)
     // GENERATED_BODY is stubbed while parsing, so requiring StaticStruct() would reject every struct.
     template<typename T>

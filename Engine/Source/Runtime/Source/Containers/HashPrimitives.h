@@ -205,7 +205,6 @@ namespace Lumina::Containers
 
 namespace Lumina
 {
-    // Hoisted so an unqualified GetTypeHash inside Lumina reaches the scalar overloads; ADL cannot,
-    // because a pointer to a Lumina type does not associate Lumina::Containers.
+    // Hoisted so an unqualified GetTypeHash inside Lumina reaches the scalar overloads, which ADL cannot for pointers to Lumina types.
     using Containers::GetTypeHash;
 }

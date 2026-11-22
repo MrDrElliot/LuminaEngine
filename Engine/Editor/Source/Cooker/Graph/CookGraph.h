@@ -11,8 +11,7 @@ namespace Lumina
     class FAssetRegistry;
     struct FCookRoot;
 
-    // One node in the cook-time reachability graph. Lives only for the
-    // duration of one cook pass; not stored in the asset registry.
+    // One node in the cook-time reachability graph, living only for one cook pass.
     struct FCookNode
     {
         FGuid                       AssetGUID;
@@ -29,8 +28,7 @@ namespace Lumina
         FString    Detail;
     };
 
-    // Usage: AddRoot() per FEngine::GetCookRoots() entry, Traverse() once, then query IsReachable / GetChunkFor / GetReachableNodes.
-    // Walks FAssetData::Dependencies from the registry; never loads packages (discovery/dep extraction is the AssetRegistry's job).
+    // Walks FAssetData::Dependencies from the registry without loading packages. Call AddRoot per cook root, then Traverse once.
     class EDITOR_API FCookGraph
     {
     public:
@@ -54,16 +52,14 @@ namespace Lumina
         const FCookNode*    Find(const FGuid& A) const;
         FName               GetChunkFor(const FGuid& A) const;
 
-        // Every reached node in deterministic order (sorted by GUID),
-        // so the cooker emits packages in stable order between runs.
+        // Every reached node sorted by GUID, so the cooker emits packages in a stable order.
         TVector<const FCookNode*> GetReachableNodesSorted() const;
 
         size_t              NumNodes() const { return Nodes.Num(); }
         const TVector<FCookGraphIssue>& GetIssues() const { return Issues; }
 
     private:
-        // Mark target reachable; if not yet present, create node and
-        // enqueue for traversal. Returns true if added.
+        // Marks target reachable, creating and enqueueing its node if new. Returns true if added.
         bool VisitTarget(const FGuid& TargetGUID,
                          const FName& InheritedChunk,
                          EDependencyType EdgeType);

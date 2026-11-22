@@ -218,13 +218,89 @@ namespace Lumina::Forest
         Out.Hash = Hash;
     }
 
-    const FTerrainHeightView* FindGround(const FRules& Rules, float X, float Z, float& OutHeight)
+    TSharedPtr<FTerrainSnapshot> FTerrainSnapshot::Capture(const FTerrainHeightView& Source)
+    {
+        const int32 Res = Source.Resolution;
+        if (Source.Heights == nullptr || Res < 2)
+        {
+            return nullptr;
+        }
+
+        const int32  Count  = Res * Res;
+        const float* Begin  = Source.Heights;
+        float Low  = Begin[0];
+        float High = Begin[0];
+        for (int32 i = 1; i < Count; ++i)
+        {
+            Low  = Math::Min(Low, Begin[i]);
+            High = Math::Max(High, Begin[i]);
+        }
+
+        TSharedPtr<FTerrainSnapshot> Out = MakeShared<FTerrainSnapshot>();
+        Out->Resolution    = Res;
+        Out->TileWorldSize = Source.TileWorldSize;
+        Out->MaxHeight     = Source.MaxHeight;
+        Out->Origin        = Source.Origin;
+        Out->HeightMin     = Low;
+        Out->HeightStep    = (High - Low) / 65535.0f;
+        Out->Heights.SetNum(Count);
+        const float ToStep = Out->HeightStep > 0.0f ? 1.0f / Out->HeightStep : 0.0f;
+        for (int32 i = 0; i < Count; ++i)
+        {
+            Out->Heights[i] = (uint16)Math::Clamp((Begin[i] - Low) * ToStep + 0.5f, 0.0f, 65535.0f);
+        }
+
+        const float Shape[] = { Out->TileWorldSize, Out->MaxHeight, Out->HeightMin, Out->HeightStep, Out->Origin.x, Out->Origin.y, Out->Origin.z };
+        Out->Hash = Containers::CombineHash(Containers::HashBytes(Out->Heights.GetData(), Count * sizeof(uint16)), Containers::HashBytes(Shape, sizeof(Shape)));
+        return Out;
+    }
+
+    bool FTerrainSnapshot::SampleHeight(float WorldX, float WorldZ, float& OutHeight) const
+    {
+        const int32 Res = Resolution;
+        if (Heights.IsEmpty() || Res < 2)
+        {
+            return false;
+        }
+
+        const float Stride = TileWorldSize / float(Res - 1);
+        const float Lx     = (WorldX - (Origin.x - TileWorldSize * 0.5f)) / Stride;
+        const float Lz     = (WorldZ - (Origin.z - TileWorldSize * 0.5f)) / Stride;
+        if (Lx < 0.0f || Lz < 0.0f || Lx > float(Res - 1) || Lz > float(Res - 1))
+        {
+            return false;
+        }
+
+        const int32 X0 = int32(Lx), Z0 = int32(Lz);
+        const int32 X1 = Math::Min(X0 + 1, Res - 1), Z1 = Math::Min(Z0 + 1, Res - 1);
+        const float Tx = Lx - float(X0), Tz = Lz - float(Z0);
+        const float H  = Math::Mix(Math::Mix((float)Heights[Z0 * Res + X0], (float)Heights[Z0 * Res + X1], Tx),
+                                   Math::Mix((float)Heights[Z1 * Res + X0], (float)Heights[Z1 * Res + X1], Tx), Tz);
+        OutHeight = Origin.y + (HeightMin + H * HeightStep) * MaxHeight;
+        return true;
+    }
+
+    FVector3 FTerrainSnapshot::SampleNormal(float WorldX, float WorldZ) const
+    {
+        const float Stride = TileWorldSize / float(Math::Max(Resolution - 1, 1));
+        const float Eps    = Math::Max(Stride, 0.5f);
+
+        float HxL, HxR, HzL, HzR;
+        if (!SampleHeight(WorldX - Eps, WorldZ, HxL) || !SampleHeight(WorldX + Eps, WorldZ, HxR)
+            || !SampleHeight(WorldX, WorldZ - Eps, HzL) || !SampleHeight(WorldX, WorldZ + Eps, HzR))
+        {
+            return FVector3(0.0f, 1.0f, 0.0f);
+        }
+        return Math::Normalize(FVector3(-(HxR - HxL) / (2.0f * Eps), 1.0f, -(HzR - HzL) / (2.0f * Eps)));
+    }
+
+    const FTerrainSnapshot* FindGround(const FRules& Rules, float X, float Z, float& OutHeight)
     {
         for (const TSharedPtr<const FTerrainSnapshot>& Terrain : Rules.Terrains)
         {
-            if (Terrain->View.SampleHeight(X, Z, OutHeight))
+            if (Terrain->SampleHeight(X, Z, OutHeight))
             {
-                return &Terrain->View;
+                return Terrain.get();
             }
         }
         return nullptr;
@@ -311,7 +387,7 @@ namespace Lumina::Forest
                         FVector3 Normal = Up;
                         if (bFollowTerrain)
                         {
-                            const FTerrainHeightView* Ground = FindGround(Rules, PX, PZ, Position.y);
+                            const FTerrainSnapshot* Ground = FindGround(Rules, PX, PZ, Position.y);
                             if (Ground == nullptr)
                             {
                                 continue;

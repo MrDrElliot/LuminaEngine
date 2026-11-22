@@ -128,14 +128,13 @@ TEST(ForestScatter, PlantsStandOnTheFinestTerrainUnderThem)
 {
     auto MakeFlat = [](float Size, float Height)
     {
-        TSharedPtr<Forest::FTerrainSnapshot> Snapshot = MakeShared<Forest::FTerrainSnapshot>();
-        Snapshot->Heights.SetNum(4);
-        Algo::Fill(Snapshot->Heights, 1.0f);
-        Snapshot->View.Heights       = Snapshot->Heights.GetData();
-        Snapshot->View.Resolution    = 2;
-        Snapshot->View.TileWorldSize = Size;
-        Snapshot->View.MaxHeight     = Height;
-        return TSharedPtr<const Forest::FTerrainSnapshot>(Move(Snapshot));
+        const float Heights[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        FTerrainHeightView View;
+        View.Heights       = Heights;
+        View.Resolution    = 2;
+        View.TileWorldSize = Size;
+        View.MaxHeight     = Height;
+        return TSharedPtr<const Forest::FTerrainSnapshot>(Forest::FTerrainSnapshot::Capture(View));
     };
 
     Forest::FRules Rules = MakeRules(1.0f);

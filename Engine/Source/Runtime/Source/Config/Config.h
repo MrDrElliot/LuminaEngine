@@ -26,8 +26,7 @@ namespace Lumina
     {
     public:
 
-        //~ IObjectReferenceProvider: the developer-settings snapshots are a plain map, so nothing else
-        //~ reaches the classes and default objects they hold.
+        //~ IObjectReferenceProvider, since the snapshots are a plain map that nothing else reaches.
 
         const char* GetReferenceProviderName() const override { return "config settings defaults"; }
 
@@ -36,9 +35,7 @@ namespace Lumina
 
         // ---- Developer settings (reflection-driven CDeveloperSettings objects) ----
 
-        // Discover every CDeveloperSettings subclass and load its JSON section into its CDO.
-        // Idempotent: classes already initialized are skipped, so it is safe to call again after
-        // a module (e.g. the editor) registers more settings classes.
+        // Idempotent, so it is safe to call again after a module registers more settings classes.
         void DiscoverAndLoadSettings();
 
         // Re-serialize a settings class's CDO into its ConfigFile, preserving other sections.

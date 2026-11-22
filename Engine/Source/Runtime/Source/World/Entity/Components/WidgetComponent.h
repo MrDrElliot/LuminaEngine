@@ -17,8 +17,7 @@ namespace Rml
 
 namespace Lumina
 {
-    // Per-instance live state for a world widget (its Rml context + offscreen RT). Not serialized; rebuilt
-    // on demand. Copies start EMPTY so a duplicate doesn't alias the source; moves transfer ownership.
+    // Per-instance live widget state, rebuilt on demand, where copies start empty so a duplicate never aliases the source.
     struct FWidgetRuntime
     {
         Rml::Context*         Context = nullptr;
@@ -61,8 +60,7 @@ namespace Lumina
         }
     };
 
-    // Renders an RmlUi document onto a world-space quad. Laid out + rasterized into Runtime.Target each
-    // frame; the widget pass draws a textured quad sampling that RT bindlessly.
+    // Renders an RmlUi document onto a world-space quad through Runtime.Target each frame.
     REFLECT(Component, Category = "UI")
     struct RUNTIME_API SWidgetComponent
     {

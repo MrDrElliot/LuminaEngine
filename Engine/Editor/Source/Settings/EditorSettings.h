@@ -449,14 +449,7 @@ namespace Lumina
         SShortcut ReloadScripts = SShortcut(SKey(EKey::B, true, true));
     };
 
-    // Which tool tabs this project had open. Per-project (lives in the project's own /Config), and
-    // written through on every open and close rather than at shutdown -- a crash must not lose it.
-    //
-    // Entries are "<kind>:<key>" strings kept in the order the tabs were opened:
-    //   asset:<guid>   an asset editor, keyed by GUID so a moved or renamed asset still resolves
-    //   file:<path>    a raw-file editor (.rml, ...), keyed by VFS path
-    // A stringly-typed key rather than a reflected struct keeps FEditorUI from having to hand every
-    // tool subclass a restore interface, and leaves the JSON readable.
+    // Tool tabs this project had open, written through on every open and close so a crash loses nothing.
     REFLECT(MinimalAPI, ConfigFile = "/Config/EditorSession.json", DisplayName = "Session", Category = "Editor")
     class CEditorSessionSettings : public CDeveloperSettings
     {

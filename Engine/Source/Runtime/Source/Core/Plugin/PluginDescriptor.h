@@ -16,8 +16,7 @@ namespace Lumina
         // Loaded only when WITH_EDITOR. Stripped from shipping builds.
         Editor,
 
-        // Loaded in Debug/Development only. Useful for tooling that should
-        // not ship.
+        // Loaded in Debug and Development only, for tooling that should not ship.
         Developer,
 
         // A Reflector generator, which the engine never loads.
@@ -51,8 +50,7 @@ namespace Lumina
         bool    bOptional = false;
     };
 
-    // Parsed contents of a .lplugin descriptor file. Not the live runtime
-    // state; FPlugin owns that.
+    // Parsed contents of a .lplugin file, while FPlugin owns the live runtime state.
     struct FPluginDescriptor
     {
         int32   FormatVersion       = 1;
@@ -67,16 +65,14 @@ namespace Lumina
         bool    bEditorOnly         = false;
         bool    bContainsContent    = true;
 
-        // Set by the discovery layer based on which root the descriptor was
-        // found under (Engine/Plugins/* vs <Project>/Plugins/*).
+        // Set by discovery from which root the descriptor was found under.
         bool    bIsEnginePlugin     = true;
 
         TVector<FString>                 SupportedPlatforms;
         TVector<FPluginDependency>       Dependencies;
         TVector<FPluginModuleDescriptor> Modules;
 
-        // Cook-root seeds contributed by this plugin; empty = assets cook only if
-        // reached transitively from project/engine roots.
+        // Cook-root seeds, and when empty the plugin's assets cook only if reached from other roots.
         TVector<FCookRoot>               CookRoots;
 
         // False with OutError set for a missing file, malformed JSON, a missing Name, or a field LuminaBuildTool would also reject.

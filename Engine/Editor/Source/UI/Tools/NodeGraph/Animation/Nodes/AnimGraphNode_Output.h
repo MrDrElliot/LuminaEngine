@@ -5,9 +5,7 @@
 
 namespace Lumina
 {
-    // Terminal node: the pose wired into its single input is the frame's final pose.
-    // Exactly one exists per graph and it cannot be deleted.
-    // The graph creates the one and only Output itself, so it must never be offered in the palette.
+    // Terminal node whose input is the final pose, created by the graph itself so it is never in the palette.
     REFLECT(NotPlaceable, MinimalAPI)
     class CAnimGraphNode_Output : public CAnimGraphNode
     {
@@ -22,8 +20,7 @@ namespace Lumina
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override;
 
-        // Pose register resolved from the Result Pose input during the last compile; the owning
-        // graph emits the final Output opcode (top-level) or threads it into a state machine (sub-graph).
+        // Resolved during the last compile, and the owning graph emits the Output opcode or threads it into a state machine.
         uint16 GetResolvedPoseRegister() const { return ResolvedPoseRegister; }
 
         CAnimGraphPin* ResultPosePin = nullptr;

@@ -6,6 +6,7 @@
 #include "Core/Serialization/MemoryArchiver.h"
 #include "FileSystem/FileSystem.h"
 #include "Memory/MemoryTracking.h"
+#include "slang-tag-version.h"
 
 namespace Lumina::FShaderCache
 {
@@ -217,9 +218,16 @@ namespace Lumina::FShaderCache
         }
     }
 
+    uint64 GetCompilerSeed()
+    {
+        uint64 Seed = (uint64)kShaderCacheVersion;
+        Seed ^= Hash::GetHash64(SLANG_TAG_VERSION) + 0x9e3779b97f4a7c15ULL + (Seed << 6) + (Seed >> 2);
+        return Seed;
+    }
+
     uint64 ComputeSourceSetHash(FStringView ShaderVirtualPath, const TVector<FString>& Defines, const TVector<FString>& SearchRoots, FStringView EntryPoint)
     {
-        uint64 Hash = (uint64)kShaderCacheVersion;
+        uint64 Hash = GetCompilerSeed();
         const FString DefineBlob = JoinSortedDefines(Defines);
         Hash ^= Hash::GetHash64(DefineBlob) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
         Hash ^= Hash::GetHash64(EntryPoint) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
@@ -246,7 +254,7 @@ namespace Lumina::FShaderCache
             return 0;
         }
 
-        uint64 Hash = (uint64)kShaderCacheVersion;
+        uint64 Hash = GetCompilerSeed();
         const FString DefineBlob = JoinSortedDefines(Defines);
         Hash ^= Hash::GetHash64(DefineBlob) + 0x9e3779b97f4a7c15ULL + (Hash << 6) + (Hash >> 2);
 

@@ -15,17 +15,14 @@ namespace Lumina
     REFLECT()
     enum class EAnimUpdateMode : uint8
     {
-        // Evaluate the pose every frame regardless of visibility (use for gameplay-critical
-        // skeletons whose pose must stay current even off-screen).
+        // Evaluates the pose every frame regardless of visibility.
         AlwaysTickPose,
 
-        // Skip pose evaluation while the mesh hasn't been rendered recently (the pose freezes
-        // and resumes when it comes back on-screen). Default -- saves CPU on off-screen crowds.
+        // Default, freezes the pose while the mesh has not been rendered recently.
         TickWhenRendered,
     };
 
-    // CACHE_ALIGN: the gather writes LastRenderedTime / LastDistanceOverRadius / the render-bone cache from
-    // worker threads, so unaligned components would false-share at parallel range boundaries.
+    // CACHE_ALIGN because the gather writes the render-bone cache from workers and would false-share at range boundaries.
     REFLECT(Component, Category = "Rendering")
     struct RUNTIME_API CACHE_ALIGN SSkeletalMeshComponent : SMeshComponent
     {
@@ -53,24 +50,19 @@ namespace Lumina
         PROPERTY(Editable, Category = "Animation")
         bool bUpdateRateOptimization = true;
 
-        // Screen-size proxy (camera distance / bounding radius) stamped by the render gather; drives
-        // the update-rate interval. 0 (never rendered) evaluates at full rate. Transient.
+        // Camera distance over bounding radius stamped by the render gather, and 0 evaluates at full rate. Transient.
         float LastDistanceOverRadius = 0.0f;
 
         // Mesh-local error the camera tolerates at this mesh, stamped by the render gather; 0 animates every bone. Transient.
         float LastBoneLODTolerance = 0.0f;
 
-        // Animation time accrued while update-rate optimization skipped evaluation; consumed as one
-        // larger step on the next evaluated frame. Transient.
+        // Animation time accrued while evaluation was skipped, consumed as one step on the next evaluated frame. Transient.
         float PendingAnimTime = 0.0f;
 
-        // Update-rate countdown: frames until the next evaluation. -1 seeds the entity-id phase
-        // stagger on the next reduced-rate frame (self-contained per component, so it works no
-        // matter how many worlds tick per frame). Transient.
+        // Frames until the next evaluation, and -1 seeds the entity-id phase stagger. Transient.
         int16 AnimSkipCounter = -1;
 
-        // World time the render gather last kept this mesh through culling; animation systems read it
-        // to gate off-screen pose evaluation. -1 until first rendered. Transient, never serialized.
+        // World time the render gather last kept this mesh through culling, and -1 until first rendered. Transient.
         double LastRenderedTime = -1.0;
 
         // Latest LastRenderedTime among the meshes following this one, so a hidden leader still animates them. Transient.
@@ -89,20 +81,16 @@ namespace Lumina
         PROPERTY(Editable, Replicated, Category = "Mesh")
         TStrongObjectPtr<CSkeletalMesh> SkeletalMesh;
 
-        // Sized to the skeleton's bone count by the animation system (0 when unused). The render scene
-        // uploads exactly this many matrices; FGPUInstance.BoneOffset references this instance's slice.
+        // Sized to the skeleton's bone count by the animation system, and the render scene uploads exactly this many matrices.
         TVector<FMatrix4> BoneTransforms;
 
-        // This frame's recorded pose recipe: the animation system's update phase fills it, the
-        // execution phase consumes it into BoneTransforms. Transient, capacity reused across frames.
+        // This frame's pose recipe, filled by the update phase and consumed by the execution phase. Transient.
         FAnimTaskList AnimTasks;
 
-        // Raised by anything that writes BoneTransforms without bumping PoseSerial itself; the gather
-        // folds it into PoseSerial when it next reaches this mesh.
+        // Raised by anything that writes BoneTransforms without bumping PoseSerial, and the gather folds it in.
         bool bRenderBonesDirty = false;
 
-        // Bumped whenever BoneTransforms is rewritten. The gather packs into the bone arena and uploads
-        // a pose only when this moved, so an off-screen mesh is never packed at all.
+        // Bumped whenever BoneTransforms is rewritten, so the gather packs and uploads only a moved pose.
         uint32 PoseSerial = 0;
 
         // BoneTransforms in the GPU bone layout at two vectors a bone, packed while the pose was still in cache; current only while PackedPoseSerial equals PoseSerial.
@@ -112,8 +100,7 @@ namespace Lumina
         // Hash of the last pose the animation system wrote, so an unchanged pose is caught without reading the cold matrices back.
         uint64 PoseHash = 0;
 
-        // The recipe BoneTransforms was last built from. The executor reads nothing outside the task
-        // list, so an identical recipe reproduces the same pose and the whole execute is skipped.
+        // The recipe BoneTransforms was last built from, so an identical recipe skips the whole execute.
         FAnimTaskList LastRecipe;
         bool bLastRecipeValid = false;
     };

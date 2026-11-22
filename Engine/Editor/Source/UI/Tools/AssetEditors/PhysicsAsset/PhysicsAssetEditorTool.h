@@ -30,8 +30,7 @@ namespace Lumina
         Constraint,
     };
 
-    // Editor for CPhysicsAsset: skeleton tree on the left, bodies and constraint limits drawn over a
-    // bind-pose preview mesh, details for whichever body/constraint is selected.
+    // Editor for CPhysicsAsset with bodies and constraint limits drawn over a bind-pose preview mesh.
     class EDITOR_API FPhysicsAssetEditorTool : public FAssetEditorTool, public IShapeHandleHost
     {
     public:
@@ -97,8 +96,7 @@ namespace Lumina
         // Pushes the asset's joint limits into the running ragdoll, so tuning is felt without restarting.
         void RetuneSimulatedRagdoll();
 
-        // While simulating: the physics floor and the live bone positions, so a ragdoll that misses the
-        // floor is visibly a placement problem instead of a guess.
+        // Shows the physics floor and live bone positions so a ragdoll missing the floor reads as a placement problem.
         void DrawSimulationOverlay();
 
         // Each of these opens its own transaction, so none may call another.
@@ -108,16 +106,14 @@ namespace Lumina
         void RemoveConstraintAt(int32 ConstraintIndex);
         void ClearAllBodies();
 
-        // Capsule down every bone long enough to matter, plus a swing-twist joint to the nearest
-        // ancestor that also got a body.
+        // A capsule per bone long enough to matter, with a swing-twist joint to the nearest ancestor that has a body.
         void GenerateFromSkeleton(bool bReplaceExisting);
 
         void SelectBody(int32 BodyIndex);
         void SelectConstraint(int32 ConstraintIndex);
         void ClearSelection();
 
-        // Drops a live ragdoll into the preview world. The world is an editor world, so it starts paused
-        // and without a physics scene; both are turned on here and put back on stop.
+        // The editor world starts paused without a physics scene, so both are turned on here and restored on stop.
         void StartSimulation();
         void StopSimulation();
 
@@ -126,13 +122,11 @@ namespace Lumina
 
         FName FindAncestorBodyBone(int32 BoneIndex);
 
-        // Viewport manipulation. Rays are built from the editor camera; picking is analytic against the
-        // authored shapes rather than a GPU readback, which keeps it exact and off the render path.
+        // Viewport manipulation picks analytically against the authored shapes, off the render path.
 
         // Writes a gizmo-edited world frame back into the bone-relative offsets the asset stores.
 
-        // Closes whatever a drag left open when it is cut short (entering simulation, closing the tool)
-        // rather than the mouse being released.
+        // Closes a drag cut short by entering simulation or closing the tool.
         void CloseOpenDragTransaction();
 
         int32 PickBody(const FVector3& RayOrigin, const FVector3& RayDirection);
@@ -151,8 +145,7 @@ namespace Lumina
         // Mirrors a viewport pick into the bone tree so both panels agree on the selection.
         void SyncTreeSelectionToBody(int32 BodyIndex);
 
-        // Shift + left-drag while simulating: springs the grabbed body toward the cursor, so a ragdoll can
-        // be hauled around and thrown to see how the joints hold up.
+        // Shift and left-drag while simulating springs the grabbed body toward the cursor.
         void UpdateSimulationGrab(const ImVec2& ViewportOrigin, const ImVec2& ViewportSize);
 
         FTreeListViewContext        BoneListContext;
@@ -187,8 +180,7 @@ namespace Lumina
         // Size is owned by the dots, so the gizmo only ever moves or rotates the body frame.
         ImGuizmo::OPERATION         BodyGizmoOp = ImGuizmo::TRANSLATE;
 
-        // Live grab state. Distance keeps the body at the depth it was grabbed at, so dragging sideways
-        // does not haul it toward the camera; the local offset keeps the pull anchored where it was hit.
+        // Distance keeps the body at its grab depth, and the local offset anchors the pull where it was hit.
         SPhysicsBodyTarget                      GrabbedTarget;
         float                       GrabDistance = 0.0f;
         FVector3                    GrabLocalOffset = FVector3(0.0f);

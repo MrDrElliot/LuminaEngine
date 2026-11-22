@@ -32,8 +32,7 @@ namespace Lumina::ImGuiX
         ImVec2          Size = ImVec2(0, 0);
     };
     
-    // Editor UI scale (monitor DPI * bias); 1.0 = none. Fonts/style track it automatically;
-    // multiply hardcoded pixel sizes by this so custom layouts stay aligned.
+    // Editor UI scale (monitor DPI times bias). Multiply hardcoded pixel sizes by this to stay aligned.
     RUNTIME_API float GetUIScale();
 
     // Set by the ImGui renderer whenever the scale is (re)resolved.
@@ -195,31 +194,23 @@ namespace Lumina::ImGuiX
     RUNTIME_API bool SliderFloat(const char* Label, float* Value, float Min, float Max, ESliderFlags Flags = ESliderFlags::None, const char* Format = "%.2f", const FSliderStyle* Style = nullptr);
     RUNTIME_API bool SliderInt(const char* Label, int32* Value, int32 Min, int32 Max, ESliderFlags Flags = ESliderFlags::None, const char* Format = "%d", const FSliderStyle* Style = nullptr);
     
-    // Filter input + trailing clear button, sized so the button cannot clip against the panel edge.
-    // Hint is drawn inside the empty box (ImGuiTextFilter::Draw takes no hint of its own). Returns true
-    // when the filter text changed this frame, including via the clear button.
+    // Filter input with a trailing clear button. Returns true when the text changed, including via the button.
     RUNTIME_API bool SearchBar(const char* StrId, ImGuiTextFilter& Filter, const char* Hint = nullptr);
 
-    // ImGuiTextFilter only splits on commas, so "pine tree" is matched as one contiguous run and finds
-    // nothing. Treats spaces as separators too and passes only text containing every word.
+    // ImGuiTextFilter only splits on commas, so this treats spaces as separators too and requires every word.
     RUNTIME_API bool PassSearchFilter(FStringView Query, FStringView Text);
     RUNTIME_API bool PassSearchFilter(const ImGuiTextFilter& Filter, FStringView Text);
 
-    // A searchable single-select dropdown. Pass OutCreatedText for a list the user may extend: an entry
-    // offering the typed text appears whenever it matches no item, and the pick lands there instead of
-    // in the return value, which stays Constants::kIndexNone.
+    // Pass OutCreatedText to let the user add entries, and that pick lands there while the return stays Constants::kIndexNone.
     RUNTIME_API int32 SearchableCombo(const char* StrId, const char* Preview, int32 ItemCount, int32 CurrentIndex, const TFunction<FFixedString(int32)>& GetItemLabel, const char* ItemIcon = nullptr, FFixedString* OutCreatedText = nullptr);
 
     // Whether that combo's list is open, so a caller can skip gathering items nobody can see.
     RUNTIME_API bool IsSearchableComboOpen(const char* StrId);
 
-    // Searchable combo for picking an asset of (or deriving from) FilterClass from the registry.
-    // Writes the chosen asset's GUID into InOutGUID and returns true when it changes.
+    // Picks a registry asset of FilterClass into InOutGUID and returns true when it changes.
     RUNTIME_API bool AssetReferenceCombo(const char* StrId, CClass* FilterClass, FGuid& InOutGUID, const char* ItemIcon = nullptr);
 
-    // Searchable combo over every loaded class that is-a BaseClass (BaseClass itself included). Writes
-    // the pick into InOutClass and returns true when it changes. bAllowNone adds a leading "None" entry
-    // that clears the selection; without it the combo always holds a class once one is set.
+    // Picks a loaded class deriving from BaseClass into InOutClass, and bAllowNone adds an entry that clears it.
     RUNTIME_API bool ClassCombo(const char* StrId, CClass* BaseClass, CClass*& InOutClass, bool bAllowNone = true, const char* ItemIcon = nullptr);
 
     // Same, over structs that is-a BaseStruct. BaseStruct itself is listed only with bIncludeBase.
@@ -272,10 +263,7 @@ namespace Lumina::ImGuiX
             uint32 bIsArray    = 0;     // 0 = Texture2D, 1 = Texture2DArray
         };
 
-        // Marker only; never invoked. The renderer backend compares ImDrawCmd::UserCallback against
-        // this and reads ImDrawCmd::UserCallbackData as an FImGuiDisplayState. Going through the
-        // draw list rather than a global keeps the state ordered with the draws it applies to, which
-        // is what makes it correct across docked windows and secondary viewports.
+        // Marker the renderer matches on ImDrawCmd::UserCallback, and going through the draw list keeps state ordered across docked windows and viewports.
         RUNTIME_API ImDrawCallback GetDisplayStateCallback();
     }
 
@@ -296,8 +284,7 @@ namespace Lumina::ImGuiX
 
         RUNTIME_API void NotifyInternal(EType Type, FStringView Msg);
 
-        // Extra pixels to lift the notification stack above the work-area bottom edge.
-        // The editor sets this to the open footer drawer's height so toasts aren't covered.
+        // Lifts the notification stack above the bottom edge, so toasts clear the open footer drawer.
         RUNTIME_API void SetBottomInset(float Pixels);
 
         template <typename... TArgs>
@@ -333,16 +320,12 @@ namespace Lumina::ImGuiX
         }
     }
     
-    // Stand-in for the OS title bar, drawn as the main viewport's top side bar. Laid out left to right as
-    // [menu section][info section][window controls]. Every pixel not covered by a widget is reported to the
-    // platform window as caption, so the whole bar drags without any section having to reserve a gap.
+    // Stand-in for the OS title bar, and every pixel not covered by a widget is reported as caption so the whole bar drags.
     class RUNTIME_API FApplicationTitleBar
     {
     public:
 
-        // Draws the bar for this frame. Only the info section is measured by the caller; the menu section
-        // takes every pixel that is left, so long content (a project name) is bounded by the window rather
-        // than clipped against a fixed section width.
+        // Only the info section is measured by the caller, and the menu section takes all remaining width.
         void Draw(TFunction<void()>&& MenuSectionDrawFunction = TFunction<void()>(),
                   TFunction<void()>&& InfoSectionDrawFunction = TFunction<void()>(),
                   float InfoSectionWidth = 0.0f);
@@ -356,8 +339,7 @@ namespace Lumina::ImGuiX
         // Scaled width of the minimize/maximize/close cluster.
         static float GetWindowControlsWidth();
 
-        // Height of the single row the sections draw on. Content taller than a line of text (icons,
-        // images) should be centered on the section's height, since the menu cursor is not on the text row.
+        // Taller content such as icons should center on this height, since the menu cursor is not on the text row.
         static float GetContentRowHeight();
 
     private:

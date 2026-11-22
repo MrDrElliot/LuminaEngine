@@ -7,8 +7,7 @@
 
 namespace Lumina
 {
-    // Editor for CAudioStream: waveform visualization plus an in-editor playback preview.
-    // PCM is decoded once on init into fixed-resolution min/max peak buckets per channel.
+    // Editor for CAudioStream with a waveform and playback preview decoded once on init into peak buckets.
     class FAudioStreamEditorTool : public FAssetEditorTool
     {
     public:

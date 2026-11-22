@@ -108,8 +108,7 @@ namespace Lumina::Object::Internal
 
         void AllocateObjectPool(int32 InMaxCObjects);
 
-        // Arms the shutdown guard without tearing anything down, so releasing the root set stops
-        // destroying objects individually and Shutdown() can do one ordered pass. Idempotent.
+        // Arms the shutdown guard so releasing the root set stops destroying objects individually. Idempotent.
         void BeginShutdown();
 
         void Shutdown();

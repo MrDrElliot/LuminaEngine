@@ -5,8 +5,7 @@
 
 namespace Lumina
 {
-    // Inline editor for one SParticleParameter row in UserParameters; lays out
-    // [Name] [Type] [typed value editor] on a line, Niagara-style.
+    // Inline editor for one SParticleParameter row, laid out as name, type and value on one line.
     class FParticleParameterCustomization : public IPropertyTypeCustomization
     {
     public:

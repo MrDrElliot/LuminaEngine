@@ -59,9 +59,7 @@ namespace Lumina::Reflection
         std::string                                           Namespace;
         uint32_t                                                GeneratedBodyLineNumber = 0;
         uint32_t                                                LineNumber = 0;
-        // True if the type has a non-static data member with NO PROPERTY() macro. Such state is invisible to
-        // the reflector, so the type's reflected layout is incomplete and it must NOT be mirrored by value in
-        // C# (a flat by-value struct would be the wrong size). Set by the struct field visitor.
+        // A member without PROPERTY() is invisible, so the layout is incomplete and the type must not be mirrored by value in C#.
         bool                                                    bHasUnreflectedFields = false;
 
         // Reflected through a REFLECT'd `using`, so nothing declares the name and it has no injected body.
@@ -95,12 +93,9 @@ namespace Lumina::Reflection
         void AddConstant(const FConstant& Constant) { Constants.push_back(Constant); }
 
         std::vector<FConstant> Constants;
-        // Size in bytes of the enum's underlying integer type. The generated C# enum is emitted with a matching
-        // explicit backing type (byte/ushort/uint/ulong or the signed forms), so an enum of any width can sit
-        // inside a blittable by-value struct mirror; ComputeBlittableLayout uses this as the field size/align.
+        // The generated C# enum gets a matching backing type so any width fits a blittable struct mirror.
         uint32_t                 UnderlyingSize = 4;
-        // True when the underlying integer type is unsigned (uint8/uint16/...); selects the C# backing type's
-        // signedness. Default scoped enums (no fixed type) are int-backed, hence signed.
+        // Selects the C# backing type's signedness, and default scoped enums are int-backed so signed.
         bool                     bUnsignedUnderlying = false;
     };
 

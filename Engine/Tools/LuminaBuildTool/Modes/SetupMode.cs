@@ -39,6 +39,18 @@ public static class SetupMode
 
         public string Url => $"{ReleaseUrl}/{AssetName}";
 
+        // Records which pinned bundle External/ holds, since the sentinel alone cannot tell an old bundle from the current one.
+        public string StampPath(string ExternalDirectory) => Path.Combine(ExternalDirectory, $".bundle-{Platform}.sha256");
+
+        public string SentinelIn(string ExternalDirectory) => Path.Combine(ExternalDirectory, SentinelPath.Replace('/', Path.DirectorySeparatorChar));
+
+        public bool IsInstalledIn(string ExternalDirectory)
+        {
+            string Stamp = StampPath(ExternalDirectory);
+            return File.Exists(SentinelIn(ExternalDirectory)) && File.Exists(Stamp)
+                && string.Equals(File.ReadAllText(Stamp).Trim(), Sha256, StringComparison.OrdinalIgnoreCase);
+        }
+
         public bool bIsPublished => Sha256.Length > 0 || Platform == BuildPlatform.Windows64;
     }
 
@@ -48,18 +60,18 @@ public static class SetupMode
         {
             Platform = BuildPlatform.Windows64,
 
-            AssetName = "External-Win64.zip",
+            AssetName = "External-Win64-r2.zip",
             Format = ArchiveFormat.Zip,
-            Sha256 = "6CF9D85C9A52F4663929F33C19FD8242268D55E565C19950696A48D0299D00DD",
+            Sha256 = "DDB003EEEEACE9435152A6BC04A61B685EA0DA9147DB55CAF4D437496F18D430",
             SentinelPath = "LLVM/bin/libclang.dll",
         },
         new()
         {
             Platform = BuildPlatform.Linux64,
-            AssetName = "External-Linux64.tar.gz",
+            AssetName = "External-Linux64-r2.tar.gz",
             Format = ArchiveFormat.TarGz,
 
-            Sha256 = "A36EB8E55076F3E5AB1A4255DA12E0C400052B7EB6A64E289AD9951D6D6DFCBA",
+            Sha256 = "5B1CE721E54658EB38865D859A328C94050F1DBAC322B44728747F0DD542EAB9",
             SentinelPath = "LLVM/lib/libclang.so",
         },
     };
@@ -67,7 +79,7 @@ public static class SetupMode
     private static readonly (string Name, string Use)[] DependencyManifest =
     {
         (".NET 10 runtime + hosting headers", "C# scripting host (LuminaSharp)"),
-        ("LLVM/Clang 19 (libclang)", "reflection codegen (Reflector)"),
+        ("LLVM/Clang 23 (libclang)", "reflection codegen (Reflector)"),
         ("Slang shader compiler", "shader compilation to SPIR-V"),
         ("RenderDoc", "in-app GPU frame capture"),
         ("Tracy", "CPU and GPU profiler"),
@@ -94,10 +106,10 @@ public static class SetupMode
         }
 
         string ExternalDirectory = Path.Combine(Directories.EngineRoot, "External");
-        string Sentinel = Path.Combine(ExternalDirectory, Bundle.SentinelPath.Replace('/', Path.DirectorySeparatorChar));
+        string Sentinel = Bundle.SentinelIn(ExternalDirectory);
         bool bForce = Arguments.HasFlag("Force");
 
-        if (File.Exists(Sentinel) && !bForce)
+        if (Bundle.IsInstalledIn(ExternalDirectory) && !bForce)
         {
             Log.Info("{0} dependencies are already installed; skipping the download. Pass -Force to refresh them.", HostPlatform);
         }
@@ -107,6 +119,10 @@ public static class SetupMode
             {
                 Log.Info("External/ exists but holds nothing for {0} ({1} is missing).", HostPlatform, Bundle.SentinelPath);
                 Log.Info("Fetching this platform's bundle; the bundles are built to coexist, so anything already there stays.");
+            }
+            else if (File.Exists(Sentinel) && !bForce)
+            {
+                Log.Info("External/ holds an older {0} bundle than the one this checkout pins; replacing it.", HostPlatform);
             }
 
             if (!await InstallDependenciesAsync(Arguments, Bundle, Directories.EngineRoot, Cancellation).ConfigureAwait(false))
@@ -182,14 +198,16 @@ public static class SetupMode
 
         File.Delete(ArchivePath);
 
-        string Sentinel = Path.Combine(EngineRoot, "External", Bundle.SentinelPath.Replace('/', Path.DirectorySeparatorChar));
+        string ExternalDirectory = Path.Combine(EngineRoot, "External");
 
-        if (!File.Exists(Sentinel))
+        if (!File.Exists(Bundle.SentinelIn(ExternalDirectory)))
         {
             Log.Error("The bundle extracted but does not contain External/{0}.", Bundle.SentinelPath);
             Log.Error("It is either the wrong platform's asset or incomplete; the build will fail on it later.");
             return false;
         }
+
+        File.WriteAllText(Bundle.StampPath(ExternalDirectory), Bundle.Sha256);
 
         Log.Info("Dependencies installed for {0}.", Bundle.Platform);
 
@@ -287,6 +305,20 @@ public static class SetupMode
 
     private static void Extract(string ArchivePath, ArchiveFormat Format, string EngineRoot)
     {
+        // An earlier bundle's files can be read-only, and overwriting one would fail the refresh.
+        string ExternalDirectory = Path.Combine(EngineRoot, "External");
+        if (Directory.Exists(ExternalDirectory))
+        {
+            foreach (string Existing in Directory.EnumerateFiles(ExternalDirectory, "*", SearchOption.AllDirectories))
+            {
+                FileAttributes Attributes = File.GetAttributes(Existing);
+                if ((Attributes & FileAttributes.ReadOnly) != 0)
+                {
+                    File.SetAttributes(Existing, Attributes & ~FileAttributes.ReadOnly);
+                }
+            }
+        }
+
         if (Format == ArchiveFormat.Zip)
         {
             ZipFile.ExtractToDirectory(ArchivePath, EngineRoot, overwriteFiles: true);
@@ -297,6 +329,19 @@ public static class SetupMode
         using GZipStream Decompressed = new(Compressed, CompressionMode.Decompress);
 
         TarFile.ExtractToDirectory(Decompressed, EngineRoot, overwriteFiles: true);
+    }
+
+    // A build against an older bundle fails in ways that never name External/, so it says so first.
+    public static void WarnIfStale(BuildDirectories Directories)
+    {
+        DependencyBundle? Bundle = Bundles.FirstOrDefault(B => B.Platform == BuildPlatformRegistry.HostPlatform);
+        string ExternalDirectory = Path.Combine(Directories.EngineRoot, "External");
+        if (Bundle is null || Bundle.Sha256.Length == 0 || !File.Exists(Bundle.SentinelIn(ExternalDirectory)) || Bundle.IsInstalledIn(ExternalDirectory))
+        {
+            return;
+        }
+
+        Log.Warning("External/ is not the {0} bundle this checkout pins. Run {1} to update it.", Bundle.AssetName, RunMode.HostScriptName("Setup"));
     }
 
     private static bool VerifyChecksum(string FilePath, string Expected)

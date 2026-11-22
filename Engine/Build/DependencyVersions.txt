@@ -7,7 +7,7 @@
 #
 # DEPENDENCIES.md documents what each dependency is for; this file is what the tooling actually reads.
 
-LLVM_MAJOR=19
-SLANG_VERSION=2026.3.1
-DOTNET_VERSION=10.0.2
-RENDERDOC_VERSION=1.45
+LLVM_MAJOR=23
+SLANG_VERSION=2026.22.1
+DOTNET_VERSION=10.0.15
+RENDERDOC_VERSION=1.47

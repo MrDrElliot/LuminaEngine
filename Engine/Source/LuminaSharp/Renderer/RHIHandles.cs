@@ -3,9 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace LuminaSharp.Rendering;
 
-// RHI handles. Each mirrors the engine's THandle<T> = { uint64 Handle } byte-for-byte, so it crosses the
-// native boundary as a single 8-byte value with zero marshalling. Invalid == 0. Read-only value types:
-// copy them freely; they are just a number.
+// Each handle mirrors THandle byte-for-byte so it crosses the native boundary as one 8-byte value, and 0 is invalid.
 
 [StructLayout(LayoutKind.Sequential)]
 [NativeLayout("RHI::FPipelineH")]

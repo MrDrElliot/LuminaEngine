@@ -21,8 +21,7 @@ namespace Lumina::ECS
 
 namespace Lumina
 {
-    // A managed listener bound to a registry signal. Heap-owned by the bridge; the listener's address is
-    // both the signal payload and the disconnect key, so one allocation is one subscription.
+    // A managed listener bound to a registry signal, whose address is both the payload and the disconnect key.
     struct FManagedSignalListener
     {
         // Script binds here, and destroying this listener is what releases those binds.

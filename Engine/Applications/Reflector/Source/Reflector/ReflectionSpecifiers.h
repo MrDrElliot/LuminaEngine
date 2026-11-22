@@ -91,7 +91,7 @@ namespace Lumina::Reflection
 #define LUMINA_FUNCTION_SPECIFIERS(X) \
     X(ToolTip,                  Value, Editor, "Hover text for the function. Filled from the declaration's doc comment when not written by hand.") \
     X(Button,                   Either, Editor, "Draws a parameterless function as a button in the object's inspector, labeled with the value when one is given.") \
-    X(Rpc,                      Value, Runtime, "Broadcast, Host or Owner, the C++ spelling of C# [Rpc.*]. The body starts with NET_RPC(...) passing its parameters.") \
+    X(Rpc,                      Value, Runtime, "Broadcast, Host or Owner, the C++ spelling of C# [Rpc.*]. The function must be virtual, and calling it routes the call.") \
     X(NetFlags,                 Value, Runtime, "Unreliable and OwnerOnly, joined with |, the C++ spelling of C# NetFlags.") \
     X(Bind,                     Flag,  Runtime, "A command a UI document runs from data-event-*, or a computed {{ value }} when it takes nothing and returns one.") \
     X(SuppressGCTransition,     Flag,  Script, "Skips the GC transition on the generated C# call. Only valid on a short leaf function that never calls back into managed code.") \

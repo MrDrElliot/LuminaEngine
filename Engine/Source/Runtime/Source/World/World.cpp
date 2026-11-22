@@ -78,6 +78,7 @@
 #include "Config/EngineSettings.h"
 #include "ExternalEntities/ExternalEntities.h"
 #include "Subsystems/CoroutineManager.h"
+#include "Subsystems/NetSubsystem.h"
 #include "Subsystems/TimerManager.h"
 #include "Subsystems/TweenManager.h"
 #include "UI/RmlUiBridge.h"
@@ -713,6 +714,11 @@ namespace Lumina
         {
             // Before the pause check, so what was sent last frame still ages out while the game is paused.
             EventQueues.Advance();
+
+            if (CNetSubsystem* Net = GetNet())
+            {
+                Net->DispatchSessionEvents();
+            }
 
             RealDeltaTime = Context.GetDeltaTime();
             DeltaTime = RealDeltaTime * GetDefaultWorldSettings().DeltaTimeScale;
@@ -1717,7 +1723,7 @@ namespace Lumina
         {
             for (const TStrongObjectPtr<CEntityScript>& Script : EntityRegistry.Get<SEntityScriptComponent>(Entity).Scripts)
             {
-                if (Script.Get() != nullptr && Script->IsAttached() && Script->GetClass()->IsChildOf(ScriptClass.Get()))
+                if (Script.Get() != nullptr && FEntityScriptAccess::IsAttached(*Script) && Script->GetClass()->IsChildOf(ScriptClass.Get()))
                 {
                     Out.Add(Script);
                 }

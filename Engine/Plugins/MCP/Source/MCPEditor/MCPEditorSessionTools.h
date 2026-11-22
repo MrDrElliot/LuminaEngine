@@ -172,7 +172,6 @@ namespace Lumina
         Close,
         Float,
         Target,
-        Open,
     };
 
     REFLECT()
@@ -183,7 +182,7 @@ namespace Lumina
         PROPERTY()
         EEditorTabsAction Action = EEditorTabsAction::List;
 
-        // Tab id from List, or a unique part of its name. Target with an empty Tab restores the world editor. Open takes a Tools menu panel name such as Memory.
+        // Tab id from List, or a unique part of its name. Target with an empty Tab restores the world editor.
         PROPERTY()
         FString Tab;
 
@@ -244,6 +243,54 @@ namespace Lumina
         TVector<STabInfo> Tabs;
 
         // True once Focus, Close, Float or Target was applied or queued.
+        PROPERTY()
+        bool bDone = false;
+    };
+
+    REFLECT()
+    enum class EEditorToolsAction : uint8
+    {
+        List,
+        Open,
+        Close,
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorToolsParams
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        EEditorToolsAction Action = EEditorToolsAction::List;
+
+        // Open and Close only. A tool name from List, such as Profiler, or a unique part of one.
+        PROPERTY()
+        FString Name;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorToolInfo
+    {
+        GENERATED_BODY()
+
+        // The menu label after its icon.
+        PROPERTY()
+        FString Name;
+
+        PROPERTY()
+        bool bOpen = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorToolsResult
+    {
+        GENERATED_BODY()
+
+        // Every tool window, with whether it is open now.
+        PROPERTY()
+        TVector<SEditorToolInfo> Tools;
+
+        // True once Open or Close was applied or queued.
         PROPERTY()
         bool bDone = false;
     };

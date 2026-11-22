@@ -124,8 +124,7 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
                 continue;
             }
 
-            // A soft core, so the source radius spreads the near-light glow over several froxels instead of one spike.
-            // An area light keeps its right axis where the core radius would be, so its core is the rectangle's own half size.
+            // The soft core spreads near-light glow over several froxels, and an area light uses its rectangle's own half size.
             const bool   bArea = HasFlag(L.Flags, ELightFlags::Area);
             const float  R0    = bArea ? max(L.Angles.x, L.Angles.y) : L.Radius * L.VolumetricScatteringRadius;
             const float3 LC    = UnpackColor(L.Color).rgb * (L.Intensity * L.VolumetricIntensity);

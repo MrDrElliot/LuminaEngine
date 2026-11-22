@@ -21,8 +21,7 @@ namespace Lumina
         SCustomPrimitiveData Value;
         ImGuiTextFilter SearchFilter;
 
-        // Edits buffer in Value, written via UpdatePropertyValue. Started/Finished across
-        // two frames forms an undo transaction; multi-frame drags fold into the open one.
+        // Edits buffer in Value and write via UpdatePropertyValue, with Started and Finished across two frames forming one undo transaction.
         bool bFinishPending = false;
     };
 }

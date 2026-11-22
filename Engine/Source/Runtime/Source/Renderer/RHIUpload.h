@@ -33,6 +33,9 @@ namespace Lumina::RHI
 
         uint32 FlushSplit(FCmdListH BufferCL, FCmdListH ImageCL, TVector<FGPUAllocation>& OutOwnedStaging, uint64* OutBatch = nullptr);
 
+        // A relaxed read, so an op queued during the call may wait for the next flush.
+        bool HasQueuedOps();
+
         // Read after queueing the ops you care about, so the answer is their batch or a later one.
         uint64 BatchForQueuedOps();
 
@@ -45,6 +48,9 @@ namespace Lumina::RHI
 
         // Records the value the flush signals, which frees its staging and tells IsBatchComplete the copies ran.
         void NoteFlushSubmitted(uint64 Batch, EQueueType Queue, FSemaphoreH Semaphore, uint64 Value);
+
+        // Staging ring bytes no queued or in-flight copy still holds, which a streamer spends from so its uploads never wait on the GPU.
+        RUNTIME_API uint64 GetStagingHeadroom();
 
         RUNTIME_API void LogStats(FStringView Label);
         void PublishProfileCounters();

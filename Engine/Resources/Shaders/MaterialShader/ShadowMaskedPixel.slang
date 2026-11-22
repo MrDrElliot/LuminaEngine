@@ -34,11 +34,17 @@ float ShadowMaskedOpacity(FMaskedVertexOutput Input)
 [shader("fragment")]
 void FragmentMain(FMaskedVertexOutput Input, uint ViewportIndex : SV_ViewportArrayIndex)
 {
+    const uint CullViewIndex = MeshletPass().CullViewIndex + (IsMultiViewShadowDraw() ? ViewportIndex : 0u);
+    // A close caster rasters its whole meshlet at the finest level, so texels outside this frame's pages skip the opacity graph.
+    if (IsVirtualShadowFragmentSkipped(CullViewIndex, Input.Position))
+    {
+        discard;
+    }
     if (ShadowMaskedOpacity(Input) < GetMaterialOpacityClip(Input.MaterialIndex))
     {
         discard;
     }
 
     // A virtual shadow level has no depth target, so a kept fragment writes its own depth into the page pool.
-    WriteVirtualShadowDepth(MeshletPass().CullViewIndex + (IsMultiViewShadowDraw() ? ViewportIndex : 0u), Input.Position);
+    WriteVirtualShadowDepth(CullViewIndex, Input.Position);
 }

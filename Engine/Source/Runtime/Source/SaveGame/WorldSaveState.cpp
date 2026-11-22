@@ -12,6 +12,8 @@
 #include "World/Entity/Components/TagComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/EntityUtils.h"
+#include "World/Subsystems/SaveGameSubsystem.h"
+#include "World/World.h"
 
 namespace Lumina::SaveGame
 {
@@ -371,8 +373,7 @@ namespace Lumina::SaveGame
             });
         }
 
-        void ReadSaveGameBlocks(FArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity, bool bAttachMissingScripts,
-            TVector<TStrongObjectPtr<CEntityScript>>& OutRestoredScripts)
+        void ReadSaveGameBlocks(FArchive& Ar, ECS::FRegistry& Registry, ECS::FEntity Entity, bool bAttachMissingScripts)
         {
             uint32 ComponentCount = 0;
             if (!ReadCount(Ar, ComponentCount, "component"))
@@ -423,7 +424,6 @@ namespace Lumina::SaveGame
                 if (Script != nullptr)
                 {
                     SerializeProperties(Ar, Class, Script, ESaveGameProperties::SaveGame);
-                    OutRestoredScripts.Add(Script);
                 }
                 else
                 {
@@ -433,22 +433,19 @@ namespace Lumina::SaveGame
             }
         }
 
-        void NotifySaving(ECS::FRegistry& Registry)
+        // A bare registry has no world, so nothing is listening.
+        void BroadcastToWorld(ECS::FRegistry& Registry, FScriptDelegate CSaveGameSubsystem::* Event)
         {
-            TVector<TStrongObjectPtr<CEntityScript>> Saving;
-            for (ECS::FEntity Entity : Registry.View<SEntityScriptComponent>())
+            CWorld** World = Registry.Ctx().Find<CWorld*>();
+            if (World != nullptr && *World != nullptr)
             {
-                ForEachSavedScript(Registry, Entity, [&](CEntityScript* Script, uint32) { Saving.Add(Script); });
-            }
-            for (const TStrongObjectPtr<CEntityScript>& Script : Saving)
-            {
-                Script->OnSaving();
+                ((*World)->GetSaveGames()->*Event).Broadcast();
             }
         }
 
         bool WriteRegistry(FSaveGameArchive& Ar, ECS::FRegistry& Registry)
         {
-            NotifySaving(Registry);
+            BroadcastToWorld(Registry, &CSaveGameSubsystem::OnSaving);
 
             const TVector<FComponentEntry> AllComponents      = GatherComponents(Registry, false);
             const TVector<FComponentEntry> SaveGameComponents = GatherComponents(Registry, true);
@@ -705,7 +702,6 @@ namespace Lumina::SaveGame
                 return Registry.IsValid(Saved) && IsLevelEntity(Registry, Saved) ? Saved : ECS::NullEntity;
             };
 
-            TVector<TStrongObjectPtr<CEntityScript>> RestoredScripts;
             bool bRespawnedAny = false;
             for (uint32 Index = 0; Index < RecordCount && !Ar.HasError(); ++Index)
             {
@@ -746,9 +742,7 @@ namespace Lumina::SaveGame
                         Ar.Seek(ComponentStart + ComponentSize);
                     }
 
-                    // Respawned scripts start with their saved values and run OnAttach later, so they get no OnRestored.
-                    TVector<TStrongObjectPtr<CEntityScript>> NotRestored;
-                    ReadSaveGameBlocks(Ar, Registry, Target, false, NotRestored);
+                    ReadSaveGameBlocks(Ar, Registry, Target, false);
                 }
                 else
                 {
@@ -763,7 +757,7 @@ namespace Lumina::SaveGame
                             Transform->SetLocalTransform(Local);
                         }
                     }
-                    ReadSaveGameBlocks(Ar, Registry, Target, true, RestoredScripts);
+                    ReadSaveGameBlocks(Ar, Registry, Target, true);
                 }
                 Ar.Seek(Start + Size);
             }
@@ -788,13 +782,7 @@ namespace Lumina::SaveGame
                 ECS::Utils::RebuildTagStorages(Registry);
             }
 
-            for (const TStrongObjectPtr<CEntityScript>& Script : RestoredScripts)
-            {
-                if (Script.Get() != nullptr)
-                {
-                    Script->OnRestored();
-                }
-            }
+            BroadcastToWorld(Registry, &CSaveGameSubsystem::OnRestored);
             return !Ar.HasError();
         }
     }

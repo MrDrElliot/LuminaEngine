@@ -1,7 +1,6 @@
 #pragma once
 
-// Aggregates every material-graph node header in one include so callers
-// (compiler, registration, editor) don't have to track them individually.
+// Aggregates every material-graph node header in one include.
 
 #include "MaterialGraphNode.h"
 #include "MaterialNodeExpression.h"

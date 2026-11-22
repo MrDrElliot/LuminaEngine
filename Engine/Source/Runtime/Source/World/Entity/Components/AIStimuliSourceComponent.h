@@ -8,16 +8,13 @@
 
 namespace Lumina
 {
-    // Marks an entity as perceivable by AI. Sight/hearing register the entity passively (the perception
-    // system scans for it); damage is reported on demand via World.Perception.ReportDamage. Affiliation tags
-    // let a perceiver filter who it cares about.
+    // Marks an entity as perceivable by AI, with sight and hearing passive and damage reported through World.Perception.ReportDamage.
     REFLECT(Component, Category = "AI")
     struct RUNTIME_API SAIStimuliSourceComponent
     {
         GENERATED_BODY()
 
-        // Affiliation/identity tags this source broadcasts (e.g. "Team.Red"). A perceiver senses it only when
-        // its DetectableTags matches any of these; an empty perceiver filter senses everyone.
+        // Affiliation tags this source broadcasts, sensed only by a perceiver whose DetectableTags matches (empty senses everyone).
         PROPERTY(Editable, Category = "AI|Perception")
         SHierarchicalTagContainer AffiliationTags;
 
@@ -25,8 +22,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "AI|Perception")
         EAISenseChannel RegisteredSenses = EAISenseChannel::Sight | EAISenseChannel::Hearing;
 
-        // World-space offset (along entity up) used as the sight aim point so line-of-sight rays target the
-        // chest/head instead of the floor.
+        // Offset along entity up used as the sight aim point, so line-of-sight rays miss the floor.
         PROPERTY(Editable, Category = "AI|Perception")
         FVector3 SightTargetOffset = FVector3(0.0f, 1.0f, 0.0f);
     };

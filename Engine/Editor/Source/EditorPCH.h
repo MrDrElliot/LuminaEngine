@@ -1,18 +1,8 @@
 ﻿#pragma once
 
-// Editor PCH. Includes Runtime's PCH (which carries the standard library and our containers)
-// plus the editor-only heavies (ImGui).
-//
-// Keep this lean: anything pulled in here is paid by all 95 Editor TUs every
-// build, and any edit invalidates the PCH. Editor-specific headers
-// (EditorUI, EditorTool, etc.) intentionally stay out so that touching one
-// of them doesn't dirty the entire PCH.
+// Keep this lean, since every Editor TU pays for what is pulled in here and any edit invalidates the PCH.
 
-// ModuleAPI carries LUMINA_SCRIPT_API. The build /FI-includes it AFTER the PCH
-// header, so anything the PCH pulls in that declares an interop thunk would see
-// it undefined; including it up-front here settles that before the PCH is parsed.
-// The per-module RUNTIME_API / EDITOR_API macros do not come from here: the build
-// system defines them on the command line, so they are already in scope.
+// The build includes ModuleAPI after the PCH header, so it is included first to define LUMINA_SCRIPT_API for interop thunks.
 #include "ModuleAPI.h"
 #include "RuntimePCH.h"
 
@@ -20,7 +10,5 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
-// ImGuiX is included by 29+ Editor TUs and transitively pulls imgui_internal,
-// ImGuizmo, AssetRegistry, and a handful of Containers. Hoisting it
-// into the PCH replaces ~29 redundant parses with one.
+// ImGuiX is included by most Editor TUs, so hoisting it here replaces many redundant parses.
 #include "Tools/UI/ImGui/ImGuiX.h"

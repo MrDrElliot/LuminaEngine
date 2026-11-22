@@ -523,8 +523,7 @@ TEST(ScriptClassReload, AnUnchangedSchemaNeedsNoRebuild)
     EXPECT_FALSE(Scripting::ScriptClassLayoutMatches(Sub, Renamed));
 }
 
-// A reload has to say WHAT changed, not just that something did: a reworded tooltip must reach the editor
-// without a rebuild, which refuses while instances are live and so used to drop the edit on the floor.
+// A reworded tooltip must reach the editor without a rebuild, which refuses while instances are live.
 TEST(ScriptClassReload, ADiffSeparatesLayoutFromMetadataAndDefaults)
 {
     Scripting::FScriptExportSchema Schema;
@@ -782,8 +781,7 @@ TEST(ScriptClassReload, ContainersSurviveARebuild)
     EXPECT_EQ(Values->GetOps()->Num(Array), 1);
 }
 
-// The superseded-layout grace existed only for an in-place rebuild. A reshape now mints a new class, so the
-// invariant that matters is that the old one is left empty and can retire.
+// A reshape now mints a new class, so the old one must be left empty and able to retire.
 TEST(ScriptClassReload, AReshapeLeavesTheOldClassWithNoInstances)
 {
     Scripting::FScriptExportSchema Initial;

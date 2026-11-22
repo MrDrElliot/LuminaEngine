@@ -16,8 +16,7 @@ namespace Lumina
         Restore,
     };
 
-    // Plays a CSequence against the world. Driven entirely by its own fields, so script starts a cutscene
-    // by setting bPlaying rather than calling into anything.
+    // Plays a CSequence against the world, started by setting bPlaying.
     REFLECT(Component, Category = "Cinematics")
     struct RUNTIME_API SSequencePlayerComponent
     {

@@ -7,8 +7,7 @@
 
 namespace Lumina
 {
-    // Marks an entity for networking. Authored fields serialize with the world; runtime net state is
-    // derived per-peer by CNetworkSystem and shown ReadOnly for debugging but never saved.
+    // Marks an entity for networking. Runtime net state is derived per peer by CNetworkSystem and never saved.
     REFLECT(Component, Category = "Networking")
     struct NETWORKINGRUNTIME_API SNetworkComponent
     {
@@ -68,8 +67,7 @@ namespace Lumina
         PROPERTY(ReadOnly, NoSerialize, Category = "Networking|Debug")
         bool bInherited = false;
 
-        // Client-only latch. A proxy's physics body switched to Kinematic so the local sim no longer
-        // fights replicated transforms. Set once the body exists.
+        // Client-only latch set once a proxy's body is Kinematic, so the local sim stops fighting replicated transforms.
         bool bProxyPhysicsConfigured = false;
     };
 }

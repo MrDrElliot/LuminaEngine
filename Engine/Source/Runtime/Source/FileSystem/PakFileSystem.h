@@ -4,8 +4,7 @@
 
 namespace Lumina::VFS
 {
-    // Read-only IFileSystem over a shared FPakArchive (multiple aliases can mount one .pak).
-    // Mutators are no-ops returning false; IsReadOnly() returns true.
+    // Read-only over a shared FPakArchive, so mutators are no-ops returning false.
     class RUNTIME_API FPakFileSystem : public IFileSystem
     {
     public:

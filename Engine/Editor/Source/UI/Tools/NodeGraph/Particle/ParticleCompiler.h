@@ -54,21 +54,7 @@ namespace Lumina
         // Splices the generated stacks into Source, which BuildShader reads from ParticleSimulateTemplate.slang.
         FString ExpandTemplate(FString Source) const;
 
-        //~ Module parameter block ------------------------------------------------------------------
-        //
-        // Module inputs used to be baked into the shader text as literals, which made every value edit a
-        // full Slang recompile -- and a recompile swaps the FShaderEntry the dispatch binds, which is what
-        // restarted the preview. It also meant nothing was parameterizable at runtime, because the values
-        // only existed inside compiled SPIR-V.
-        //
-        // Instead a module registers each value input here and gets back an HLSL expression indexing a
-        // float4 array uploaded per frame. The generated code then depends only on the module ORDER and
-        // COUNT, never on the values -- so a value edit is a buffer write, and only a structural change
-        // needs the shader rebuilt.
-        //
-        // One float4 per parameter, read back through a swizzle. That wastes up to 12 bytes on a scalar,
-        // which at a realistic stack size is well under a kilobyte; packing sub-float4 would make slot
-        // assignment order-dependent for no meaningful saving.
+        //~ Module parameter block, generated code depends on module order and count only, so a value edit is a buffer write.
 
         /** Registers a module input and returns the HLSL expression that reads it.
          *
@@ -98,17 +84,7 @@ namespace Lumina
         FString ParamCurve(const char* DebugName, const SCurve& Value);
         FString ParamGradient(const char* DebugName, const SGradient& Value);
 
-        //~ Per-particle attributes -----------------------------------------------------------------
-        //
-        // The core FGPUParticle is a fixed 64 bytes and exactly full, so a module that needs to carry its
-        // own per-particle value (mass, a custom fade, a drag coefficient) had nowhere to put it. Declared
-        // attributes live in a PARALLEL buffer indexed by the same particle index, which keeps the core
-        // layout -- and therefore ParticleVertex.slang, which indexes it with a compile-time struct --
-        // untouched.
-        //
-        // Scalars only for now. A float3 is three declarations; making vectors first-class needs a
-        // non-lvalue read path (float3(B[i],B[i+1],B[i+2])) and a matching write helper, which is a
-        // worthwhile follow-up but not needed to prove the mechanism.
+        //~ Per-particle attributes live in a parallel buffer because the core FGPUParticle is exactly full, and are scalar only.
 
         /** Declares (or re-finds) a scalar attribute and returns the addressed expression, which is an
          *  LVALUE -- assign to it to write, read it to sample:

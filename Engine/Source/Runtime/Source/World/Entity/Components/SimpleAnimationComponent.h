@@ -41,8 +41,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Animation")
         ERootMotionLockMode RootMotionLock = ERootMotionLockMode::FromAsset;
 
-        // Root-motion delta extracted this frame in the parallel pass; applied to the entity transform
-        // in the serial pass (transform writes mutate the registry and aren't ParallelFor-safe). Transient.
+        // Root-motion delta extracted in the parallel pass and applied in the serial pass, since transform writes are not ParallelFor-safe. Transient.
         FRootMotionDelta PendingRootMotion;
 
         /**
@@ -53,23 +52,19 @@ namespace Lumina
         PROPERTY(Hidden, Category = "Animation")
         bool bFinished = false;
 
-        // Forces a fresh pose sample even when not playing (e.g. just-called PlayAnimation or rewound
-        // CurrentTime). Cleared by the system after sampling.
+        // Forces a fresh pose sample even when not playing, cleared by the system after sampling.
         bool bDirty = true;
 
         // CurrentTime before this frame's advance, used to detect playhead crossings.
         float PreviousTime = 0.0f;
 
-        // Set when CurrentTime advanced via playback (not a scrub/stop jump). Point notifies + NotifyState
-        // Tick fire only when true, so Stop()/seek don't re-fire events. End still fires on stop.
+        // Set when CurrentTime advanced via playback, so Stop and seek do not re-fire point notifies and state ticks.
         bool bAdvancedThisFrame = false;
 
-        // Indices (into the active clip's NotifyStates) currently under the playhead.
-        // Diffed each frame to drive Begin/End transitions; cleared on clip change.
+        // Indices into the active clip's NotifyStates under the playhead, diffed each frame and cleared on clip change.
         TVector<int32> ActiveNotifyStates;
 
-        // Notify events that fired this frame: point Triggers plus notify-state Begin/Tick/End.
-        // Cleared every update. Transient.
+        // Notify events that fired this frame, cleared every update. Transient.
         TVector<FAnimNotifyEvent> NotifyEvents;
 
         /** True if the named point notify fired this frame. */

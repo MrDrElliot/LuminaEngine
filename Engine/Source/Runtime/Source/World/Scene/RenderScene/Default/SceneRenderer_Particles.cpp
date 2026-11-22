@@ -1675,8 +1675,7 @@ namespace Lumina
         return Blend;
     }
 
-    // A Particle material carries its own blend, so the emitter's EParticleBlendMode is not consulted.
-    // The built-in pixel stage premultiplies alpha and additive itself, so only multiply needs a blend state of its own.
+    // A Particle material carries its own blend, and the pixel stage premultiplies alpha and additive so only multiply needs a blend state.
     static RHI::FBlendDesc MakeParticleBlend(EParticleBlendMode Mode)
     {
         return MakeParticleBlendFactors(Mode == EParticleBlendMode::Multiply ? EParticleBlendMode::Multiply : EParticleBlendMode::PreMultiplied);

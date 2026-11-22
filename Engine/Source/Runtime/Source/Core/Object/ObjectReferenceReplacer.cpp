@@ -134,9 +134,7 @@ namespace Lumina
 
         const uint32 Before = NumReplaced;
 
-        // Handles, not pointers: clearing a reference can drop an object's last one and free it mid-pass, and
-        // a handle resolves to null once that happens instead of handing back freed memory. Taking a strong
-        // reference instead would be worse, since releasing one an object never had destroys it outright.
+        // Handles, not pointers, since clearing a reference can free an object mid-pass and a handle then resolves to null.
         TVector<FObjectHandle> Live;
         ForEachObject([&](CObjectBase* Base, int32)
         {

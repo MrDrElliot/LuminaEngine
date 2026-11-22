@@ -2,24 +2,32 @@
 #define __TRACYALIGN_HPP__
 
 #include <string.h>
+#include <type_traits>
 
 #include "TracyForceInline.hpp"
+
+#if defined _MSC_VER && !defined _M_IX86
+#  define TracyUnaligned __unaligned
+#else
+#  define TracyUnaligned
+#endif
 
 namespace tracy
 {
 
 template<typename T>
-tracy_force_inline T MemRead( const void* ptr )
+tracy_force_inline T MemRead( const TracyUnaligned T* ptr )
 {
     T val;
     memcpy( &val, ptr, sizeof( T ) );
     return val;
 }
 
-template<typename T>
-tracy_force_inline void MemWrite( void* ptr, T val )
+template<typename T, typename U>
+tracy_force_inline void MemWrite( TracyUnaligned T* ptr, U val )
 {
-    memcpy( ptr, &val, sizeof( T ) );
+    static_assert( std::is_same<T, U>::value, "MemWrite type mismatch" );
+    memcpy( (void*)ptr, &val, sizeof( T ) );
 }
 
 }

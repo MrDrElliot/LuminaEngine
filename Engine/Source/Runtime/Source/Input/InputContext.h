@@ -85,7 +85,7 @@ namespace Lumina
 
         //~ Gamepad. Only the receiving context is fed a pad, so every other context reads a disconnected one.
 
-        // Takes this frame's pad and queues an event for every button edge, so OnInput sees pad presses like key presses.
+        // Takes this frame's pad and queues an event for every button edge, so SInputComponent.OnInput sees pad presses like key presses.
         RUNTIME_API void SetGamepadState(const FGamepadState& State);
 
         RUNTIME_API bool  IsGamepadConnected() const                        { return Gamepad.bConnected; }
@@ -133,7 +133,7 @@ namespace Lumina
         uint32 GetActionsSerial() const { return ActionsSerial; }
         void   SetActionsSerial(uint32 InSerial) { ActionsSerial = InSerial; }
 
-        // This frame's discrete events in order, read by the script OnInput dispatch and cleared in EndFrame.
+        // This frame's discrete events in order, broadcast through SInputComponent.OnInput and cleared in EndFrame.
         const TVector<SInputEvent>& GetFrameEvents() const { return FrameEvents; }
 
         RUNTIME_API void EndFrame();

@@ -26,8 +26,7 @@
     #endif
 #endif
 
-// The out-of-line handler, not Assert.h itself: that reaches FString, and every container includes this.
-// _INDEX and _WITHIN are the bounds forms; they report the two values, not just the expression text.
+// The out-of-line handler avoids Assert.h, which reaches FString while every container includes this.
 #if LUMINA_CONTAINER_CHECKS
     #define LUMINA_CONTAINER_CHECK(Expr) do { if (!(Expr)) [[unlikely]] { ::Lumina::Assert::Detail::HandleCheckFailure(#Expr, std::source_location::current()); } } while (false)
     #define LUMINA_CONTAINER_CHECK_BOUNDS(IndexExpr, Op, OpText, BoundExpr) do { const uint64 LuminaCheckedIndex = (uint64)(IndexExpr); const uint64 LuminaCheckedBound = (uint64)(BoundExpr); if (!(LuminaCheckedIndex Op LuminaCheckedBound)) [[unlikely]] { ::Lumina::Assert::Detail::HandleBoundsFailure(#IndexExpr, LuminaCheckedIndex, OpText, #BoundExpr, LuminaCheckedBound, std::source_location::current()); } } while (false)

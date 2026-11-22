@@ -1,7 +1,6 @@
 ﻿#pragma once
 
-// Disables compiler warnings for Clang/GCC/MSVC; wrap third-party includes between
-// PRAGMA_DISABLE_ALL_WARNINGS and the matching restore macro.
+// Wrap third-party includes between PRAGMA_DISABLE_ALL_WARNINGS and the matching restore macro.
 
 
 #if defined(__clang__)

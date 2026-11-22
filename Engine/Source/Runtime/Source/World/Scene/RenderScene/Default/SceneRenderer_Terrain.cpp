@@ -145,7 +145,7 @@ namespace Lumina
                 RetireSceneImage(State.LayerWeightTexture);
 
                 State.HeightmapTexture   = TerrainPassInternal::CreateTerrainImage(Res, 1u,          EFormat::R32_FLOAT, false, false, "Terrain.Heightmap");
-                State.NormalTexture      = TerrainPassInternal::CreateTerrainImage(Res, 1u,          EFormat::RGBA8_UNORM, true, false, "Terrain.Normal");
+                State.NormalTexture      = TerrainPassInternal::CreateTerrainImage(Res, 1u,          EFormat::RG8_UNORM, true, false, "Terrain.Normal");
                 State.LayerWeightTexture = TerrainPassInternal::CreateTerrainImage(Res, (uint16)Math::Max(LayerCount, 1u), EFormat::R8_UNORM, false, true, "Terrain.LayerWeight");
                 State.AllocatedResolution = Res;
                 State.AllocatedLayerCount = LayerCount;

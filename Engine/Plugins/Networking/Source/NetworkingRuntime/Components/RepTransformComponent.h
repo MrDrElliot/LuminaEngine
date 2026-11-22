@@ -121,8 +121,7 @@ namespace Lumina
         // Mirror of SNetworkComponent::NetGUID, set on add. Lets the parallel interp pass avoid GuidTable.
         uint32 NetGUID = 0;
 
-        //~ Send side. Quantized last-sent pose; integer compare drives change-detection, send re-uses it
-        //  verbatim (zero re-quantize).
+        //~ Send side quantized last-sent pose, where an integer compare drives change detection and the send reuses it verbatim.
         NetQuantize::FQuantizedVector LastSentPos;
         NetQuantize::FQuantizedQuat   LastSentRot;
         NetQuantize::FQuantizedVector LastSentScale;
@@ -137,9 +136,7 @@ namespace Lumina
         //~ Receive side. Timestamped sample ring for interpolation/extrapolation.
         FNetInterpState Ring;
 
-        // Smoothed per-entity interpolation delay (seconds). Eased toward max(InterpDelay, BufferIntervals *
-        // Ring.AverageInterval()) so the render clock stays behind this entity's actual sample rate (no routine
-        // extrapolation/snap) and a tier/rate change ramps the delay instead of rewinding. -1 = uninitialized.
+        // Smoothed per-entity interpolation delay in seconds, eased so a rate change ramps instead of rewinding. Negative means uninitialized.
         double SmoothedInterpDelay = -1.0;
 
         // Per second, so a 60 fps tick eases the delay by the same 10% the old per-tick factor did.

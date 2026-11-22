@@ -87,6 +87,12 @@ namespace Lumina
                      (uint32)Math::Min<uint64>((Upload.LargestLODMeshlets + Upload.GrassMeshlets.Meshlets) * Views, kSceneFloorMaxEntries) };
         }
 
+        // Once the readback has seen a frame the scene-wide worst case overshoots any real one many times, so a floor stops at twice the session peak.
+        uint32 CapFloorAtPeak(uint32 SceneFloor, uint32 Peak)
+        {
+            return Peak != 0u ? (uint32)Math::Min<uint64>(SceneFloor, (uint64)Peak * 2u) : SceneFloor;
+        }
+
         // The readback lags the frame by the ring depth, so a moving camera outgrows an exact fit before it is seen.
         uint32 WithHeadroom(uint32 Demand)
         {
@@ -763,6 +769,11 @@ namespace Lumina
 
             UpdateIBLDirty(Frame);
             UploadLightData(Frame);
+            // Ahead of the root, which names the atlas, and only once a local light casts, since a sun-lit scene never draws into it.
+            if (!Frame.Lighting.PackedShadows[(uint32)ELightType::Point].IsEmpty() || !Frame.Lighting.PackedShadows[(uint32)ELightType::Spot].IsEmpty())
+            {
+                ShadowAtlas.InitImage();
+            }
             PublishSceneRoot(CL, Frame);
             DispatchGPUSceneCull(CL, Frame);
         }
@@ -786,19 +797,21 @@ namespace Lumina
         VisiblePeak   = Math::Max(VisiblePeak, LastVisibleInstances);
 
         // Only until the readback has seen the new scene or view, so a large world does not hold its worst case every frame.
-        const SceneRendererCullInternal::FSceneListFloor Floor = (bAfterCameraCut || bSceneGrew)
+        SceneRendererCullInternal::FSceneListFloor Floor = (bAfterCameraCut || bSceneGrew)
             ? SceneRendererCullInternal::SceneListFloorOf(Frame) : SceneRendererCullInternal::FSceneListFloor{};
+        Floor.Meshlets = SceneRendererCullInternal::CapFloorAtPeak(Floor.Meshlets, DrawListPeak);
+        Floor.Blocks   = SceneRendererCullInternal::CapFloorAtPeak(Floor.Blocks, BlockListPeak);
 
         // Windowed like the other GPU-fed sizes, so the raw readback's lag does not collapse it.
         const uint32 DrawListWindowed = Math::Max(SceneRendererCullInternal::WithHeadroom(DrawListDemand.Observe(LastDrawListRequired)), Floor.Meshlets);
         // Bounded, since a scene that asks for more than this draws its overflow coarser rather than taking the device down.
-        const uint32 DrawListWanted   = Math::Min(SceneRendererCullInternal::ApplyDebugCapacityScale(bAfterCameraCut ? Math::Max(DrawListWindowed, DrawListPeak) : DrawListWindowed),
+        const uint32 DrawListWanted   = Math::Min(SceneRendererCullInternal::ApplyDebugCapacityScale(Math::Max(DrawListWindowed, DrawListPeak)),
                                                   (uint32)SceneRendererCullInternal::kListBudgetEntries);
 
         ReservePreSkinBuffers(CL, PreSkinWanted);
         ReserveMeshletDrawBuffers(CL, Frame, DrawListWanted);
         ReserveVisibleInstanceBuffers(CL, Frame, bAfterCameraCut);
-        ReserveMeshletBlockList(CL, bAfterCameraCut, Floor.Blocks);
+        ReserveMeshletBlockList(CL, Floor.Blocks);
     }
 
     bool FDefaultSceneRenderer::TrackSceneGrowth(const FFrameData& Frame)
@@ -955,18 +968,19 @@ namespace Lumina
         FrameVisibleInstanceCapacity = Math::Min(FrameVisibleInstanceCapacity,
                                                  InstanceViewRangeRing[Slot].CapacityOf<FUIntVector2>() / RangeViews);
 
-        // Every retained slot can become a proxy, so the list never has to report demand. The second half takes the late phase's survivors.
-        ReserveBuffer(CL, ProxyListRing[Slot], Math::Max<SIZE_T>(1u, SlotCount) * sizeof(uint32) * 2u);
+        // Every retained slot and impostor point can become a proxy, so the list never has to report demand. The second half takes the late phase's survivors.
+        const SIZE_T ProxyCandidates = (SIZE_T)SlotCount + Frame.Geometry.RetainedUpload.ImpostorPointCount;
+        ReserveBuffer(CL, ProxyListRing[Slot], Math::Max<SIZE_T>(1u, ProxyCandidates) * sizeof(uint32) * 2u);
         // Two draws, then the occlusion cull's dispatch.
         ReserveBuffer(CL, ProxyDrawArgsRing[Slot], sizeof(RHI::FDrawIndirectArguments) * 2u + sizeof(RHI::FDispatchIndirectArguments));
         ProxyListCapacity = ProxyListRing[Slot] ? ProxyListRing[Slot].CapacityOf<uint32>() / 2u : 0u;
     }
 
-    void FDefaultSceneRenderer::ReserveMeshletBlockList(RHI::FCmdListH CL, bool bAfterCameraCut, uint32 SceneListFloor)
+    void FDefaultSceneRenderer::ReserveMeshletBlockList(RHI::FCmdListH CL, uint32 SceneListFloor)
     {
         // Only the GPU knows how many blocks were appended, and its counter lags the frames in flight.
         const uint32 BlockListWindowed = Math::Max(SceneRendererCullInternal::WithHeadroom(BlockListDemand.Observe(LastBlocksRequested)), SceneListFloor);
-        const uint32 BlockListWanted   = Math::Min(SceneRendererCullInternal::ApplyDebugCapacityScale(bAfterCameraCut ? Math::Max(BlockListWindowed, BlockListPeak) : BlockListWindowed),
+        const uint32 BlockListWanted   = Math::Min(SceneRendererCullInternal::ApplyDebugCapacityScale(Math::Max(BlockListWindowed, BlockListPeak)),
                                                    (uint32)SceneRendererCullInternal::kListBudgetEntries);
 
         const SIZE_T MeshletBlockSize = Math::Max<SIZE_T>(
@@ -1561,8 +1575,7 @@ namespace Lumina
         const SIZE_T TransformBytes = Math::Max<SIZE_T>(sizeof(FTransform3x4),      (SIZE_T)RetainedSlots * sizeof(FTransform3x4));
         const SIZE_T StaticBytes    = Math::Max<SIZE_T>(sizeof(FInstanceStatic),    (SIZE_T)RetainedSlots * sizeof(FInstanceStatic));
 
-        // Zeroed on growth because a free slot IS zero; a preserve copy would clobber the full re-send that rewrites live slots ahead of this list.
-        // A shrink keeps the prefix too, since a trimmed slot range otherwise held its peak until the next full upload.
+        // Zeroed on growth because a free slot is zero and a preserve copy would clobber the full re-send, and a shrink keeps the prefix to release its peak.
         ReserveBuffer(CL, RetainedCullEntryBuffer, CullBytes,      /*bAllowShrink*/ true, /*bPreserveContents*/ !Upload.bFull,
                       Upload.bFull ? CullBytes : 0u);
         ReserveBuffer(CL, RetainedTransformBuffer, TransformBytes, /*bAllowShrink*/ true, /*bPreserveContents*/ !Upload.bFull,
@@ -1601,6 +1614,10 @@ namespace Lumina
                                 && RetainedTransformBuffer.CapacityOf<FTransform3x4>()   >= RetainedSlots
                                 && RetainedStaticBuffer.CapacityOf<FInstanceStatic>()    >= RetainedSlots
                                 && RetainedProxyBuffer.CapacityOf<FInstanceProxy>()      >= RetainedSlots;
+
+        // Staged ahead of the retained writes, which end by launching the staged fills that no later write may join.
+        UploadImpostorPoints(CL, Upload);
+
         if (RetainedCullEntryBuffer && RetainedTransformBuffer && RetainedStaticBuffer && RetainedProxyBuffer && RetainedSlots > 0 && bRetainedFits)
         {
             WriteRetainedInstances(CL, Upload);
@@ -1763,6 +1780,7 @@ namespace Lumina
             RHI::TGPUSpan<FInstanceCullEntry> RetainedCullEntries;
             RHI::TGPUSpan<FTransform3x4>      RetainedTransforms;
             RHI::TGPUSpan<FInstanceStatic>    RetainedStatic;
+            RHI::TGPUSpan<FInstanceProxy>     RetainedProxies;
             RHI::TGPUSpan<FSurfaceDescGPU>    SurfaceDescs;
             RHI::TGPUSpan<FGPUInstance>       OutInstances;
             RHI::TGPUSpan<uint32>             OutInstanceCount;
@@ -1776,7 +1794,7 @@ namespace Lumina
             RHI::TGPUSpan<uint32>             OutProxyList;
             RHI::TGPUSpan<uint32>             OutProxyDrawArgs;
         };
-        static_assert(sizeof(FCullInstancesPC) == 256, "FCullInstancesPC must match CullInstances.slang.");
+        static_assert(sizeof(FCullInstancesPC) == 272, "FCullInstancesPC must match CullInstances.slang.");
 
         FCullInstancesPC PC = {};
         PC.NumViews               = NumCullViews;
@@ -1785,7 +1803,8 @@ namespace Lumina
         PC.RetainedCullEntries    = { RetainedCullEntryBuffer, RetainedSlots };
         PC.RetainedTransforms     = { RetainedTransformBuffer, RetainedSlots };
         PC.RetainedStatic         = { RetainedStaticBuffer, RetainedSlots };
-        PC.SurfaceDescs           = { SurfaceDescBuffer, UploadedSurfaceDescs };
+        PC.RetainedProxies        = SceneRootShared.RetainedProxies;
+        PC.SurfaceDescs          = { SurfaceDescBuffer, UploadedSurfaceDescs };
         PC.OutInstances           = { VisibleInstanceRing[Slot], FrameVisibleInstanceCapacity };
         PC.OutInstanceCount       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address, 1u);
         PC.OutInstanceViewRanges  = { GetInstanceViewRanges() };
@@ -1821,6 +1840,12 @@ namespace Lumina
         // CullInstances.slang undoes the fold with GroupID.y * MAX_DISPATCH_AXIS * LOCAL_SIZE_X.
         const FUIntVector2 Grid = RenderUtils::FoldGroupCount(RenderUtils::GetGroupCount(RetainedSlots, 64u));
         RHI::CmdDispatch(CL, MakeArgs(PC), Grid.x, Grid.y, 1u);
+
+        // Appends to the same list and count, which needs no barrier since both only add through the counter.
+        if (bProxies)
+        {
+            DispatchCullImpostorPoints(CL, Frame, PC.OutProxyList, ProxyDrawArgsRing[Slot].Sub(offsetof(RHI::FDrawIndirectArguments, InstanceCount), sizeof(uint32)));
+        }
 
         Barriers::ComputeToGeometry(CL);
     }

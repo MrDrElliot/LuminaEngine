@@ -23,11 +23,24 @@ namespace Lumina::Forest
     };
 
     // A copy of the terrain's heights, which build threads sample while the editor may be sculpting the original.
-    struct FTerrainSnapshot
+    struct RUNTIME_API FTerrainSnapshot
     {
-        TVector<float>     Heights;
-        FTerrainHeightView View;
-        uint64             Hash = 0;
+        // Quantized across the copy's own range, half a float copy and finer than the 16-bit heightmaps terrains come from.
+        TVector<uint16> Heights;
+        float           HeightMin     = 0.0f;
+        float           HeightStep    = 0.0f;
+        int32           Resolution    = 0;
+        float           TileWorldSize = 0.0f;
+        float           MaxHeight     = 0.0f;
+        FVector3        Origin        = FVector3(0.0f);
+        uint64          Hash          = 0;
+
+        // Null when the view holds no heights.
+        static TSharedPtr<FTerrainSnapshot> Capture(const FTerrainHeightView& Source);
+
+        // The same bilinear height and central-difference normal as FTerrainHeightView.
+        bool     SampleHeight(float WorldX, float WorldZ, float& OutHeight) const;
+        FVector3 SampleNormal(float WorldX, float WorldZ) const;
     };
 
     struct FArea
@@ -106,7 +119,7 @@ namespace Lumina::Forest
     RUNTIME_API void DiffPaint(const FRules& Rules, const FPaint* Before, const FPaint* After, TVector<FArea>& OutAreas);
 
     // The finest terrain holding the point and its height there, or null where none does.
-    RUNTIME_API const FTerrainHeightView* FindGround(const FRules& Rules, float X, float Z, float& OutHeight);
+    RUNTIME_API const FTerrainSnapshot* FindGround(const FRules& Rules, float X, float Z, float& OutHeight);
 
     // Every plant whose cell lies in [Min, Max), the same however the region is split, less species that vanish before MinViewDistance.
     RUNTIME_API void ScatterRect(const FRules& Rules, const FVector2& Min, const FVector2& Max, TVector<FPlant>& Out, float MinViewDistance = 0.0f);

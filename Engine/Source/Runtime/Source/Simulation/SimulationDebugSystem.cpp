@@ -5,7 +5,7 @@
 #include "Simulation/SimulationComponents.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Systems/DebugDrawSystem.h"
-#include "World/Subsystems/DebugDrawSubsystem.h"
+#include "World/Subsystems/DebugSubsystem.h"
 #include "World/World.h"
 
 namespace Lumina
@@ -28,7 +28,7 @@ namespace Lumina
     {
         CWorld* World = Context.GetWorld();
         FSimulation* Sim = World->GetSimulation();
-        CDebugDrawSubsystem* Draw = World->GetDebugDraw();
+        CDebugSubsystem* Draw = World->GetDebug();
         if (Sim == nullptr || Draw == nullptr)
         {
             return;

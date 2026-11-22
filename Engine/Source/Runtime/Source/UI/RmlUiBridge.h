@@ -1,7 +1,6 @@
 #pragma once
 
-// Process-global RmlUi backend (shared interfaces/renderer/font/debugger + editor previews);
-// the per-world Rml::Context lives on CWorld via FWorldUIContext.
+// Process-global RmlUi backend, while the per-world Rml::Context lives on CWorld via FWorldUIContext.
 
 #include "Core/Math/Math.h"
 #include "UI/UIDesignModel.h"
@@ -50,8 +49,7 @@ namespace Lumina::RmlUi
     // Registers the faces listed in the project's UI settings, skipping any already registered.
     RUNTIME_API void            RegisterProjectFonts();
 
-    // Per-world context lifecycle. CWorld owns the returned wrapper; CreateWorldUI
-    // builds the Rml::Context, DestroyWorldUI removes it. No external bookkeeping.
+    // CWorld owns the returned wrapper.
     RUNTIME_API TUniquePtr<FWorldUIContext> CreateWorldUI(CWorld* World);
     RUNTIME_API void            DestroyWorldUI(CWorld* World);
 
@@ -60,14 +58,12 @@ namespace Lumina::RmlUi
     // Composite one world's UI onto its render target (from the scene's RenderView).
     RUNTIME_API void            RenderWorldUI(const CWorld* World, RHI::FCmdListH CmdList);
 
-    // World-space widgets (SWidgetComponent): Tick lays each document into its RT (in Extract),
-    // Render rasterizes the queued RTs, Release tears one down from on_destroy.
+    // World-space widgets (SWidgetComponent) lay out during Extract and rasterize in Render.
     RUNTIME_API void            TickWorldWidgets(CWorld* World);
     RUNTIME_API void            RenderWorldWidgets(const CWorld* World, RHI::FCmdListH CmdList);
     RUNTIME_API void            ReleaseWidget(CWorld* World, SWidgetComponent& Component);
 
-    // The world whose context is the active UI target. Set when a world comes
-    // up or resumes; cleared when it tears down.
+    // The world whose context is the active UI target.
     RUNTIME_API void            SetActiveWorld(CWorld* World);
 
     // Editor-only preview contexts (not bound to any world); ticked/rendered here.
@@ -76,12 +72,10 @@ namespace Lumina::RmlUi
 
     RUNTIME_API Rml::Context*   GetContextForWorld(CWorld* World);
 
-    // True when the cursor is over an interactive element in this world's UI, so
-    // editor picking / marquee should yield to it. Reads RmlUi's current hover.
+    // True when the cursor is over an interactive element, so editor picking should yield to it.
     RUNTIME_API bool            WorldUIWantsMouse(const CWorld* World);
 
-    // RAII: holds the bridge lock and resolves a world's Rml::Context for the call duration; the lock
-    // blocks RenderWorldUI from walking the DOM and keeps the context valid against teardown.
+    // Holds the bridge lock, which blocks RenderWorldUI from walking the DOM and keeps the context valid against teardown.
     class RUNTIME_API FLockedWorldContext
     {
     public:
@@ -128,8 +122,7 @@ namespace Lumina::RmlUi
     /** RGBA8; 0-alpha clear allows the editor to composite its own background. */
     RUNTIME_API void            SetEditorContextClearColor(Rml::Context* Context, const FVector4& Color);
 
-    // Editor previews are drawn as a texture, so nothing reaches the document without this. Position is
-    // in the context's own layout pixels; the caller maps from its canvas rect.
+    // Editor previews are drawn as a texture, so nothing reaches the document without this.
     RUNTIME_API void            ForwardEditorContextMouse(Rml::Context* Context, const FVector2& Position, float WheelDelta,
                                                           bool bLeftDown, bool bRightDown, bool bLeftWasDown, bool bRightWasDown);
     RUNTIME_API void            ForwardEditorContextMouseLeave(Rml::Context* Context);
@@ -143,16 +136,7 @@ namespace Lumina::RmlUi
                                                              TVector<FRmlDiagnostic>* OutDiagnostics = nullptr);
     RUNTIME_API void            ClearEditorContextDocument(Rml::Context* Context);
 
-    //--------------------------------------------------------------------------------------------
-    // Editor composition designer: live-DOM slot introspection.
-    //
-    // After a document is parsed into an editor preview context, EnumerateEditorSlots walks the element
-    // tree and reports every addressable container (an element carrying an id) as a "slot" the visual
-    // designer can assign a widget into. Offsets/sizes are border-box, in context pixels (the tool maps
-    // them to canvas space). Assignment state is NOT reported here: a <template src> directive is consumed
-    // at parse time and leaves no DOM element, so the editor reads assignments back from the source text.
-    // Takes the bridge lock; game/editor thread only.
-    //--------------------------------------------------------------------------------------------
+    // Assignments are not reported, since a template src directive leaves no DOM element and is read from source text.
 
     struct FRmlEditorSlot
     {
@@ -183,8 +167,7 @@ namespace Lumina::RmlUi
 
     using FManagedUIEventThunk = void (*)(void* Context, const FUIEventData* Event);
 
-    // Screen documents (loaded into the world's own context). LoadScreenDocument returns the
-    // Rml::ElementDocument* as a handle (hidden until ShowDocument); null on parse/load failure.
+    // LoadScreenDocument returns a handle that stays hidden until ShowDocument, or null on failure.
     RUNTIME_API void* LoadScreenDocument(CWorld* World, FStringView VirtualPath);
     RUNTIME_API void* LoadScreenDocumentFromMemory(CWorld* World, FStringView Body, FStringView SourceUrl);
 
@@ -217,10 +200,7 @@ namespace Lumina::RmlUi
     /** Border box in document pixels: X, Y, Width, Height. Zeroes when the element is gone. */
     RUNTIME_API void    ElementGetBox(void* Element, float* OutXYWH);
 
-    // Event listeners. Add binds a managed thunk (+ GCHandle context) to one element's event and returns
-    // an opaque listener handle (null on failure); Remove detaches + frees it. Listeners are owned by the
-    // bridge and reaped when the world's UI is destroyed, so a missed Remove never dangles -- it leaks the
-    // managed GCHandle, exactly like a registry signal.
+    // Listeners are reaped when the world's UI is destroyed, so a missed Remove leaks the managed GCHandle but never dangles.
     RUNTIME_API void* AddElementEventListener(CWorld* World, void* Element, FStringView EventType);
     RUNTIME_API void  RemoveElementEventListener(CWorld* World, void* Listener);
 
@@ -256,9 +236,7 @@ namespace Lumina::RmlUi
     // Register a command callback bound by data-event-*; CommandId is dispatched back through EventThunk.
     RUNTIME_API void  DataModelBindCommand(void* Model, FStringView Name, int32 CommandId);
 
-    // Register a list (array-of-struct) variable for data-for; returns a list field id (its own index space,
-    // separate from scalar fields), or -1. Add its columns with DataModelBindListMember, then push rows.
-    // Cells are strings (RmlUi formats/compares them via Variant conversion); the list is one-way (display).
+    // The returned list field id has its own index space separate from scalar fields, and the list is one-way.
     RUNTIME_API int32 DataModelBindList(void* Model, FStringView Name);
     // Add a named member (column) to a list, in RML reachable as {{ item.Name }}; returns its column index.
     RUNTIME_API int32 DataModelBindListMember(void* Model, int32 ListField, FStringView MemberName);
@@ -275,8 +253,7 @@ namespace Lumina::RmlUi
     RUNTIME_API void  DataModelDirty(void* Model, int32 Field);
     RUNTIME_API void  DataModelDirtyAll(void* Model);
 
-    // Remove the model from its context and free the wrapper. No-op (safe) if the model was already reaped
-    // when its world tore down -- the handle is validated against the live set, not dereferenced blindly.
+    // Safe if the model was already reaped, since the handle is validated against the live set.
     RUNTIME_API void  DestroyDataModel(void* Model);
 
     // The editor preview's stand-in data models, so {{ }} and data-* show values while editing instead of nothing.

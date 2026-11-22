@@ -14,8 +14,7 @@ namespace Lumina
 {
     class FArchive;
 
-    // One baked glyph. Atlas UVs are normalized [0,1] (v0 = top atlas row); plane bounds and advance
-    // are em-normalized (1.0 = one em), so the same baked data renders at any world size.
+    // One baked glyph with normalized atlas UVs (v0 is the top row) and em-normalized plane bounds and advance.
     struct FFontGlyph
     {
         uint32   Codepoint = 0;
@@ -38,9 +37,7 @@ namespace Lumina
         FVector4 UV;     // u0, v0, u1, v1
     };
 
-    // Self-contained font asset; the TTF/OTF bytes are embedded so cooked builds need no source file.
-    // Consumers (ImGui / RmlUi) load the face from GetFontData(). The editor bakes an MSDF atlas at
-    // import time (FontFactory) which world-space text (STextComponent) samples via GetAtlasImage().
+    // Self-contained font asset with the TTF/OTF bytes embedded and an MSDF atlas baked at import.
     REFLECT()
     class RUNTIME_API CFont : public CObject
     {
@@ -59,8 +56,7 @@ namespace Lumina
         // True once a usable MSDF atlas is baked (pixels + glyph table present).
         bool HasAtlas() const { return !AtlasPixels.IsEmpty() && AtlasWidth > 0 && AtlasHeight > 0 && !Glyphs.IsEmpty(); }
 
-        // Lazily uploads AtlasPixels into the global texture heap; safe to call repeatedly.
-        // Returns the heap ResourceID world text samples by, or -1 if no atlas is baked.
+        // Lazily uploads AtlasPixels to the texture heap and returns its ResourceID, or -1 if no atlas is baked.
         int32 GetAtlasResourceID();
 
         uint32 GetAtlasWidth()  const { return AtlasWidth; }
@@ -75,13 +71,10 @@ namespace Lumina
 
         const FFontGlyph* FindGlyph(uint32 Codepoint) const;
 
-        // (Re)builds the codepoint->glyph lookup from Glyphs. Called by PostLoad for serialized assets and
-        // by the baker for in-memory bakes (the default font never loads, so it must build the map itself).
+        // Rebuilds the glyph lookup, which the baker must call itself because the default font never loads.
         void BuildGlyphLookup();
 
-        // Lays out a UTF-8 string into em-space quads. HAlign/VAlign are factors in [0,1]
-        // (0 = left/top, 0.5 = center, 1 = right/bottom) about the entity origin. LineSpacing scales
-        // the baked line height. Returns false if no atlas is baked.
+        // Lays out a UTF-8 string into em-space quads with HAlign and VAlign in [0,1], and returns false if no atlas is baked.
         bool ShapeText(const FString& Text, float HAlign, float VAlign, float LineSpacing, TVector<FShapedGlyph>& Out) const;
 
         // Source file the face was imported from; empty for in-place created assets.

@@ -442,6 +442,14 @@ namespace Lumina
                     FScenePrimitiveSet::FMeshletDemand GrassMeshlets;
                     uint32                      GrassSlotCount = 0;
 
+                    // Impostor points, types and point blocks written since the last publish, as (first, count) runs over the live extents.
+                    uint32                      ImpostorPointCount = 0;
+                    uint32                      ImpostorTypeCount = 0;
+                    uint32                      ImpostorBlockCount = 0;
+                    TVector<FUIntVector2>       ImpostorPointRuns;
+                    TVector<FUIntVector2>       ImpostorTypeRuns;
+                    TVector<FUIntVector2>       ImpostorBlockRuns;
+
                     // Moved instances the extract wrote straight to GPU-visible memory, scattered after the uploads above.
                     RHI::FGPURange              StreamRecords;
                     RHI::FGPURange              StreamSlots;
@@ -1300,7 +1308,7 @@ namespace Lumina
         void ReservePreSkinBuffers(RHI::FCmdListH CL, uint32 PreSkinWanted);
         void ReserveMeshletDrawBuffers(RHI::FCmdListH CL, const FFrameData& Frame, uint32 DrawListWanted);
         void ReserveVisibleInstanceBuffers(RHI::FCmdListH CL, const FFrameData& Frame, bool bAfterCameraCut);
-        void ReserveMeshletBlockList(RHI::FCmdListH CL, bool bAfterCameraCut, uint32 SceneListFloor);
+        void ReserveMeshletBlockList(RHI::FCmdListH CL, uint32 SceneListFloor);
         void UploadLightData(FFrameData& Frame);
         void PublishSceneRoot(RHI::FCmdListH CL, FFrameData& Frame);
         void PublishViewImageIndices(FFrameData& Frame);
@@ -1923,6 +1931,22 @@ namespace Lumina
         TArray<FSceneBuffer, RHI::kFramesInFlight> ProxyListRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.ProxyList", 1.5f);
         TArray<FSceneBuffer, RHI::kFramesInFlight> ProxyDrawArgsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.ProxyDrawArgs", 1.0f);
         uint32 ProxyListCapacity = 0;
+
+        // Far plants held as impostor points, their shared types and bounds per point block, grown with their contents kept.
+        FSceneBuffer ImpostorPointBuffer { "Impostor.Points", 1.5f, EBufferInit::Zeroed };
+        FSceneBuffer ImpostorTypeBuffer { "Impostor.Types", 1.5f, EBufferInit::Zeroed };
+        FSceneBuffer ImpostorBlockBuffer { "Impostor.BlockBounds", 1.5f, EBufferInit::Zeroed };
+        // Points this frame uploaded and the cull walks, 0 when a buffer did not fit.
+        uint32 ImpostorPointsLive = 0;
+        // The sun's static shadow casters among the points as (level, point) words, and the strip draw that reads them.
+        FSceneBuffer ImpostorShadowList { "Impostor.ShadowList", 1.25f };
+        FSceneBuffer ImpostorShadowArgs { "Impostor.ShadowArgs", 1.0f };
+        TArray<RHI::FGPUAllocation, RHI::kFramesInFlight> ImpostorShadowReadback = {};
+        uint32 ImpostorShadowCapacity = 0;
+        // The most casters a frame asked for, which the list grows toward.
+        uint32 ImpostorShadowDemand = 0;
+        bool   bImpostorShadowsListed = false;
+        TVector<FVector4> ImpostorTouchScratch;
         // One arena per frame slot, since the next frame's upload can run on compute while this frame's passes still read poses.
         TArray<FSceneBuffer, RHI::kFramesInFlight> BoneArenaRing = MakeSceneRing<RHI::kFramesInFlight>("Skinning.BoneArena", 1.5f);
         // The upload serial each slot's arena last matched the mirror at, so it knows which dirty ranges it missed.
@@ -1973,6 +1997,13 @@ namespace Lumina
 
         void DispatchGPUSceneCull(RHI::FCmdListH CL, const FFrameData& Frame);
         bool UploadRetainedInstances(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload);
+        void UploadImpostorPoints(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload);
+        // Appends the impostor points the camera sees to the proxy list, beside the retained slots CullInstances listed.
+        void DispatchCullImpostorPoints(RHI::FCmdListH CL, const FFrameData& Frame, RHI::TGPUSpan<uint32> OutProxyList, RHI::FGPURange OutProxyCount);
+        // Lists the points whose impostor lands in a static sun shadow page that draws this frame, ahead of the shadow raster.
+        void CullImpostorShadows(RHI::FCmdListH CL);
+        // Draws them into the static layer, inside the shadow raster's render pass.
+        void DrawImpostorShadows(RHI::FCmdListH CL);
         void WriteRetainedInstances(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload);
         void UploadSurfaceDescs(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload);
         void DispatchCullInstances(RHI::FCmdListH CL, const FFrameData& Frame, FShaderH CullInstancesShader);
@@ -1989,6 +2020,8 @@ namespace Lumina
         void ScatterTransformStream(RHI::FCmdListH CL, const FFrameData::FGeometry::FRetainedUpload& Upload);
 
         std::atomic<uint32>                                 RetainedDeviceCapacity{0};
+        // Set when the impostor buffers lost their contents, so the next publish sends every point and type.
+        std::atomic<bool>                                   bImpostorResendAll{true};
 
         std::atomic<bool>                                   bDepthPyramidValid{false};
 

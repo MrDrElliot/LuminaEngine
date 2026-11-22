@@ -121,8 +121,7 @@ namespace Lumina
         FUNCTION()
         int32 GetTriangleCount() const;
 
-        // Bulk stream setters. Counts are element counts, so 3 floats per vertex for positions and
-        // normals, 2 for UVs, 4 or 1 for float and packed colors, and 1 for an index.
+        // Bulk stream setters taking element counts, such as 3 floats per vertex position and 1 per index.
 
         FUNCTION()
         void SetPositionsData(const float* Data, int32 FloatCount);

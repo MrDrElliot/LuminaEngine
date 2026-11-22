@@ -3,9 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace Lumina;
 
-// Blittable integer-vector mirrors of the engine's TVec<uint32,N> / TVec<int32,N> math types. Layout is
-// field-order, matching the native types byte-for-byte (used by the RHI structs and anywhere a GPU extent
-// or grid index crosses the boundary). Pure data; no operators needed.
+// Blittable integer-vector mirrors that match the native TVec layout byte-for-byte.
 
 [StructLayout(LayoutKind.Sequential)]
 [LuminaSharp.NativeLayout("FUIntVector2")]

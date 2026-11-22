@@ -163,6 +163,13 @@ namespace Lumina::RHI
 
         enum class ERingStall : uint8 { Retry, Flush, Wait, Yield };
 
+        // Caller holds the upload mutex and BatchMutex. Hands back the ring bytes every finished copy has released.
+        void AdvanceTailLocked()
+        {
+            PopCompletedBatchesLocked();
+            GUpload.Ring.Tail = Math::Max(GUpload.Ring.Tail, GUpload.CompletedRingEnd);
+        }
+
         // Caller holds the upload mutex. Frees what finished copies released, then says how to make room.
         ERingStall ReclaimRingLocked(FRingWait& OutWait)
         {
@@ -170,8 +177,7 @@ namespace Lumina::RHI
             const uint64 TailBefore = Ring.Tail;
 
             FScopeLock BatchLock(GUpload.BatchMutex);
-            PopCompletedBatchesLocked();
-            Ring.Tail = Math::Max(Ring.Tail, GUpload.CompletedRingEnd);
+            AdvanceTailLocked();
 
             // Nothing queued, writing or in flight means no copy can read the ring, so all of it is free.
             if (GUpload.InFlightBatches.IsEmpty() && GUpload.Queue.IsEmpty() && Ring.ActiveStarts.IsEmpty())
@@ -756,6 +762,11 @@ namespace Lumina::RHI
             return Result;
         }
 
+        bool HasQueuedOps()
+        {
+            return GUpload.bInitialized && GUpload.QueuedOps.load(std::memory_order_relaxed) != 0u;
+        }
+
         bool Flush(FCmdListH CL, TVector<FGPUAllocation>& OutOwnedStaging, uint64* OutBatch)
         {
             return FlushSplit(CL, CL, OutOwnedStaging, OutBatch) != 0u;
@@ -885,10 +896,17 @@ namespace Lumina::RHI
                 Label, Ring.Capacity >> 20, Ring.PeakInUse >> 20, Ring.FullWaits, Ring.FullFlushes, Ring.Oversized);
         }
 
-        void PublishProfileCounters()
+        uint64 GetStagingHeadroom()
         {
             FScopeLock Lock(GUpload.Mutex);
-            LUMINA_PROFILE_VALUE("Upload/StagingInUseKiB", (GUpload.Ring.Head - GUpload.Ring.Tail) / 1024);
+            FScopeLock BatchLock(GUpload.BatchMutex);
+            AdvanceTailLocked();
+            return GUpload.Ring.Capacity - (GUpload.Ring.Head - GUpload.Ring.Tail);
+        }
+
+        void PublishProfileCounters()
+        {
+            LUMINA_PROFILE_VALUE("Upload/StagingInUseKiB", (GUpload.Ring.Capacity - GetStagingHeadroom()) / 1024);
         }
     }
 }

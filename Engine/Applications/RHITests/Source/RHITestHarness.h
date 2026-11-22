@@ -15,8 +15,7 @@ namespace Lumina::RHITests
     {
     public:
 
-        //~ Assertions. All of them record and continue -- a test states several things and we want every
-        //  one of them reported, not just the first.
+        //~ Assertions all record and continue so every failure in a test is reported.
 
         bool Check(bool bCondition, const char* Expression, const char* File, int32 Line);
 
@@ -34,8 +33,7 @@ namespace Lumina::RHITests
 
         void Failf(const char* Format, ...);
 
-        //~ Resource helpers. Everything taken through these is released when the test returns, in
-        //  reverse order of acquisition, whether it passed or failed.
+        //~ Resource helpers release in reverse order of acquisition when the test returns, pass or fail.
 
         RHI::FGPUAllocation Malloc(uint64 Size, RHI::EMemoryType Type, const char* DebugName);
         RHI::FTextureH CreateTexture(const RHI::FTextureDesc& Desc, const char* DebugName);
@@ -123,9 +121,7 @@ namespace Lumina::RHITests
         #Group, #Name, &RHITest_##Group##_##Name, /*bExpectValidationError*/ false, /*bNeedsMeshShaders*/ true); \
     static void RHITest_##Group##_##Name(Lumina::RHITests::FTestContext& Ctx)
 
-//~ A NEGATIVE CONTROL: the body deliberately breaks a rule, and the test passes only if the validation
-//  layer reported something. Inverted so a harness that has stopped seeing validation output at all
-//  fails loudly instead of going quietly green.
+//~ The body breaks a rule on purpose and passes only if validation reported it, so a deaf harness fails loudly.
 #define RHI_TEST_EXPECT_VALIDATION(Group, Name)                                                           \
     static void RHITest_##Group##_##Name(Lumina::RHITests::FTestContext& Ctx);                             \
     static const Lumina::RHITests::FTestRegistrar GRHITestReg_##Group##_##Name(                            \
@@ -135,7 +131,6 @@ namespace Lumina::RHITests
 #define RHI_CHECK(Expr)          Ctx.Check((Expr), #Expr, __FILE__, __LINE__)
 #define RHI_CHECK_EQ(A, B)       Ctx.CheckEq((A), (B), #A, __FILE__, __LINE__)
 
-//~ Stops the test body. For a precondition whose failure would make everything after it meaningless
-//  (a null allocation, an unsupported queue) rather than just another reported mismatch.
+//~ Stops the test body for a precondition whose failure makes everything after it meaningless.
 #define RHI_REQUIRE(Expr)                                                                                 \
     do { if (!Ctx.Check((Expr), #Expr, __FILE__, __LINE__)) { return; } } while (false)

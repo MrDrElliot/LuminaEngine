@@ -14,8 +14,7 @@
 
 namespace Lumina
 {
-    // An index plus a number, not a 64-bit hash plus a number. FName is a member of nearly every reflected
-    // thing in the engine, so this is load-bearing for CObjectBase fitting in a cache line.
+    // An index plus a number rather than a 64-bit hash, which keeps CObjectBase fitting in a cache line.
     static_assert(sizeof(FName) == 8, "FName grew; CObjectBase and FProperty are sized around it.");
 
     // Append-only arena for interned name strings.

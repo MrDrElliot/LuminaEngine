@@ -31,8 +31,7 @@ namespace Lumina
             OutExtensions.Add({ ".fbx" });
         }
 
-        // Embedded image payloads are views into the loaded ufbx scene, so the parse outlives
-        // ParseMeshSource and is only released once the import is committed or canceled.
+        // Embedded image payloads are views into the ufbx scene, so the parse outlives ParseMeshSource until commit or cancel.
         void ReleaseSourceData() override;
 
     protected:

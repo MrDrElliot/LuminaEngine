@@ -2,6 +2,8 @@
 #include "ForestSystem.h"
 
 #include "SystemContext.h"
+#include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
+#include "Config/EngineSettings.h"
 #include "Containers/Algorithm.h"
 #include "Containers/HashPrimitives.h"
 #include "TaskSystem/TaskSystem.h"
@@ -19,16 +21,68 @@ namespace Lumina
     {
         // New entities per frame, since each one binds a tile of foliage.
         constexpr uint32 kMaxAppliesPerFrame    = 6;
+        // A far tile binds only points, a fraction of what a tile of slots costs.
+        constexpr uint32 kMaxPointAppliesPerFrame = 32;
         // Updates a new tile must already draw in before the one it replaces goes, so the swap never shows a hole.
         constexpr uint16 kDrawnSettleFrames     = 3;
         // A tile that cannot draw, such as one whose mesh never resolves, stops holding the old one after this.
         constexpr uint16 kMaxDrawWaitFrames     = 120;
         // A sculpt stroke bumps the heightmap every frame, so the forest waits for the terrain to settle.
         constexpr uint32 kTerrainSettleFrames   = 30;
-        // Tiles nearer than this hold every species, and further ones leave out the plants that vanish before it.
+        // Tiles nearer than this hold every species, and further ones leave out the plants that vanish before them.
         constexpr int32  kNearBand              = 0;
-        constexpr int32  kFarBand               = 1;
+        constexpr int32  kMidBand               = 1;
+        // Past the forest's ImpostorDistance, where plants with an impostor become points.
+        constexpr int32  kFarBand               = 2;
         constexpr float  kNearBandDistance      = 160.0f;
+
+        // The share of the transition either side of it the cull dithers instances across, from Culling.slang.
+        constexpr float  kProxyTransitionBand   = 0.25f;
+
+        // Plants culled before the band starts are left out of its tiles.
+        float GetBandStart(const FForestState& State, int32 Band)
+        {
+            return Band == kNearBand ? 0.0f : Band == kMidBand ? kNearBandDistance : State.PointBandStart;
+        }
+
+        // Past this every plant with an impostor already draws as it in the cull, so its tiles can hold points instead of slots.
+        float ComputePointBandStart(CWorld& World, const SForestComponent& Forest, const FForestState& State)
+        {
+            const float Configured = Math::Max(Forest.ImpostorDistance, kNearBandDistance);
+            const CRendererSettings* Renderer = GetDefault<CRendererSettings>();
+            CCameraSubsystem* Camera = World.GetCamera();
+            if (Renderer == nullptr || !Renderer->bFarProxies || Renderer->ImpostorTransitionPixels <= 0.0f || Camera == nullptr)
+            {
+                return Configured;
+            }
+
+            const float    FieldOfView = Camera->GetFieldOfView();
+            const FVector2 Viewport    = Camera->GetViewportSize();
+            float Radius = 0.0f;
+            for (const SFoliageType& Type : State.Types)
+            {
+                const CStaticMesh* Mesh = Type.Mesh.Get();
+                if (Mesh != nullptr && Mesh->HasImpostor())
+                {
+                    Radius = Math::Max(Radius, Math::Length(Mesh->GetAABB().GetSize()) * 0.5f * Type.ScaleMax);
+                }
+            }
+            if (FieldOfView <= 0.0f || Viewport.x <= 0.0f || Viewport.y <= 0.0f || Radius <= 0.0f)
+            {
+                return Configured;
+            }
+
+            // A plant at the corner of the view sits closer in view depth than in distance, by the half-diagonal's cosine.
+            const float TanHalf   = Math::Tan(Math::Radians(FieldOfView) * 0.5f);
+            const float Aspect    = Viewport.x / Viewport.y;
+            const float OffAxis   = Math::Sqrt(1.0f + TanHalf * TanHalf * (1.0f + Aspect * Aspect));
+            const float Threshold = Renderer->ImpostorTransitionPixels * (1.0f - kProxyTransitionBand);
+            const float Start     = Radius / TanHalf * Viewport.y / Threshold * OffAxis;
+
+            // Whole tiles, so a small change in the view does not move the band and rebuild its edge.
+            const float TileSize = State.Rules != nullptr ? State.Rules->TileSize : 64.0f;
+            return Math::Clamp(Math::Ceil(Start / TileSize) * TileSize, kNearBandDistance, Configured);
+        }
 
         bool Overlaps(const FTileKey& A, const FTileKey& B)
         {
@@ -174,22 +228,11 @@ namespace Lumina
             Track.StableFrames = Version == Track.SeenVersion ? Track.StableFrames + 1u : 0u;
             Track.SeenVersion  = Version;
 
-            const bool bOriginMoved = Track.Snapshot && Track.Snapshot->View.Origin != Origin;
+            const bool bOriginMoved = Track.Snapshot && Track.Snapshot->Origin != Origin;
             const bool bSettled     = Track.StableFrames >= kTerrainSettleFrames || Track.Version == ~0u;
             if ((Version != Track.Version && bSettled) || bOriginMoved)
             {
-                TSharedPtr<Forest::FTerrainSnapshot> Snapshot = MakeShared<Forest::FTerrainSnapshot>();
-                Snapshot->View = FTerrainSculptSystem::MakeHeightView(Terrain, Origin);
-                if (Snapshot->View.Heights != nullptr)
-                {
-                    const int32 Count = Terrain.Resolution * Terrain.Resolution;
-                    Snapshot->Heights.Append(Snapshot->View.Heights, Count);
-                    Snapshot->View.Heights = Snapshot->Heights.GetData();
-                    const float Shape[] = { Snapshot->View.TileWorldSize, Snapshot->View.MaxHeight, Origin.x, Origin.y, Origin.z };
-                    Snapshot->Hash = Containers::CombineHash(Containers::HashBytes(Snapshot->Heights.GetData(), Count * sizeof(float)),
-                                                             Containers::HashBytes(Shape, sizeof(Shape)));
-                }
-                Track.Snapshot = Move(Snapshot);
+                Track.Snapshot = Forest::FTerrainSnapshot::Capture(FTerrainSculptSystem::MakeHeightView(Terrain, Origin));
                 Track.Version  = Version;
             }
             Tracks.Add(Move(Track));
@@ -200,7 +243,7 @@ namespace Lumina
         TVector<TSharedPtr<const Forest::FTerrainSnapshot>> Snapshots;
         for (const FTerrainTrack& Track : State.Terrains)
         {
-            if (Track.Snapshot && Track.Snapshot->View.Heights != nullptr)
+            if (Track.Snapshot)
             {
                 Snapshots.Add(Track.Snapshot);
             }
@@ -257,7 +300,7 @@ namespace Lumina
         return true;
     }
 
-    void CForestSystem::ApplyBuild(CWorld& World, ForestSystemInternal::FTile& Tile, ForestSystemInternal::FForestState& State)
+    void CForestSystem::ApplyBuild(CWorld& World, const ForestSystemInternal::FTileKey& Key, ForestSystemInternal::FTile& Tile, ForestSystemInternal::FForestState& State)
     {
         using namespace ForestSystemInternal;
 
@@ -280,7 +323,8 @@ namespace Lumina
         World.EmplaceComponent<FTransientEntityTag>(Entity);
         World.EmplaceComponent<FHideInSceneOutliner>(Entity);
         SFoliageComponent& Foliage = World.EmplaceComponent<SFoliageComponent>(Entity);
-        Foliage.Types = State.Types;
+        Foliage.Types           = State.Types;
+        Foliage.bImpostorPoints = Key.Band == kFarBand;
         Foliage.Instances.Reserve(Build->Plants.Num());
         for (const Forest::FPlant& Plant : Build->Plants)
         {
@@ -308,7 +352,8 @@ namespace Lumina
         }
 
         TVector<FWanted> Wanted;
-        GatherWanted(World, Forest, Center, *State.Rules, Wanted);
+        State.PointBandStart = ComputePointBandStart(World, Forest, State);
+        GatherWanted(World, Forest, Center, State, Wanted);
 
         THashSet<uint64> WantedSet;
         TVector<FTileKey> Unready;
@@ -319,10 +364,11 @@ namespace Lumina
         PublishStats(World, State);
     }
 
-    void CForestSystem::GatherWanted(CWorld& World, const SForestComponent& Forest, const FVector3& Center, const Forest::FRules& Rules, TVector<ForestSystemInternal::FWanted>& Out)
+    void CForestSystem::GatherWanted(CWorld& World, const SForestComponent& Forest, const FVector3& Center, const ForestSystemInternal::FForestState& State, TVector<ForestSystemInternal::FWanted>& Out)
     {
         using namespace ForestSystemInternal;
 
+        const auto& Rules = *State.Rules;
         CCameraSubsystem* Camera = World.GetCamera();
         const FVector3 ViewPosition = Camera != nullptr ? Camera->GetViewPosition() : Center;
         const float    ViewDistance = Math::Max(Forest.ViewDistance, Rules.TileSize);
@@ -348,7 +394,8 @@ namespace Lumina
                 const float    Distance = Math::Length(Math::Clamp(ViewPosition, BoxMin, BoxMax) - ViewPosition);
                 if (Distance <= ViewDistance)
                 {
-                    Out.Add({ { Distance < kNearBandDistance ? kNearBand : kFarBand, X, Z }, Distance });
+                    const int32 Band = Distance < kNearBandDistance ? kNearBand : Distance < State.PointBandStart ? kMidBand : kFarBand;
+                    Out.Add({ { Band, X, Z }, Distance });
                 }
             }
         }
@@ -390,7 +437,7 @@ namespace Lumina
             ++Builds;
 
             const FVector2 Min = GetTileMin(*State.Rules, Want.Key);
-            const float MinViewDistance = Want.Key.Band == kFarBand ? kNearBandDistance : 0.0f;
+            const float MinViewDistance = GetBandStart(State, Want.Key.Band);
             Jobs::Spawn(Jobs::EJobPriority::Low, [](TSharedPtr<FBuild> Target, TSharedPtr<const Forest::FRules> TileRules, FVector2 TileMin, float NearestView) -> Jobs::TTask<void>
             {
                 if (!Target->bCanceled.load(std::memory_order_relaxed))
@@ -407,20 +454,26 @@ namespace Lumina
     {
         using namespace ForestSystemInternal;
 
-        uint32 Applied = 0;
+        uint32 Applied      = 0;
+        uint32 PointApplied = 0;
         for (const FWanted& Want : Wanted)
         {
-            if (Applied >= kMaxAppliesPerFrame)
+            if (Applied >= kMaxAppliesPerFrame && PointApplied >= kMaxPointAppliesPerFrame)
             {
                 return;
+            }
+            const bool bPoints = Want.Key.Band == kFarBand;
+            if (bPoints ? PointApplied >= kMaxPointAppliesPerFrame : Applied >= kMaxAppliesPerFrame)
+            {
+                continue;
             }
             FTile* Tile = State.Tiles.Find(Want.Key.Pack());
             if (Tile == nullptr || Tile->bReady || !Tile->Build || !Tile->Build->bDone.load(std::memory_order_acquire))
             {
                 continue;
             }
-            ApplyBuild(World, *Tile, State);
-            ++Applied;
+            ApplyBuild(World, Want.Key, *Tile, State);
+            ++(bPoints ? PointApplied : Applied);
         }
     }
 

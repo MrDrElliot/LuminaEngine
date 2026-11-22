@@ -8,8 +8,7 @@ namespace Lumina
     class CEdGraphNode;
     class CMaterialFunctionGraph;
 
-    // Editor for CMaterialFunction: node graph (material library + FunctionInput/Output), properties,
-    // and signature panels. No 3D preview (inlined into materials); save syncs the signature + validates.
+    // Editor for CMaterialFunction with no 3D preview, since it inlines into materials. Save syncs the signature and validates.
     class FMaterialFunctionEditorTool : public FAssetEditorTool
     {
     public:
@@ -37,8 +36,7 @@ namespace Lumina
         void DrawPropertiesWindow();
         void DrawSignatureWindow();
 
-        // Scans the graph's FunctionInput / FunctionOutput nodes into the asset's signature (sorted by
-        // SortPriority then name) and runs a throwaway validation compile to surface node errors.
+        // Sorts by SortPriority then name, and runs a throwaway validation compile to surface node errors.
         void CompileAndSyncSignature();
 
         TStrongObjectPtr<CMaterialFunctionGraph> NodeGraph;

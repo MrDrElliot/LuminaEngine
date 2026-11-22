@@ -8,8 +8,7 @@
 #include "Containers/Vector.h"
 #include "Networking/NetworkTypes.h"
 
-// The ECS registry is reached through its own header, and it is already in the
-// Runtime PCH, so this costs nothing here.
+// The ECS registry is reached through its own header, which is already in the Runtime PCH.
 
 namespace Lumina
 {
@@ -19,12 +18,7 @@ namespace Lumina
     class INetworkTransport;
     class FNetArchive;
 
-    // Everything the engine asks of networking, and the whole of it. The engine calls through this
-    // and never names an implementation, so the netcode behind it can be replaced or removed
-    // outright without the engine knowing which one it got.
-    //
-    // Every method has an empty default: with no implementation installed the engine runs exactly as
-    // it does with networking disabled, and an implementation overrides only what it cares about.
+    // Every method has an empty default, so with no implementation installed the engine runs as if networking were disabled.
     class INetworkRuntime
     {
     public:
@@ -42,12 +36,7 @@ namespace Lumina
         // Clients currently connected to this world, for anything that reports it. Zero without netcode.
         virtual int32 GetConnectedClientCount(const CWorld* World) const { return 0; }
 
-        // Hand the live client connection over to the engine so it survives a map change, leaving the
-        // old world without one. False when there is nothing to carry, which is the usual answer.
-        //
-        // The engine owns the transport across the gap and hands it back after the new world exists,
-        // so a seamless travel does not reconnect. Only the netcode knows where the connection was
-        // kept, which is why this is a handover rather than the engine reaching in for it.
+        // The engine owns the transport across a map change so a seamless travel does not reconnect, and false means nothing to carry.
         virtual bool TakeClientConnection(
             CWorld* OldWorld,
             TUniquePtr<INetworkTransport>& OutTransport,
@@ -57,13 +46,10 @@ namespace Lumina
             return false;
         }
 
-        // A world has finished materializing its serialized entities. A client drops the entities the
-        // server owns exclusively here; the decision of which those are belongs to the netcode, so
-        // the engine reports the event rather than asking for the outcome.
+        // A client drops server-owned entities here, and the netcode decides which those are.
         virtual void OnWorldEntitiesLoaded(CWorld* World) {}
 
-        // An entity's parent changed. Replication may need to observe it; the engine does not know
-        // whether it does.
+        // An entity's parent changed, which replication may need to observe.
         virtual void OnEntityAttachmentChanged(CWorld* World, ECS::FEntity Entity) {}
 
         //~ The gameplay surface scripts reach through. A world with no netcode answers as standalone.

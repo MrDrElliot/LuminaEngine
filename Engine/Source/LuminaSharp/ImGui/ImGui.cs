@@ -4,7 +4,7 @@ using Lumina;
 
 namespace LuminaSharp;
 
-// Dear ImGui for scripts, named as in C++, for debug windows built in OnDebugGui. Every call is a no-op where no frame is open, as in Shipping.
+// Dear ImGui for scripts, named as in C++, for debug windows built in a World.Debug.OnDebugGui handler. Every call is a no-op where no frame is open, as in Shipping.
 public static unsafe partial class ImGui
 {
     // Text larger than this goes to the heap rather than the stack.

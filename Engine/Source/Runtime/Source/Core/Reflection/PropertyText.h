@@ -8,19 +8,14 @@ namespace Lumina
     class FProperty;
 }
 
-// Text form of a single reflected property value: what a CSV cell holds, and what a compact grid cell
-// shows and edits.
-//
-// Scalars and arrays of them round-trip as one CSV cell, while structs, maps and delegates are refused rather than half parsed.
+// Text form of a property value as held by a CSV cell. Structs, maps and delegates are refused rather than half parsed.
 namespace Lumina::Reflection
 {
     RUNTIME_API bool IsTextConvertible(const FProperty* Property);
 
-    // Empty string for a null object reference. Returns "" for a non-convertible property rather than
-    // inventing a representation that FromText could not read back.
+    // Returns an empty string for a null reference or a non-convertible property.
     RUNTIME_API FString ToText(const FProperty* Property, const void* Container);
 
-    // Leaves the value untouched and returns false on a malformed number, an unknown enum name, an
-    // unresolvable object path, or a non-convertible property.
+    // Leaves the value untouched and returns false on malformed or unresolvable text.
     RUNTIME_API bool FromText(const FProperty* Property, void* Container, FStringView Text);
 }

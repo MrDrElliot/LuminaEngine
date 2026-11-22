@@ -10,8 +10,7 @@ namespace Lumina
 {
     class FParticleCompiler;
 
-    // One emitter's authoring data: ordered Spawn/Update module stacks (editor-time only; runtime consumes only the compiled shader).
-    // CompileStacks walks enabled modules in order, emitting HLSL spliced into ParticleSimulateTemplate.slang.
+    // One emitter's ordered Spawn and Update module stacks, editor-time only since runtime consumes just the compiled shader.
     REFLECT()
     class EDITOR_API CParticleEmitterStack : public CObject
     {

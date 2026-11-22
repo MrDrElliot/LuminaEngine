@@ -103,9 +103,9 @@ namespace Lumina
         return GetCachedSubsystem<CUISubsystem>();
     }
 
-    CDebugDrawSubsystem* CWorld::GetDebugDraw()
+    CDebugSubsystem* CWorld::GetDebug()
     {
-        return GetCachedSubsystem<CDebugDrawSubsystem>();
+        return GetCachedSubsystem<CDebugSubsystem>();
     }
 
     CSpawnSubsystem* CWorld::GetSpawner()

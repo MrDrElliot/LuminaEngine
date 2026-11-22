@@ -5,6 +5,7 @@
 #include "World/Entity/EntityUtils.h"
 
 #include "Renderer/ShaderHandle.h"
+#include "World/Scene/RenderScene/ImpostorPointSet.h"
 #include "Containers/HashTable.h"
 #include "Containers/Span.h"
 #include "Containers/Vector.h"
@@ -262,6 +263,8 @@ namespace Lumina
 
         uint32                              GetSkinnedPrimitiveCount() const { return (uint32)SkeletalIndices.Num(); }
         uint32                              GetFoliageInstanceCount() const { return FoliageInstanceCount; }
+        FImpostorPointSet&                  GetImpostorPoints() { return ImpostorPointSet; }
+        const FImpostorPointSet&            GetImpostorPoints() const { return ImpostorPointSet; }
 
         // Primitives drawn into custom depth, so the renderer adds the view and the pass only while one exists.
         uint32                              GetCustomDepthPrimitiveCount() const { return CustomDepthCount; }
@@ -313,7 +316,6 @@ namespace Lumina
             uint32 SeenSerial         = 0;
         };
 
-        // A contiguous run of retained slots the GPU scatter fills each frame, leaving unused ones inactive. Idempotent per key while the mesh is the same and Capacity fits.
         // True when the species already holds a block of this mesh at least this large, so acquiring it allocates no slots.
         bool GrassSpeciesFits(const FGrassSpeciesKey& Key, const CStaticMesh* Mesh, uint32 Capacity) const;
         FGrassSpeciesBinding AcquireGrassSpecies(const FGrassSpeciesKey& Key, CStaticMesh* Mesh, uint32 ResolveHandle, uint32 Capacity);
@@ -715,6 +717,11 @@ namespace Lumina
             uint32                          SyncedVersion = 0;
             // Resolve identity per TYPE, which is what the staleness sweep compares instead of per instance.
             TVector<uint64>                 TypeResolveKeys;
+            // One point per instance and one type per foliage type, held while any type draws as impostor points.
+            FImpostorPointSet::FRange       Points;
+            FImpostorPointSet::FRange       PointTypes;
+            // A reference on each point type's impostor batch, since its deferred material only shades while the batch is live.
+            TVector<uint32>                 PointBatches;
         };
 
         struct FFoliageTypeResolve
@@ -733,6 +740,9 @@ namespace Lumina
             float                               WPODisableDistance = 0.0f;
             // Instances of this type a fresh bind gives a span, counted so its batch references are taken in one add.
             uint32                              FreshInstances = 0;
+            // Set instead of Memo on a type whose instances are impostor points, which then hold no slots.
+            const FBindingMemo*                 PointMemo = nullptr;
+            uint32                              ImpostorSurface = 0;
         };
 
         static FInstanceCullEntry   MakeFoliageCull(const FSurfaceBinding& Binding, const FFoliageTypeResolve& Type, const FVector4& WorldSphere, bool bHidden);
@@ -740,6 +750,10 @@ namespace Lumina
         static FInstanceProxy       MakeFoliageProxy(const FFoliageTypeResolve& Type, uint32 SurfaceIndex);
 
         void    SyncFoliage(ECS::FRegistry& Registry, const FSyncPools& Pools, ECS::FEntity Entity);
+        // Rewrites the entity's impostor points and types from FoliageTypeScratch, or releases them when no type draws as points.
+        void    SyncImpostorPoints(FFoliageEntityState& State, const SFoliageComponent& Foliage, uint32 EntityID);
+        FImpostorType MakeImpostorType(const FFoliageTypeResolve& Type, uint32 EntityID) const;
+        void    ReleaseImpostorPoints(FFoliageEntityState& State);
         // Fills FoliageTypeScratch for this sync and reports whether the type table changed shape.
         bool    ResolveFoliageTypes(FFoliageEntityState& State, const SFoliageComponent& Foliage, const FSyncPools& Pools, ECS::FEntity Entity);
         // Rebuilds the component's bake and sizes the instance table to it, releasing a shrunk tail.
@@ -768,6 +782,7 @@ namespace Lumina
 
         ECS::TEntityMap<FFoliageEntityState> FoliageByEntity;
         uint32                              FoliageInstanceCount = 0;
+        FImpostorPointSet                   ImpostorPointSet;
 
         TVector<FFoliageTypeResolve>        FoliageTypeScratch;
 

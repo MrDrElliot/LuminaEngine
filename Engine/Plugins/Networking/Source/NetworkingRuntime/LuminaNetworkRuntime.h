@@ -9,8 +9,7 @@ namespace Lumina
 {
     class FNetLoadBotSwarm;
 
-    // Lumina's own netcode behind the engine's networking interface. Nothing outside this plugin
-    // names it; the engine only ever sees INetworkRuntime.
+    // Lumina's own netcode behind the engine's networking interface, which only ever sees INetworkRuntime.
     class FLuminaNetworkRuntime final : public INetworkRuntime
     {
     public:

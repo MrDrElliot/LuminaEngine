@@ -4,7 +4,7 @@
 #include "World/Entity/Components/InputComponent.h"
 #include "Input/InputContext.h"
 #include "Input/InputQuery.h"
-#include "Scripting/EntityScript.h"
+#include "Input/InputActionMap.h"
 #include "World/World.h"
 #include "CoroutineSystem.h"
 
@@ -43,27 +43,38 @@ namespace Lumina
             }
         }
 
-        // Snapshot first, since a callback spawning an entity mutates the storage a live view walks.
+        const TVector<SInputAction>& Actions = FInputActionMap::Get().GetAllActions();
+
+        // Snapshot first, since a listener spawning an entity mutates the storage a live view walks.
         for (ECS::FEntity Entity : Listeners.Collect())
         {
-            if (!Registry.IsValid(Entity))
+            // Resolved again after any broadcast that reports its delegate moved, since a listener may relocate or remove the component.
+            auto Receiving = [&Registry, Entity]() -> SInputComponent*
             {
-                continue;
+                SInputComponent* Input = Registry.IsValid(Entity) ? Registry.TryGet<SInputComponent>(Entity) : nullptr;
+                return Input != nullptr && Input->bEnabled ? Input : nullptr;
+            };
+
+            SInputComponent* Input = Receiving();
+            for (int32 Index = 0; Input != nullptr && Index < Events.Num(); ++Index)
+            {
+                if (!Input->OnInput.Broadcast(Events[Index]))
+                {
+                    Input = Receiving();
+                }
             }
 
-            // Re-resolved per entity, since an earlier callback may have removed or disabled it.
-            const SInputComponent* InputComp = Listeners.TryGet<SInputComponent>(Entity);
-            if (InputComp == nullptr || !InputComp->bEnabled)
+            for (int32 Index : ChangedActionIndices)
             {
-                continue;
+                if (Input == nullptr)
+                {
+                    break;
+                }
+                if (Index < Actions.Num() && !Input->OnAction.Broadcast(Actions[Index].Name, States[Index]))
+                {
+                    Input = Receiving();
+                }
             }
-
-            for (const SInputEvent& Event : Events)
-            {
-                EntityScripts::DispatchInput(Registry, Entity, Event);
-            }
-
-            EntityScripts::DispatchActions(Registry, Entity, States.GetData(), States.Num(), ChangedActionIndices);
         }
     }
 }

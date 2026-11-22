@@ -5,6 +5,7 @@
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Templates/Optional.h"
 #include "Core/Threading/Thread.h"
+#include "Input/InputEvent.h"
 #include "Scripting/EntityScript.h"
 #include "World/Entity/Components/ComponentRef.h"
 #include "World/Entity/Components/NameComponent.h"
@@ -86,12 +87,10 @@ namespace Lumina
         void OnReady() override       { ++ReadyCount; Record('R'); if (ReadyHook != nullptr) { ReadyHook(*this, HookContext); } }
         void OnUpdate(float Dt) override      { ++UpdateCount; AccumulatedTime += Dt; }
         void OnFixedUpdate(float Dt) override { ++FixedUpdateCount; }
-        void OnInput(SInputEvent Event) override { Record('I'); }
         void OnDetach() override      { ++DetachCount; if (DetachHook != nullptr) { DetachHook(*this, HookContext); } }
-        void OnConnected(uint32 ConnectionId) override    { Record('C'); }
-        void OnDisconnected(uint32 ConnectionId) override { Record('D'); }
-        void OnJoinedHost() override                      { Record('J'); }
-        void OnLeftHost(ENetLeaveReason Reason) override  { Record('L'); }
+
+        // Bound to an SInputComponent's OnInput by the tests that need it, so input proves the delegate path.
+        void RecordInput(SInputEvent) { Record('I'); }
 
         // Appends Phase and Label to a test's log, so a test can read back the order callbacks ran in. Unreflected.
         TVector<FString>* EventLog = nullptr;
@@ -511,5 +510,44 @@ namespace Lumina
         void (*ManagedTick)(const SExclusiveContext*) = nullptr;
 
         int32 ProjectilesSpawned = 0;
+    };
+
+    // A native RPC, so a test proves a plain call goes through the generated override and still runs the body here.
+    REFLECT()
+    class RUNTIME_API CEntityScriptRpcTest : public CEntityScript
+    {
+        GENERATED_BODY()
+    public:
+
+        FUNCTION(Rpc = Host)
+        virtual void Ping(int32 Value, const FString& Label) { Received.Add(Lumina::Format("base {} {}", Value, Label)); }
+
+        TVector<FString> Received;
+    };
+
+    // Inherits Ping and replaces its body, so the generated override has to reach the most derived one.
+    REFLECT()
+    class RUNTIME_API CEntityScriptRpcDerivedTest : public CEntityScriptRpcTest
+    {
+        GENERATED_BODY()
+    public:
+
+        void Ping(int32 Value, const FString& Label) override { Received.Add(Lumina::Format("derived {} {}", Value, Label)); }
+    };
+
+    // A replicated field with a change handler, so a test proves arriving values reach the handler only at the sync point.
+    REFLECT()
+    class RUNTIME_API CEntityScriptSyncTest : public CEntityScript
+    {
+        GENERATED_BODY()
+    public:
+
+        PROPERTY(Sync, Change = OnHealthChanged)
+        int32 Health = 100;
+
+        FUNCTION()
+        void OnHealthChanged(int32 Old, int32 New) { Changes.Add(Lumina::Format("{} {}", Old, New)); }
+
+        TVector<FString> Changes;
     };
 }

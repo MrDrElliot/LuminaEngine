@@ -9,6 +9,9 @@ static const float kImpostorQuadGrowth = 1.05;
 // Blended coverage under which a near pixel shows what is behind the impostor, which far ones dither around.
 static const float kImpostorCoverageCutoff = 0.5;
 
+// Blended coverage under which a resolved impostor pixel has no surface of its own to shade.
+static const float kImpostorMissCoverage = 0.02;
+
 float3 ImpostorDecodeDirection(float2 GridUV)
 {
     const float2 P = GridUV * 2.0 - 1.0;

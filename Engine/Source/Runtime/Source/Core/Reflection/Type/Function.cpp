@@ -19,8 +19,7 @@ namespace Lumina
     {
         DEBUG_ASSERT(Frame != nullptr);
 
-        // Zeroed first, so a trivially-constructible parameter is already its default and only the kinds
-        // that own memory need the virtual call below.
+        // Zeroed first so only parameter kinds that own memory need the virtual call below.
         Memory::Memzero(Frame, ParmsSize);
 
         for (uint16 Index = 0; Index < NumParams; ++Index)
@@ -156,9 +155,7 @@ namespace Lumina
             {
                 ParamArray[Index] = OrderedParams[Index];
 
-                // A parameter answers for the function's owner, so a walker can get back to the type. Only
-                // when it has none: an override borrows its base's parameters, and claiming them would
-                // retarget the base's own function to whichever subclass was minted last.
+                // Only when it has no owner, since an override borrows base parameters and claiming them would retarget the base function.
                 if (ParamArray[Index]->OwnerStruct == nullptr)
                 {
                     ParamArray[Index]->OwnerStruct = Owner;

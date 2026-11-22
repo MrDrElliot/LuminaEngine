@@ -72,26 +72,56 @@ struct FVisProxy
     bool           bValid;
 };
 
+// What one proxy list entry draws, read off a retained slot or an impostor point and its type, with every index clamped.
+FVisProxy LoadProxyEntry(uint Entry)
+{
+    FVisProxy Out;
+    Out.Slot   = Entry;
+    Out.Proxy  = (FInstanceProxy)0;
+    Out.Static = (FInstanceStatic)0;
+    Out.Model  = float4x4(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+    Out.bValid = false;
+
+    if ((Entry & PROXY_ENTRY_POINT_BIT) != 0u)
+    {
+        const uint Index = Entry & ~PROXY_ENTRY_POINT_BIT;
+        if (!ImpostorPoints().Contains(Index))
+        {
+            return Out;
+        }
+        const FImpostorPoint Point = ImpostorPoints().GetAligned(Index);
+        if (!ImpostorTypes().Contains(Point.Type))
+        {
+            return Out;
+        }
+        const FImpostorType Type = ImpostorTypes().GetAligned(Point.Type);
+        Out.Proxy                    = Type.Proxy;
+        Out.Static.MeshletHeaderSlot = Type.MeshletHeaderSlot;
+        Out.Static.MaterialIndex     = Type.MaterialIndex;
+        Out.Static.EntityID          = Type.EntityID;
+        Out.Model                    = ImpostorPointModel(Point);
+        Out.bValid                   = true;
+        return Out;
+    }
+
+    if (!RetainedProxies().Contains(Entry) || !RetainedStatic().Contains(Entry) || !RetainedTransforms().Contains(Entry))
+    {
+        return Out;
+    }
+    Out.Proxy  = RetainedProxies().GetAligned(Entry);
+    Out.Static = RetainedStatic().GetAligned(Entry);
+    Out.Model  = RetainedTransforms().Get(Entry).ToMatrix();
+    Out.bValid = true;
+    return Out;
+}
+
 // Every index is clamped like the triangle resolve, since a stale list entry must not walk off the retained arrays.
 FVisProxy ResolveVisProxy(uint VisRaw)
 {
-    FVisProxy Out;
-    Out.Slot   = 0u;
-    Out.bValid = false;
-
-    const uint Index = (VisRaw & ~VISBUFFER_FLAG_MASK) - 1u;
-    bool bValid = IsVisProxy(VisRaw) && ProxyList().Contains(Index);
-    const uint Slot = bValid ? ProxyList().Get(Index) : 0u;
-    bValid = bValid && RetainedProxies().Contains(Slot) && RetainedStatic().Contains(Slot) && RetainedTransforms().Contains(Slot);
-
-    const uint SafeSlot = bValid ? Slot : 0u;
-    Out.Slot   = SafeSlot;
-    Out.Proxy  = RetainedProxies().Count  > 0u ? RetainedProxies().GetAligned(SafeSlot) : (FInstanceProxy)0;
-    Out.Static = RetainedStatic().Count   > 0u ? RetainedStatic().GetAligned(SafeSlot)  : (FInstanceStatic)0;
-    Out.Model  = RetainedTransforms().Count > 0u ? RetainedTransforms().Get(SafeSlot).ToMatrix()
-                                                 : float4x4(1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
-    Out.bValid = bValid;
-    return Out;
+    const uint Index   = (VisRaw & ~VISBUFFER_FLAG_MASK) - 1u;
+    const bool bListed = IsVisProxy(VisRaw) && ProxyList().Contains(Index);
+    // An unlisted pixel asks for a slot no retained array holds, which resolves invalid.
+    return LoadProxyEntry(bListed ? ProxyList().Get(Index) : ~PROXY_ENTRY_POINT_BIT);
 }
 
 // Widened and faded exactly as the cull scales a thinned instance's meshlets, so the drawn quad and its shading agree.
@@ -382,16 +412,23 @@ FVisSurface ReconstructVisSurfaceNoWPO(FVisTriangle T, uint2 Texel, float2 Scree
     return InterpolateVisSurface(W, WorldPos, VisPixelNdc(Texel, ScreenSize), ScreenSize);
 }
 
-// There is no SV_IsFrontFace outside the rasterizer, so two-sided back faces flip toward the camera here.
-float3 OrientVisNormal(FMeshletRef Ref, float3 NormalWS, float3 WorldPosition)
+// There is no SV_IsFrontFace outside the rasterizer, so the triangle's own face, turned to its authored side, decides which side the camera sees.
+float3 OrientVisNormal(FMeshletRef Ref, float3 NormalWS, float3 WorldPosition, float3 Corners[3], float3 CornerNormals[3])
 {
     if (!Ref.InstHasFlag(EInstanceFlags::TwoSided))
     {
         return NormalWS;
     }
 
+    // The shading normal leans off the face, so testing it would flip every pixel of a grass blade above the eye.
+    float3 Face = cross(Corners[1] - Corners[0], Corners[2] - Corners[0]);
+    if (dot(Face, CornerNormals[0] + CornerNormals[1] + CornerNormals[2]) < 0.0)
+    {
+        Face = -Face;
+    }
+
     const float3 ViewDir = IsCameraOrthographic() ? -GetCameraForward() : normalize(GetCameraPosition() - WorldPosition);
-    return (dot(NormalWS, ViewDir) < 0.0) ? -NormalWS : NormalWS;
+    return (dot(Face, ViewDir) < 0.0) ? -NormalWS : NormalWS;
 }
 
 // Decodes the terrain normal, distance blend and root darkening GrassScatter.slang packs; painted foliage carries zero and keeps its surface.

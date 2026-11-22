@@ -6,8 +6,7 @@
 
 namespace Lumina
 {
-    // One factory for every data asset type: the creation dialogue picks which CDataAsset subclass to
-    // mint, so a new type is just a C++ class -- nothing to register here.
+    // One factory for every data asset type, since the creation dialogue picks the CDataAsset subclass.
     REFLECT()
     class CDataAssetFactory : public CFactory
     {

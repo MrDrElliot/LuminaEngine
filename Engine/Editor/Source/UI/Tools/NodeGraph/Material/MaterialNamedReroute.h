@@ -12,12 +12,7 @@ namespace Lumina
 
 namespace Lumina
 {
-    // Declares a wireless link. Whatever feeds its input can be read anywhere else in the graph by a
-    // usage node carrying the same name, with no wire drawn between them.
-    //
-    // Reports IsRerouteNode so the compiler emits nothing for it and every existing reroute walk
-    // resolves straight through to its source, but opts out of dot rendering because it has a name
-    // to show.
+    // Declares a wireless link readable anywhere in the graph by a usage node with the same name.
     REFLECT()
     class CMaterialNamedRerouteDeclaration : public CEdGraphNode
     {
@@ -42,9 +37,7 @@ namespace Lumina
 
         uint32 GetNodeTitleColor() const override { return IM_COL32(60, 105, 145, 255); }
 
-        // The base returns the title's own text width, which the header layout then adds a second time
-        // as trailing filler. That doubles the width of any node with a long name, and these have the
-        // longest names in the graph. Zero lets the header size to the title alone.
+        // The base width is added a second time as filler, which doubles long names.
         ImVec2 GetMinNodeTitleBarSize() const override { return ImVec2(0.0f, 28.0f); }
 
         void DrawNodeBody() override;
@@ -58,9 +51,7 @@ namespace Lumina
         CMaterialInput* Input = nullptr;
     };
 
-    // Reads a declaration's source by name. Has an output pin and no input; the link is resolved
-    // through GetRerouteSourcePin, and GetImplicitInputNode is what keeps the declaration's upstream
-    // reachable and ordered ahead of this node.
+    // Reads a declaration's source by name, with GetImplicitInputNode keeping the upstream reachable and ordered first.
     REFLECT()
     class CMaterialNamedRerouteUsage : public CEdGraphNode
     {
@@ -87,9 +78,7 @@ namespace Lumina
 
         uint32 GetNodeTitleColor() const override { return IM_COL32(60, 105, 145, 255); }
 
-        // The base returns the title's own text width, which the header layout then adds a second time
-        // as trailing filler. That doubles the width of any node with a long name, and these have the
-        // longest names in the graph. Zero lets the header size to the title alone.
+        // The base width is added a second time as filler, which doubles long names.
         ImVec2 GetMinNodeTitleBarSize() const override { return ImVec2(0.0f, 28.0f); }
 
         void DrawNodeBody() override;

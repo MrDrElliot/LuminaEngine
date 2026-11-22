@@ -9,8 +9,7 @@
 
 namespace Lumina
 {
-    // Result of the most recent path query; distinct from "is the agent moving" -- a follower may keep
-    // walking prior corners after a failed replan.
+    // Result of the most recent path query, which is not whether the agent is moving.
     enum class EPathFollowStatus : uint8
     {
         None      = 0, // No target set, or target was just cleared.
@@ -20,15 +19,13 @@ namespace Lumina
         Failed    = 4, // Last query returned no valid path.
     };
 
-    // Drives an entity along a navmesh path; CPathFollowSystem fills the paired controller's MoveInput from
-    // the direction to the next corner. Target via SetTargetLocation/SetTargetEntity; replans past RepathDistance.
+    // Drives an entity along a navmesh path by filling the paired controller's MoveInput, and replans past RepathDistance.
     REFLECT(Component, Category = "AI")
     struct RUNTIME_API SPathFollowComponent
     {
         GENERATED_BODY()
 
-        //~ Begin script-facing API. Designed so a script can drive an AI with
-        //  three lines: SetTargetLocation, IsFollowing, IsAtDestination.
+        //~ Begin script-facing API
 
         /** Set a static world-space goal. Triggers a fresh path request next tick. */
         FUNCTION()
@@ -144,8 +141,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "PathFollow", ClampMin = 0.0f, ClampMax = 1.0f)
         float Speed = 1.0f;
 
-        // Replan when the tracked target moves more than this from the cached path's source point. Ignored
-        // for a static world-location goal.
+        // Replan when the tracked target moves more than this from the path's source point, ignored for a static goal.
         PROPERTY(Editable, Category = "PathFollow", ClampMin = 0.0f)
         float RepathDistance = 1.5f;
 

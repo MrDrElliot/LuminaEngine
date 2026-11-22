@@ -13,8 +13,7 @@ namespace Lumina
         inline constexpr double PositionQuantum = 0.001;  // 1 mm
         inline constexpr double ScaleQuantum    = 0.0001; // scale precision
 
-        // Quantized position/scale: per-axis int64 in quantum units. int64 (not int32) matches the wire
-        // encoder and avoids overflow past ~2.1 km at 1 mm. Exact integer compare drives change detection.
+        // Per-axis int64 in quantum units, since int32 would overflow past about 2.1 km at 1 mm.
         struct RUNTIME_API FQuantizedVector
         {
             int64 X = 0;
@@ -31,8 +30,7 @@ namespace Lumina
             void Read (FNetArchive& Ar);
         };
 
-        // Quantized rotation: smallest-three. Drop the largest-magnitude component, send its index (2 bits)
-        // plus the other three as 15-bit normalized values; reconstruct the dropped one as +sqrt(1-sum).
+        // Smallest-three rotation that drops the largest component and sends its 2-bit index plus three 15-bit values.
         struct RUNTIME_API FQuantizedQuat
         {
             uint8  LargestIndex = 3;

@@ -7,9 +7,7 @@
 
 namespace Lumina
 {
-    // Project-wide authored hierarchical tags. Registered into FHierarchicalTagRegistry at load, so the editor tag
-    // picker lists them (plus any tag requested at runtime). Persists to /Config/HierarchicalTags.json; the
-    // picker's "+" button appends here.
+    // Project-wide authored tags registered into FHierarchicalTagRegistry at load, persisted to /Config/HierarchicalTags.json.
     REFLECT(MinimalAPI, ConfigFile = "/Config/HierarchicalTags.json", DisplayName = "Hierarchical Tags", Category = "Project")
     class CHierarchicalTagsSettings : public CDeveloperSettings
     {

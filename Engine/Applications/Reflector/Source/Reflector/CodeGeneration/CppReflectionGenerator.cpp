@@ -7,6 +7,7 @@
 
 #include "GeneratedFiles.h"
 #include "ReflectionNames.h"
+#include "RpcShim.h"
 #include "Reflector/ReflectionSpecifiers.h"
 
 namespace Lumina::Reflection
@@ -56,6 +57,9 @@ namespace Lumina::Reflection
             void DefinePropertyTable(const FTypeView& Type);
             void EmitLayoutAsserts(const FTypeView& Type);
             void EmitFunctionFrames(const FTypeView& Type);
+            void EmitFunctionThunks(const FTypeView& Type);
+            void EmitCallForwarders(const FTypeView& Type);
+            bool EmitRpcShim(const FTypeView& Type);
             void EmitFunctionTable(const FTypeView& Type);
             void DefineFunctionParameterTables(const FTypeView& Type);
             void DefineFunctionTable(const FTypeView& Type);
@@ -91,12 +95,12 @@ namespace Lumina::Reflection
         // Declared in the type's own namespace so a class can befriend it.
         std::string TypeInfoName(const FTypeView& Type)
         {
-            return "FTypeInfo_" + Type.DisplayName();
+            return Names::TypeInfo(Type.DisplayName());
         }
 
         std::string TypeInfoQualifiedName(const FTypeView& Type)
         {
-            return Type.Namespace().empty() ? ("::" + TypeInfoName(Type)) : ("::" + Type.Namespace() + "::" + TypeInfoName(Type));
+            return Names::TypeInfoQualified(Type.Namespace(), Type.DisplayName());
         }
 
         // Named without the type, so a module table can list it by declaration alone.
@@ -378,6 +382,10 @@ namespace Lumina::Reflection
                 Writer.Line("#include \"Scripting/DotNet/DotNetHost.h\"");
                 Writer.Line("#include <new>");
             }
+            if (std::any_of(Types.begin(), Types.end(), [](const FTypeView& Type) { return Type.Kind() == ETypeKind::Class && !RpcShim::CollectFunctions(Type).empty(); }))
+            {
+                Writer.Line("#include \"Scripting/ScriptNet.h\"");
+            }
             Writer.BlankLines(2);
 
             Emitter.EmitTypeLinks(Types);
@@ -610,8 +618,30 @@ namespace Lumina::Reflection
         }
     }
 
-    // The frame struct and thunk for each function, at file scope since offsetof is taken against them.
+    // The frame struct for each function, at file scope since offsetof is taken against it.
     void FCppEmitter::EmitFunctionFrames(const FTypeView& Type)
+    {
+        for (const FFunctionView Function : Type.Functions())
+        {
+            if (!Function.ReflectsNatively())
+            {
+                continue;
+            }
+
+            const std::string Parms = Names::FunctionParmsStruct(Type.DisplayName(), Function.Name());
+            Writer.Linef("struct %s", Parms.c_str());
+            Writer.Line("{");
+            for (const FParameterView Parameter : Function.Parameters())
+            {
+                Writer.Linef("	%s %s;", Parameter.StorageType().c_str(), Parameter.Property().Name().c_str());
+            }
+            Writer.Line("};");
+            Writer.Line();
+        }
+    }
+
+    // A member of the type info, whose friendship with the class lets a thunk call a private or protected function.
+    void FCppEmitter::EmitFunctionThunks(const FTypeView& Type)
     {
         for (const FFunctionView Function : Type.Functions())
         {
@@ -624,15 +654,6 @@ namespace Lumina::Reflection
             const std::string Parms = Names::FunctionParmsStruct(Type.DisplayName(), Name);
             const std::string Thunk = Names::FunctionThunk(Type.DisplayName(), Name);
             const auto Parameters = Function.Parameters();
-
-            Writer.Linef("struct %s", Parms.c_str());
-            Writer.Line("{");
-            for (const FParameterView Parameter : Parameters)
-            {
-                Writer.Linef("\t%s %s;", Parameter.StorageType().c_str(), Parameter.Property().Name().c_str());
-            }
-            Writer.Line("};");
-            Writer.Line();
 
             // A static takes no object, and anything else dispatches through the pointer, which is what makes a virtual reach its override.
             std::string Arguments;
@@ -695,6 +716,93 @@ namespace Lumina::Reflection
             Writer.Line("}");
             Writer.Line();
         }
+    }
+
+    // One per function name, for the C# exports, which sit outside the type info and so could not call a private function themselves.
+    void FCppEmitter::EmitCallForwarders(const FTypeView& Type)
+    {
+        const std::string& Owner = Type.CppQualifiedName();
+        std::vector<std::string> Emitted;
+        for (const FFunctionView Function : Type.Functions())
+        {
+            const std::string& Name = Function.Name();
+            if (Function.IsFreeFunction() || std::find(Emitted.begin(), Emitted.end(), Name) != Emitted.end())
+            {
+                continue;
+            }
+            Emitted.push_back(Name);
+
+            // Forwarding rather than a fixed signature, so an overload or a defaulted parameter resolves at the call as it would anywhere.
+            if (Function.IsStatic())
+            {
+                Writer.Linef("template<typename... TArgs> static decltype(auto) Call_%s(TArgs&&... Args) { return %s::%s(static_cast<TArgs&&>(Args)...); }",
+                    Name.c_str(), Owner.c_str(), Name.c_str());
+                continue;
+            }
+
+            Writer.Linef("template<typename... TArgs> static decltype(auto) Call_%s(%s* Self, TArgs&&... Args) { return Self->%s(static_cast<TArgs&&>(Args)...); }",
+                Name.c_str(), Owner.c_str(), Name.c_str());
+            if (Function.IsVirtual())
+            {
+                Writer.Linef("template<typename... TArgs> static decltype(auto) Base_%s(%s* Self, TArgs&&... Args) { return Self->%s::%s(static_cast<TArgs&&>(Args)...); }",
+                    Name.c_str(), Owner.c_str(), Owner.c_str(), Name.c_str());
+            }
+        }
+        if (!Emitted.empty())
+        {
+            Writer.Line();
+        }
+    }
+
+    // The subclass the factory builds when the class declares or inherits an RPC, whose override is what makes calling one route it.
+    bool FCppEmitter::EmitRpcShim(const FTypeView& Type)
+    {
+        const std::vector<FFunctionView> Rpcs = RpcShim::CollectFunctions(Type);
+        if (Rpcs.empty())
+        {
+            return false;
+        }
+
+        const std::string& Owner = Type.CppQualifiedName();
+        const std::string Shim = RpcShim::ShimName(Type);
+
+        OpenNamespace(Type);
+        Writer.Linef("class %s : public %s", Shim.c_str(), Owner.c_str());
+        Writer.Line("{");
+        Writer.Line("public:");
+        for (const FFunctionView& Function : Rpcs)
+        {
+            const std::string& Name = Function.Name();
+            std::string Params;
+            std::string Values;
+            std::string Forwarded;
+            size_t NumArguments = 0;
+            for (const FArgumentView Argument : Function.Arguments())
+            {
+                const std::string Arg = "A" + std::to_string(NumArguments++);
+                Params    += (Params.empty() ? "" : ", ") + Argument.RawTypeName() + " " + Arg;
+                Values    += "&" + Arg + ", ";
+                Forwarded += (Forwarded.empty() ? "" : ", ") + std::string("static_cast<decltype(") + Arg + ")&&>(" + Arg + ")";
+            }
+
+            const char* Const = Function.IsConst() ? " const" : "";
+            const std::string Self = Function.IsConst() ? ("const_cast<" + Shim + "&>(*this)") : std::string("*this");
+            Writer.Linef("	void %s(%s)%s override", Name.c_str(), Params.c_str(), Const);
+            Writer.Line("	{");
+            Writer.Linef("		const void* RpcValues[] = { %snullptr };", Values.c_str());
+            Writer.Linef("		if (::Lumina::ScriptNet::RouteRpc(%s, \"%s\", RpcValues, %zuu))", Self.c_str(), Name.c_str(), NumArguments);
+            Writer.Line("		{");
+            Writer.Line("			return;");
+            Writer.Line("		}");
+            Writer.Linef("		%s::%s(%s);", Owner.c_str(), Name.c_str(), Forwarded.c_str());
+            Writer.Line("	}");
+        }
+        Writer.Line("};");
+        Writer.Linef("static_assert(sizeof(%s) == sizeof(%s), \"%s adds only overrides, so it has to stay the size the class was reflected at.\");",
+            Shim.c_str(), Owner.c_str(), Shim.c_str());
+        CloseNamespace(Type);
+        Writer.Line();
+        return true;
     }
 
     void FCppEmitter::EmitFunctionTable(const FTypeView& Type)
@@ -985,6 +1093,8 @@ namespace Lumina::Reflection
         EmitMetadataArrays(Type);
         EmitPropertyTable(Type);
         EmitFunctionTable(Type);
+        EmitFunctionThunks(Type);
+        EmitCallForwarders(Type);
         EmitLayoutAsserts(Type);
 
         const std::string Super = Type.Parent().empty() ? std::string() : (", .Super = &" + Cpp + "::Super::StaticStruct");
@@ -1033,7 +1143,15 @@ namespace Lumina::Reflection
     {
         const std::string& DisplayName = Type.DisplayName();
         Writer.Linef("// Begin %s", DisplayName.c_str());
-        Writer.Linef("IMPLEMENT_CLASS(%s, %s)", Type.Namespace().c_str(), DisplayName.c_str());
+        if (EmitRpcShim(Type))
+        {
+            const std::string Shim = Type.Namespace().empty() ? RpcShim::ShimName(Type) : (Type.Namespace() + "::" + RpcShim::ShimName(Type));
+            Writer.Linef("IMPLEMENT_CLASS_CONSTRUCTING(%s, %s, %s)", Type.Namespace().c_str(), DisplayName.c_str(), Shim.c_str());
+        }
+        else
+        {
+            Writer.Linef("IMPLEMENT_CLASS(%s, %s)", Type.Namespace().c_str(), DisplayName.c_str());
+        }
 
         // Otherwise a class that misses an override would silently become abstract and vanish from every picker.
         if (!Type.HasMetadata("Abstract"))
@@ -1052,6 +1170,8 @@ namespace Lumina::Reflection
         EmitMetadataArrays(Type);
         EmitPropertyTable(Type);
         EmitFunctionTable(Type);
+        EmitFunctionThunks(Type);
+        EmitCallForwarders(Type);
         EmitLayoutAsserts(Type);
 
         Writer.Linef("static constexpr Lumina::FClassDesc Desc = { .StaticClass = &%s::StaticClass%s%s };",

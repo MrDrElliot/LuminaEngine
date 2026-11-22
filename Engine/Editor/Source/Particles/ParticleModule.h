@@ -23,11 +23,7 @@ namespace Lumina
         Target,
     };
 
-    // Exported: a plugin or game editor module defines its own modules by deriving from this, which needs
-    // the base's vtable and StaticClass out of the Editor DLL. Discovery alone is not enough -- reflection
-    // would find the subclass, but it could not have linked in the first place.
-    // One behavior in an emitter stack (Niagara-style): typed PROPERTY() inputs + emitted HLSL into the Spawn/Update compute, reading/writing P.* attributes and SimParams.
-    // Editor-time authoring concept: serialized into the asset, but the runtime only consumes the compiled shader.
+    // One behavior in an emitter stack, exported so plugin and game editor modules can derive their own.
     REFLECT()
     class EDITOR_API CParticleModule : public CObject
     {

@@ -188,8 +188,7 @@ namespace Lumina
         }
     };
 
-    // One compiled state-machine edge; the VM cross-fades FromState->ToState over BlendDuration
-    // when every term passes (or any term, when bRequireAll is false) while FromState is active.
+    // One compiled state-machine edge that cross-fades over BlendDuration when every term passes (any term when bRequireAll is false).
     struct FAnimGraphTransition
     {
         // -1 means "any state" (checked regardless of active state).
@@ -285,8 +284,7 @@ namespace Lumina
         }
     };
 
-    // Which graph curve slot each of a clip's authored curves feeds (Constants::kIndexNone = not referenced).
-    // Resolved at compile so sampling a clip writes its curves by index, never by name.
+    // Which graph curve slot each authored clip curve feeds, resolved at compile so sampling writes by index (Constants::kIndexNone is unreferenced).
     struct FAnimGraphClipCurveMap
     {
         TVector<int32> Slots;
@@ -310,8 +308,7 @@ namespace Lumina
         }
     };
 
-    // Compiled state machine; each state owns a pose register. Per-frame bookkeeping (active state,
-    // timer) lives in per-instance FAnimGraphVMState.StateSlots, addressed by the *Slot indices below.
+    // Compiled state machine whose per-frame bookkeeping lives in per-instance FAnimGraphVMState.StateSlots.
     struct FAnimGraphStateMachine
     {
         // State entered on first init.
@@ -331,8 +328,7 @@ namespace Lumina
         // Scalar register holding each state's first clip player Finished flag, or 0xFFFF for none.
         TVector<uint16> StateFinishedRegisters;
 
-        // Machines compiled inside each state's blend tree, transitive, as a range of machine indices.
-        // A machine flagged bResetOnEntry is rewound while the state hosting it is inactive.
+        // Transitive machines inside each state's blend tree, and a bResetOnEntry machine is rewound while its state is inactive.
         TVector<uint16> StateChildMachineFirst;
         TVector<uint16> StateChildMachineEnd;
 
@@ -343,8 +339,7 @@ namespace Lumina
         TVector<uint16> TransitionsByState;
         TVector<uint32> TransitionsByStateStart;
 
-        // Slots into FAnimGraphVMState.StateSlots: Current/From state indices (From -1 when not
-        // transitioning), seconds spent in the current state, Duration of the active transition.
+        // Slots into FAnimGraphVMState.StateSlots, with the From state -1 when not transitioning.
         uint16 CurrentStateSlot = 0;
         uint16 FromStateSlot = 0;
         uint16 TimeInStateSlot = 0;
@@ -384,8 +379,7 @@ namespace Lumina
         }
     };
 
-    // Runtime anim-graph asset: compiled bytecode + referenced resources/metadata. Editor compiles a
-    // CAnimationGraphNodeGraph into this; CAnimationSystem runs it each frame via FAnimationGraphVM.
+    // Runtime anim-graph asset holding the bytecode the editor compiles from a CAnimationGraphNodeGraph.
     REFLECT()
     class RUNTIME_API CAnimationGraph : public CObject
     {

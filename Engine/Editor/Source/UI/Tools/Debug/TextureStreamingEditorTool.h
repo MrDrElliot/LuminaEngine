@@ -56,8 +56,7 @@ namespace Lumina
         int32 SortColumn = Column_Resident;
         bool  bSortAscending = false;
 
-        // Rolling history of resident bytes, in MiB, for the pool plot. A flat line while the camera moves
-        // is the clearest single symptom of feedback not reaching the streamer.
+        // Resident MiB history for the pool plot, where a flat line while the camera moves means feedback is not reaching the streamer.
         static constexpr int kHistory = 240;
         float   ResidentHistory[kHistory] = {};
         int     HistoryCursor = 0;

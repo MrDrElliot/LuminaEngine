@@ -16,8 +16,7 @@ namespace Lumina
 
     class CMaterialInterface;
 
-    // Interpolation curve for blending the active camera (CCameraSystem::SetActiveCamera);
-    // EvaluateCameraBlend maps normalized [0..1] time onto [0..1].
+    // Interpolation curve for blending the active camera, mapped by EvaluateCameraBlend.
     REFLECT()
     enum class ECameraBlendFunction : uint8
     {
@@ -86,8 +85,7 @@ namespace Lumina
             ViewVolume.SetView(Position, ViewDirection, UpDirection);
         }
 
-        // Bake the resolved (possibly blended) view into the view volume without writing authored FOV, so
-        // direct matrix consumers (editor gizmo, CPU picking) match the rendered view. Called by CCameraSystem.
+        // Bakes the resolved view into the view volume without writing authored FOV, so matrix consumers match the render.
         void SetResolvedView(const FVector3& Position, const FVector3& ViewDirection, const FVector3& UpDirection, float InFOV)
         {
             ViewVolume.SetFOV(InFOV);
@@ -188,13 +186,11 @@ namespace Lumina
         PROPERTY(Editable, Category = "Camera|Input", ClampMin = 0.0f)
         float MouseLookDegreesPerCount = 0.0f;
 
-        // Per-camera color grading + tone mapping; the render scene reads it from the active camera and
-        // applies it in the composite pass. Defaults to an identity grade with AGX.
+        // Per-camera color grading and tone mapping applied in the composite pass, defaulting to an identity grade with AGX.
         PROPERTY(Editable, Category = "Camera", DefaultCollapsed)
         SPostProcessSettings PostProcess;
 
-        // Post-process materials run in order after tone mapping; each is a fullscreen pass whose Emissive
-        // replaces scene color (later entries read earlier via SceneColor). Must be MaterialType = PostProcess.
+        // Fullscreen post-process materials run in order after tone mapping, each with Emissive replacing scene color.
         PROPERTY(Editable, Category = "Camera|Post Process")
         TVector<TStrongObjectPtr<CMaterialInterface>> PostProcessMaterials;
 

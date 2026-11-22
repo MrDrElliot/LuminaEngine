@@ -68,6 +68,9 @@ namespace LuminaSaveGameTests
         ECS::FRegistry& R = Level.Registry();
         R.GetSignals<STransformComponent>().OnConstruct.Connect<&BindTransform>();
 
+        // What InitializeWorld gives a real world, so scripts find it and the save events reach them.
+        R.Ctx().Emplace<CWorld*>(Level.World);
+
         Level.Chest = Spawn(R, "Chest");
         R.Emplace<SSaveGameTestComponent>(Level.Chest).Coins = 1;
         Level.Door   = Spawn(R, "Door");

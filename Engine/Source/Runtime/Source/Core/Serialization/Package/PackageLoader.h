@@ -22,8 +22,7 @@ namespace Lumina
         }
     };
     
-    // A package's file bytes, read only once loaded and shared by every reader over them. Held by
-    // shared pointer so a reader in flight keeps the buffer alive after the package drops its cache.
+    // Held by shared pointer so a reader in flight keeps the buffer alive after the package drops its cache.
     struct FPackageFileBytes
     {
         FPackageFileBytes(void* InData, int64 InSize) : Data(InData), Size(InSize) {}

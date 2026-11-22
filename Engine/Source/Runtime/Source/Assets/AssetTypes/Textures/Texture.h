@@ -124,8 +124,7 @@ namespace Lumina
         // Sampled at varying distance and minified: needs a full mip chain.
         World,
 
-        // Drawn screen-aligned at (or near) 1:1 by the UI pass, so minified mips are never sampled.
-        // Skipping them saves ~33% of the texture's memory and the cook time to produce them.
+        // The UI pass draws near one to one, so skipping the unsampled minified mips saves about 33% of memory.
         UI,
 
         // Same rationale as UI: sampled at a fixed on-screen size.
@@ -439,8 +438,7 @@ namespace Lumina
 
         TUniquePtr<FTextureResource> TextureResource;
 
-        // Host-uploaded half of a staged residency change, drained over frames by TickResidencyFill. The
-        // cursor is (mip, layer, block row): a whole-mip step is 16 MiB, bigger than any sane frame budget.
+        // Host-uploaded half of a staged residency change, stepped by block row since a whole mip is 16 MiB.
         struct FResidencyFill
         {
             uint32 FirstMip   = 0;   // chain mip the staged image starts at

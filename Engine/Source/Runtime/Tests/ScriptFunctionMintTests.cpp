@@ -17,8 +17,7 @@
 
 using namespace Lumina;
 
-// Stands in for the managed dispatcher: reads its arguments out of the frame through the parameters
-// themselves, which is the whole reason a frame is described by FProperty rather than by a signature string.
+// Stands in for the managed dispatcher and reads its arguments through the parameters themselves.
 namespace
 {
     int32 GThunkCalls = 0;
@@ -227,8 +226,7 @@ TEST(ScriptFunctionMint, CallingItReachesTheThunkThroughAFrame)
     EXPECT_EQ(Frame.Return<int32>(), 42);
 }
 
-// A script class can be behaviour only. The block append used to ask whether there were fields, so such a
-// type got no layout record and therefore no functions either.
+// A behavior-only script class used to get no layout record, and therefore no functions.
 TEST(ScriptFunctionMint, ATypeWithFunctionsAndNoPropertiesStillGetsThem)
 {
     static const bool bReflectionReady = [] { RegisterPendingTypes(); return true; }();

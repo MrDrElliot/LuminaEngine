@@ -34,8 +34,7 @@ TEST(AudioGraphApi, ComponentSurfaceIsSafeWithoutADevice)
     EXPECT_FALSE(Source.bPlaying);
 }
 
-// bLooping speaks for a wave only. A graph's own construction decides whether it plays until stopped,
-// which is what the audio system virtualizes on.
+// bLooping speaks for a wave only, since a graph's own construction decides whether it plays until stopped.
 TEST(AudioGraphApi, PersistenceComesFromTheSoundNotTheLoopFlag)
 {
     SAudioSourceComponent Source;

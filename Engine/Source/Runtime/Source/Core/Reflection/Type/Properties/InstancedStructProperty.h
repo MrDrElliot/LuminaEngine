@@ -6,8 +6,7 @@ namespace Lumina
 {
     class CStruct;
 
-    // Backs TInstancedStruct<T>. Owns a heap struct instance whose concrete type is chosen at runtime
-    // from MetaStruct or a derived struct, serialized inline as the chosen name plus its properties.
+    // Backs TInstancedStruct<T>, owning a heap instance whose concrete type is chosen at runtime.
     class FInstancedStructProperty : public FProperty
     {
     public:
@@ -26,8 +25,7 @@ namespace Lumina
         RUNTIME_API void RelocateValue(void* Dest, void* Source) const override;
         bool OwnsStorage() const override { return true; }
 
-        // The base every owned instance must derive from: the T in TInstancedStruct<T>, or the type named
-        // by PROPERTY(StructBase = "...") on a bare FInstancedStruct. Null means unconstrained.
+        // The base every owned instance must derive from, where null means unconstrained.
         RUNTIME_API CStruct* GetMetaStruct() const;
 
     private:

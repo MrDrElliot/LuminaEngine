@@ -33,8 +33,7 @@ namespace Lumina
         /** Walks one property's value, recursing through containers, structs and optionals. */
         RUNTIME_API static void VisitProperty(const FProperty* Property, void* Value, FSlotFunc Func);
 
-        //~ The same walk, reporting soft references as well. Separate entry points so a caller that does not
-        //~ care about soft references pays nothing and reads nothing extra.
+        //~ The same walk also reporting soft references, so callers that ignore them pay nothing.
 
         RUNTIME_API static void VisitStructWithSoft(const CStruct* Struct, void* Instance,
             FSlotFunc Func, FSoftSlotFunc SoftFunc);

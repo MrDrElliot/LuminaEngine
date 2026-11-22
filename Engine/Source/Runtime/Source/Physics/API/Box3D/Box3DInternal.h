@@ -100,8 +100,7 @@ namespace Lumina::Physics
         return Shape;
     }
 
-    // Combine modes ride in the surface material id, which is the only per-shape data the mixing
-    // callbacks receive. Bit 16 marks a real material so a plain zero id still means no material.
+    // Combine modes ride in the surface material id, the only per-shape data mixing callbacks receive, and bit 16 marks a real material.
     inline constexpr uint64 MaterialIdPresentBit = 1ull << 16;
 
     FORCEINLINE uint64 PackMaterialId(uint8 FrictionCombine, uint8 RestitutionCombine)
@@ -109,8 +108,7 @@ namespace Lumina::Physics
         return MaterialIdPresentBit | (uint64)FrictionCombine | ((uint64)RestitutionCombine << 8);
     }
 
-    // Box3D's mover ignores initial overlap and cannot climb out of geometry, so a spawn that starts buried
-    // has to be lifted onto the surface before the first step or it free falls forever.
+    // Box3D's mover cannot climb out of geometry, so a buried spawn must be lifted onto the surface before the first step.
     enum class EMoverSeatResult : uint8
     {
         Seated,

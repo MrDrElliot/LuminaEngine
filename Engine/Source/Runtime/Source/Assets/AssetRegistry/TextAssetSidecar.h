@@ -7,12 +7,7 @@
 
 namespace Lumina
 {
-    // Stable identity for loose text assets (.rml/.rcss) lives in a tiny sidecar under a hidden
-    // ".lmeta" directory at the owning content root, mirroring the file's relative subpath:
-    //   /Game/UI/Foo.rml  ->  /Game/.lmeta/UI/Foo.rml.lmeta
-    // Mirroring the full subpath (not just the name) keeps same-named files in different folders distinct.
-    // The sidecar is the durable source of truth (committed, never shipped); the registry cache + cooked
-    // AssetRegistry.bin are rebuildable from it.
+    // Loose text asset identity lives in a sidecar at /Game/.lmeta/UI/Foo.rml.lmeta for /Game/UI/Foo.rml, and the registry cache rebuilds from it.
     namespace TextAssetSidecar
     {
         // Hidden meta directory name placed at each content root.

@@ -9,10 +9,7 @@ namespace Lumina
     class CAnimGraphNode_State;
     class CAnimStateTransition;
 
-    // State machine canvas: State nodes plus one Entry node, wires between States are transitions.
-    // Transition data lives in CAnimStateTransition objects, reconciled against live links on edit.
-    // Draws itself rather than using the generic node/wire look: state boxes, straight arrows, and a
-    // clickable badge per transition.
+    // State machine canvas whose wires are transitions, with data in CAnimStateTransition objects reconciled against live links.
     REFLECT()
     class CAnimStateMachineGraph : public CEdNodeGraph
     {
@@ -22,21 +19,18 @@ namespace Lumina
         void Initialize() override;
         void Shutdown() override;
 
-        // Context-free setup (no node-editor context needed): ensures the Entry node and registers the
-        // State node as creatable, so the compiler can ready a never-opened state machine. Idempotent.
+        // Idempotent setup that needs no node-editor context, so the compiler can ready a never-opened machine.
         void EnsureSetup();
 
         const FEdGraphSchema& GetSchema() const override;
 
-        // Rebuilds the serialized connection list and reconciles the transition
-        // objects against the live State -> State wires.
+        // Reconciles the transition objects against the live State to State wires.
         void ValidateGraph() override;
 
         // Transitions are keyed by node id, so a cloned canvas has to re-key them onto its own nodes.
         void PostCloneContent(const CEdNodeGraph* Source, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones) override;
 
-        // Finds the transition object bound to a State -> State link, or null
-        // (e.g. the Entry wire, which has no transition data).
+        // Null for links without transition data, such as the Entry wire.
         CAnimStateTransition* FindTransition(int64 FromStateNodeID, int64 ToStateNodeID) const;
 
         // The Any State edge into this state, which the runtime can only report by its destination.
@@ -51,8 +45,7 @@ namespace Lumina
         // Transitions leaving State, in the order the runtime tests them (Priority, then wire order).
         void GetOutgoingTransitions(int64 FromStateNodeID, TVector<CAnimStateTransition*>& Out) const;
 
-        // Label for whichever end of a transition a node id refers to: the state's name, or
-        // "Any State" / "Entry" for the special nodes.
+        // The state's name, or "Any State" or "Entry" for the special nodes.
         FString GetEndpointLabel(int64 NodeID) const;
 
         const TVector<TStrongObjectPtr<CAnimStateTransition>>& GetTransitions() const { return Transitions; }
@@ -68,8 +61,7 @@ namespace Lumina
 
     private:
 
-        // One-shot guards; not serialized. bSetupDone covers context-free setup; bInitialized covers
-        // full Initialize() (which additionally creates the node-editor context).
+        // One-shot guards that are not serialized, with bInitialized also covering the node-editor context.
         bool bSetupDone = false;
         bool bInitialized = false;
 

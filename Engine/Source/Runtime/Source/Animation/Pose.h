@@ -123,8 +123,7 @@ namespace Lumina
 
     namespace AnimPose
     {
-        // Direct TRS -> column-major matrix; same result as Translate * ToMatrix4(R) * Scale
-        // without the two 4x4 multiplies. Matches Math::ToMatrix3's quat convention.
+        // Skips the two 4x4 multiplies of Translate * ToMatrix4(R) * Scale and matches Math::ToMatrix3's quat convention.
         FORCEINLINE FMatrix4 ComposeTRS(const FVector3& T, const FQuat& R, const FVector3& S)
         {
             const float XX = R.x * R.x; const float YY = R.y * R.y; const float ZZ = R.z * R.z;
@@ -139,8 +138,7 @@ namespace Lumina
             return M;
         }
 
-        // Cheap TRS extract for rigid + per-axis-scale matrices (no skew/projective handling);
-        // the shared decomposition for all bind-pose math so results stay bit-consistent.
+        // Handles rigid and per-axis-scale matrices only, and is shared by all bind-pose math so results stay bit-consistent.
         FORCEINLINE void DecomposeTRS(const FMatrix4& M, FVector3& OutT, FQuat& OutR, FVector3& OutS)
         {
             OutT = FVector3(M[3]);
@@ -162,18 +160,15 @@ namespace Lumina
             OutR = Math::ToQuat(Rot);
         }
 
-        // NumActiveBones on the kernels below is the skeleton-LOD cut: bones past it pass through
-        // from the first input (A / Base) untouched instead of being blended. Negative = all bones.
+        // NumActiveBones below is the skeleton LOD cut, and bones past it pass through from the first input.
 
         // Out = Lerp(A, B, Alpha). A, B and Out may alias. Alpha is clamped to [0,1].
         RUNTIME_API void Blend(const FPose& A, const FPose& B, float Alpha, FPose& Out, int32 NumActiveBones = -1);
 
-        // Per-bone masked blend: the blend alpha for bone i is Alpha * BoneWeights[i].
-        // BoneWeights shorter than the bone count treats missing entries as 1.0.
+        // Bone i blends at Alpha * BoneWeights[i], and missing weights count as 1.0.
         RUNTIME_API void BlendMasked(const FPose& A, const FPose& B, float Alpha, const TVector<float>& BoneWeights, FPose& Out, int32 NumActiveBones = -1);
 
-        // OutDelta := Src relative to bind pose (T/S differences/ratios, R = Src * inverse(Bind)). Pair with ApplyAdditive.
-        // Bones past the LOD cut get the identity delta.
+        // OutDelta is Src relative to bind pose, and bones past the LOD cut get the identity delta.
         RUNTIME_API void MakeAdditive(const FPose& Src, const FSkeletonResource* Skeleton, FPose& OutDelta, int32 NumActiveBones = -1);
 
         // MakeAdditive against an arbitrary base pose instead of the bind pose.
@@ -222,29 +217,24 @@ namespace Lumina
                                             const FVector3& Scale,
                                             float Alpha);
 
-        // In-place analytical two-bone IK so EndIdx reaches Target (component space); Pole picks bend side, Alpha slerps.
-        // Requires MidIdx's parent == RootIdx and EndIdx's parent == MidIdx.
-        // Iterative chain solver (FABRIK) reaching Target with the chain from RootIdx down to TipIdx.
-        // TipIdx must descend from RootIdx. Positions are component space, as everywhere else here.
+        // TipIdx must descend from RootIdx.
         RUNTIME_API void FABRIK(FPose& Pose, const FSkeletonResource* Skeleton, int32 RootIdx, int32 TipIdx,
                                 const FVector3& Target, int32 Iterations, float Alpha);
 
-        // Turns one bone so its LocalForward axis points at Target, clamped to MaxAngleRadians of its
-        // rest direction. 0 or less leaves it unclamped.
+        // MaxAngleRadians of 0 or less leaves the turn unclamped.
         RUNTIME_API void LookAt(FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIdx,
                                 const FVector3& Target, const FVector3& LocalForward, float MaxAngleRadians, float Alpha);
 
-        // Two bone IK onto the foot displaced by Offset, then the foot rotated onto GroundNormal.
         // Offset and GroundNormal are component space, so the caller converts its trace results once.
         RUNTIME_API void FootIK(FPose& Pose, const FSkeletonResource* Skeleton, int32 ThighIdx, int32 CalfIdx,
                                 int32 FootIdx, const FVector3& Offset, const FVector3& GroundNormal,
                                 const FVector3& FootUpAxis, float NormalAlpha, float Alpha);
 
-        // Displaces one bone by Offset in component space, keeping its rotation. What lowers a pelvis
-        // by the amount the feet needed, which no baked transform can express.
+        // Keeps the bone's rotation, which is how a pelvis lowers by the amount the feet needed.
         RUNTIME_API void TranslateBoneComponentSpace(FPose& Pose, const FSkeletonResource* Skeleton, int32 BoneIdx,
                                                      const FVector3& Offset, float Alpha);
 
+        // Requires MidIdx's parent to be RootIdx and EndIdx's parent to be MidIdx.
         RUNTIME_API void TwoBoneIK(FPose& Pose,
                                    const FSkeletonResource* Skeleton,
                                    int32 RootIdx, int32 MidIdx, int32 EndIdx,

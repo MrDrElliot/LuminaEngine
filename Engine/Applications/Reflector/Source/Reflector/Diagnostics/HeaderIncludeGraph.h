@@ -9,12 +9,10 @@ namespace Lumina::Reflection
 {
     class FReflectedWorkspace;
 
-    // A cycle is the chain of headers a -> b -> ... -> a, where the first and
-    // last entries are the same path.
+    // A cycle is a chain of headers whose first and last entries are the same path.
     using FHeaderCycle = std::vector<std::string>;
 
-    // Directed #include graph across a workspace's headers, walked for cycles via a lightweight
-    // line-based regex (not a full preprocessor): quoted includes only, ignores #if guards, stops at project roots.
+    // Directed #include graph walked for cycles with a line-based regex, so quoted includes only and #if guards are ignored.
     class FHeaderIncludeGraph
     {
     public:
@@ -42,12 +40,10 @@ namespace Lumina::Reflection
 
     private:
 
-        // Pulls the textual #include "..." directives out of a single header.
-        // Returns false if the file couldn't be opened.
+        // Returns false if the file could not be opened.
         bool ScanHeader(const std::string& AbsPath, std::vector<std::pair<std::string, uint32_t>>& OutIncludes) const;
 
-        // Tries IncluderDir/Text first, then each include search dir. Returns
-        // an empty string when nothing resolves to an existing file.
+        // Tries IncluderDir/Text first, then each include search dir, and returns empty when nothing resolves.
         std::string ResolveInclude(
             const std::string& IncludeText,
             const std::string& IncluderDir,

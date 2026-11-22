@@ -26,16 +26,13 @@ namespace Lumina::Logging
 	// Blocks until everything logged so far has reached the sinks and the OS.
 	RUNTIME_API void Flush();
 
-	// Moves the log file into Directory (created if needed), carrying this run's lines with it.
 	// Init() has no project yet, so the file starts beside the exe and lands here once one loads.
 	RUNTIME_API void SetLogFileDirectory(FStringView Directory);
 
-	// Renames the log file itself, keeping the directory it currently sits in. A second process
-	// sharing a project needs its own name, or it rotates the log the first one is still writing.
+	// A second process sharing a project needs its own name, or it rotates the log the first one is still writing.
 	RUNTIME_API void SetLogFileName(FStringView FileName);
 
-	// Absolute path of the live log file, or empty when there is no file sink. Follows
-	// SetLogFileDirectory, so callers holding the path must re-read it after a project loads.
+	// Follows SetLogFileDirectory, so callers holding the path must re-read it after a project loads.
 	RUNTIME_API FString GetLogFilePath();
 
 	RUNTIME_API void ClearLogQueue();
@@ -92,14 +89,12 @@ namespace Lumina::Logging
 	}
 }
 
-// WARN/ERROR/CRITICAL always compile in, they carry crash diagnostics you
-// want even in a shipped build.
+// WARN/ERROR/CRITICAL always compile in because they carry crash diagnostics a shipped build needs.
 #define LOG_CRITICAL(...)	::Lumina::Logging::Log(::Lumina::ELogLevel::Critical, __VA_ARGS__)
 #define LOG_ERROR(...)		::Lumina::Logging::Log(::Lumina::ELogLevel::Error,    __VA_ARGS__)
 #define LOG_WARN(...)		::Lumina::Logging::Log(::Lumina::ELogLevel::Warn,     __VA_ARGS__)
 
-// DISPLAY always compiles in (info severity): rare boot/system milestones that must survive Shipping.
-// Not a general info channel, use LOG_INFO for everyday status.
+// DISPLAY always compiles in for rare milestones that must survive Shipping, so use LOG_INFO for everyday status.
 #define LOG_DISPLAY(...)	::Lumina::Logging::Log(::Lumina::ELogLevel::Info,     __VA_ARGS__)
 
 // TRACE/DEBUG/INFO are gated by LUMINA_VERBOSE_LOGGING; off (Shipping default) they expand to nothing.
@@ -113,9 +108,7 @@ namespace Lumina::Logging
 	#define LOG_INFO(...)	((void)0)
 #endif
 
-// A site that fires per entity, per chunk or per frame drowns the log in one restatement of a single
-// fact. These keep the first occurrence, which is the one that carries the diagnosis, and drop the rest.
-// The flag is per call site, so two sites logging the same text still report independently.
+// These keep the first occurrence and drop the rest, and the flag is per call site so two sites still report independently.
 #define LUMINA_LOG_ONCE(Macro, ...)                                      \
 	do {                                                                 \
 		static ::Lumina::TAtomic<bool> bLoggedOnce(false);                \

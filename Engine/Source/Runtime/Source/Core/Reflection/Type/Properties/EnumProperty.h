@@ -27,10 +27,7 @@ namespace Lumina
         void Serialize(FArchive& Ar, void* Value) override;
         void SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults) override;
 
-        // FEnumProperty stores its value through the inner numeric property and is NOT a TProperty<>, so
-        // its own ElementSize is never set -- the base memcpy/memcmp would be zero-length no-ops (which
-        // silently broke reset-to-default / Identical for enum members of a struct). Delegate to the
-        // inner property, which carries the correct underlying-type size.
+        // Not a TProperty, so its ElementSize is never set and the base memcpy and memcmp would be zero-length no-ops. Delegates to the inner property.
         void CopyCompleteValue(void* Dst, const void* Src) const override
         {
             if (InnerProperty) { InnerProperty->CopyCompleteValue(Dst, Src); }

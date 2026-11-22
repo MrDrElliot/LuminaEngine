@@ -13,8 +13,7 @@ namespace Lumina::Hash
 {
 	// XXHash: default hashing algorithm for the engine.
 
-	// The primitives live in Containers/HashPrimitives.h because StringView and BasicString need them and
-	// this header includes Containers/String.h; defining them here instead would close an include cycle.
+	// The primitives live in Containers/HashPrimitives.h because defining them here would close an include cycle with String.h.
 	using Containers::HashBytes;
 	using Containers::GetTypeHash;
 
@@ -105,8 +104,7 @@ namespace Lumina::Hash
 		}
 	}
 
-	// Default Lumina hashing functions. Seeds mirror the XXHash layer, and for the same reason the
-	// const char* forms below take none: a seed there makes every GetHash32(Ptr, Length) ambiguous.
+	// The const char* forms below take no seed because one would make every GetHash32(Ptr, Length) ambiguous.
 	FORCEINLINE uint32 GetHash32(const FString& string, uint32 Seed = 0)
 	{
 		return XXHash::GetHash32(*string, string.Len(), Seed);

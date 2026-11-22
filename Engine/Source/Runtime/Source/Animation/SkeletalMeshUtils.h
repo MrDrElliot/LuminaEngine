@@ -22,12 +22,10 @@ namespace Lumina::SkeletalUtils
     RUNTIME_API FSkeletonResource* GetSkeleton(const SSkeletalMeshComponent& Mesh);
     RUNTIME_API CSkeleton* GetSkeletonAsset(const SSkeletalMeshComponent& Mesh);
 
-    // Component-space (mesh-entity-relative) bone transform from the live pose, or the bind pose when
-    // no pose has been evaluated yet. False when the bone index is out of range.
+    // Falls back to the bind pose when no pose has been evaluated yet, and is false when the bone index is out of range.
     RUNTIME_API bool GetBoneComponentTransform(const SSkeletalMeshComponent& Mesh, int32 BoneIndex, FMatrix4& OutTransform);
 
-    // Resolve a socket-or-bone name: a socket on the skeleton wins (its bone + authored offset),
-    // else a raw bone name (identity offset). False when neither exists.
+    // A socket on the skeleton wins over a raw bone name, which gets an identity offset.
     RUNTIME_API bool ResolveSocket(const SSkeletalMeshComponent& Mesh, const FName& SocketOrBone, int32& OutBoneIndex, FMatrix4& OutSocketOffset);
 
     RUNTIME_API bool GetSocketComponentTransform(const SSkeletalMeshComponent& Mesh, const FName& SocketOrBone, FMatrix4& OutTransform);
@@ -35,8 +33,7 @@ namespace Lumina::SkeletalUtils
     // Static mesh socket transform (fixed, relative to the mesh origin). False when the socket doesn't exist.
     RUNTIME_API bool GetStaticSocketTransform(const SStaticMeshComponent& Mesh, const FName& SocketName, FMatrix4& OutTransform);
 
-    // Component-space socket transform on an entity with either mesh component type
-    // (skeletal: animated bone or socket; static: authored socket).
+    // Works on an entity with either mesh component type.
     RUNTIME_API bool GetEntitySocketTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone, FMatrix4& OutTransform);
 
     RUNTIME_API bool EntityHasSocket(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone);
@@ -91,11 +88,9 @@ namespace Lumina::SkeletalUtils
     // World-space socket-or-bone transform on Entity (folds in the entity's world matrix).
     RUNTIME_API bool GetSocketWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FName& SocketOrBone, FMatrix4& OutTransform);
 
-    // Bone whose origin lies nearest WorldPoint; approximates the hit bone for meshes with a single
-    // physics body (per-bone hits only come from ragdoll bodies). Constants::kIndexNone without a skeleton.
+    // Approximates the hit bone for single-body meshes, since per-bone hits only come from ragdoll bodies.
     RUNTIME_API int32 FindClosestBone(ECS::FRegistry& Registry, ECS::FEntity Entity, const FVector3& WorldPoint);
 
-    // Packs NumBones skinning matrices into the 32-byte GPU layout the skinning shaders read. OutBones is
-    // written straight through, so the render gather aims this at its own arena slice and stages nothing.
+    // OutBones is written straight through, so the render gather aims this at its own arena slice and stages nothing.
     RUNTIME_API void PackRenderBones(const FMatrix4* BoneTransforms, uint32 NumBones, FPackedBoneTransform* OutBones);
 }

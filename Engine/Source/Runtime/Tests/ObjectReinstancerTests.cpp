@@ -18,8 +18,7 @@
 
 using namespace Lumina;
 
-// The reinstancer moves live instances onto a replacement class and repoints whatever pointed at them, which
-// is what lets a script type change shape with a world running.
+// The reinstancer lets a script type change shape with a world running.
 
 namespace
 {
@@ -158,8 +157,7 @@ TEST(ObjectReinstancer, DoesNothingWithoutAMapping)
     EXPECT_EQ(Result.ReferencesPatched, 0);
 }
 
-// The seam a language uses to say which of its properties must not survive the migration. Without it the
-// reinstancer would have to know what a script attribute means.
+// The seam a language uses to mark properties that must not survive migration, so the reinstancer need not know script attributes.
 TEST(ObjectReinstancer, ThePostReplaceHookSeesEveryReplacementBeforeAnythingPointsAtIt)
 {
     Scripting::FScriptExportSchema Before;

@@ -29,8 +29,7 @@ namespace Lumina::Containers
         template <typename T>
         inline constexpr bool bIsInPlaceType<TInPlaceType<T>> = true;
 
-        // A concept, not a variable template: a conjunction stops at the first false rather than substituting
-        // into the rest, which is what keeps a function built from another function from recursing forever.
+        // A concept rather than a variable template, so a conjunction stops at the first false and a function built from another cannot recurse forever.
         template <typename TCallable, typename TSelf, typename TRet, bool bCopyable, typename... TArgs>
         concept StorableCallable =
             (!std::is_same_v<std::decay_t<TCallable>, TSelf>) &&

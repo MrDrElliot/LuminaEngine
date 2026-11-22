@@ -138,8 +138,7 @@ namespace Lumina
         FSoftObjectPath Inner;
     };
 
-    // Layout invariant the reflector + FSoftObjectProperty rely on: the
-    // storage of TSoftObjectPtr<CObject> is one FSoftObjectPath.
+    // The reflector and FSoftObjectProperty rely on TSoftObjectPtr<CObject> being exactly one FSoftObjectPath.
     static_assert(sizeof(TSoftObjectPtr<CObject>) == sizeof(FSoftObjectPath),
         "TSoftObjectPtr<T> must be layout-identical to FSoftObjectPath");
 }

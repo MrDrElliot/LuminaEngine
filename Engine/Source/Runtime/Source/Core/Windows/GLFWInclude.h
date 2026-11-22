@@ -1,7 +1,6 @@
 #pragma once
 
-// Centralized GLFW include. GLFW forgets to undef APIENTRY (unlike WINGDIAPI/CALLBACK),
-// leaking __stdcall that clashes with the Windows headers (C4005). Mirror GLFW's own cleanup.
+// GLFW leaks APIENTRY as __stdcall, which clashes with the Windows headers (C4005).
 
 // Unconditional, or glfwCreateWindowSurface is declared only where a Vulkan header came first.
 #define GLFW_INCLUDE_VULKAN

@@ -24,16 +24,13 @@ namespace Lumina
 
         void UpdateWorlds(const FUpdateContext& UpdateContext);
 
-        // Opens every live scene's immediate-line write window. Must run before anything ticks or draws
-        // this frame -- producers whose window is closed drop their lines rather than write into a slot
-        // the GPU still owns. Closed again by each scene's Extract.
+        // Opens every scene's immediate-line window before anything ticks, since producers with a closed window drop lines instead of writing a slot the GPU owns.
         void BeginImmediateLines();
 
         // Game thread
         void ReclaimIdleRenderers(double NowSeconds);
 
-        // Steps every live world's physics and dispatches the contact events it raised. Game thread,
-        // synchronous, between the PrePhysics and PostPhysics stages.
+        // Steps every world's physics and dispatches contact events, on the game thread between PrePhysics and PostPhysics.
         void TickPhysics();
 
         // Game thread
@@ -54,8 +51,7 @@ namespace Lumina
         // First Game-type context encountered; null if no game world is loaded (eg, editor-only session).
         FWorldContext* GetPrimaryGameContext();
 
-        // Duplicates SourceWorld, registers a PIE context of the given type, returns the new world.
-        // SessionType should be EWorldType::Game (Play-In-Editor) or EWorldType::Simulation (Simulate).
+        // Duplicates SourceWorld into a PIE context of SessionType, either EWorldType::Game or EWorldType::Simulation.
         CWorld* StartPIE(CWorld* SourceWorld, EWorldType SessionType, ENetMode NetMode = ENetMode::Standalone);
 
         // Tears down and removes a PIE context created by StartPIE.

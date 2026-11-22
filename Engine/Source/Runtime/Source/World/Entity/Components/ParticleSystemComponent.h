@@ -62,8 +62,7 @@ namespace Lumina
                 ParameterOverrides  = Other.ParameterOverrides;
                 MaterialOverrides   = Other.MaterialOverrides;
                 RenderLayers        = Other.RenderLayers;
-                // Transient activation intents never carry across a copy; the render scene
-                // allocates fresh GPU/sim state keyed by the new entity.
+                // Transient activation intents never carry across a copy, and the render scene allocates fresh state.
                 bForceBurst         = false;
                 bForceReset         = false;
             }
@@ -97,8 +96,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Particle System")
         bool bBurstOnSpawn = true;
 
-        // Per-instance overrides for asset-declared parameters; only diverging entries live here, reads
-        // fall back to the asset.
+        // Per-instance overrides for asset parameters, where only diverging entries live here.
         PROPERTY(Hidden)
         TVector<SParticleParameter> ParameterOverrides;
 
@@ -122,8 +120,7 @@ namespace Lumina
         FUNCTION()
         CMaterialInstance* CreateDynamicMaterialInstance(int32 EmitterIndex);
 
-        // Game-thread activation intents consumed by Extract into ParticleGPUStates; transient. bForceBurst
-        // re-arms the burst; bForceReset also clears live particles.
+        // Game-thread activation intents consumed by Extract, where bForceBurst re-arms the burst and bForceReset also clears live particles. Transient.
         bool bForceBurst = false;
         bool bForceReset = false;
 
@@ -233,8 +230,7 @@ namespace Lumina
 
     private:
 
-        // Get-or-create the override entry for (Name, type). Returns nullptr if the asset declares the
-        // parameter with a different type (programmer error).
+        // Get-or-create the override entry for (Name, type), nullptr if the asset declares a different type.
         SParticleParameter* GetOrCreateOverride(FName Name, EParticleParameterType ExpectedType);
         //~ End User Parameters
     };

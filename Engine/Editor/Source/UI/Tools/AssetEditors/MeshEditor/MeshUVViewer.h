@@ -72,8 +72,7 @@ namespace Lumina
         TVector<FUVEdge> Edges;
         FCacheKey        CacheKey;
 
-        // Not part of FCacheKey because it selects which edges get collected rather than describing the
-        // source data; kept alongside so a filter change rebuilds the same way a LOD change does.
+        // Outside FCacheKey since it selects edges rather than describing source data, but a change rebuilds like a LOD change.
         int32            CachedSurfaceFilter = -2;   // -2 = never built (-1 is a valid filter: all surfaces)
 
         uint32 TriangleCount        = 0;    // triangles walked for the current LOD/cache

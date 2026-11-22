@@ -45,8 +45,7 @@ namespace Lumina
         bool                  bValid      = false;
     };
 
-    // Renders a string as crisp MSDF glyph quads in the world. The font's baked atlas (see FontFactory)
-    // is sampled per-glyph; WorldSize is the world height of one em, so text scales without blurring.
+    // Renders a string as MSDF glyph quads, where WorldSize is the world height of one em.
     REFLECT(Component, Category = "Rendering")
     struct RUNTIME_API STextComponent
     {
@@ -95,8 +94,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rendering")
         SRenderLayerMask RenderLayers;
 
-        //~ Script setters (reflected fields aren't directly assignable from scripts). Font is optional -- a null
-        //  font falls back to the engine default world-text font (CFontManager).
+        //~ Script setters, with a null font falling back to the engine default world-text font.
 
         FUNCTION()
         void SetText(const FString& InText) { Text = InText; }

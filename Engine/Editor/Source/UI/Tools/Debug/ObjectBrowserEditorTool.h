@@ -93,9 +93,7 @@ namespace Lumina
         ImGuiTextFilter            NameFilter;
         ImGuiTextFilter            ClassFilter;
 
-        // WEAK, deliberately. A strong ref would keep alive the very object you opened this tool to watch
-        // die, and a raw pointer would dangle the moment it did -- the handle resolves to null instead.
-        // Never an index into VisibleRows: that vector is rebuilt by every filter keystroke.
+        // Weak so it neither keeps the watched object alive nor dangles, and never an index since VisibleRows rebuilds on every keystroke.
         TWeakObjectPtr<CObject>    SelectedObject;
 
         TUniquePtr<FPropertyTable> DetailsTable;
@@ -110,8 +108,7 @@ namespace Lumina
         int32   SortColumn = 0;
         bool    bSortAscending = true;
 
-        // Computed during the snapshot, so the header cannot lie (the previous one printed two statics that
-        // were never assigned and always read 0).
+        // Computed during the snapshot so the header cannot disagree with the rows.
         int32   TotalAlive = 0;
         int32   TotalSlots = 0;
     };

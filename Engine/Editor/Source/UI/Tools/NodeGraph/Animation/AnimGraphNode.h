@@ -10,8 +10,7 @@ namespace Lumina
     class FAnimationGraphCompiler;
     struct FAnimGraphDebugView;
 
-    // Persisted per-pin default. Pins are rebuilt by BuildNode() and not serialized, so a value pin's
-    // editable inline default lives here, keyed by pin name.
+    // Pins are rebuilt by BuildNode and not serialized, so a value pin's inline default persists here by pin name.
     REFLECT()
     struct SAnimGraphPinDefault
     {
@@ -24,18 +23,14 @@ namespace Lumina
         float Value = 0.0f;
     };
 
-    // Base class for animation node-graph nodes: subclasses build pins in BuildNode() and emit bytecode
-    // in GenerateBytecode(); the graph walks them in topological order during compile.
-    // NotPlaceable: family base, not a node. The specifier does not inherit, so every concrete
-    // anim node below stays discoverable.
+    // NotPlaceable does not inherit, so every concrete anim node stays discoverable.
     REFLECT(NotPlaceable, Abstract)
     class EDITOR_API CAnimGraphNode : public CEdGraphNode
     {
         GENERATED_BODY()
     public:
 
-        // Every anim node belongs to the blend-tree graph; the two state-machine-canvas nodes
-        // override this to say otherwise.
+        // Every anim node belongs to the blend-tree graph except the two state-machine canvas nodes.
         CClass* GetSupportedGraphClass() const override;
 
         virtual void GenerateBytecode(FAnimationGraphCompiler& Compiler) = 0;
@@ -43,8 +38,7 @@ namespace Lumina
         FFixedString GetNodeCategory() const override { return "Animation"; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(60, 110, 70, 255); }
 
-        // Effective default for an unconnected value pin: the per-node saved
-        // override if one exists, else the pin's builtin DefaultValue.
+        // The saved per-node override if one exists, else the pin's builtin DefaultValue.
         float GetValuePinDefault(const CAnimGraphPin* Pin) const;
         void  SetValuePinDefault(const CAnimGraphPin* Pin, float Value);
 
@@ -66,28 +60,23 @@ namespace Lumina
 
         const CAnimGraphPin* FindFirstValueOutput() const;
 
-        // Creates a typed animation pin, sets its name / color / default, and
-        // returns it already cast to CAnimGraphPin.
+        // Creates a typed animation pin already cast to CAnimGraphPin.
         CAnimGraphPin* CreateAnimPin(const FString& Name, ENodePinDirection Direction, EAnimPinType Type, float DefaultValue = 0.0f);
 
-        // Binds a compact DragFloat inline editor to a value input pin; edits the
-        // node's saved default for that pin (see PinDefaults).
+        // Binds an inline DragFloat that edits the node's saved default for the pin.
         void BindFloatPinEditor(CAnimGraphPin* Pin, float Speed = 0.01f, const char* Format = "%.2f");
 
-        // Binds a combo inline editor to an enum-backed value input pin (Items are the enum's display names
-        // in value order). The backing enum property stays the source of truth; the pin is an optional override.
+        // Items are the enum's display names in value order, and the backing property stays the source of truth.
         void BindEnumPinEditor(CAnimGraphPin* Pin, const TVector<const char*>& Items,
                                const TFunction<int()>& Get, const TFunction<void(int)>& Set);
 
         // Marks the owning asset package dirty after an inline edit completes.
         void MarkGraphDirty();
 
-        // Resolves the pose register feeding InputPin, or emits a bind-pose
-        // RefPose when the pin is unconnected.
+        // Emits a bind-pose RefPose when the pin is unconnected.
         static uint16 ResolvePoseInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler);
 
-        // Resolves the scalar register feeding InputPin, or emits a LoadConst of
-        // the pin's DefaultValue when the pin is unconnected.
+        // Emits a LoadConst of the pin's DefaultValue when the pin is unconnected.
         static uint16 ResolveValueInput(CEdNodeGraphPin* InputPin, FAnimationGraphCompiler& Compiler);
 
         // Object register feeding InputPin, or Constants::kIndexNone when the pin is unconnected.

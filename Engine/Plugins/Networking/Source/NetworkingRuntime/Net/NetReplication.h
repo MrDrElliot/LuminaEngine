@@ -30,20 +30,15 @@ namespace Lumina
 
     namespace Net
     {
-        // Max bytes for one framed message. The frame length prefix is 16-bit, so a single message (e.g. a
-        // transform snapshot) can't exceed this; AppendFramedMessage drops anything larger. Single-sourced
-        // here so the network debug tool can warn as a snapshot approaches the cap.
+        // Max bytes for one framed message, since the length prefix is 16-bit and AppendFramedMessage drops anything larger.
         inline constexpr SIZE_T MaxFramedMessageSize = 0xFFFF;
 
-        // Reflection-driven entity replication. The same generic path the world serializer uses, keyed by a
-        // compact type hash, carrying only Replicated properties. Works for any REFLECT(Component).
+        // Reflection-driven entity replication keyed by a compact type hash, carrying only Replicated properties.
 
         // Hash of the wire protocol
         NETWORKINGRUNTIME_API uint32 GetProtocolHash(const FReplTypeTable& Types);
 
-        // Compact NetGUID codec. Stable ids are small; dynamic (spawned) ids carry the high bit, which would
-        // varint to 5 bytes, so the two ranges are interleaved (LSB = dynamic flag) and the remainder
-        // varint-encoded, giving 1-2 bytes for both. Every NetGUID on the wire must go through this pair.
+        // Compact NetGUID codec that moves the dynamic flag to the LSB so both ranges varint to 1-2 bytes. Every wire NetGUID goes through this pair.
         void   WriteNetGuid(FNetArchive& Ar, uint32 Guid);
         uint32 ReadNetGuid (FNetArchive& Ar);
 
@@ -59,11 +54,7 @@ namespace Lumina
         NETWORKINGRUNTIME_API void CollectComponentFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
             bool bBaseline, FComponentRepState* DiffState, TVector<FComponentRepOut>& Out);
 
-        // True when Parent is an entity that actually replicates to clients (SNetworkComponent + bReplicates +
-        // bNetLoadOnClient + a NetGUID). A child of such a parent sends its LOCAL transform + the parent's NetGUID
-        // (client reparents + composes, rigid); a child of a non-replicated parent must send WORLD instead, since
-        // the client has no parent to compose against. Both the transform extract and the attachment-link write
-        // gate on this so they stay consistent.
+        // True when Parent replicates to clients, so a child sends its local transform, otherwise world since the client has no parent to compose against.
         bool ParentReplicates(ECS::FRegistry& Registry, ECS::FEntity Parent);
 
         // Null Components writes an empty component block.
@@ -88,8 +79,7 @@ namespace Lumina
             TVector<uint8> Block;
         };
 
-        // Server, diff every script on Entity that declares replicated fields. Same contract as CollectComponentFieldsInto.
-        // Returns true when a rate-limited field changed too soon and was held back, so the entity has to stay dirty.
+        // Server, diff every script on Entity that declares replicated fields. Returns true when a rate-limited field was held back, so the entity stays dirty.
         NETWORKINGRUNTIME_API bool CollectScriptFieldsInto(ECS::FRegistry& Registry, ECS::FEntity Entity, FNetWorldState& State,
             bool bBaseline, FComponentRepState* DiffState, TVector<FScriptRepOut>& Out);
 
@@ -110,12 +100,10 @@ namespace Lumina
         void AppendScriptRpc(TVector<uint8>& Batch, uint32 Guid, uint32 ScriptIndex, uint32 RpcId, ERpcTarget Target,
             uint8 Flags, uint32 Caller, const uint8* Payload, uint32 PayloadSize);
 
-        // Client, reparent any children that were deferred waiting on NewEntity (NetGUID NewGuid) to spawn.
-        // Call right after registering a freshly-spawned entity's NetGUID in the GuidTable.
+        // Client, reparent children deferred waiting on NewEntity, called right after its NetGUID is registered.
         void DrainPendingAttach(ECS::FRegistry& Registry, FNetWorldState& State, uint32 NewGuid, ECS::FEntity NewEntity);
 
-        //~ Packet batching. Many small messages per tick are concatenated into one length-prefixed datagram,
-        //~ one ENet header and ack instead of N. Every packet on the wire is a batch.
+        //~ Packet batching concatenates many small messages per tick into one datagram, and every packet on the wire is a batch.
 
         // Append one framed message to a batch buffer.
         NETWORKINGRUNTIME_API void AppendFramedMessage(TVector<uint8>& Batch, const uint8* Msg, SIZE_T MsgSize);
@@ -129,11 +117,9 @@ namespace Lumina
         // Split a received batch into its framed messages.
         NETWORKINGRUNTIME_API void ForEachFramedMessage(const uint8* Data, SIZE_T Size, const TFunction<void(const uint8*, SIZE_T)>& Fn);
 
-        //~ Net-index caches. A CObject/SUIDocumentRef reference is sent as a compact varint index; identity is
-        //~ exported once and resolved in the sender's index space. Incoming maps are per-connection.
+        //~ Net-index caches send references as a varint index, with identity exported once and resolved in the sender's index space.
 
-        // Bind both index caches on an archive. Writer uses the peer's outgoing maps, reader the sender's
-        // incoming maps. Used for component + RPC-arg replication.
+        // Bind both index caches on an archive, the writer using the peer's outgoing maps and the reader the sender's incoming maps.
         NETWORKINGRUNTIME_API void BindWriters(FNetArchive& Ar, FNetWorldState& State);
         NETWORKINGRUNTIME_API void BindReaders(FNetArchive& Ar, FNetWorldState& State, uint32 SenderConn);
 

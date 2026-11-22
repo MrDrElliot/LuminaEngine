@@ -2,9 +2,7 @@
 #include "VFloat4.h"
 #include "Core/Math/Quat/Quat.h"
 
-// VQuat4: 4 quaternions in SoA form (one VFloat4 per component) for batch pose math.
-// Loads/stores transpose from the engine's AoS FQuat (x,y,z,w) layout. Slerp uses
-// sin/atan minimax polynomials (van Waveren), accurate to ~1e-6 over the full range.
+// 4 quaternions in SoA form for batch pose math. Slerp uses minimax sin and atan polynomials accurate to about 1e-6.
 
 namespace Lumina::SIMD
 {
@@ -104,8 +102,7 @@ namespace Lumina::SIMD
         }
     }
 
-    // Shortest-arc slerp with per-lane alpha; near-parallel lanes fall back to lerp.
-    // Result is normalized. Inputs are expected normalized (animation-pose quats are).
+    // Shortest-arc slerp with per-lane alpha where near-parallel lanes lerp. Inputs are expected normalized.
     [[nodiscard]] FORCEINLINE VQuat4 SlerpShortest(const VQuat4& A, const VQuat4& B, VFloat4 Alpha)
     {
         const VFloat4 One = VFloat4::Broadcast(1.0f);

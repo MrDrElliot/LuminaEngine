@@ -428,6 +428,11 @@ namespace Lumina
                 LOG_WARN("FMeshResource '{}' has a malformed impostor, which is dropped", Data.Name);
                 Data.Impostor.Reset();
             }
+            // An atlas saved before BC7 compresses as it loads, and the next save keeps the smaller form.
+            if (Ar.IsReading())
+            {
+                Impostor::Compress(Data.Impostor);
+            }
         }
 
         // Offsets index CPU arrays and GPU buffers unchecked, so a corrupt package loads an empty mesh instead.

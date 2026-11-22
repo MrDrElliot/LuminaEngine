@@ -36,28 +36,28 @@ using TracyCLCtx = void*;
 #include <CL/cl.h>
 
 #include <atomic>
-#include <cassert>
 #include <sstream>
 
 #include "Tracy.hpp"
 #include "../client/TracyCallstack.hpp"
 #include "../client/TracyProfiler.hpp"
 #include "../common/TracyAlloc.hpp"
+#include "../common/TracyAssert.hpp"
 
 #define TRACY_CL_TO_STRING_INDIRECT(T) #T
 #define TRACY_CL_TO_STRING(T) TRACY_CL_TO_STRING_INDIRECT(T)
-#define TRACY_CL_ASSERT(p) if(!(p)) {                                                         \
+#define TRACY_CL_ASSERT(p) do { if(!(p)) {                                                    \
     TracyMessageL( "TRACY_CL_ASSERT failed on " TracyFile ":" TRACY_CL_TO_STRING(TracyLine) );  \
-    assert(false && "TRACY_CL_ASSERT failed");                                                \
-}
-#define TRACY_CL_CHECK_ERROR(err) if(err != CL_SUCCESS) {                    \
+    TRACY_ASSERT(false && "TRACY_CL_ASSERT failed");                                                \
+} } while(false)
+#define TRACY_CL_CHECK_ERROR(err) do { if(err != CL_SUCCESS) {               \
     std::ostringstream oss;                                                  \
     oss << "TRACY_CL_CHECK_ERROR failed on " << TracyFile << ":" << TracyLine  \
         << ": error code " << err;                                           \
     auto msg = oss.str();                                                    \
     TracyMessage(msg.data(), msg.size());                                    \
-    assert(false && "TRACY_CL_CHECK_ERROR failed");                          \
-}
+    TRACY_ASSERT(false && "TRACY_CL_CHECK_ERROR failed");                          \
+} } while(false)
 
 namespace tracy {
 
@@ -76,22 +76,22 @@ namespace tracy {
     class OpenCLCtx
     {
     public:
-        enum { QueryCount = 64 * 1024 };
+        static constexpr size_t QueryCount = 64 * 1024;
 
         OpenCLCtx(cl_context context, cl_device_id device)
-            : m_contextId(GetGpuCtxCounter().fetch_add(1, std::memory_order_relaxed))
+            : m_contextId(NextGpuContextId())
             , m_head(0)
             , m_tail(0)
         {
             int64_t tcpu, tgpu;
-            TRACY_CL_ASSERT(m_contextId != 255);
+            TRACY_CL_ASSERT(m_contextId != InvalidGpuContextId);
 
             cl_int err = CL_SUCCESS;
             cl_command_queue queue = clCreateCommandQueue(context, device, CL_QUEUE_PROFILING_ENABLE, &err);
-            TRACY_CL_CHECK_ERROR(err)
+            TRACY_CL_CHECK_ERROR(err);
             uint32_t dummyValue = 42;
             cl_mem dummyBuffer = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(uint32_t), nullptr, &err);
-            TRACY_CL_CHECK_ERROR(err)
+            TRACY_CL_CHECK_ERROR(err);
             cl_event writeBufferEvent;
             TRACY_CL_CHECK_ERROR(clEnqueueWriteBuffer(queue, dummyBuffer, CL_FALSE, 0, sizeof(uint32_t), &dummyValue, 0, nullptr, &writeBufferEvent));
             TRACY_CL_CHECK_ERROR(clWaitForEvents(1, &writeBufferEvent));
@@ -113,8 +113,8 @@ namespace tracy {
             memset(&item->gpuNewContext.thread, 0, sizeof(item->gpuNewContext.thread));
             MemWrite(&item->gpuNewContext.period, 1.0f);
             MemWrite(&item->gpuNewContext.type, GpuContextType::OpenCL);
-            MemWrite(&item->gpuNewContext.context, (uint8_t) m_contextId);
-            MemWrite(&item->gpuNewContext.flags, (uint8_t)0);
+            MemWrite(&item->gpuNewContext.context, uint8_t(m_contextId));
+            MemWrite(&item->gpuNewContext.flags, GpuContextNone);
 #ifdef TRACY_ON_DEMAND
             GetProfiler().DeferItem(*item);
 #endif
@@ -164,7 +164,7 @@ namespace tracy {
                     if (eventInfo.event == nullptr) {
                         TracyMessageL("A TracyCLZone must be paird with a TracyCLZoneSetEvent, check your code!");
                     }
-                    assert(false && "clGetEventInfo failed, maybe a TracyCLZone is not paired with TracyCLZoneSetEvent");
+                    TRACY_ASSERT(false && "clGetEventInfo failed, maybe a TracyCLZone is not paired with TracyCLZoneSetEvent");
                     continue;
                 }
                 if (eventStatus != CL_COMPLETE) return;
@@ -178,7 +178,7 @@ namespace tracy {
                 if (err == CL_PROFILING_INFO_NOT_AVAILABLE)
                 {
                     TracyMessageL("command queue is not created with CL_QUEUE_PROFILING_ENABLE flag, check your code!");
-                    assert(false && "command queue is not created with CL_QUEUE_PROFILING_ENABLE flag");
+                    TRACY_ASSERT(false && "command queue is not created with CL_QUEUE_PROFILING_ENABLE flag");
                 }
                 else
                     TRACY_CL_CHECK_ERROR(err);
@@ -187,9 +187,9 @@ namespace tracy {
 
                 auto item = Profiler::QueueSerial();
                 MemWrite(&item->hdr.type, QueueType::GpuTime);
-                MemWrite(&item->gpuTime.gpuTime, (int64_t)eventTimeStamp);
-                MemWrite(&item->gpuTime.queryId, (uint16_t)m_tail);
-                MemWrite(&item->gpuTime.context, m_contextId);
+                MemWrite(&item->gpuTime.gpuTime, int64_t(eventTimeStamp));
+                MemWrite(&item->gpuTime.queryId, uint16_t(m_tail));
+                MemWrite(&item->gpuTime.context, uint8_t(m_contextId));
                 Profiler::QueueSerialFinish();
 
                 if (eventInfo.phase == EventPhase::End)
@@ -200,7 +200,7 @@ namespace tracy {
             }
         }
 
-        tracy_force_inline uint8_t GetId() const
+        tracy_force_inline int32_t GetId() const
         {
             return m_contextId;
         }
@@ -222,7 +222,7 @@ namespace tracy {
 
     private:
 
-        unsigned int m_contextId;
+        int32_t m_contextId;
 
         EventInfo m_query[QueryCount];
         unsigned int m_head; // index at which a new event should be inserted
@@ -251,7 +251,7 @@ namespace tracy {
             MemWrite(&item->gpuZoneBegin.srcloc, (uint64_t)srcLoc);
             MemWrite(&item->gpuZoneBegin.thread, GetThreadHandle());
             MemWrite(&item->gpuZoneBegin.queryId, (uint16_t)m_beginQueryId);
-            MemWrite(&item->gpuZoneBegin.context, ctx->GetId());
+            MemWrite(&item->gpuZoneBegin.context, uint8_t(ctx->GetId()));
             Profiler::QueueSerialFinish();
         }
 
@@ -276,7 +276,7 @@ namespace tracy {
             MemWrite(&item->gpuZoneBegin.srcloc, (uint64_t)srcLoc);
             MemWrite(&item->gpuZoneBegin.thread, GetThreadHandle());
             MemWrite(&item->gpuZoneBegin.queryId, (uint16_t)m_beginQueryId);
-            MemWrite(&item->gpuZoneBegin.context, ctx->GetId());
+            MemWrite(&item->gpuZoneBegin.context, uint8_t(ctx->GetId()));
             Profiler::QueueSerialFinish();
         }
 
@@ -300,7 +300,7 @@ namespace tracy {
             MemWrite(&item->gpuZoneBegin.srcloc, srcloc);
             MemWrite(&item->gpuZoneBegin.thread, GetThreadHandle());
             MemWrite(&item->gpuZoneBegin.queryId, (uint16_t)m_beginQueryId);
-            MemWrite(&item->gpuZoneBegin.context, ctx->GetId());
+            MemWrite(&item->gpuZoneBegin.context, uint8_t(ctx->GetId()));
             Profiler::QueueSerialFinish();
         }
 
@@ -324,7 +324,7 @@ namespace tracy {
             MemWrite(&item->gpuZoneBegin.srcloc, srcloc);
             MemWrite(&item->gpuZoneBegin.thread, GetThreadHandle());
             MemWrite(&item->gpuZoneBegin.queryId, (uint16_t)m_beginQueryId);
-            MemWrite(&item->gpuZoneBegin.context, ctx->GetId());
+            MemWrite(&item->gpuZoneBegin.context, uint8_t(ctx->GetId()));
             Profiler::QueueSerialFinish();
         }
 
@@ -346,7 +346,7 @@ namespace tracy {
             MemWrite(&item->gpuZoneEnd.cpuTime, Profiler::GetTime());
             MemWrite(&item->gpuZoneEnd.thread, GetThreadHandle());
             MemWrite(&item->gpuZoneEnd.queryId, (uint16_t)queryId);
-            MemWrite(&item->gpuZoneEnd.context, m_ctx->GetId());
+            MemWrite(&item->gpuZoneEnd.context, uint8_t(m_ctx->GetId()));
             Profiler::QueueSerialFinish();
         }
 
@@ -373,29 +373,29 @@ namespace tracy {
 
 using TracyCLCtx = tracy::OpenCLCtx*;
 
-#define TracyCLContext(ctx, device) tracy::CreateCLContext(ctx, device);
-#define TracyCLDestroy(ctx) tracy::DestroyCLContext(ctx);
-#define TracyCLContextName(ctx, name, size) ctx->Name(name, size);
+#define TracyCLContext(ctx, device) tracy::CreateCLContext(ctx, device)
+#define TracyCLDestroy(ctx) tracy::DestroyCLContext(ctx)
+#define TracyCLContextName(ctx, name, size) ctx->Name(name, size)
 #if defined TRACY_HAS_CALLSTACK && defined TRACY_CALLSTACK
-#  define TracyCLNamedZone(ctx, varname, name, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine) { name, TracyFunction, TracyFile, (uint32_t)TracyLine, 0 }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), TRACY_CALLSTACK, active );
-#  define TracyCLNamedZoneC(ctx, varname, name, color, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine) { name, TracyFunction, TracyFile, (uint32_t)TracyLine, color }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), TRACY_CALLSTACK, active );
+#  define TracyCLNamedZone(ctx, varname, name, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine) { name, TracyFunction, TracyFile, (uint32_t)TracyLine, 0 }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), TRACY_CALLSTACK, active )
+#  define TracyCLNamedZoneC(ctx, varname, name, color, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine) { name, TracyFunction, TracyFile, (uint32_t)TracyLine, color }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), TRACY_CALLSTACK, active )
 #  define TracyCLZone(ctx, name) TracyCLNamedZoneS(ctx, __tracy_gpu_zone, name, TRACY_CALLSTACK, true)
 #  define TracyCLZoneC(ctx, name, color) TracyCLNamedZoneCS(ctx, __tracy_gpu_zone, name, color, TRACY_CALLSTACK, true)
-#  define TracyCLZoneTransient( ctx, varname, name, active ) tracy::OpenCLCtxScope varname( ctx, TracyLine, TracyFile, strlen( TracyFile ), TracyFunction, strlen( TracyFunction ), name, strlen( name ), TRACY_CALLSTACK, active );
+#  define TracyCLZoneTransient( ctx, varname, name, active ) tracy::OpenCLCtxScope varname( ctx, TracyLine, TracyFile, strlen( TracyFile ), TracyFunction, strlen( TracyFunction ), name, strlen( name ), TRACY_CALLSTACK, active )
 #else
-#  define TracyCLNamedZone(ctx, varname, name, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine){ name, TracyFunction, TracyFile, (uint32_t)TracyLine, 0 }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), active);
-#  define TracyCLNamedZoneC(ctx, varname, name, color, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine){ name, TracyFunction, TracyFile, (uint32_t)TracyLine, color }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), active);
+#  define TracyCLNamedZone(ctx, varname, name, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine){ name, TracyFunction, TracyFile, (uint32_t)TracyLine, 0 }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), active)
+#  define TracyCLNamedZoneC(ctx, varname, name, color, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine){ name, TracyFunction, TracyFile, (uint32_t)TracyLine, color }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), active)
 #  define TracyCLZone(ctx, name) TracyCLNamedZone(ctx, __tracy_gpu_zone, name, true)
 #  define TracyCLZoneC(ctx, name, color) TracyCLNamedZoneC(ctx, __tracy_gpu_zone, name, color, true )
-#  define TracyCLZoneTransient( ctx, varname, name, active ) tracy::OpenCLCtxScope varname( ctx, TracyLine, TracyFile, strlen( TracyFile ), TracyFunction, strlen( TracyFunction ), name, strlen( name ), active );
+#  define TracyCLZoneTransient( ctx, varname, name, active ) tracy::OpenCLCtxScope varname( ctx, TracyLine, TracyFile, strlen( TracyFile ), TracyFunction, strlen( TracyFunction ), name, strlen( name ), active )
 #endif
 
 #ifdef TRACY_HAS_CALLSTACK
-#  define TracyCLNamedZoneS(ctx, varname, name, depth, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine){ name, TracyFunction, TracyFile, (uint32_t)TracyLine, 0 }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), depth, active);
-#  define TracyCLNamedZoneCS(ctx, varname, name, color, depth, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine){ name, TracyFunction, TracyFile, (uint32_t)TracyLine, color }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), depth, active);
+#  define TracyCLNamedZoneS(ctx, varname, name, depth, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine){ name, TracyFunction, TracyFile, (uint32_t)TracyLine, 0 }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), depth, active)
+#  define TracyCLNamedZoneCS(ctx, varname, name, color, depth, active) static constexpr tracy::SourceLocationData TracyConcat(__tracy_gpu_source_location,TracyLine){ name, TracyFunction, TracyFile, (uint32_t)TracyLine, color }; tracy::OpenCLCtxScope varname(ctx, &TracyConcat(__tracy_gpu_source_location,TracyLine), depth, active)
 #  define TracyCLZoneS(ctx, name, depth) TracyCLNamedZoneS(ctx, __tracy_gpu_zone, name, depth, true)
 #  define TracyCLZoneCS(ctx, name, color, depth) TracyCLNamedZoneCS(ctx, __tracy_gpu_zone, name, color, depth, true)
-#  define TracyCLZoneTransientS( ctx, varname, name, depth, active ) tracy::OpenCLCtxScope varname( ctx, TracyLine, TracyFile, strlen( TracyFile ), TracyFunction, strlen( TracyFunction ), name, strlen( name ), depth, active );
+#  define TracyCLZoneTransientS( ctx, varname, name, depth, active ) tracy::OpenCLCtxScope varname( ctx, TracyLine, TracyFile, strlen( TracyFile ), TracyFunction, strlen( TracyFunction ), name, strlen( name ), depth, active )
 #else
 #  define TracyCLNamedZoneS(ctx, varname, name, depth, active) TracyCLNamedZone(ctx, varname, name, active)
 #  define TracyCLNamedZoneCS(ctx, varname, name, color, depth, active) TracyCLNamedZoneC(ctx, varname, name, color, active)

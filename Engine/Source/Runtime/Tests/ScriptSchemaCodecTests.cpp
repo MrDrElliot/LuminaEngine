@@ -9,9 +9,7 @@ using namespace Lumina::Scripting;
 
 namespace
 {
-    // Mirrors LuminaSharp.Serializer so a test can produce the wire the managed side would. Kept deliberately
-    // separate from the reader: a bug that cancelled out between one shared implementation and itself would
-    // pass, which is exactly the drift this format exists to catch.
+    // Mirrors LuminaSharp.Serializer and stays separate from the reader, so a bug cannot cancel out against itself.
     struct FTestSchemaWriter
     {
         TVector<uint8> Bytes;
@@ -98,8 +96,7 @@ namespace
             Close(L);
         }
 
-        // Only a top-level field carries the hot-reload byte, so a nested one that wrote it would put every
-        // reader a byte out from there on.
+        // Only a top-level field carries the hot-reload byte, or every reader would be a byte out afterward.
         void ScalarField(const char* Name, EPropertyTypeFlags Kind, const char* Tooltip = "",
                          uint32 Flags = 0, bool bWriteFlags = false, bool bTopLevel = true)
         {
@@ -217,8 +214,7 @@ TEST(ScriptSchemaCodec, AWellFormedBufferRoundTrips)
     EXPECT_EQ(*Tooltip, FString("how fast"));
 }
 
-// The whole reason the format is framed: a writer that learns a new trailing field must not break a reader
-// that has not. Without this the reader would consume the extra bytes as the next record and desync.
+// A writer that learns a new trailing field must not break a reader that has not, or it desyncs on the extra bytes.
 TEST(ScriptSchemaCodec, AnUnknownTrailingFieldIsSkippedRatherThanDesyncing)
 {
     FTestSchemaWriter W;
@@ -298,8 +294,7 @@ TEST(ScriptSchemaCodec, ATruncatedBufferIsReportedRatherThanPartiallyAccepted)
     EXPECT_FALSE(ParseSchemaBlob(W.Bytes, Schema));
 }
 
-// A record written out of order is the shape a hand-mirrored writer drifts into, and the tag is what turns
-// that into a named failure instead of four bytes read as a length.
+// A record written out of order must fail by name through its tag instead of four bytes read as a length.
 TEST(ScriptSchemaCodec, AMisorderedRecordIsCaughtByItsTag)
 {
     FTestSchemaWriter W;

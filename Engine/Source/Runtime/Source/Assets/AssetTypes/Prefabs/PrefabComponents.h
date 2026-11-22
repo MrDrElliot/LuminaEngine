@@ -70,8 +70,7 @@ namespace Lumina
         FName ComponentType;
     };
 
-    // A node a variant adds outright, or inherits but reparents. Parentage is by StableID because an
-    // added entity usually hangs under an inherited one, which has no id in the variant's own registry.
+    // A node a variant adds or reparents, with parentage by StableID since an inherited parent has no id in the variant's registry.
     REFLECT()
     struct RUNTIME_API SPrefabVariantNode
     {

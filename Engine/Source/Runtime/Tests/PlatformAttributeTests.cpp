@@ -7,8 +7,7 @@ using namespace Lumina;
 
 namespace
 {
-    // Compiles only while every attribute macro expands to something a declaration accepts, which is
-    // what breaks first when one is added without a REFLECTION_PARSER mirror.
+    // Breaks first when an attribute macro is added without a REFLECTION_PARSER mirror.
     LUMINA_FORCEINLINE_HINT int32 HintedAdd(int32 A, int32 B) { return A + B; }
 
     LUMINA_FORCEINLINE_DEBUGGABLE int32 DebuggableAdd(int32 A, int32 B) { return A + B; }

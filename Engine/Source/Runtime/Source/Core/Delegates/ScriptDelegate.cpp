@@ -12,16 +12,14 @@ namespace Lumina
     {
         size_t GLiveManagedBindings = 0;
 
-        // Only delegates that actually carry a managed listener, so an unbound one costs nothing and no
-        // per-delegate bytes are spent on a concern that only matters at reload.
+        // Only delegates carrying a managed listener, so an unbound one costs nothing.
         THashSet<FScriptDelegateBase*>& ManagedBoundDelegates()
         {
             static THashSet<FScriptDelegateBase*> Set;
             return Set;
         }
 
-        // The Destroy hook every managed listener carries. Its address is also what marks a listener as
-        // managed, so an id collision can never retire a native callable.
+        // The Destroy hook's address marks a listener as managed, so an id collision can never retire a native callable.
         void FreeManagedListener(void* Context)
         {
             --GLiveManagedBindings;
@@ -32,6 +30,36 @@ namespace Lumina
         void InvokeManagedListener(void* Context, const void* Payload)
         {
             Scripting::InvokeScriptCallbackRepeating(SScriptCallback{ reinterpret_cast<uint64>(Context) }, reinterpret_cast<uint64>(Payload));
+        }
+    }
+
+    bool FScriptDelegateBase::OwnsResources(const FListener& Listener)
+    {
+        return Listener.Destroy != nullptr || Listener.Token != nullptr;
+    }
+
+    void FScriptDelegateBase::DiscardListener(const FListener& Listener)
+    {
+        if (Listener.Destroy != nullptr)
+        {
+            Listener.Destroy(Listener.Context);
+        }
+        if (Listener.Token != nullptr)
+        {
+            Listener.Token->Release();
+        }
+    }
+
+    FBindingToken* FBindingToken::Create()
+    {
+        return new FBindingToken();
+    }
+
+    void FBindingToken::Release()
+    {
+        if (Refs.fetch_sub(1, Atomic::MemoryOrderAcqRel) == 1)
+        {
+            delete this;
         }
     }
 
@@ -66,7 +94,7 @@ namespace Lumina
         // A handler destroying its own delegate is still running, so the broadcast that called it frees the callables.
         for (FListener& Listener : Listeners)
         {
-            if (Listener.Destroy == nullptr)
+            if (!OwnsResources(Listener))
             {
                 continue;
             }
@@ -76,7 +104,7 @@ namespace Lumina
             }
             else
             {
-                Listener.Destroy(Listener.Context);
+                DiscardListener(Listener);
             }
         }
         Listeners.Reset();
@@ -106,7 +134,7 @@ namespace Lumina
             {
                 Listeners.Add(Listener);
             }
-            else if (Listener.Destroy != nullptr && Outermost != nullptr)
+            else if (OwnsResources(Listener) && Outermost != nullptr)
             {
                 Outermost->PendingDestroy.Add(Listener);
             }
@@ -171,9 +199,9 @@ namespace Lumina
         return false;
     }
 
-    uint64 FScriptDelegateBase::AddListener(FThunk Thunk, void* Context, void (*Destroy)(void*))
+    uint64 FScriptDelegateBase::AddListener(FThunk Thunk, void* Context, void (*Destroy)(void*), FBindingToken* Token)
     {
-        if (Thunk == nullptr)
+        if (Thunk == nullptr || (Token != nullptr && Token->HasEnded()))
         {
             if (Destroy != nullptr)
             {
@@ -182,10 +210,29 @@ namespace Lumina
             return 0;
         }
 
+        // A delegate that rarely broadcasts would otherwise keep every ended owner's callables until it next fires.
+        RetireEnded();
+
+        if (Token != nullptr)
+        {
+            Token->AddRef();
+        }
         const uint64 Id = GenerateId();
-        Listeners.Emplace(Id, Thunk, Context, Destroy);
+        Listeners.Emplace(Id, Thunk, Context, Destroy, Token);
         ++LiveCount;
         return Id;
+    }
+
+    void FScriptDelegateBase::RetireEnded()
+    {
+        for (int32 Index = Listeners.Num(); Index > 0; --Index)
+        {
+            const FListener& Listener = Listeners[Index - 1];
+            if (Listener.Thunk != nullptr && Listener.Token != nullptr && Listener.Token->HasEnded())
+            {
+                RetireAt(Index - 1);
+            }
+        }
     }
 
     bool FScriptDelegateBase::RemoveListener(uint64 Id)
@@ -227,10 +274,7 @@ namespace Lumina
 
         const FListener Retired = Listener;
         Listeners.RemoveAt(Index);
-        if (Retired.Destroy != nullptr)
-        {
-            Retired.Destroy(Retired.Context);
-        }
+        DiscardListener(Retired);
     }
 
     void FScriptDelegateBase::Compact()
@@ -243,7 +287,7 @@ namespace Lumina
         {
             if (Listeners[Read].Thunk == nullptr)
             {
-                if (Listeners[Read].Destroy != nullptr)
+                if (OwnsResources(Listeners[Read]))
                 {
                     Retired.Add(Listeners[Read]);
                 }
@@ -260,19 +304,19 @@ namespace Lumina
         // Last, since freeing a callable can run a destructor that destroys this delegate's owner.
         for (const FListener& Listener : Retired)
         {
-            Listener.Destroy(Listener.Context);
+            DiscardListener(Listener);
         }
     }
 
-    uint64 FScriptDelegateBase::BindManaged(SScriptCallback Callback)
+    uint64 FScriptDelegateBase::BindManaged(SScriptCallback Callback, FBindingToken* Token)
     {
-        return BindManaged(&InvokeManagedListener, reinterpret_cast<void*>(Callback.Token));
+        return BindManaged(&InvokeManagedListener, reinterpret_cast<void*>(Callback.Token), Token);
     }
 
-    uint64 FScriptDelegateBase::BindManaged(FThunk Thunk, void* Context)
+    uint64 FScriptDelegateBase::BindManaged(FThunk Thunk, void* Context, FBindingToken* Token)
     {
         ++GLiveManagedBindings;
-        const uint64 Id = AddListener(Thunk, Context, &FreeManagedListener);
+        const uint64 Id = AddListener(Thunk, Context, &FreeManagedListener, Token);
         if (Id == 0)
         {
             // AddListener already ran Destroy, which decremented; nothing else to undo.
@@ -376,7 +420,7 @@ namespace Lumina
         return Count;
     }
 
-    bool FScriptDelegateBase::BroadcastAll(const void* Payload)
+    bool FScriptDelegateBase::BroadcastAll(const void* Payload, FListenerGuard Guard)
     {
         if (LiveCount == 0)
         {
@@ -404,7 +448,20 @@ namespace Lumina
                 void* const  Context = Listeners[Index].Context;
                 const bool   bNative = Listeners[Index].Destroy != &FreeManagedListener;
 
-                if (Thunk != nullptr && bNative == bNativePhase)
+                if (Thunk == nullptr || bNative != bNativePhase)
+                {
+                    continue;
+                }
+                if (const FBindingToken* Token = Listeners[Index].Token; Token != nullptr && Token->HasEnded())
+                {
+                    RetireAt(Index);
+                    continue;
+                }
+                if (Guard != nullptr)
+                {
+                    Guard(Thunk, Context, Payload);
+                }
+                else
                 {
                     Thunk(Context, Payload);
                 }
@@ -424,7 +481,7 @@ namespace Lumina
             }
             for (const FListener& Listener : Frame.PendingDestroy)
             {
-                Listener.Destroy(Listener.Context);
+                DiscardListener(Listener);
             }
             return false;
         }

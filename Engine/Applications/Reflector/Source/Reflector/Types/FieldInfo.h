@@ -9,8 +9,7 @@ namespace Lumina
     struct FFieldInfo
     {
         CXType                              Type;
-        // Cursor of the originating field; carried through sub-field creation so
-        // diagnostics for inner properties still point at the user-facing source line.
+        // Carried through sub-field creation so inner property diagnostics point at the user-facing source line.
         CXCursor                            OwningCursor = clang_getNullCursor();
         EPropertyTypeFlags                  Flags;
         EPropertyFlags                      PropertyFlags = EPropertyFlags::None;

@@ -62,8 +62,7 @@ namespace Lumina
         // Strips SPrefabInstanceComponent from the subtree, and fails when InstanceRoot is not an instance root of a prefab.
         static bool DetachInstance(CWorld* World, ECS::FEntity InstanceRoot);
 
-        // Replaces this prefab with a deep copy of RootEntity and descendants from SourceWorld.
-        // Adopting tags every captured source entity as a member of this prefab, so a pushed-back instance stays one instance.
+        // Replaces this prefab with a deep copy of RootEntity and descendants, tagging each source entity so a pushed-back instance stays one instance.
         void CaptureFromWorld(CWorld* SourceWorld, ECS::FEntity RootEntity, bool bAdoptSourceAsInstance = false);
 
         // The prefab's own component the overrides diff against and reset to, or null when it is absent.
@@ -110,8 +109,7 @@ namespace Lumina
             const TVector<ECS::FEntity>* SourceEntities = nullptr,
             bool(*ExtraSkipStorage)(uint32) = nullptr);
 
-        // A variant owns no authored registry: Registry is RESOLVED from ParentPrefab plus the delta
-        // below, so a parent edit reaches every descendant without anything being copied forward.
+        // A variant owns no authored registry, so Registry is resolved from ParentPrefab plus the delta below.
 
         // Prefab this one is a variant of. Null for a root prefab, whose Registry is authored directly.
         PROPERTY(ReadOnly, Category = "Variant")
@@ -137,8 +135,7 @@ namespace Lumina
         // Loaded prefabs whose ParentPrefab is this one.
         NODISCARD TVector<CPrefab*> FindDirectVariants() const;
 
-        // Bumped every time ResolveVariant rebuilds Registry. An open editor watches this to know its
-        // preview world is showing data the parent has since replaced.
+        // Bumped every time ResolveVariant rebuilds Registry, so an open editor knows its preview is stale.
         NODISCARD uint32 GetVariantResolveCount() const { return VariantResolveCount; }
 
         // A variant serializes only its delta, so an unresolved Registry is empty rather than authoritative.
@@ -158,8 +155,7 @@ namespace Lumina
         // The only entities a variant serializes, each paired with a parent node by its SPrefabComponent StableID.
         ECS::FRegistry VariantDelta;
 
-        // The ledger. Public because the reflector's generated code takes offsetof on every PROPERTY;
-        // nothing outside the variant paths should write these.
+        // The ledger, public for the reflector's offsetof, and only the variant paths should write it.
         PROPERTY(Hidden)
         TVector<SPrefabPropertyOverride> VariantOverriddenProperties;
 

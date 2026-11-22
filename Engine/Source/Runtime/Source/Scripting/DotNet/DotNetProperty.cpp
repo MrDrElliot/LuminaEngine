@@ -18,6 +18,7 @@
 #include "Core/Reflection/Type/Properties/ClassProperty.h"
 #include "Core/Reflection/Type/Properties/SubStructProperty.h"
 #include "Scripting/ScriptableObject.h"
+#include "Scripting/EntityScript.h"
 #include "Scripting/ScriptCallback.h"
 #include "Scripting/ScriptTypeRegistry.h"
 #include "Core/Object/SoftObjectPtr.h"
@@ -536,14 +537,16 @@ LUMINA_DOTNET_EXPORT(const void*, PropMapOps)(const void* Prop)
 
 // Script delegate bind/unbind. Game thread only.
 
-LUMINA_DOTNET_EXPORT(uint64, DelegateBind)(void* DelegatePtr, uint64 Callback)
+// Owner is the handler's target object, so a handler that is a script's own method unbinds when that script detaches.
+LUMINA_DOTNET_EXPORT(uint64, DelegateBind)(void* DelegatePtr, uint64 Callback, void* Owner)
 {
     if (DelegatePtr == nullptr)
     {
         Scripting::ReleaseScriptCallback(SScriptCallback{ Callback });
         return 0;
     }
-    return static_cast<FScriptDelegateBase*>(DelegatePtr)->BindManaged(SScriptCallback{ Callback });
+    FBindingToken* Token = BindingTokenFor(Cast<CEntityScript>(static_cast<CObject*>(Owner)));
+    return static_cast<FScriptDelegateBase*>(DelegatePtr)->BindManaged(SScriptCallback{ Callback }, Token);
 }
 
 // A delegate's argument properties, so the managed side can bind frame slots the way a function does.

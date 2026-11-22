@@ -66,8 +66,7 @@ public static class LuminaFeatures
             // Debug only; too expensive elsewhere. Debug also enables robustBufferAccess (see CreateDevice).
             Validation => Target.Configuration == BuildConfiguration.Debug,
 
-            // Never on by default: GPU-AV instruments every shader. --gpuvalidation toggles it at runtime.
-            // On NVIDIA 610.88 the instrumented shaders fault inside the driver (2026-08-04).
+            // Off by default because instrumented shaders fault inside NVIDIA 610.88 drivers. --gpuvalidation toggles it at runtime.
             GpuValidation => false,
 
             // Vendor specific: pointless on a machine that cannot produce the crash dumps.

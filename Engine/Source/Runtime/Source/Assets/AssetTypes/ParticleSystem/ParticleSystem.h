@@ -544,8 +544,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Events")
         bool bReportCollisions = false;
 
-        // Below: legacy uniform-driven fields kept (non-editable) for assets not yet compiled to a
-        // module stack; superseded by editor modules baked into the compute shader. Don't surface in editor.
+        // Below are legacy uniform fields kept hidden for assets not yet compiled to a module stack.
         PROPERTY(Hidden)
         EParticleShaderMode ShaderMode = EParticleShaderMode::Default;
 
@@ -851,8 +850,7 @@ namespace Lumina
         bool            bBurstPending       = true;
         FVector3        PrevEmitterPosition = FVector3(0.0f);
         bool            bHasPrevPosition    = false;
-        // Estimated time until all particles are dead; bumped on spawn, decremented otherwise.
-        // At 0 with no spawn, the simulate dispatch is skipped.
+        // Estimated time until all particles are dead, and at 0 with no spawn the simulate dispatch is skipped.
         float           AliveTimeRemaining  = 0.0f;
 
         // Events this emitter's particles raise for sub-emitters, one list per EParticleEventType.

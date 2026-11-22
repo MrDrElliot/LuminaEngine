@@ -92,8 +92,7 @@ namespace Lumina
         
         FString GetNodeFullName() { return FullName; }
 
-        // FullName drives the emitted variable name. The material-function inliner temporarily prefixes
-        // a function's interior node names so nested calls don't collide, then restores them. Not general-use.
+        // FullName drives the emitted variable name, and only the material-function inliner should change it.
         void SetNodeFullName(const FString& In) { FullName = In; }
 
         virtual bool WantsTitlebar() const { return true; }
@@ -108,32 +107,25 @@ namespace Lumina
 
         virtual bool IsDeletable() const { return true; }
 
-        // A sub-graph this node contains, descended into on double-click (e.g. a state machine canvas).
-        // Null for ordinary leaf nodes. May lazily allocate the graph.
+        // A sub-graph descended into on double-click, which may be allocated lazily. Null for leaf nodes.
         virtual CEdNodeGraph* GetEnterableSubGraph() { return nullptr; }
 
         // A comment box annotates the canvas and compiles to nothing, so graph tools leave it out of their passes.
         virtual bool IsCommentNode() const { return false; }
 
-        // True for wire-passthrough nodes (e.g. CEdNode_Reroute): graph walks skip them and resolve
-        // through to the real source/target, and the compiler emits nothing for them.
+        // True for wire-passthrough nodes, which graph walks resolve through and the compiler skips.
         virtual bool IsRerouteNode() const { return false; }
 
-        // Whether a passthrough node collapses to a single dot. Split from IsRerouteNode because a
-        // named reroute passes through like one but still needs a titled body to show its name.
+        // Split from IsRerouteNode because a named reroute passes through but still needs a titled body.
         virtual bool WantsRerouteDotRendering() const { return IsRerouteNode(); }
 
         // False for a static switch, whose branch pins are typed inputs the schema still has to police.
         virtual bool IsUntypedPassthrough() const { return IsRerouteNode(); }
 
-        // The pin feeding a passthrough node. Defaults to the first input; a named reroute usage
-        // returns its declaration's input instead, which is what lets a wireless link resolve through
-        // every walk that already understands reroutes.
+        // Defaults to the first input, while a named reroute usage returns its declaration's input so wireless links resolve.
         virtual CEdNodeGraphPin* GetRerouteSourcePin() const;
 
-        // A node this one depends on with no wire between them. Reachability and topological order
-        // fold it in as a real input edge, so a named reroute's upstream still compiles, and still
-        // compiles first.
+        // A dependency with no wire, folded into reachability and topological order as a real input edge.
         virtual CEdGraphNode* GetImplicitInputNode() const { return nullptr; }
 
         // Title-bar text. Separate from GetNodeDisplayName, which pin ids hash and a rename must not move.
@@ -187,14 +179,10 @@ namespace Lumina
         // True when a pin on this node already uses this id, in either direction.
         bool IsPinIDTaken(uint32 ID) const;
 
-        // Owning graph; populated by CEdNodeGraph::AddNode. Lets nodes reach up for graph-wide
-        // context (e.g. material domain on CMaterialOutputNode).
+        // Populated by CEdNodeGraph::AddNode so nodes can reach graph-wide context.
         CEdNodeGraph* GetOwningGraph() const { return OwningGraph; }
 
-        // Call when an inline editor on this node commits a value. Those widgets (a constant's
-        // DragFloat, a pin's ColorEdit, a texture slot) write straight into the node and never pass
-        // through the property table, so without this nothing marks the graph as changed and a tool
-        // watching GetContentVersion never learns it needs to recompile.
+        // Call when an inline widget commits a value, since those bypass the property table and nothing else bumps GetContentVersion.
         void NotifyValueEdited();
 
         // A node that creates its sub-graph lazily calls this, so the new canvas rides along with the newest undo step.
@@ -226,16 +214,14 @@ namespace Lumina
 
         FString                             FullName;
 
-        // Raw "DisplayName_NodeID". Pin IDs hash this rather than FullName, so sanitizing the emitted
-        // identifier never shifts pin IDs and drops the serialized links of existing graphs.
+        // Pin IDs hash this rather than FullName so sanitizing the emitted identifier never drops serialized links.
         FString                             PinHashName;
 
         TOptional<EdNodeGraph::FError>      Error;
         TOptional<EdNodeGraph::FError>      Warning;
         bool                                bWasBuild = false;
 
-        // Set by CEdNodeGraph::AddNode. Non-owning -- the graph owns the
-        // node, not the other way around.
+        // Set by CEdNodeGraph::AddNode and non-owning.
         CEdNodeGraph*                       OwningGraph = nullptr;
     };
     

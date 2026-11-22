@@ -32,8 +32,12 @@ namespace Lumina
 
         bool StartNext();
         void Finish(FJob& Job);
+        // Queues the forest meshes of the open scene that have no impostor yet, each once a session, so far forests never wait on a manual bake.
+        void QueueMissingForestImpostors();
 
         TVector<TWeakObjectPtr<CStaticMesh>> Queue;
         TUniquePtr<FJob>                     Active;
+        TVector<TWeakObjectPtr<CStaticMesh>> AutoQueued;
+        uint32                               FramesToAutoScan = 0;
     };
 }

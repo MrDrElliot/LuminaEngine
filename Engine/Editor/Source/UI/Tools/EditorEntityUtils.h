@@ -18,8 +18,7 @@ namespace Lumina
     struct STransformComponent;
 }
 
-// Shared helpers for FWorldEditorTool and FPrefabEditorTool (editor-only tag set,
-// transform/gizmo math, outliner row formatting) so the two tools agree by construction.
+// Helpers shared by FWorldEditorTool and FPrefabEditorTool so the two agree by construction.
 namespace Lumina::EditorEntityUtils
 {
     /** True for tags/components that are tool-internal bookkeeping and must NOT be

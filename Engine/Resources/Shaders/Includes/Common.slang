@@ -577,6 +577,31 @@ struct FInstanceProxy
     float  ThinningStartDistance;
 };
 
+// Mirror of Lumina::FImpostorPoint (32 B), a far plant drawn only as its mesh's impostor.
+struct FImpostorPoint
+{
+    float3 Position;
+    float  Scale;
+    uint   Rotation;
+    uint   Type;
+    uint   Reserved0;
+    uint   Reserved1;
+};
+
+// Mirror of Lumina::FImpostorType (64 B), what every point of one foliage type shares.
+struct FImpostorType
+{
+    FInstanceProxy Proxy;
+    uint           MeshletHeaderSlot;
+    uint           MaterialIndex;
+    uint           EntityID;
+    uint           Flags;
+    float          MaxDrawDistance;
+    uint           Reserved0;
+    uint           Reserved1;
+    uint           Reserved2;
+};
+
 // Word 0 is never handed out, so a zeroed payload reads as an instance with no meshlet visibility.
 static const uint kNoMeshletVisibility = 0u;
 
@@ -624,6 +649,36 @@ struct FTransform3x4
         return float4x4(Row0, Row1, Row2, float4(0.0, 0.0, 0.0, 1.0));
     }
 };
+
+// The inverse of PackImpostorRotation, an (x, y, z, w) quaternion.
+float4 UnpackImpostorRotation(uint Packed)
+{
+    const uint Largest = Packed >> 30u;
+    const float3 Small = (float3(uint3(Packed >> 20u, Packed >> 10u, Packed) & 1023u) / 1023.0 - 0.5) * 1.41421356;
+    const float  Big   = sqrt(saturate(1.0 - dot(Small, Small)));
+    float4 Q;
+    if (Largest == 0u)      { Q = float4(Big, Small.x, Small.y, Small.z); }
+    else if (Largest == 1u) { Q = float4(Small.x, Big, Small.y, Small.z); }
+    else if (Largest == 2u) { Q = float4(Small.x, Small.y, Big, Small.z); }
+    else                    { Q = float4(Small.x, Small.y, Small.z, Big); }
+    return Q;
+}
+
+// Rows of the point's affine model matrix, rotation and uniform scale then translation, as the retained transforms hold it.
+float4x4 ImpostorPointModel(FImpostorPoint P)
+{
+    const float4 Q = UnpackImpostorRotation(P.Rotation);
+    const float x2 = Q.x + Q.x, y2 = Q.y + Q.y, z2 = Q.z + Q.z;
+    const float xx = Q.x * x2, yy = Q.y * y2, zz = Q.z * z2;
+    const float xy = Q.x * y2, xz = Q.x * z2, yz = Q.y * z2;
+    const float wx = Q.w * x2, wy = Q.w * y2, wz = Q.w * z2;
+    const float S  = P.Scale;
+    FTransform3x4 Rows;
+    Rows.Row0 = float4((1.0 - (yy + zz)) * S, (xy - wz) * S,         (xz + wy) * S,         P.Position.x);
+    Rows.Row1 = float4((xy + wz) * S,         (1.0 - (xx + zz)) * S, (yz - wx) * S,         P.Position.y);
+    Rows.Row2 = float4((xz - wy) * S,         (yz + wx) * S,         (1.0 - (xx + yy)) * S, P.Position.z);
+    return Rows.ToMatrix();
+}
 
 // Mirror of Lumina::FPackedBoneTransform, 3x3 in halves with full-precision translation.
 struct FBoneTransform
@@ -1337,6 +1392,12 @@ float3 GetInstanceScale(float4x4 ModelMatrix)
         length(mul(ModelMatrix, float4(1.0, 0.0, 0.0, 0.0)).xyz),
         length(mul(ModelMatrix, float4(0.0, 1.0, 0.0, 0.0)).xyz),
         length(mul(ModelMatrix, float4(0.0, 0.0, 1.0, 0.0)).xyz));
+}
+
+float MatrixMaxScale(float4x4 ModelMatrix)
+{
+    const float3 Scale = GetInstanceScale(ModelMatrix);
+    return max(Scale.x, max(Scale.y, Scale.z));
 }
 
 // Exact inverse of an affine transform, cofactor form so a degenerate scale stays finite.

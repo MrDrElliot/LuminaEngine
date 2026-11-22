@@ -8,9 +8,7 @@
 
 namespace Lumina
 {
-	// Immutable encoded audio bytes (e.g. a .wav file image) shared between an asset and any
-	// in-flight sounds; the audio pump decodes from these bytes, so they must stay alive for
-	// the duration of playback. Share via TSharedPtr.
+	// The audio pump decodes from these bytes, so they must stay alive for the duration of playback via TSharedPtr.
 	struct FAudioData
 	{
 		TVector<uint8> Bytes;

@@ -36,8 +36,7 @@ namespace Lumina
             OutExtensions.Append({ ".gltf", ".glb" });
         }
 
-        // Embedded image payloads are views into the parsed buffers, so the parse outlives ParseMeshSource
-        // and is only released once the import is committed or canceled.
+        // Embedded image payloads are views into the parsed buffers, so the parse outlives ParseMeshSource until commit or cancel.
         void ReleaseSourceData() override;
 
     protected:

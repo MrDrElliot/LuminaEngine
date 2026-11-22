@@ -24,10 +24,7 @@ namespace Lumina::Reflection
         
         std::string                                                       Name;
         std::string                                                       Path;
-        // Override destination for this project's generated C# bindings (.generated.cs). Empty = the default
-        // Intermediates/CSharpBindings/<Name> (engine modules → LuminaSharp.dll). A plugin/game module sets
-        // this to its <root>/Scripts/Generated so the per-plugin script gather compiles the bindings into the
-        // plugin's OWN assembly, not LuminaSharp.dll.
+        // Plugin and game modules set this so their bindings compile into their own assembly instead of LuminaSharp.dll.
         std::string                                                       CSharpBindingsDir;
 
         // Routes reflected-TYPE bindings into CSharpBindingsDir too, for a unit that compiles its own assembly.
@@ -45,11 +42,7 @@ namespace Lumina::Reflection
         /// include path.
         std::string                                                       PrecompiledHeader;
 
-        // Parsed for type discovery only -- no code is generated for it, and its output directories are
-        // never swept. A game or plugin workspace pulls the engine's modules in this way so that its own
-        // types can name engine types: a base class, or a property typed as an engine struct, needs the
-        // engine type in the database to emit a SuperStruct and a cross-module declaration. Without it
-        // the base is silently dropped and the property reference fails to link.
+        // Parsed for type discovery only so game types can name engine bases and properties, which otherwise drop or fail to link.
         bool                                                                bReferenceOnly = false;
 
         FReflectedWorkspace*                                                Workspace;

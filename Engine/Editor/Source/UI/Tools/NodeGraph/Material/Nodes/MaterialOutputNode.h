@@ -7,8 +7,7 @@ namespace Lumina
 {
     class CMaterialOutput;
 
-    // The graph creates exactly one of these itself (EnsureRootNodes), so it must never be offered
-    // in the palette -- a second one would give the compiler two roots.
+    // Created by EnsureRootNodes and never offered in the palette, since a second would give the compiler two roots.
     REFLECT(NotPlaceable)
     class CMaterialOutputNode : public CMaterialGraphNode
     {
@@ -23,8 +22,7 @@ namespace Lumina
 
         void BuildNode() override;
 
-        // Refreshes pin enable/disable from the current material domain before pins draw, so the right
-        // pins light up immediately after flipping MaterialType in the inspector.
+        // Refreshes pin enable state from the material domain before pins draw, so a MaterialType change shows at once.
         void DrawNodeTitleBar() override;
 
         void GenerateDefinition(FMaterialCompiler& Compiler) override;

@@ -16,8 +16,7 @@ namespace Lumina
 
         bool IsClient() const { return !Host.IsEmpty(); }
 
-        // Parse "192.168.1.5:7777" | "/Game/Maps/Foo?listen?port=7777". A token starting with '/' is the Map;
-        // otherwise it's host[:port]. Options after '?': "listen", "port=N".
+        // A leading '/' token is the map, otherwise it is host and optional port, with options after '?'.
         static FURL Parse(FStringView Str)
         {
             FURL URL;

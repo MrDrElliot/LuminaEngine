@@ -168,14 +168,20 @@ namespace Lumina
                 Species.bRandomYaw    = Type->bRandomYaw;
 
                 // Patches take over past PatchDistance, blades thinning out as patches thin in across one band, so the seam is a blend.
-                CStaticMesh* PatchMesh = Type->GetPatchMesh();
-                if (PatchMesh == nullptr || !PatchMesh->IsReadyForRender() || Type->PatchDistance >= Type->CullDistance)
+                if (Type->PatchDistance <= 0.0f || Type->PatchDistance >= Type->CullDistance)
                 {
                     continue;
                 }
+                // Blades stop at the band even while the patch mesh builds, since blades to the full distance grow millions of slots for those frames.
                 const float BandHalf = Type->PatchDistance * kPatchBlendShare * 0.5f;
                 Species.CullDistance = Type->PatchDistance + BandHalf;
                 Species.FadeOutStart = Type->PatchDistance - BandHalf;
+
+                CStaticMesh* PatchMesh = Type->GetPatchMesh();
+                if (PatchMesh == nullptr || !PatchMesh->IsReadyForRender())
+                {
+                    continue;
+                }
 
                 FGrassSpeciesExtract Patch = Species;
                 Patch.bPatch        = true;

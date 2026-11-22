@@ -37,8 +37,7 @@ namespace Lumina
                 default: break;
             }
 
-			// Phrase match, unlike the rest of the editor's search boxes: OR-on-space would make
-			// "failed to load" match every line holding "to".
+			// Phrase match, since splitting on spaces would make "failed to load" match every line holding "to".
 			return TextFilter.PassFilter(Entry.Message.GetData());
         }
 
@@ -144,8 +143,7 @@ namespace Lumina
         static int InputTextCallbackStub(ImGuiInputTextCallbackData* Data);
         int InputTextCallback(ImGuiInputTextCallbackData* Data);
 
-        // Selection is keyed on the index into the log queue, so it survives the filter changing
-        // under it. Anchor is a queue index too; the shift-range resolves it against the visible list.
+        // Selection and anchor are queue indices so they survive filter changes, and shift-range resolves against the visible list.
         void HandleRowClick(uint32 MessageIndex, const TVector<uint32>& VisibleIndices);
         void CopyToClipboard(const TVector<uint32>& VisibleIndices, bool bSelectionOnly) const;
         void AppendMessageText(FString& Out, const FConsoleMessage& Message) const;

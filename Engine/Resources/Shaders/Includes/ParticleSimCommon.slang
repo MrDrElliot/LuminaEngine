@@ -416,7 +416,9 @@ bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Resti
             continue;
         }
 
-        const float3 Normal = normalize(FTexture2D(Terrain.Textures.y).SampleLevel(Samplers::LinearClamp, UV, 0.0).xyz * 2.0 - 1.0);
+        // The terrain packs only the XZ slope, so Y comes back from unit length.
+        const float2 SlopeXZ = FTexture2D(Terrain.Textures.y).SampleLevel(Samplers::LinearClamp, UV, 0.0).rg * 2.0 - 1.0;
+        const float3 Normal  = float3(SlopeXZ.x, sqrt(saturate(1.0 - dot(SlopeXZ, SlopeXZ))), SlopeXZ.y);
         Position.y = Ground + Radius;
         ReflectOffSurface(Velocity, Normal, Restitution, Friction);
         HitNormal = Normal;

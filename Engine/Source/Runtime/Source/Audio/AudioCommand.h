@@ -6,8 +6,7 @@
 
 namespace Lumina
 {
-	// Game thread to audio pump control message. Flat rather than a union so payloads with default
-	// member initializers (SAudioAttenuation) can live here.
+	// Flat rather than a union so payloads with default member initializers (SAudioAttenuation) can live here.
 	struct FAudioCommand
 	{
 		EAudioCommandType Type = EAudioCommandType::StopSound;

@@ -26,13 +26,10 @@ namespace Lumina
         std::string                   Name;
         std::string                   Outer;
         uint32_t                      LineNumber = 0;
-        // True when an unsupported argument was dropped from Arguments during parsing (LRT1005). The C#
-        // binder must skip such a function: its reflected arg list is shorter than the real signature, so
-        // a generated call would pass too few args.
+        // An argument was dropped (LRT1005), so the C# binder must skip this function or its call would pass too few args.
         bool                            bHasOmittedArgs = false;
 
-        // True for a C++ virtual method. Only a virtual is overridable from C#: the Scriptable codegen
-        // generates a native shim override + a reverse-dispatch managed thunk so a C# subclass can override it.
+        // Only a virtual is overridable from C#, through a generated native shim and managed thunk.
         bool                            bIsVirtual = false;
 
         // Declared = 0, so a C# override has no native body to fall back on.
@@ -41,9 +38,7 @@ namespace Lumina
         bool                            bIsStatic = false;
         bool                            bIsConst = false;
 
-        //~ Native FFunction reflection. Populated only when every argument and the return can be both
-        //  described as a property and stored in a frame; a function that cannot is left unreflected
-        //  natively rather than failing the build, since reflecting it is additive.
+        //~ Native FFunction reflection, left off when any argument or return cannot be described and stored in a frame.
         bool                                             bReflectNatively = false;
 
         /// Every property describing the frame, flat and in emission order: a container's inners come
@@ -68,8 +63,7 @@ namespace Lumina
         /// Index into TopLevelParams of the return value, or -1 when the function returns void.
         int                                              ReturnIndex = -1;
 
-        //~ Free-function (SCRIPT_EXPORT) fields. A free function has no owning type: it binds to a named C#
-        //  static class and is called by its fully-qualified name in the generated thunk.
+        //~ Free-function (SCRIPT_EXPORT) fields, bound to a named C# static class since there is no owning type.
         bool                            bFreeFunction = false;
         std::string                   QualifiedName; // C++ fully-qualified function name (the thunk call target)
         std::string                   CSharpTarget;  // target C# class, optionally namespaced ("Lumina.Native")

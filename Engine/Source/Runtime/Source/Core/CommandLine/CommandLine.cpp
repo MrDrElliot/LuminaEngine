@@ -75,10 +75,6 @@ namespace Lumina
 
                 Args[Key] = Value;
             }
-            else
-            {
-                PositionalArgs.Emplace(FFixedString(Arg.begin(), Arg.end()));
-            }
         }
     }
 
@@ -115,15 +111,5 @@ namespace Lumina
     
         const FFixedString& Val = (*it);
         return Val.IsEmpty() || Val == "1" || Val == "true" || Val == "yes";
-    }
-
-    const TVector<FFixedString>& FCommandLine::GetPositionalArgs() const
-    {
-        return PositionalArgs;
-    }
-
-    const THashMap<FName, FFixedString>& FCommandLine::GetAll() const
-    {
-        return Args;
     }
 }

@@ -4,14 +4,12 @@
 
 namespace Lumina
 {
-    // Connection rules for the animation node graph: a pin may only connect to
-    // another pin of the same EAnimPinType (pose-to-pose, value-to-value).
+    // Connection rules that let a pin connect only to another of the same EAnimPinType.
     struct FAnimGraphSchema : public FEdGraphSchema
     {
         bool CanCreateConnection(CEdNodeGraphPin* From, CEdNodeGraphPin* To) const override;
 
-        // Honors CAnimGraphPin::bAllowMultipleConnections so the State Machine
-        // node's "States" pin can collect every state in one input.
+        // Honors bAllowMultipleConnections so the State Machine's States pin can collect every state.
         bool AllowsMultipleConnections(CEdNodeGraphPin* InputPin) const override;
     };
 

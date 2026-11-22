@@ -414,7 +414,7 @@ namespace Lumina
         TargetDesc.flags   = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY | SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
 
         // Declaring the capability silences warning 41012, and the emitted SPIR-V is identical.
-        const char* const DeclaredCapabilities[] = { "spvGroupNonUniformShuffle", "spvGroupNonUniformVote",
+        const char* const DeclaredCapabilities[] = { "spvGroupNonUniform", "spvGroupNonUniformShuffle", "spvGroupNonUniformVote",
                                                      "spvGroupNonUniformBallot", "spvGroupNonUniformArithmetic",
                                                      "SPV_GOOGLE_user_type", "spvDerivativeControl", "spvImageQuery",
                                                      "spvImageGatherExtended", "spvSparseResidency", "spvMinLod",

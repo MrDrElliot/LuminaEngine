@@ -19,8 +19,7 @@ namespace Lumina
         FString GetAssetDescription() const override { return "A cutscene: entities bound to tracks that drive them over time."; }
         CClass* GetAssetClass() const override { return CSequence::StaticClass(); }
 
-        // Grouped with Animation rather than a category of its own; Factory.h asks for a small shared set
-        // of category strings, and a one-entry submenu is worse than a near neighbor.
+        // Grouped with Animation, since a one-entry submenu is worse than a near neighbor.
         FString GetCategory() const override { return "Animation"; }
     };
 }

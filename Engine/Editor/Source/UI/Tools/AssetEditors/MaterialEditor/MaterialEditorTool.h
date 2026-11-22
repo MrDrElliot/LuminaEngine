@@ -38,8 +38,7 @@ namespace Lumina
         {
             FString                     CompilationLog;
             TVector<FCompilationError>  Errors;
-            // Non-fatal findings. Same payload as an error so the row renderer is shared; kept apart
-            // because these do NOT set bIsError -- the material compiled and renders.
+            // Non-fatal findings that share the error payload but do not set bIsError.
             TVector<FCompilationError>  Warnings;
             bool                        bIsError = false;
         };
@@ -74,12 +73,9 @@ namespace Lumina
         void DrawMaterialProperties();
         void DrawShaderStats();
 
-        // Renders compile diagnostics as bordered rows with a "Focus Node" jump. Shared by the error block
-        // and the warning block -- only the palette differs, and a warning that read differently from an
-        // error would look like a second, lesser kind of thing rather than the same finding at lower severity.
+        // Shared by the error and warning blocks, which differ only in palette.
         void DrawDiagnosticRows(const TVector<FCompilationError>& Diagnostics, bool bIsError);
-        // Compiled-shader truth (local-memory arrays + the driver's register count / occupancy), as
-        // opposed to the source-derived estimates the rest of the panel shows.
+        // Compiled-shader figures from the driver, unlike the source-derived estimates elsewhere in the panel.
         void DrawGPUStats(float LabelWidth, const ImVec4& HeaderColor, const ImVec4& LabelColor, const ImVec4& ValueColor);
 
         // bNotifyResult off lets a save-driven compile toast after the package save toast instead of under it.
@@ -102,8 +98,7 @@ namespace Lumina
         // Double-click handler for a Material Function call node: opens the referenced asset in its own tab.
         void OpenMaterialFunctionForNode(CEdGraphNode* Node);
 
-        // Syntax-highlighted editor for the selected Custom Slang node's body. Bound lazily to the
-        // selection; edits write straight back to the node (auto-compile picks them up).
+        // Bound lazily to the selection, with edits written straight back to the node.
         void DrawCustomCodeEditor();
 
         void ConfigureCodeEditor();
@@ -137,8 +132,7 @@ namespace Lumina
         
         FString                         Tree;
         FString                         VertexTree;
-        // True when the graph has changed since the last successful Compile, so the Compile action can
-        // say so instead of leaving the user to notice their edits never reached the shader.
+        // True when the graph changed since the last successful Compile.
         NODISCARD bool NeedsCompile() const;
 
         FMaterialCompiler::FShaderStats ShaderStats;

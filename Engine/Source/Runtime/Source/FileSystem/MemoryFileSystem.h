@@ -4,8 +4,7 @@
 
 namespace Lumina::VFS
 {
-    // In-memory IFileSystem; keys are full virtual paths (with alias prefix).
-    // Not synchronized: populate before exposing the mount, or guard mutations with the caller's lock.
+    // Keys are full virtual paths with the alias prefix, and it is not synchronized so populate before exposing the mount.
     class RUNTIME_API FMemoryFileSystem : public IFileSystem
     {
     public:

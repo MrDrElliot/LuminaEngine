@@ -3,14 +3,11 @@
 #include "FileInfo.h"
 #include "Containers/String.h"
 
-// Virtual-path helpers shared by the file system backends. They were copied per backend, which
-// compiles fine one translation unit at a time and collides the moment two of those files share
-// one. Sharing them also means the backends cannot drift on what a parent path is.
+// Shared by the file system backends so they cannot drift on what a parent path is.
 
 namespace Lumina::VFS
 {
-    // Parent of a virtual path, with a single trailing slash ignored so "/A/B/" and "/A/B" agree.
-    // Empty when the path has no separator; "/" for a root-level entry.
+    // A single trailing slash is ignored, and the result is empty when the path has no separator.
     FORCEINLINE FStringView ParentOf(FStringView Path)
     {
         if (!Path.IsEmpty() && Path.Last() == '/')
@@ -41,8 +38,7 @@ namespace Lumina::VFS
         return Pos == Constants::kIndexNone ? Path : Path.Mid(Pos + 1);
     }
 
-    // Entry flags implied by a path. bReadOnly is the backend's answer, not the path's: a pak is
-    // read-only by definition where a memory mount is not.
+    // bReadOnly is the backend's answer, since a pak is read-only by definition and a memory mount is not.
     FORCEINLINE EFileFlags FlagsForPath(FStringView Path, bool bIsDirectory, bool bReadOnly)
     {
         EFileFlags Flags = bIsDirectory ? EFileFlags::Directory : EFileFlags::File;

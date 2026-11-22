@@ -4,16 +4,11 @@
 #include "Renderer/MeshData.h"
 #include "Renderer/SkeletonResource.h"
 
-// Bind-pose access shared by the animation resource and the pose kernels. Its own header rather
-// than a copy in each .cpp: the two copies were identical, and identical file-scope definitions
-// compile fine one translation unit at a time but collide the moment those files share one.
-// It also keeps the weight where it belongs, since neither Pose.h nor MeshData.h has to learn
-// about the other to declare it.
+// Shared by the animation resource and the pose kernels, since identical file-scope copies collide in a unity build.
 
 namespace Lumina::AnimPose
 {
-    // A bone's bind-pose local TRS, from the SoA cache when the skeleton has one and by decomposing
-    // its local matrix when it does not.
+    // Reads the SoA cache when the skeleton has one, otherwise decomposes the local matrix.
     FORCEINLINE void GetBindLocalTRS(
         const FSkeletonResource* Skeleton, int32 BoneIndex, FVector3& OutT, FQuat& OutR, FVector3& OutS)
     {

@@ -5,8 +5,7 @@
 
 namespace Lumina
 {
-    // Linearly blends two poses. Alpha 0 yields pose A, alpha 1 yields pose B;
-    // rotations are blended with slerp so the result stays valid.
+    // Blends two poses from A at alpha 0 to B at alpha 1, using slerp for rotations.
     REFLECT(MinimalAPI)
     class CAnimGraphNode_Blend : public CAnimGraphNode
     {

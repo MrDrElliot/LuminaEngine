@@ -171,8 +171,8 @@ struct ConcurrentQueueDefaultTraits
 #if defined(malloc) || defined(free)
 	// Gah, this is 2015, stop defining macros that break standard code already!
 	// Work around malloc/free being special macros:
-	static inline void* WORKAROUND_malloc(size_t size) { return malloc(size); }
-	static inline void WORKAROUND_free(void* ptr) { return free(ptr); }
+	static inline void* WORKAROUND_malloc(size_t size) { return tracy::tracy_malloc(size); }
+	static inline void WORKAROUND_free(void* ptr) { return tracy::tracy_free(ptr); }
 	static inline void* (malloc)(size_t size) { return WORKAROUND_malloc(size); }
 	static inline void (free)(void* ptr) { return WORKAROUND_free(ptr); }
 #else
@@ -680,7 +680,7 @@ private:
 			while (head != nullptr) {
 				auto prevHead = head;
 				auto refs = head->freeListRefs.load(std::memory_order_relaxed);
-				if ((refs & REFS_MASK) == 0 || !head->freeListRefs.compare_exchange_strong(refs, refs + 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+				if ((refs & REFS_MASK) == 0 || !head->freeListRefs.compare_exchange_strong(refs, refs + 1, std::memory_order_acquire)) {
 					head = freeListHead.load(std::memory_order_acquire);
 					continue;
 				}
@@ -730,7 +730,7 @@ private:
 				node->freeListRefs.store(1, std::memory_order_release);
 				if (!freeListHead.compare_exchange_strong(head, node, std::memory_order_release, std::memory_order_relaxed)) {
 					// Hmm, the add failed, but we can only try again when the refcount goes back to zero
-					if (node->freeListRefs.fetch_add(SHOULD_BE_ON_FREELIST - 1, std::memory_order_release) == 1) {
+					if (node->freeListRefs.fetch_add(SHOULD_BE_ON_FREELIST - 1, std::memory_order_acq_rel) == 1) {
 						continue;
 					}
 				}
@@ -794,7 +794,7 @@ private:
 			}
 			else {
 				// Increment counter
-				auto prevVal = elementsCompletelyDequeued.fetch_add(1, std::memory_order_release);
+				auto prevVal = elementsCompletelyDequeued.fetch_add(1, std::memory_order_acq_rel);
 				assert(prevVal < BLOCK_SIZE);
 				return prevVal == BLOCK_SIZE - 1;
 			}
@@ -816,7 +816,7 @@ private:
 			}
 			else {
 				// Increment counter
-				auto prevVal = elementsCompletelyDequeued.fetch_add(count, std::memory_order_release);
+				auto prevVal = elementsCompletelyDequeued.fetch_add(count, std::memory_order_acq_rel);
 				assert(prevVal + count <= BLOCK_SIZE);
 				return prevVal + count == BLOCK_SIZE;
 			}
@@ -975,7 +975,7 @@ private:
 				auto block = this->tailBlock;
 				do {
 					block = block->next;
-					if (block->ConcurrentQueue::Block::is_empty()) {
+					if (block->is_empty()) {
 						continue;
 					}
 
@@ -1020,10 +1020,10 @@ private:
         inline void enqueue_begin_alloc(index_t currentTailIndex)
         {
             // We reached the end of a block, start a new one
-            if (this->tailBlock != nullptr && this->tailBlock->next->ConcurrentQueue::Block::is_empty()) {
+            if (this->tailBlock != nullptr && this->tailBlock->next->is_empty()) {
                 // We can re-use the block ahead of us, it's empty!
                 this->tailBlock = this->tailBlock->next;
-                this->tailBlock->ConcurrentQueue::Block::reset_empty();
+                this->tailBlock->reset_empty();
 
                 // We'll put the block on the block index (guaranteed to be room since we're conceptually removing the
                 // last block from it first -- except instead of removing then adding, we can just overwrite).
@@ -1042,7 +1042,7 @@ private:
 
                 // Insert a new block in the circular linked list
                 auto newBlock = this->parent->ConcurrentQueue::requisition_block();
-                newBlock->ConcurrentQueue::Block::reset_empty();
+                newBlock->reset_empty();
                 if (this->tailBlock == nullptr) {
                     newBlock->next = newBlock;
                 }
@@ -1124,7 +1124,7 @@ private:
 						processData( (*block)[index], sz );
 						index += sz;
 
-						block->ConcurrentQueue::Block::set_many_empty(firstIndexInBlock, static_cast<size_t>(endIndex - firstIndexInBlock));
+						block->set_many_empty(firstIndexInBlock, static_cast<size_t>(endIndex - firstIndexInBlock));
 						indexIndex = (indexIndex + 1) & (localBlockIndex->size - 1);
 					} while (index != firstIndex + actualCount);
 
@@ -1208,6 +1208,21 @@ private:
     ExplicitProducer* get_explicit_producer(producer_token_t const& token)
     {
         return static_cast<ExplicitProducer*>(token.producer);
+    }
+
+    // If a producer token is created before the constructor of a statically allocated
+    // queue runs (which may happen due to the undefined order of static initialization
+    // across module boundaries), the constructor will orphan it by resetting the
+    // producer list. Such a producer is functional, as producer creation works on the
+    // zero-initialized queue memory, but the consumer is not able to see the data it
+    // enqueues. This method links the producer back into the list.
+    bool readopt_orphaned_producer(ExplicitProducer* producer)
+    {
+        for (auto ptr = producerListTail.load(std::memory_order_relaxed); ptr != nullptr; ptr = ptr->next_prod()) {
+            if (ptr == static_cast<ProducerBase*>(producer)) return false;
+        }
+        add_producer(static_cast<ProducerBase*>(producer));
+        return true;
     }
 
     private:

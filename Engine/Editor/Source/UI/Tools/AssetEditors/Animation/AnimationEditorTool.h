@@ -79,8 +79,7 @@ namespace Lumina
         bool  bIsPlaying = false;
         bool  bLooping   = true;
         float Playrate   = 1.0f;
-        // Playhead time as of last frame; editor advances the clip itself (a paused
-        // world reports dt=0) and uses this to flash notifies the playhead crosses.
+        // The editor advances the clip itself because a paused world reports zero delta time.
         float LastPlayheadTime = 0.0f;
 
         // Timeline view state
@@ -106,18 +105,15 @@ namespace Lumina
         FString RenameBuffer;
         FString NotifyNameBuffer;
 
-        // Pulses briefly when the playhead crosses a notify during in-editor playback,
-        // so authored events visibly fire while previewing. Maps notify index -> flash age.
+        // Maps notify index to flash age so authored events visibly fire while previewing.
         float       NotifyFlash[256] = {};
 
-        // Curve view
-        // Encodes bone * NumTrackKinds + kind, since a compressed bone carries its three tracks inline.
+        // Encodes bone * NumTrackKinds + kind since a compressed bone carries its three tracks inline.
         static constexpr int32 NumTrackKinds = 3;
         int  SelectedChannel = -1;
         int  SelectedCurve   = -1;
 
-        // Edits the selected authored curve. Rebound every frame: adding or removing a curve can move
-        // the array the bound pointer points into.
+        // Rebound every frame because adding or removing a curve can move the array it points into.
         FCurveEditorWidget CurveWidget;
 
         // Inline editor for the selected notify's instanced type.

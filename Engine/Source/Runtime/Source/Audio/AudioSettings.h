@@ -8,8 +8,7 @@
 
 namespace Lumina
 {
-	// Project-wide audio configuration. Bus volumes are the shipped defaults; a game's options menu
-	// writes them back through Audio::SetBusVolume + FConfig::SaveSettings.
+	// Bus volumes are the shipped defaults, and a game's options menu writes them back through Audio::SetBusVolume.
 	REFLECT(MinimalAPI, ConfigFile = "/Config/AudioSettings.json", DisplayName = "Audio", Category = "Engine")
 	class CAudioSettings : public CDeveloperSettings
 	{

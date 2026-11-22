@@ -6,9 +6,7 @@
 
 namespace Lumina
 {
-    // Shared base for binary scalar nodes (A op B). Subclasses only declare the
-    // EAnimScalarOp they emit; pin building and bytecode emission live here.
-    // Shared base for the scalar op nodes; not a node in its own right.
+    // Shared base for binary scalar nodes, where subclasses only declare the EAnimScalarOp they emit.
     REFLECT(NotPlaceable)
     class CAnimGraphNode_ScalarBinaryOp : public CAnimGraphNode
     {
@@ -22,8 +20,7 @@ namespace Lumina
 
         virtual EAnimScalarOp GetScalarOp() const { return EAnimScalarOp::Add; }
 
-        // Defaults fed into unconnected input pins; multiply/divide override B to
-        // 1 so a half-wired node behaves sensibly.
+        // Defaults for unconnected pins, with multiply and divide overriding B to 1 so a half-wired node behaves sensibly.
         virtual float GetDefaultA() const { return 0.0f; }
         virtual float GetDefaultB() const { return 0.0f; }
 
@@ -32,8 +29,7 @@ namespace Lumina
         CAnimGraphPin* ResultPin = nullptr;
     };
 
-    // Shared base for unary scalar nodes (op A).
-    // Shared base for the scalar op nodes; not a node in its own right.
+    // Shared base for unary scalar nodes.
     REFLECT(NotPlaceable)
     class CAnimGraphNode_ScalarUnaryOp : public CAnimGraphNode
     {

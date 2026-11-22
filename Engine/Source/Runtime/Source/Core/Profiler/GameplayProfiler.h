@@ -35,14 +35,7 @@ namespace Lumina
         uint32         Offset = 0;   // the oldest sample, which is what ImGui plots from
     };
 
-    // A lightweight CPU profiler for GAMEPLAY work: per-frame, name-aggregated scope timings with call counts
-    // and inclusive/exclusive ms, plus rolling history for sparklines. Drives the editor "Gameplay Profiler"
-    // tool and the C# Profiler API. Near-zero cost when disabled (one atomic check).
-    //
-    // BeginScope/EndScope are CONCURRENCY-SAFE so parallel C# EntitySystems (ticked across job-system workers)
-    // can profile: the open-scope stack is thread-local (each scope opens and closes on the same thread/fiber),
-    // and the shared per-frame aggregation is mutex-guarded. BeginFrame/EndFrame stay game-thread, called at the
-    // frame boundary when no worker scope is open.
+    // Per-frame gameplay scope timings. BeginScope and EndScope are thread-safe, while BeginFrame and EndFrame must run on the game thread with no worker scope open.
     class RUNTIME_API FGameplayProfiler
     {
     public:

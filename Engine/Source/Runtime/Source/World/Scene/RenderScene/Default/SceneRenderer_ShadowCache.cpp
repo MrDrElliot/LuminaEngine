@@ -35,6 +35,8 @@ namespace Lumina
         {
             bool bAll = false;
             SunShadowCache.TakeTouches(Virtual.InvalidSpheres, bAll);
+            // Impostor points are not retained slots, so their streamed tiles clear their own pages.
+            ScenePrimitives.GetImpostorPoints().TakeTouches(Virtual.InvalidSpheres);
             // The Shadow Raster view shows how every caster rasterizes, so it redraws each cached page rather than only what moved.
             bAll = bAll || Frame.SceneGlobalData.CullData.DebugMode == (uint32)ERenderSceneDebugFlags::ShadowRaster;
             Virtual.bInvalidateAll = bAll;
@@ -49,6 +51,12 @@ namespace Lumina
                     Level.bInvalidate = 1u;
                 }
             }
+        }
+        else
+        {
+            // Without virtual pages there is nothing to clear, and the spheres would only pile up.
+            ImpostorTouchScratch.Reset();
+            ScenePrimitives.GetImpostorPoints().TakeTouches(ImpostorTouchScratch);
         }
     }
 }

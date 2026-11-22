@@ -32,8 +32,7 @@ namespace Lumina
         
         virtual float DrawPin() { return 1.5f; }
 
-        // True when this pin draws a compact inline editor (value/enum) for an unconnected input;
-        // the draw loop right-aligns those editors into a tidy column.
+        // True for a compact inline editor on an unconnected input, which the draw loop right-aligns into a column.
         virtual bool HasInlineEditor() const { return false; }
         
         void SetPinName(const FString& Name) { PinName = Name; }
@@ -65,8 +64,7 @@ namespace Lumina
         bool ShouldDrawEditor() const { return bDrawPinEditor; }
         void SetShouldDrawEditor(bool bNew) { bDrawPinEditor = bNew; }
 
-        // Disabled pins draw faded and reject new connections (e.g. the material output node grays out
-        // attributes that don't apply to the current domain). Existing connections are preserved.
+        // Disabled pins draw faded and reject new connections, while existing connections are preserved.
         bool IsDisabled() const { return bDisabled; }
         void SetDisabled(bool bNew) { bDisabled = bNew; }
         

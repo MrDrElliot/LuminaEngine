@@ -61,8 +61,11 @@ struct FSceneRoot
     GPUSpan<FTransform3x4>       RetainedTransforms;
     GPUSpan<FInstanceStatic>     RetainedStatic;
     GPUSpan<FInstanceProxy>      RetainedProxies;
-    // Retained slots CullInstances turned into proxies this frame, in proxy draw order.
+    // Retained slots CullInstances turned into proxies this frame, in proxy draw order, with PROXY_ENTRY_POINT_BIT on impostor points.
     GPUSpan<uint>                ProxyList;
+    // Far plants held as bare impostor points, and the per-type data they share.
+    GPUSpan<FImpostorPoint>      ImpostorPoints;
+    GPUSpan<FImpostorType>       ImpostorTypes;
     // One bit per retained slot the sun's shadow cache holds, empty while the cache is off.
     GPUSpan<uint>                ShadowCacheBits;
     // Every terrain the frame draws, in the order their VisID slot ranges follow.
@@ -173,6 +176,8 @@ GPUSpan<FTransform3x4>       RetainedTransforms()    { return GetSceneRoot().Ret
 GPUSpan<FInstanceStatic>     RetainedStatic()        { return GetSceneRoot().RetainedStatic; }
 GPUSpan<FInstanceProxy>      RetainedProxies()       { return GetSceneRoot().RetainedProxies; }
 GPUSpan<uint>                ProxyList()             { return GetSceneRoot().ProxyList; }
+GPUSpan<FImpostorPoint>      ImpostorPoints()        { return GetSceneRoot().ImpostorPoints; }
+GPUSpan<FImpostorType>       ImpostorTypes()         { return GetSceneRoot().ImpostorTypes; }
 
 bool IsShadowCached(uint RetainedSlot)
 {

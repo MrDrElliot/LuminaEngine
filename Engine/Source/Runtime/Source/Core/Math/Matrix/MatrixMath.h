@@ -4,8 +4,7 @@
 #include "Core/Math/Quat/Quat.h"
 #include <cmath>
 
-// Matrix free fns + quat<->matrix conversions in Lumina::Math.
-// Conventions: COLUMN-MAJOR, LEFT-HANDED, ZERO-TO-ONE clip depth. Do not "fix" these.
+// Conventions are column-major, left-handed, zero-to-one clip depth and must not be changed.
 
 namespace Lumina::Math
 {
@@ -148,8 +147,7 @@ namespace Lumina::Math
         return Inv * OneOverDet;
     }
 
-    // SIMD fast path for 4x4 float inverse (SSE cofactor/adjugate); same math as the
-    // template above, exact-type overload replacing the scalar path for FMatrix4.
+    // SSE cofactor inverse overload for FMatrix4 that matches the template above.
     [[nodiscard]] inline TMat<float, 4, 4> Inverse(const TMat<float, 4, 4>& M)
     {
         using namespace SIMD;
@@ -217,8 +215,7 @@ namespace Lumina::Math
         return Result;
     }
 
-    // SIMD fast paths for FMatrix4 (exact-type overloads win over the templates above and
-    // match their scalar result); the hot per-entity TRS path lives in VTransform/VQuat1.
+    // Exact-type SIMD overloads for FMatrix4 win over the templates above and match their scalar result.
     [[nodiscard]] inline TMat<float, 4, 4> Translate(const TMat<float, 4, 4>& M, const TVec<float, 3>& V)
     {
         using namespace SIMD;
@@ -435,8 +432,7 @@ namespace Lumina::Math
         return ToQuat(Result);
     }
 
-    // Affine TRS decompose (for non-skewed, non-projective
-    // transforms, which is all the engine builds). Returns false on singular.
+    // Affine TRS decompose for non-skewed, non-projective transforms. Returns false on singular.
     template<typename T>
     bool Decompose(const TMat<T, 4, 4>& M, TVec<T, 3>& OutScale, TQuat<T>& OutRotation, TVec<T, 3>& OutTranslation)
     {
@@ -487,8 +483,7 @@ namespace Lumina::Math
         return Decompose(M, OutScale, OutRotation, OutTranslation);
     }
 
-    // Shortest-arc quaternion rotating From onto To
-    // (both expected normalized).
+    // Shortest-arc quaternion rotating From onto To, both expected normalized.
     template<typename T>
     [[nodiscard]] TQuat<T> RotationBetween(const TVec<T, 3>& From, const TVec<T, 3>& To)
     {

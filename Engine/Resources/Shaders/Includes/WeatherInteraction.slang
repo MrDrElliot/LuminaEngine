@@ -48,7 +48,7 @@ FWeatherFieldSample SampleWeatherField(FWeatherData W, float2 WorldXZ)
         return Sample;
     }
 
-    constexpr float kEdgeFade = 10.0;
+    const float kEdgeFade = 10.0;
     const float2 Edge  = min(UV, 1.0 - UV);
     Sample.Weight = saturate(min(Edge.x, Edge.y) * kEdgeFade);
 
@@ -106,7 +106,7 @@ FInteractorWetness InteractorWetness(FWeatherData W, uint EntityID, float WorldY
         if (Entry.x == EntityID)
         {
             // A few centimeters of soft edge, so the line reads as cloth wicking rather than a painted stripe.
-            constexpr float kWaterlineSoftness = 30.0;
+            const float kWaterlineSoftness = 30.0;
             const float4 Record = W.Interactors.Get(Entry.y);
             const float  Below  = saturate((Record.x + Record.z - WorldY) * kWaterlineSoftness + 0.5);
             Result.Wetness = max(Record.y, Record.w * Below);

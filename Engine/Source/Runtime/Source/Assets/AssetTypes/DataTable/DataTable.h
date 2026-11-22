@@ -141,8 +141,7 @@ namespace Lumina
         return static_cast<const T*>(Table->FindRow(RowName));
     }
 
-    // A reference to one row. PROPERTY(Editable, RowType = "SMyRow") on the owning field makes the
-    // editor flag a table whose rows are not that type. Read it with FindDataTableRow.
+    // A reference to one row, where RowType on the owning PROPERTY makes the editor flag a table of the wrong type.
     REFLECT()
     struct RUNTIME_API SDataTableRowHandle
     {

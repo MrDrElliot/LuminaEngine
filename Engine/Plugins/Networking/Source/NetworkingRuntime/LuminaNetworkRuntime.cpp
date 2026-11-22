@@ -324,7 +324,7 @@ namespace Lumina
     {
         CWorld* World = Script->GetWorld();
         FNetWorldState* State = StateOf(World);
-        if (State == nullptr || State->Transport == nullptr || !Script->IsAttached() || PayloadSize > Net::MaxFramedMessageSize / 2)
+        if (State == nullptr || State->Transport == nullptr || !FEntityScriptAccess::IsAttached(*Script) || PayloadSize > Net::MaxFramedMessageSize / 2)
         {
             return false;
         }

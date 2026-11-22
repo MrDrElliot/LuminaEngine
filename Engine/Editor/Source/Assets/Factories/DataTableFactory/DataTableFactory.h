@@ -20,8 +20,7 @@ namespace Lumina
         CClass* GetAssetClass() const override { return CDataTable::StaticClass(); }
         FString GetCategory() const override { return "Data"; }
 
-        // Pick the row struct. Required: a table with no row type cannot hold anything, and choosing
-        // it later would mean discarding whatever had been authored in the meantime.
+        // Required, since choosing the row struct later would discard whatever had been authored.
         bool HasCreationDialogue() const override;
         bool DrawCreationDialogue(FStringView Path, bool& bShouldClose) override;
 

@@ -6,8 +6,7 @@
 
 namespace Lumina
 {
-    // Loose text assets that get a stable GUID identity (so references survive rename/move).
-    // Sidecars and the registry cache store the raw value, so a kind keeps its number once assigned.
+    // Loose text assets with a stable GUID identity, stored as the raw value so a kind keeps its number once assigned.
     enum class ETextAssetKind : uint8
     {
         None          = 0,
@@ -29,8 +28,7 @@ namespace Lumina
         // True iff Path names one of the tracked text-asset extensions.
         RUNTIME_API bool IsTextAssetPath(FStringView Path);
 
-        // Parse a PROPERTY(AssetType="rml,rcss") meta value into the kinds it allows.
-        // Tokens may be extensions (with or without dot) or kind names; empty/"any" -> all kinds.
+        // Parses a PROPERTY AssetType meta value of extensions or kind names, where empty or "any" allows all kinds.
         RUNTIME_API TVector<ETextAssetKind> ParseAssetTypeMeta(FStringView Meta);
     }
 }

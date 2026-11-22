@@ -64,11 +64,7 @@ namespace Lumina
         ECS::FEntity DirectionalLightEntity;
         EDebugMesh   DebugMesh = EDebugMesh::Sphere;
 
-        // Standard object picker, shared across every texture row. The parameter table only exposes each
-        // slot through CMaterialInstance's override list, so the picker is driven by a handle synthesized
-        // over Scratch, which is seeded from the row's resolved texture before the draw and read back after.
-        // One instance is safe because UpdateAndDraw re-syncs from the handle each frame, and the caller
-        // already pushes a per-parameter ImGui ID.
+        // Shared across texture rows via a handle over Scratch, which is safe since UpdateAndDraw re-syncs each frame under a per-parameter ID.
         TSharedPtr<IPropertyTypeCustomization> TexturePicker;
         TSharedPtr<FPropertyHandle>            TextureHandle;
         SMaterialParameterOverride             TextureScratch;

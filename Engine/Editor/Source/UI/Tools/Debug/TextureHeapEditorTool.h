@@ -4,8 +4,7 @@
 
 namespace Lumina
 {
-    // Live view of the global bindless texture heap: every occupied sampled slot with its
-    // description and a preview; click a preview to inspect it enlarged.
+    // Live view of every occupied slot in the global bindless texture heap, with an enlargeable preview.
     class FTextureHeapEditorTool : public FEditorTool
     {
     public:

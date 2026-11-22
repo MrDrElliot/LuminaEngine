@@ -42,8 +42,7 @@ namespace Lumina
 		// Drain queued audio commands + housekeeping (kicked once per frame). Default no-op.
 		virtual void Update() {}
 
-		// Asset-backed playback: the shared bytes are decoded on the audio pump and kept alive for the
-		// lifetime of the voice, so the caller's asset can be unloaded mid-playback.
+		// The shared bytes stay alive for the voice's lifetime, so the caller's asset can be unloaded mid-playback.
 		NODISCARD virtual SAudioHandle PlayAudio(const TSharedPtr<FAudioData>& Data, const SAudioPlayParams& Params) = 0;
 
 		// Loose-file playback (VFS path). Reads on the pump, so a large file briefly occupies a worker.
@@ -81,12 +80,10 @@ namespace Lumina
 		virtual void SetBus(SAudioHandle Handle, EAudioBus Bus) = 0;
 		virtual void SetPriority(SAudioHandle Handle, uint8 Priority) = 0;
 
-		// Amount is 0 (clear line of sight) to 1 (fully blocked). Drives a per-voice low-pass plus a
-		// gain multiplier; the caller is responsible for smoothing the value over time.
+		// Amount runs from 0 for clear line of sight to 1 for fully blocked, and the caller smooths it over time.
 		virtual void SetOcclusion(SAudioHandle Handle, float Amount, float LowPassFrequency, float VolumeAttenuation) = 0;
 
-		// Direct control of the per-voice low-pass, for effects that aren't occlusion (underwater, radio).
-		// Pass 0 to bypass the filter.
+		// For non-occlusion effects such as underwater, and 0 bypasses the filter.
 		virtual void SetLowPassCutoff(SAudioHandle Handle, float CutoffHz) = 0;
 
 		// Ramps the voice's volume to Volume over Seconds, the same volume SetVolume sets, which a later SetVolume overrides.
@@ -133,8 +130,7 @@ namespace Lumina
 		// Ramp applied to volume changes on newly started voices. Kills clicks on abrupt gain edits.
 		virtual void SetVolumeSmoothing(float Milliseconds) = 0;
 
-		// Rebuilds the output device. 0 means "device native" for any field. Applied on the pump, so
-		// this returns before the device has actually changed.
+		// Applied on the pump, so this returns before the device has actually changed, and 0 means device native.
 		virtual void ApplyDeviceConfig(uint32 SampleRate, uint32 Channels, uint32 PeriodFrames) = 0;
 		NODISCARD virtual FAudioDeviceInfo GetDeviceInfo() const = 0;
 
@@ -146,8 +142,7 @@ namespace Lumina
 
 		virtual void EndOfflineRender() {}
 
-		// Allocates a streaming PCM buffer (float32). Caller pushes samples via the returned stream;
-		// playback is started by passing the stream to PlayProceduralStream.
+		// Playback starts by passing the returned stream to PlayProceduralStream.
 		NODISCARD virtual TSharedPtr<FProceduralAudioStream> CreateProceduralStream(
 			uint32 SampleRate, uint32 ChannelCount, uint32 BufferFrames) = 0;
 

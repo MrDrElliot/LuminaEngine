@@ -188,7 +188,7 @@ public static unsafe partial class Native
     [NativeCall] public static partial string NameToString(IntPtr Name);
 
     // Delegate properties, bound to a managed closure and described by their reflected arguments.
-    [NativeCall] public static partial ulong DelegateBind(IntPtr Delegate, ulong Callback);
+    [NativeCall] public static partial ulong DelegateBind(IntPtr Delegate, ulong Callback, IntPtr Owner);
     [NativeCall] public static partial void DelegateUnbind(IntPtr Delegate, ulong Handle);
     [NativeCall] public static partial int DelegateManagedListeners(IntPtr Delegate, ulong* OutIds, ulong* OutTokens, int Capacity);
     [NativeCall] public static partial int DelegateArgCount(IntPtr DelegateProperty);

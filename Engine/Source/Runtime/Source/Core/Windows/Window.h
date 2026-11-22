@@ -76,8 +76,7 @@ namespace Lumina
 		RUNTIME_API void Maximize();
 		RUNTIME_API void Close();
 
-		// Clears the close flag set by the OS (X button, Alt+F4) to keep the editor alive,
-		// e.g. when the user cancels the dirty-packages prompt.
+		// Clears the OS close flag to keep the editor alive, such as when the dirty-packages prompt is canceled.
 		RUNTIME_API void CancelClose();
 
 		RUNTIME_API static FWindowResizeDelegate OnWindowResized;
@@ -124,8 +123,7 @@ namespace Lumina
 		// Null NativeWindow falls back to the primary window, and a null Cursor brings back the system arrow.
 		RUNTIME_API void SetCursorForNativeWindow(void* NativeWindow, void* Cursor);
 
-		// Authoritative OS-level focus for a native window (GLFWwindow*). Exactly one window is focused at a
-		// time, so this disambiguates the active viewport across separate preview windows under game input.
+		// Authoritative OS focus, which disambiguates the active viewport across separate preview windows.
 		RUNTIME_API bool IsNativeWindowFocused(void* NativeWindow);
 
 		// A gamepad slot read through the platform's standard mapping, with axes in the device's raw -1 to 1 range.

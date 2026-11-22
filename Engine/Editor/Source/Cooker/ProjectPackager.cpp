@@ -210,8 +210,7 @@ namespace Lumina
             return {};
         }
 
-        // Binaries an earlier package wrote that this one did not, which the game would otherwise carry forever.
-        // The reflector's Clang and the editor-only Nsight and BugSplat SDKs never load in a game, and Shipping compiles Aftermath out.
+        // Removes binaries an earlier package wrote, plus editor-only SDKs that never load in a game.
         bool IsUnusedByGameDll(const FPackagePlatformRules& Rules, FStringView FileName, FStringView ConfigSuffix)
         {
             const FStringView Unprefixed = WithoutLibraryPrefix(Rules, FileName);

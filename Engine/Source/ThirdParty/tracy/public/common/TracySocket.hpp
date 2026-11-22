@@ -23,7 +23,6 @@ public:
     ~Socket();
 
     bool Connect( const char* addr, uint16_t port );
-    bool ConnectBlocking( const char* addr, uint16_t port );
     void Close();
 
     int Send( const void* buf, int len );
@@ -44,9 +43,29 @@ public:
         return true;
     }
 
+    template<typename ShouldExit>
+    int ReadUpTo( void* buf, int len, int timeout, ShouldExit exitCb )
+    {
+        auto cbuf = (char*)buf;
+        int rd = 0;
+        while( len > 0 )
+        {
+            if( exitCb() ) return rd;
+            char* p = cbuf;
+            int l = len;
+            if( !ReadImpl( p, l, timeout ) ) return rd;
+            const auto step = len - l;
+            rd += step;
+            cbuf += step;
+            len -= step;
+        }
+        return rd;
+    }
+
     bool ReadRaw( void* buf, int len, int timeout );
     bool HasData();
     bool IsValid() const;
+    bool IsConnecting() const;
 
     Socket( const Socket& ) = delete;
     Socket( Socket&& ) = delete;
@@ -78,6 +97,8 @@ public:
     bool Listen( uint16_t port, int backlog );
     Socket* Accept();
     void Close();
+    void Adopt( int fd );
+    uint16_t LocalPort() const;
 
     ListenSocket( const ListenSocket& ) = delete;
     ListenSocket( ListenSocket&& ) = delete;

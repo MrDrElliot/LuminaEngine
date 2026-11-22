@@ -9,8 +9,7 @@ namespace Lumina::Reflection
 {
     class FReflectedProject;
 
-    // One #include directive captured during preprocessing; post-parse validation uses it to
-    // enforce that a reflection-bearing header ends its include block with `<stem>.generated.h`.
+    // Post-parse validation uses these to enforce that a reflected header ends its includes with its generated.h.
     struct FIncludeRef
     {
         std::string Spelling;     // The literal text inside the angle/quote brackets.

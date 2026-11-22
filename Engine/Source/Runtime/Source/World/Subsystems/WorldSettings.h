@@ -109,8 +109,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Physics")
         bool bEnableSpeculativeContacts = true;
 
-        //~ Networking: server-authoritative replication tuning for this world. (Client-side proxy smoothing is
-        //  a global player preference -- see CNetworkSettings.)
+        //~ Networking, server-authoritative replication tuning for this world.
 
         /** Seconds between full transform keyframes (server re-sends every replicated pose so a dropped delta
          *  self-heals). <= 0 disables keyframes. */

@@ -24,8 +24,7 @@ namespace Lumina::Box3DUtils
         return Filter;
     }
 
-    // Marks the kinematic capsule standing in for a character mover, which is the one shape another
-    // character may be told to ignore.
+    // Marks the kinematic capsule standing in for a character mover, the one shape another character may ignore.
     static constexpr uint64 CharacterProxyBit = 1ull << 32;
 
     void* PackProfileUserData(const SCollisionProfile& Profile, bool bCharacterProxy)

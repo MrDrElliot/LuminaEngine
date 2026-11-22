@@ -7,8 +7,8 @@ git-ignored.
 
 | Host | Asset | Status |
 |---|---|---|
-| Windows | `External-Win64.zip` (~192 MB) | published |
-| Linux | `External-Linux64.tar.gz` (~186 MB) | published — rebuild it with [`BuildScripts/MakeLinuxBundle.sh`](BuildScripts/MakeLinuxBundle.sh) |
+| Windows | `External-Win64-r2.zip` (~165 MB) | published |
+| Linux | `External-Linux64-r2.tar.gz` (~196 MB) | published, rebuilt with [`BuildScripts/MakeLinuxBundle.sh`](BuildScripts/MakeLinuxBundle.sh) |
 
 The bundles are designed to **coexist in one `External/` tree**, so a machine that
 builds for both platforms installs both and neither overwrites the other. That works
@@ -21,6 +21,10 @@ Setup decides whether a bundle is installed by probing a single sentinel file fo
 host platform — `LLVM/bin/libclang.dll` or `LLVM/lib/libclang.so` — rather than by
 `External/` merely existing, so a checkout populated for the other platform still
 fetches what this host needs.
+
+After a verified install Setup writes the bundle's SHA-256 to `External/.bundle-<Platform>.sha256`.
+When a checkout pins a different hash, Setup replaces the bundle, and every build warns
+until it has. Pulling a commit that repins a bundle therefore only needs Setup run again.
 
 The Linux bundle is a **tarball, not a zip**, and that is a requirement rather than a
 preference. Slang's Linux libraries use versioned filenames with the plain name
@@ -40,18 +44,18 @@ fetch each library from its upstream and drop it into `External/` (see
 | Library | Path (size) | Used for | License |
 |---|---|---|---|
 | .NET 10 runtime + hosting headers | `External/DotNet` (78 MB) | CoreCLR host for C# scripting (LuminaSharp) | MIT (headers); .NET redistributable terms (runtime) |
-| LLVM / Clang 19 (libclang) | `External/LLVM` (337 MB) | Reflector parses C++ headers to generate reflection code | Apache-2.0 WITH LLVM-exception |
-| Slang | `External/SLang` (155 MB) | compiles `.slang` shaders to SPIR-V | Apache-2.0 WITH LLVM-exception |
-| RenderDoc | `External/RenderDoc` (24 MB) | in-app GPU frame capture | MIT |
-| Tracy | `External/Tracy` (77 MB) | CPU/GPU profiler | BSD-3-Clause |
+| LLVM / Clang 23 (libclang) | `External/LLVM` (86 MB) | Reflector parses C++ headers to generate reflection code | Apache-2.0 WITH LLVM-exception |
+| Slang | `External/SLang` (150 MB) | compiles `.slang` shaders to SPIR-V | Apache-2.0 WITH LLVM-exception |
+| RenderDoc | `External/RenderDoc` (27 MB) | in-app GPU frame capture | MIT |
+| Tracy | `External/Tracy` (142 MB) | CPU/GPU profiler | BSD-3-Clause |
 
 ## Upstreams
 
-- **.NET 10.0.2** (win-x64): <https://github.com/dotnet/runtime>, builds at <https://dotnet.microsoft.com/download/dotnet/10.0>. Headers are MIT (`src/native/corehost`); the runtime is Microsoft's redistributable.
-- **LLVM / Clang 19.x** (commit `faef8b4`): <https://github.com/llvm/llvm-project>. Built from source because the official Windows installer ships `libclang.dll` without the import lib and headers needed to link against it.
-- **Slang** (std module 2026.3.1): <https://github.com/shader-slang/slang>. `slang-llvm.dll` bundles LLVM, `slang-glslang.dll` wraps glslang, `gfx.dll` is Slang's deprecated graphics layer.
-- **RenderDoc**: <https://github.com/baldurk/renderdoc>, builds at <https://renderdoc.org/builds>. Loaded dynamically, so a local install works too.
-- **Tracy**: <https://github.com/wolfpld/tracy>.
+- **.NET 10.0.15** (win-x64): <https://github.com/dotnet/runtime>, builds at <https://dotnet.microsoft.com/download/dotnet/10.0>. Headers are MIT (`src/native/corehost`); the runtime is Microsoft's redistributable.
+- **LLVM / Clang 23.1.6**: <https://github.com/llvm/llvm-project>. On Windows, `libclang.dll`, `libclang.lib` and the `clang-c` headers come from the release's `clang+llvm-<v>-x86_64-pc-windows-msvc` tarball; the Reflector uses only libclang's C API, so nothing else is needed.
+- **Slang** (std module 2026.22.1): <https://github.com/shader-slang/slang>. `slang-llvm.dll` bundles LLVM, `slang-glslang.dll` wraps glslang, `gfx.dll` is Slang's deprecated graphics layer.
+- **RenderDoc 1.47**: <https://github.com/baldurk/renderdoc>, builds at <https://renderdoc.org/builds>. Loaded dynamically, so a local install works too.
+- **Tracy 0.15.0**: <https://github.com/wolfpld/tracy>. The client in `Engine/Source/ThirdParty/tracy` must be the same release as these tools; its Lumina patches are marked `Lumina patch`.
 
 ## Verifying
 
@@ -61,11 +65,11 @@ in the repo rather than next to the download, so a tampered or swapped file is
 rejected. Check it yourself:
 
 ```bash
-sha256sum External-Linux64.tar.gz
+sha256sum External-Linux64-r2.tar.gz
 ```
 
 ```bat
-powershell -NoProfile -Command "(Get-FileHash External-Win64.zip -Algorithm SHA256).Hash"
+powershell -NoProfile -Command "(Get-FileHash External-Win64-r2.zip -Algorithm SHA256).Hash"
 ```
 
 An empty pinned hash means no bundle has been published for that platform yet, and
@@ -105,7 +109,7 @@ The bundle carries everything `libLLVM` and `libclang` link against -- libxml2, 
 libzstd, liblzma, libtinfo, libbsd, libmd, zlib -- staged into `External/LLVM/lib` beside them. This is
 not belt-and-braces: the versions LLVM was built against are not the versions a current distribution
 ships. Ubuntu 26.04 has `libxml2.so.16`, and nothing installable there satisfies the `libxml2.so.2`
-that an LLVM 19 built on 22.04 asks for, so no `apt-get` line can fix it.
+that an LLVM built on 22.04 asks for, so no `apt-get` line can fix it.
 
 `Reflector.Build.cs` reaches them with `-Wl,-rpath-link` at link time and an `$ORIGIN`-relative
 `-Wl,-rpath` at load time. A plain `-L` does not apply to the transitive needs of a shared library.
@@ -129,7 +133,7 @@ host toolchain is an ABI hazard, and every distribution has them.
 To see what a given copy still needs:
 
 ```bash
-ldd External/LLVM/lib/libLLVM.so.19.1 | grep "not found"
+ldd External/LLVM/lib/libLLVM.so.23.1 | grep "not found"
 ```
 
 ### By hand
@@ -154,8 +158,9 @@ External/RenderDoc/renderdoc.dll | librenderdoc.so    in-app GPU capture
 External/Tracy/                                       profiler UI binaries
 ```
 
-Then run `GenerateProjectFiles.bat`. Setup skips the download whenever this host's
-sentinel file is already present.
+Then run `GenerateProjectFiles.bat`. Setup skips the download only when this host's
+sentinel file is present and `External/.bundle-<Platform>.sha256` holds the pinned hash, so write
+that hash there to keep a hand-assembled tree from being replaced.
 
 ## License compliance
 
@@ -173,19 +178,19 @@ covered by Microsoft's redistribution terms, not MIT.
 ## Updating a bundle
 
 ```bat
-:: replace the asset (the URL stays the same)
-gh release upload external-deps External-Win64.zip --clobber
-gh release upload external-deps External-Linux64.tar.gz --clobber
+:: upload under the next revision name, never over an existing asset
+gh release upload external-deps External-Win64-r3.zip
+gh release upload external-deps External-Linux64-r3.tar.gz
 ```
 
-Then repin: paste the hash into the matching entry's `Sha256` in `SetupMode.Bundles`,
-in the same commit that uploads the asset. First time only, create the release with
+Then point the matching entry's `AssetName` at the new file and paste its hash into
+`Sha256` in `SetupMode.Bundles`. Push the repin, then delete the previous assets with
+`gh release delete-asset external-deps <asset>`. Never replace an asset in place, since
+`main` keeps pinning the old hash until the repin lands.
+
+First time only, create the release with
 `gh release create external-deps <asset> --title "External dependencies"`.
 
-Both assets are named `External-<Platform>.<format>`. The formats differ because the
+Assets are named `External-<Platform>-r<N>.<format>`. The formats differ because the
 payloads do: the Linux one has to be a tarball to keep symlinks and executable bits,
 which zip drops.
-
-The release also still carries the old unsuffixed `External.zip`. Leave it there. Its
-URL is baked into every checkout made before the rename, and deleting it would break
-Setup for all of them; keeping it as a legacy alias costs nothing.

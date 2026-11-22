@@ -1,8 +1,7 @@
 #pragma once
 #include "SIMDConfig.h"
 
-// VFloat4: 4-lane f32 SIMD register (__m128, SSE/SSE4.1), lanes [0..3] low-to-high.
-// Comparisons return a per-lane mask; combine with Select/MoveMask/Any/All.
+// 4-lane f32 SSE register where comparisons return a per-lane mask.
 
 namespace Lumina::SIMD
 {
@@ -51,8 +50,7 @@ namespace Lumina::SIMD
     [[nodiscard]] FORCEINLINE VFloat4 Abs(VFloat4 A)           { return _mm_andnot_ps(_mm_set1_ps(-0.0f), A.V); }
     [[nodiscard]] FORCEINLINE VFloat4 Sqrt(VFloat4 A)         { return _mm_sqrt_ps(A.V); }
 
-    // Accurate 1/x and 1/sqrt(x); the *Fast variants use the ~12-bit hardware
-    // approximations (rcp/rsqrt) for when precision doesn't matter.
+    // The Fast variants use the roughly 12-bit hardware approximations.
     [[nodiscard]] FORCEINLINE VFloat4 Reciprocal(VFloat4 A)     { return _mm_div_ps(_mm_set1_ps(1.0f), A.V); }
     [[nodiscard]] FORCEINLINE VFloat4 ReciprocalFast(VFloat4 A) { return _mm_rcp_ps(A.V); }
     [[nodiscard]] FORCEINLINE VFloat4 InvSqrt(VFloat4 A)        { return _mm_div_ps(_mm_set1_ps(1.0f), _mm_sqrt_ps(A.V)); }
@@ -117,8 +115,7 @@ namespace Lumina::SIMD
     [[nodiscard]] FORCEINLINE VFloat4 SplatZ(VFloat4 A) { return _mm_shuffle_ps(A.V, A.V, _MM_SHUFFLE(2, 2, 2, 2)); }
     [[nodiscard]] FORCEINLINE VFloat4 SplatW(VFloat4 A) { return _mm_shuffle_ps(A.V, A.V, _MM_SHUFFLE(3, 3, 3, 3)); }
 
-    // Lane-indexed permute/shuffle. Permute<L0,L1,L2,L3>(A) = { A[L0], A[L1], A[L2], A[L3] }.
-    // Shuffle takes lanes 0,1 from A and lanes 2,3 from B: { A[L0], A[L1], B[L2], B[L3] }.
+    // Shuffle takes lanes 0,1 from A and lanes 2,3 from B.
     template<int L0, int L1, int L2, int L3>
     [[nodiscard]] FORCEINLINE VFloat4 Permute(VFloat4 A) { return _mm_shuffle_ps(A.V, A.V, _MM_SHUFFLE(L3, L2, L1, L0)); }
 

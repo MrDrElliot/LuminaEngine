@@ -51,8 +51,7 @@
     "|" LUMINA_MODULE_ABI_STDLIB
 
 
-// IMPLEMENT_MODULE has two flavors (LUMINA_MONOLITHIC): modular exports InitializeModule for
-// GetProcAddress; monolithic registers an intrusive FStaticModuleRegistration drained on lookup.
+// IMPLEMENT_MODULE exports InitializeModule when modular and registers an FStaticModuleRegistration when LUMINA_MONOLITHIC.
 #ifdef LUMINA_MONOLITHIC
 
 #define IMPLEMENT_MODULE(ModuleClass, ModuleName)                                           \
@@ -102,8 +101,7 @@ namespace Lumina
     {
         FName ModuleName;
         TUniquePtr<IModuleInterface> ModuleInterface;
-        // null in monolithic builds where the module is statically linked.
-        // UnloadModule must guard FreeDLLHandle on it.
+        // Null in monolithic builds, so UnloadModule must guard FreeDLLHandle on it.
         void* ModuleHandle = nullptr;
     };
 
@@ -112,8 +110,7 @@ namespace Lumina
     // ABI guard export (see LUMINA_MODULE_ABI_SIGNATURE); returns a static string, ABI-safe to call.
     using ModuleABIFunc = const char* (*)();
 
-    // Monolithic-build static registration; self-links into an intrusive list during static
-    // init. Ctor touches zero runtime state (static-init order across TUs is undefined).
+    // Monolithic-build registration that links itself into an intrusive list, touching no runtime state since static-init order is undefined.
     struct RUNTIME_API FStaticModuleRegistration
     {
         const char*                       Name;
@@ -122,8 +119,7 @@ namespace Lumina
 
         FStaticModuleRegistration(const char* InName, ModuleInitFunc InFactory);
 
-        // Head of the pending-registration list; lives in BSS (zero-init) so it's
-        // valid before any constructor runs.
+        // Lives in BSS so it is valid before any constructor runs.
         static FStaticModuleRegistration* Head;
     };
 
@@ -133,15 +129,13 @@ namespace Lumina
 
         RUNTIME_API static FModuleManager& Get();
 
-        // Load a module by DLL path; monolithic builds resolve via the static registry
-        // (basename minus -<Config> suffix) with no filesystem touch.
+        // Monolithic builds resolve through the static registry by basename without touching the filesystem.
         RUNTIME_API IModuleInterface* LoadModule(FStringView ModulePath);
         RUNTIME_API bool UnloadModule(FStringView ModuleName);
 
         void UnloadAllModules();
 
-        // Called by FStaticModuleRegistration's ctor at file-scope init; safe before
-        // FModuleManager::Get() is otherwise touched (Meyer's singleton resolves on first use).
+        // Safe at file-scope init because the Meyer's singleton resolves on first use.
         void AddStaticModuleFactory(const FName& Name, ModuleInitFunc Factory);
 
         // True if a module with this bare name is statically linked (monolithic builds).
@@ -151,7 +145,6 @@ namespace Lumina
         RUNTIME_API const FString& GetLastLoadError() const { return LastLoadError; }
 
         // ImGui is a StaticLib, so each module DLL has its own context and allocator globals.
-        // Contexts are void* to keep this header ImGui-free; modules opt in via LUMINA_MODULE_IMGUI().
         RUNTIME_API void NotifyImGuiReady(void* InImGuiContext, void* InImPlotContext);
 
         // False when Directory is already on the list.
@@ -185,8 +178,7 @@ namespace Lumina
 
         TMutex<TVector<FString>> DLLSearchPaths;
 
-        // Engine ImGui/ImPlot contexts (opaque void* to keep ImGui out of this header), null until
-        // NotifyImGuiReady. Forwarded to each opted-in module's LuminaModuleSetupImGui export.
+        // Opaque void* keeps ImGui out of this header, and these stay null until NotifyImGuiReady.
         void* ImGuiContextPtr  = nullptr;
         void* ImPlotContextPtr = nullptr;
     };

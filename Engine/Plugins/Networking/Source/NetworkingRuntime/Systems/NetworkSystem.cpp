@@ -38,7 +38,8 @@
 #include "Log/Log.h"
 #include "Core/CommandLine/CommandLine.h"
 #include "Scripting/EntityScript.h"
-#include "Scripting/DotNet/NetScriptBridge.h"
+#include "Scripting/ScriptNet.h"
+#include "World/Entity/Systems/ScriptSyncSystem.h"
 #include "Networking/NetworkEvents.h"
 #include "Net/NetSimulation.h"
 #include "Core/Object/ScriptClass.h"
@@ -1719,14 +1720,23 @@ namespace Lumina
                 return;
             }
 
+            // Queued, never run here, so a script's RPC body always runs at the sync point after this system.
+            auto Queue = [&](uint32 From)
+            {
+                if (CWorld* World = Script->GetWorld())
+                {
+                    ScriptNet::QueueRpc(*World, Entity, ScriptIndex, RpcId, From, Move(Payload));
+                }
+            };
+
             if (!bServer)
             {
-                NetScripts::DispatchRpc(Script, RpcId, Caller, Payload.GetData(), PayloadSize);
+                Queue(Caller);
                 return;
             }
 
             ERpcTarget Target = ERpcTarget::Broadcast;
-            if (!NetScripts::FindRpcTarget(Script, RpcId, Target) || Target != static_cast<ERpcTarget>(TargetByte))
+            if (!ScriptNet::FindRpcTarget(Script, RpcId, Target) || Target != static_cast<ERpcTarget>(TargetByte))
             {
                 return;
             }
@@ -1740,7 +1750,7 @@ namespace Lumina
             switch (Target)
             {
             case ERpcTarget::Host:
-                NetScripts::DispatchRpc(Script, RpcId, Sender, Payload.GetData(), PayloadSize);
+                Queue(Sender);
                 break;
             case ERpcTarget::Broadcast:
                 for (uint32 Connection : State.ReadyClientIds)
@@ -1750,7 +1760,7 @@ namespace Lumina
                         Relay(Connection);
                     }
                 }
-                NetScripts::DispatchRpc(Script, RpcId, Sender, Payload.GetData(), PayloadSize);
+                Queue(Sender);
                 break;
             case ERpcTarget::Owner:
             {
@@ -1758,7 +1768,7 @@ namespace Lumina
                 const uint32 Owner = Net != nullptr ? Net->OwningConnectionId : 0u;
                 if (Owner == 0)
                 {
-                    NetScripts::DispatchRpc(Script, RpcId, Sender, Payload.GetData(), PayloadSize);
+                    Queue(Sender);
                 }
                 else if (Owner != Sender)
                 {
@@ -1970,42 +1980,14 @@ namespace Lumina
             }
         }
 
-        // A C++ script's Sync fields have no setter to catch a write, so each is compared once a frame before anything is sent.
-        void PollNativeSyncFields(ECS::FRegistry& Registry, FNetWorldState& State)
+        // CScriptSyncSystem compares Sync fields only where this marks the entity networked, so a standalone script costs it nothing.
+        void TrackScriptSync(ECS::FRegistry& Registry)
         {
-            LUMINA_PROFILE_SCOPE();
-            THashMap<const CClass*, bool>& HasSyncFields = State.SyncFieldClassCache;
-            TVector<FProperty*>&           Fields        = State.SyncFieldScratch;
-            TVector<ECS::FEntity>&         Entities      = State.SyncEntityScratch;
-
-            // PollSync runs script callbacks that may add components, so the walk runs over a snapshot.
-            Entities.Reset();
-            Registry.View<ECS::Read<SEntityScriptComponent>, ECS::Read<SNetworkComponent>>().ForEachEntity([&](ECS::FEntity Entity) { Entities.Add(Entity); });
-            for (ECS::FEntity Entity : Entities)
+            TVector<ECS::FEntity> Untracked;
+            Registry.View<ECS::Read<SEntityScriptComponent>, ECS::Read<SNetworkComponent>>(ECS::TExclude<FScriptSyncState>{}).ForEachEntity([&](ECS::FEntity Entity) { Untracked.Add(Entity); });
+            for (ECS::FEntity Entity : Untracked)
             {
-                const SEntityScriptComponent* ScriptComponent = Registry.TryGet<ECS::Read<SEntityScriptComponent>>(Entity);
-                if (ScriptComponent == nullptr)
-                {
-                    continue;
-                }
-                for (const TStrongObjectPtr<CEntityScript>& Held : ScriptComponent->Scripts)
-                {
-                    CEntityScript* Script = Held.Get();
-                    if (Script == nullptr || !Script->IsReady() || ToScriptClass(Script->GetClass()) != nullptr)
-                    {
-                        continue;
-                    }
-                    auto Found = HasSyncFields.Find(Script->GetClass());
-                    if (Found == nullptr)
-                    {
-                        Script->GetClass()->GetNetReplicatedProperties(Fields);
-                        Found = &HasSyncFields.FindOrAdd(Script->GetClass(), !Fields.IsEmpty());
-                    }
-                    if (*Found)
-                    {
-                        Script->PollSync();
-                    }
-                }
+                Registry.Emplace<FScriptSyncState>(Entity);
             }
         }
 
@@ -2122,6 +2104,8 @@ namespace Lumina
         RequireUpdate(EUpdateStage::FrameEnd);
         // The frame end snapshot leaves out what expired this frame.
         RunsAfter<CLifetimeSystem>();
+        // Sync fields a script wrote this frame have to be compared before the send reads them.
+        RunsAfter<CScriptSyncSystem>();
     }
 
     bool CNetworkSystem::HasWork(const SSystemContext& Context)
@@ -2257,7 +2241,7 @@ namespace Lumina
 
         if (Context.GetUpdateStage() == EUpdateStage::FrameEnd)
         {
-            PollNativeSyncFields(Registry, *State);
+            TrackScriptSync(Registry);
             const double SendStart = PlatformTime::Seconds();
             SendFrame(World, Registry, *State, Context, bServer);
             const float SendMs = static_cast<float>((PlatformTime::Seconds() - SendStart) * 1000.0);

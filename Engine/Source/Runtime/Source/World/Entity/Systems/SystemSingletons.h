@@ -17,8 +17,7 @@ namespace Lumina
 
     // Registry-context singletons holding per-world state systems produce and consume; transient and never serialized.
 
-    // Resolved active view. CCameraSystem writes it at end of update (FrameEnd, or Paused in editor);
-    // CWorld::Extract reads + forwards it, keeping camera/post-process resolution in a system.
+    // Resolved active view, written by CCameraSystem at end of update and forwarded by CWorld::Extract.
     struct FResolvedSceneView : ECS::FResource
     {
         FViewVolume                     ViewVolume;
@@ -30,9 +29,7 @@ namespace Lumina
         bool                            bHasPostProcess = false;
     };
 
-    // One live additive camera shake. Applied to the RENDERED view each frame (not the camera entity
-    // transform), so several shakes sum and none permanently move the camera. Oscillation is sine-per-axis
-    // with seeded phase/frequency variation so axes don't move in lockstep.
+    // One live additive camera shake applied to the rendered view, so shakes sum and never move the camera entity.
     struct FCameraShakeInstance
     {
         FVector3    LocationAmplitude = FVector3(0.0f);  // max local-space offset per axis (world units)
@@ -49,9 +46,7 @@ namespace Lumina
         float       RotFreqMul[3]     = { 1.0f, 1.0f, 1.0f };
     };
 
-    // Active-camera selection + cinematic blend, owned and ticked entirely by CCameraSystem. A non-zero
-    // blend snapshots the displayed view and eases to the new camera over Duration; the resolved view is
-    // stored back here each frame as the source for the next blend.
+    // Active-camera selection and cinematic blend, where the resolved view is stored back each frame as the next blend source.
     REFLECT()
     struct RUNTIME_API SCameraGlobalState : ECS::FResource
     {

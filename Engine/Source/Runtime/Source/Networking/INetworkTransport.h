@@ -17,8 +17,7 @@ namespace Lumina
         // Bind + listen. Returns false on failure (port in use, socket error).
         virtual bool StartServer(const FListenParams& Params) = 0;
 
-        // Begin connecting to a server. Returns the handle for the (still-connecting) link, or an
-        // invalid handle on immediate failure. A Connected/Disconnected event follows from Service().
+        // Returns an invalid handle on immediate failure, otherwise a Connected or Disconnected event follows from Service().
         virtual FConnectionHandle ConnectToServer(const FConnectParams& Params) = 0;
 
         virtual bool IsServer() const = 0;
@@ -40,8 +39,7 @@ namespace Lumina
 
         virtual EConnectionState GetConnectionState(FConnectionHandle Connection) const = 0;
 
-        // Bytes of reliable data sent to this connection but not yet acknowledged (in flight). Used as a
-        // backpressure signal for property replication. Default 0 for backends that don't expose it.
+        // Used as a backpressure signal for property replication, and defaults to 0 for backends that do not expose it.
         virtual uint32 GetReliableBacklogBytes(FConnectionHandle Connection) const { return 0; }
 
         //~ Debug/telemetry (optional; default empty for backends that don't track it).

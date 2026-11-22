@@ -68,8 +68,7 @@ namespace Lumina
         }
     };
 
-    // Per-tick flat SoA snapshot of all movement-replicating entities. Built once on the server and reused for
-    // every client's relevancy gather. The array index is the dense "record index".
+    // Per-tick flat SoA snapshot of movement-replicating entities, built once and reused for every client's relevancy gather.
     struct FNetExtract
     {
         TVector<uint32>                        Guid;
@@ -91,8 +90,7 @@ namespace Lumina
         uint32 Num() const { return static_cast<uint32>(Guid.Num()); }
     };
 
-    // Uniform 2D grid over the XZ plane, CSR (counting-sort) layout. Cell c owns SortedRecords in
-    // [CellStart[c], CellStart[c+1]). Reused across ticks.
+    // Uniform 2D grid over the XZ plane in CSR layout, reused across ticks.
     struct FNetGrid
     {
         static constexpr int32 MaxDim = 512;
@@ -103,8 +101,7 @@ namespace Lumina
         int32           DimZ     = 0;
         TVector<int32>    CellStart;       // size NumCells()+1
         TVector<uint32>   SortedRecords;   // size = record count (extract record index, in cell order)
-        // Parallel to SortedRecords, duplicated in cell order so the per-client AOI distance/cull check reads
-        // contiguously instead of gathering scattered Extract.WorldPos[Rec]/Flags[Rec] (the hot cache miss).
+        // Parallel to SortedRecords in cell order so the per-client cull check reads contiguously instead of gathering.
         TVector<FVector3> SortedWorldPos;
         TVector<uint8>    SortedFlags;
         TVector<uint32>   SortedGuid;
@@ -161,10 +158,7 @@ namespace Lumina
 
     namespace NetGraph
     {
-        // Build the SoA extract (parallel) from movement-replicating entities, plus a connId->record map for
-        // O(1) viewpoint lookup. Server-owned entities use their STransformComponent local pose; client-owned
-        // relay the newest received ring sample. Also bumps each entity's FRepTransform change sequence when it moved.
-        // A connection owning several entities gets the NETREC_HasPitch one as its viewpoint anchor, or else the lowest NetGUID, never extract order.
+        // Builds the SoA extract in parallel, with server-owned entities using their local pose and client-owned ones relaying the newest ring sample. A connection owning several entities anchors on the NETREC_HasPitch one, else the lowest NetGUID, never extract order.
         NETWORKINGRUNTIME_API void BuildExtract(ECS::FRegistry& Registry, FNetExtract& OutExtract, THashMap<uint32, uint32>& OutOwnerToRecord);
 
         // Whether a serviced client is owed a transform record for Entry, and whether scale must ride along.

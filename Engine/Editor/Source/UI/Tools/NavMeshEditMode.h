@@ -10,8 +10,7 @@ namespace Lumina
     class CWorld;
     struct SCameraComponent;
 
-    // Navigation viewport mode: draws bake-volume bounds + a toolbar. Components auto-bake
-    // (SNavMeshComponent::bAutoBake); doesn't capture input so bounds stay selectable.
+    // Navigation viewport mode that draws bake-volume bounds without capturing input so they stay selectable.
     class FNavigationEditMode final : public IWorldEditorMode
     {
     public:

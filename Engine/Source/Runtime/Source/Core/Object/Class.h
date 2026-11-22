@@ -142,8 +142,7 @@ namespace Lumina
          *  struct kinds, so FStructProperty can answer OwnsStorage without knowing what it points at. */
         RUNTIME_API virtual bool RequiresValueLifecycle() const;
 
-        //~ Value lifetime for one instance in caller-owned raw memory. Default uses FStructOps, else
-        //~ walks the property list. CScriptStruct overrides these. Used by FInstancedStruct.
+        //~ Value lifetime for one instance in caller-owned raw memory, which CScriptStruct overrides.
         RUNTIME_API virtual void InitializeStruct(void* Dest) const;
         RUNTIME_API virtual void DestroyStruct(void* Dest) const;
         RUNTIME_API virtual void CopyStruct(void* Dest, const void* Src) const;
@@ -167,8 +166,7 @@ namespace Lumina
          *  honoring a custom StructOps serializer. Used by FProperty::NetSerialize for nested structs. */
         RUNTIME_API void NetSerializeAll(FNetArchive& Ar, void* Data) const;
 
-        //~ Per-field net delta helpers. The PROPERTY(Replicated) set/order is identical on both peers (same
-        //~ build), so a changed-field bitmask is self-describing on the wire -- no per-field tags or sizes.
+        //~ Per-field net delta helpers. The replicated property set and order match on both peers, so a changed-field bitmask needs no tags.
 
         /** Count of replicated fields (the bitmask width). Same walk/filter as NetSerializeProperties. */
         RUNTIME_API uint32 GetNetReplicatedPropertyCount() const;
@@ -223,8 +221,7 @@ namespace Lumina
             return IsChildOf(T::StaticClass());
         }
 
-        // O(1) via the flattened ancestor chain: one depth compare, one indexed load, one pointer
-        // compare. Falls back to the super walk for a type whose chain was never built.
+        // O(1) via the flattened ancestor chain, falling back to the super walk when the chain was never built.
         bool IsChildOf(const CStruct* Base) const
         {
             if (Base == nullptr)
@@ -275,8 +272,7 @@ namespace Lumina
         // Walks SuperStruct. Kept as the fallback and as the Debug cross-check for the chain.
         RUNTIME_API bool IsChildOfByWalk(const CStruct* Base) const;
 
-        // Ancestors root-first with this last, so a type sits at index (its depth). Rebuilt by
-        // SetSuperStruct, which is the only writer of SuperStruct.
+        // Ancestors root-first with this last, rebuilt by SetSuperStruct, the only writer of SuperStruct.
         RUNTIME_API void RebuildBaseChain();
 
         TVector<CStruct*> BaseChain;

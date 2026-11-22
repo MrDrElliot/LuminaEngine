@@ -224,6 +224,27 @@ namespace Lumina
         Out.bSurfaceDescsChanged    = ScenePrimitives.AreSurfaceDescsDirty() || Out.bFull || Out.bFullStatic;
         Out.MaxSurfaceDescMeshlets  = ScenePrimitives.GetMaxSurfaceDescMeshlets();
 
+        {
+            LUMINA_PROFILE_SECTION("Publish/Impostor Points");
+            FImpostorPointSet& Points = ScenePrimitives.GetImpostorPoints();
+            Points.RefreshBlockBounds();
+            Points.TakeDirty(Out.ImpostorPointRuns, Out.ImpostorTypeRuns, Out.ImpostorBlockRuns);
+            Out.ImpostorPointCount = Points.GetPointCount();
+            Out.ImpostorTypeCount  = Points.GetTypeCount();
+            Out.ImpostorBlockCount = Points.GetBlockCount();
+            // Buffers that lost their contents take everything, since the runs only name what changed.
+            if (bImpostorResendAll.exchange(false, std::memory_order_acq_rel))
+            {
+                Out.ImpostorPointRuns.Reset();
+                Out.ImpostorTypeRuns.Reset();
+                Out.ImpostorBlockRuns.Reset();
+                Out.ImpostorPointRuns.Emplace(0u, Out.ImpostorPointCount);
+                Out.ImpostorTypeRuns.Emplace(0u, Out.ImpostorTypeCount);
+                Out.ImpostorBlockRuns.Emplace(0u, Out.ImpostorBlockCount);
+            }
+            LUMINA_PROFILE_VALUE("Impostor/Points", (int64)Points.GetLivePointCount());
+        }
+
         // Channel consumed, since the decisions above are now owned by this frame.
         ScenePrimitives.ClearDirtyInstanceSlots();
         ScenePrimitives.ClearFullInstanceUpload();

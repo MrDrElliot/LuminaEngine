@@ -6,6 +6,7 @@
 
 #include "../common/TracySystem.hpp"
 #include "../common/TracyAlign.hpp"
+#include "../common/TracyAssert.hpp"
 #include "TracyProfiler.hpp"
 
 namespace tracy
@@ -21,7 +22,7 @@ public:
         , m_active( false )
 #endif
     {
-        assert( m_id != (std::numeric_limits<uint32_t>::max)() );
+        TRACY_ASSERT( m_id != (std::numeric_limits<uint32_t>::max)() );
 
         auto item = Profiler::QueueSerial();
         MemWrite( &item->hdr.type, QueueType::LockAnnounce );
@@ -84,7 +85,7 @@ public:
         Profiler::QueueSerialFinish();
     }
 
-    tracy_force_inline void AfterUnlock()
+    tracy_force_inline void BeforeUnlock()
     {
 #ifdef TRACY_ON_DEMAND
         m_lockCount.fetch_sub( 1, std::memory_order_relaxed );
@@ -154,7 +155,7 @@ public:
 
     tracy_force_inline void CustomName( const char* name, size_t size )
     {
-        assert( size < (std::numeric_limits<uint16_t>::max)() );
+        TRACY_ASSERT( size < (std::numeric_limits<uint16_t>::max)() );
         auto ptr = (char*)tracy_malloc( size );
         memcpy( ptr, name, size );
         auto item = Profiler::QueueSerial();
@@ -198,8 +199,8 @@ public:
 
     tracy_force_inline void unlock()
     {
+        m_ctx.BeforeUnlock();
         m_lockable.unlock();
-        m_ctx.AfterUnlock();
     }
 
     tracy_force_inline bool try_lock()
@@ -236,7 +237,7 @@ public:
         , m_active( false )
 #endif
     {
-        assert( m_id != (std::numeric_limits<uint32_t>::max)() );
+        TRACY_ASSERT( m_id != (std::numeric_limits<uint32_t>::max)() );
 
         auto item = Profiler::QueueSerial();
         MemWrite( &item->hdr.type, QueueType::LockAnnounce );
@@ -299,7 +300,7 @@ public:
         Profiler::QueueSerialFinish();
     }
 
-    tracy_force_inline void AfterUnlock()
+    tracy_force_inline void BeforeUnlock()
     {
 #ifdef TRACY_ON_DEMAND
         m_lockCount.fetch_sub( 1, std::memory_order_relaxed );
@@ -380,7 +381,7 @@ public:
         Profiler::QueueSerialFinish();
     }
 
-    tracy_force_inline void AfterUnlockShared()
+    tracy_force_inline void BeforeUnlockShared()
     {
 #ifdef TRACY_ON_DEMAND
         m_lockCount.fetch_sub( 1, std::memory_order_relaxed );
@@ -451,7 +452,7 @@ public:
 
     tracy_force_inline void CustomName( const char* name, size_t size )
     {
-        assert( size < (std::numeric_limits<uint16_t>::max)() );
+        TRACY_ASSERT( size < (std::numeric_limits<uint16_t>::max)() );
         auto ptr = (char*)tracy_malloc( size );
         memcpy( ptr, name, size );
         auto item = Profiler::QueueSerial();
@@ -495,8 +496,8 @@ public:
 
     tracy_force_inline void unlock()
     {
+        m_ctx.BeforeUnlock();
         m_lockable.unlock();
-        m_ctx.AfterUnlock();
     }
 
     tracy_force_inline bool try_lock()
@@ -515,8 +516,8 @@ public:
 
     tracy_force_inline void unlock_shared()
     {
+        m_ctx.BeforeUnlockShared();
         m_lockable.unlock_shared();
-        m_ctx.AfterUnlockShared();
     }
 
     tracy_force_inline bool try_lock_shared()

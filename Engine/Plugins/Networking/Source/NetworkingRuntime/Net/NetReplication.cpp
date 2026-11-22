@@ -22,7 +22,7 @@
 #include "Platform/Time/PlatformTime.h"
 #include "Scripting/EntityScript.h"
 #include "Scripting/ScriptableObject.h"
-#include "Scripting/DotNet/NetScriptBridge.h"
+#include "Scripting/ScriptNet.h"
 
 namespace Lumina
 {
@@ -722,17 +722,16 @@ namespace Lumina::Net
                 }
             }
 
-            NetScripts::DispatchSyncChanging(Script, Names.GetData(), (uint32)Names.Num());
+            // Only data moves here. The change handlers run at the sync point after this system.
+            ScriptNet::BeginSyncArrival(Registry, Entity, *Script, Names.GetData(), (uint32)Names.Num());
             Class->NetReadReplicatedMasked(Ar, Script, Mask.GetData());
             if (Ar.HasError())
             {
                 return;
             }
-            NetScripts::DispatchSyncChanged(Script, Names.GetData(), (uint32)Names.Num());
-
-            if (!Registry.IsValid(Entity))
+            if (CWorld* World = Script->GetWorld())
             {
-                return;
+                ScriptNet::QueueSyncArrival(*World, Entity, Index, Names.GetData(), (uint32)Names.Num());
             }
         }
     }

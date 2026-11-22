@@ -37,7 +37,7 @@ public static class WslBuild
         // A Windows checkout carries the script with CRLF endings, which bash reads as part of each command.
         Script.Add($"cd \"{EngineMirror}\" && sed -i 's/\\r$//' LuminaBuild.sh");
 
-        // Setup fetches the Linux dependency bundle once and returns at once while it is present.
+        // Setup fetches the Linux dependency bundle when the pinned one changes and returns at once otherwise.
         Script.Add("./LuminaBuild.sh Setup -Yes");
         foreach (string Target in TargetNames)
         {

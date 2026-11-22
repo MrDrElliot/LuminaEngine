@@ -88,6 +88,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Streaming", ClampMin = 8.0f, Units = "m")
         float ViewDistance = 2048.0f;
 
+        // Past this, a plant whose mesh has an impostor is held as a bare GPU point that only ever draws that impostor.
+        PROPERTY(Editable, Category = "Streaming", ClampMin = 0.0f, Units = "m")
+        float ImpostorDistance = 320.0f;
+
         // Tiles scattered at once on background threads.
         PROPERTY(Editable, Category = "Streaming", ClampMin = 1, ClampMax = 64)
         int32 MaxConcurrentBuilds = 16;

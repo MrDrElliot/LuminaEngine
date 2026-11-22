@@ -7,8 +7,7 @@
 
 namespace Lumina
 {
-    // Solid debug triangles. Submitted in bulk (one batch == one whole vertex span) so a
-    // large surface (e.g. a navmesh overlay) is a single enqueue, not thousands of per-triangle ones.
+    // Solid debug triangles submitted as one whole vertex span, so a large surface is a single enqueue.
     struct RUNTIME_API FTriangleBatcherComponent
     {
         static constexpr bool InPlaceDelete = true;

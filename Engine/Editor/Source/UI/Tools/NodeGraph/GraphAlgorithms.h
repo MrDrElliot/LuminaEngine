@@ -9,8 +9,7 @@
 
 namespace Lumina::GraphAlgorithms
 {
-    // Kahn's algorithm over a pre-computed reachable set. Writes SortedNodes in dependency order
-    // (roots-last). Returns the first node participating in a cycle, or nullptr on success.
+    // Kahn's algorithm over a reachable set, roots last. Returns the first node in a cycle, or nullptr.
     inline CEdGraphNode* TopologicalSortReachable(const TVector<TStrongObjectPtr<CEdGraphNode>>& Nodes, const THashSet<CEdGraphNode*>& ReachableNodes, TVector<CEdGraphNode*>& SortedNodes)
     {
         THashMap<CEdGraphNode*, uint32> InDegree;
@@ -23,10 +22,7 @@ namespace Lumina::GraphAlgorithms
             }
         }
 
-        // Wireless edges (a named reroute usage depending on its declaration) carry no pin connection,
-        // so they are gathered up front and counted exactly like real ones. Doing it here rather than
-        // special-casing the emit order also means a usage placed above its own declaration is
-        // reported as an ordinary cycle instead of silently emitting in the wrong order.
+        // Wireless edges carry no pin connection, and counting them like real ones reports a usage above its declaration as a cycle.
         THashMap<CEdGraphNode*, TVector<CEdGraphNode*>> ImplicitDependents;
         for (const auto& NodeRef : Nodes)
         {
@@ -169,8 +165,7 @@ namespace Lumina::GraphAlgorithms
                 }
             }
 
-            // A named reroute usage has no input pin, so without this its declaration and everything
-            // feeding it would be judged unreachable and never compiled.
+            // A named reroute usage has no input pin, so its declaration would otherwise be judged unreachable.
             if (CEdGraphNode* Implicit = Node->GetImplicitInputNode())
             {
                 if (ReachableNodes.TryAdd(Implicit))
@@ -181,8 +176,7 @@ namespace Lumina::GraphAlgorithms
         }
     }
 
-    // Topo-sorts the subset of Nodes reachable (via input edges) from the first RootPredicate match
-    // into SortedNodes (dependency order, roots-last). Returns the first node in a cycle, else nullptr.
+    // Sorts the nodes reachable from the first RootPredicate match, returning the first node in a cycle or nullptr.
     template <typename TRootPredicate>
     CEdGraphNode* TopologicalSortFromRoot(const TVector<TStrongObjectPtr<CEdGraphNode>>& Nodes, TVector<CEdGraphNode*>& SortedNodes, TRootPredicate&& IsRoot)
     {
@@ -202,8 +196,7 @@ namespace Lumina::GraphAlgorithms
         return TopologicalSortReachable(Nodes, ReachableNodes, SortedNodes);
     }
 
-    // Multi-root variant: seeds the reachability walk from EVERY node matching RootPredicate. A
-    // material function graph has one output node per declared output, so the walk must seed from all.
+    // Seeds the walk from every RootPredicate match, since a function graph has one output node per declared output.
     template <typename TRootPredicate>
     CEdGraphNode* TopologicalSortFromRoots(const TVector<TStrongObjectPtr<CEdGraphNode>>& Nodes, TVector<CEdGraphNode*>& SortedNodes, TRootPredicate&& IsRoot)
     {

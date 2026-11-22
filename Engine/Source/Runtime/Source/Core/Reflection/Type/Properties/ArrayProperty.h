@@ -33,8 +33,7 @@ namespace Lumina
         RUNTIME_API bool Identical(const void* ValueA, const void* ValueB) const override;
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
-        // The container owns heap memory, so zeroed bytes are not a valid value. Routed through the ops table
-        // rather than a type test, so a TVector<T> and a script runtime array are handled by the same code.
+        // The container owns heap memory, so zeroed bytes are not a valid value. The ops table serves both TVector and script arrays.
         void ConstructValue(void* Value) const override { if (Ops && Ops->ConstructContainer) { Ops->ConstructContainer(Value, Ops->ContainerContext); } }
         void DestructValue(void* Value) const override  { if (Ops && Ops->DestructContainer)  { Ops->DestructContainer(Value, Ops->ContainerContext); } }
         bool OwnsStorage() const override { return Ops != nullptr && Ops->ConstructContainer != nullptr; }

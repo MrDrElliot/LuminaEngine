@@ -24,8 +24,7 @@ public class Runtime : LuminaModuleRules
             "LUMINA_HAS_RECAST",
         });
 
-        // Everything Runtime links or exposes through its public headers. Public because a
-        // dependent compiling against those headers needs the same third-party declarations.
+        // Public because a dependent compiling against these headers needs the same third-party declarations.
         PublicDependencyModuleNames.AddRange(new[]
         {
             "StbImage",
@@ -51,18 +50,14 @@ public class Runtime : LuminaModuleRules
             "BasicUniversal",
             "MSDFGen",
 
-            // Header-only. Puts Engine/Resources/Shaders on the include path so C++ can include
-            // Shared/SharedConstants.h -- the one definition of the constants both languages use.
-            // Public because Runtime's own public headers (MeshData.h, SceneRenderTypes.h) include it.
+            // Public because Runtime's own public headers (MeshData.h, SceneRenderTypes.h) include Shared/SharedConstants.h.
             "Shaders",
 
-            // Header path is always needed; the module itself becomes header only when
-            // profiling is off.
+            // The header path is always needed, and the module becomes header only when profiling is off.
             "Tracy",
         });
 
-        // Private because only Runtime's Physics/API/Box3D includes <box3d/...>. A module that wants the
-        // backend headers (the test target) takes its own Box3D dependency rather than inheriting one.
+        // Private because only Runtime's Physics/API/Box3D includes it, so the test target takes its own Box3D dependency.
         PrivateDependencyModuleNames.Add("Box3D");
 
         if (LuminaFeatures.IsActive(Target, LuminaFeatures.Aftermath))
@@ -98,16 +93,11 @@ public class Runtime : LuminaModuleRules
             AddPerFileOption("AnimCompression.cpp", "-ffp-contract=off");
             AddPerFileOption("AnimTaskExecutor.cpp", "-ffp-contract=off");
 
-            // libstdc++ declares std::stacktrace but leaves the backtrace implementation in its own
-            // archive, so Assert.h's HAS_STD_STACKTRACE path only links with this. The name here is
-            // a request rather than a filename: the archive is libstdc++_libbacktrace.a up to GCC 13
-            // and libstdc++exp.a from GCC 14, and the Unix toolchain substitutes whichever one the
-            // located compiler ships, or drops it where std::stacktrace is unavailable anyway.
+            // The name is a request, since the Unix toolchain substitutes libstdc++_libbacktrace.a or libstdc++exp.a by GCC version.
             PublicSystemLibraries.Add("stdc++_libbacktrace");
         }
 
         // Defines stb's implementation macros, so it must be the only translation unit that does.
-        // Sharing one with any other source would compile stb twice into the same object.
         ExcludeFromUnity.Add("StbImageImpl.cpp");
 
         // Reached directly by the Tests directory rather than through Runtime's own headers.

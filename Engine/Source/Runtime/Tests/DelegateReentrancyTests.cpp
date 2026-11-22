@@ -338,8 +338,27 @@ TEST(ScriptDelegateMultiArg, ArgPackIsDeclarationOrderedCStructLayout)
     EXPECT_EQ(offsetof(FPack, V2), sizeof(int32) + sizeof(float));
     EXPECT_EQ(sizeof(FPack), sizeof(int32) + sizeof(float) + sizeof(FBlittablePayload));
 
-    // A single-argument pack must stay byte-identical to the bare payload, which is what keeps the
-    // existing generated C# accessors reading the right bytes.
+    // A single-argument pack must stay byte-identical to the bare payload so existing generated C# accessors read the right bytes.
     EXPECT_EQ(sizeof(TArgPack<FBlittablePayload>), sizeof(FBlittablePayload));
     EXPECT_EQ(offsetof(TArgPack<FBlittablePayload>, V0), 0u);
+}
+
+// A guard wraps every listener's call, which is how the debug GUI broadcast recovers ImGui after each handler.
+TEST(DelegateReentrancy, AGuardRunsAroundEachListener)
+{
+    TScriptDelegate<int32*> Event;
+    int32 Calls = 0;
+    int32 Guarded = 0;
+    Event.AddLambda([&Calls](int32*) { ++Calls; });
+    Event.BindManaged([](void* Context, const void*) { ++*static_cast<int32*>(Context); }, &Calls);
+
+    Event.BroadcastGuarded([](FScriptDelegateBase::FThunk Thunk, void* Context, const void* Payload)
+    {
+        ++*static_cast<const TArgPack<int32*>*>(Payload)->V0;
+        Thunk(Context, Payload);
+    }, &Guarded);
+
+    EXPECT_EQ(Calls, 2);
+    EXPECT_EQ(Guarded, 2) << "native and managed listeners alike go through the guard";
+    Event.ClearManaged();
 }

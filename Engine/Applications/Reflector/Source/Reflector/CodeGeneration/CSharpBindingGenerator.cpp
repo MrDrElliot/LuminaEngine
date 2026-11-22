@@ -11,6 +11,7 @@
 #include "Reflector/ReflectionSpecifiers.h"
 #include "Reflector/Utils/FileIO.h"
 #include "Reflector/CodeGeneration/ReflectionNames.h"
+#include "Reflector/CodeGeneration/RpcShim.h"
 
 namespace Lumina::Reflection
 {
@@ -1424,9 +1425,7 @@ namespace Lumina::Reflection
             return (IsOpaqueWrapperType(Db, Qualified) || IsObjectRootType(Qualified)) ? Qualified : Name;
         }
 
-        // The C# and fully-qualified C++ spellings for an element the two-pass buffer can carry by value.
-        // OutBufferCpp is set only for an object element, whose caller buffer holds raw pointers rather
-        // than the refcounted TStrongObjectPtr the callee fills.
+        // OutBufferCpp is set only for an object element, whose caller buffer holds raw pointers rather than TStrongObjectPtr.
         bool VectorElementCSharp(const FReflectionModel& Db, const std::string& Elem,
             std::string& OutCSharp, std::string& OutCpp, std::string& OutBufferCpp)
         {
@@ -1959,7 +1958,9 @@ namespace Lumina::Reflection
                 }
             }
 
-            const std::string CallExpr = Callee + "(" + CallArgs + ")";
+            // A member export passes Self first, since its callee is the type info's forwarder rather than Self->Fn.
+            const std::string SelfAndArgs = SelfType == nullptr ? CallArgs : (CallArgs.empty() ? std::string("Self") : ("Self, " + CallArgs));
+            const std::string CallExpr = Callee + "(" + SelfAndArgs + ")";
             std::string RetCpp = "void";
             std::string Body = CallExpr + ";";
             bool bStringReturn = false;
@@ -2081,8 +2082,8 @@ namespace Lumina::Reflection
                 FFnBinding FB;
                 if (ClassifyFunction(Fn, Type, Db, FB))
                 {
-                    // A static has no instance, so it is called on the type and its thunk takes no Self.
-                    const std::string Callee = Fn.IsStatic() ? (std::string(Qualified) + "::" + Fn.Name()) : ("Self->" + Fn.Name());
+                    // Through the type info, which the class befriends, so a private or protected FUNCTION still binds. A static takes no Self.
+                    const std::string Callee = Names::TypeInfoQualified(Type.Namespace(), Type.DisplayName()) + "::Call_" + Fn.Name();
                     EmitNativeFunction(Writer, FB, "LuminaSharp_Call_" + Friendly + "_" + Fn.Name(), Callee, Fn.IsStatic() ? nullptr : Qualified, Api);
                 }
             }
@@ -2093,7 +2094,8 @@ namespace Lumina::Reflection
         // Gated on virtual because the shim emits an override, and on Scriptable because only those get a shim.
         bool IsScriptEvent(const FFunctionView& Fn, const FTypeView& Type)
         {
-            return Fn.IsVirtual() && Type.HasMetadata("Scriptable");
+            // An RPC is virtual only so the generated override can route it, not so C# can replace its body.
+            return Fn.IsVirtual() && Type.HasMetadata("Scriptable") && !Fn.HasMetadata("Rpc");
         }
 
         // Strings are still deferred, since their return needs the two-pass protocol the dispatcher lacks.
@@ -2357,7 +2359,9 @@ namespace Lumina::Reflection
                     else if (A.Kind == EBind::StructOpaque) { CallArgs += "*static_cast<const " + A.TargetCpp + "*>(" + An + ")"; }
                     else                             { CallArgs += An; }
                 }
-                const std::string Call = std::string("Self->") + Qualified + "::" + E.Fn.Name() + "(" + CallArgs + ")";
+                // The type info's non-virtual forwarder, so a protected event's C# base call still reaches the native body.
+                const std::string Call = Names::TypeInfoQualified(Type.Namespace(), Type.DisplayName()) + "::Base_" + E.Fn.Name()
+                    + "(Self" + (CallArgs.empty() ? std::string() : ", " + CallArgs) + ")";
                 const std::string ParamSig = Params.empty() ? std::string() : (", " + Params);
                 // A pure virtual has no native body, so a C# base call gets the type's default.
                 if (E.Fn.IsPureVirtual())
@@ -2429,7 +2433,10 @@ namespace Lumina::Reflection
             }
             Writer.Line();
 
-            Writer.Linef("    class %s final : public %s", Shim.c_str(), Qualified);
+            // Over the RPC subclass when there is one, so a C# subclass's calls route like the native class's.
+            const std::string ShimBase = RpcShim::CollectFunctions(Type).empty() ? std::string(Qualified)
+                : (Type.Namespace().empty() ? RpcShim::ShimName(Type) : (Type.Namespace() + "::" + RpcShim::ShimName(Type)));
+            Writer.Linef("    class %s final : public %s", Shim.c_str(), ShimBase.c_str());
             Writer.Line("    {");
             // The managed instance lives in the object's slot and the override bits on the CClass, so this is bare.
             Writer.Line("    public:");
@@ -2602,8 +2609,7 @@ namespace Lumina::Reflection
             return Chain;
         }
 
-        // A handle is one NativeRef, so every member reads at a constant offset from the address it views.
-        // A read-only view's member, reusing the owner's offsets and tokens; a container or slot view with no read-only form is left out.
+        // A container or slot view with no read-only form is left out.
         bool EmitReadOnlyMember(FCodeWriter& Writer, const FPropertyView& Prop, const FBinding& B)
         {
             const std::string Name = SafeIdentifier(Prop.Name());

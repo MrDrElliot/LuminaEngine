@@ -20,8 +20,7 @@ namespace Lumina
         NODISCARD bool IsOpen() const { return Handle.IsValid(); }
         NODISCARD const FString& GetBasePath() const { return BasePath; }
 
-        // Moves the live file to NewBasePath, carrying this run's lines with it. Used once the
-        // project is known, so a run that started against the engine ends up in the project's Logs.
+        // Used once the project is known, so a run that started against the engine ends up in the project's Logs.
         void Retarget(const FString& NewBasePath);
 
         void Write(const Logging::FLogRecord& Record) override;

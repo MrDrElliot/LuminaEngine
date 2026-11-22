@@ -24,8 +24,7 @@ public abstract class LuminaTargetRules : TargetRules
             _ => "-Shipping",
         };
 
-        // Editor and Game link different exports out of the same modules, so a shared file name would
-        // leave whichever built last overwriting the other. Game keeps the plain name it ships under.
+        // Editor and Game link different exports from the same modules, so a shared file name would let the last build overwrite the other.
         OutputSuffix = Target.Type == TargetType.Game
             ? ConfigurationElement
             : $"-{Target.Type}{ConfigurationElement}";
@@ -53,8 +52,7 @@ public abstract class LuminaTargetRules : TargetRules
             "RMLUI_STATIC_LIB",
             "__AVX__",
 
-            // The runtime resolves plugin and project binaries from these, so they must stay
-            // exactly "Windows" / "64" / "Windows64" / ".dll" on Windows.
+            // The runtime resolves plugin and project binaries from these, so they must stay Windows, 64, Windows64 and .dll.
             $"LUMINA_SYSTEM_NAME=\"{Target.SystemName}\"",
             $"LUMINA_ARCH_NAME=\"{Target.ArchitectureName}\"",
             $"LUMINA_PLATFORM_NAME=\"{Target.PlatformName}\"",
@@ -73,12 +71,10 @@ public abstract class LuminaTargetRules : TargetRules
             _ => "LE_SHIPPING",
         });
 
-        // Must agree with the CRT the toolchain selects. A target that links prebuilt release
-        // libraries pins itself to a non-debug configuration rather than overriding this.
+        // Must agree with the CRT the toolchain selects, so a target with prebuilt release libraries pins a non-debug configuration.
         GlobalDefinitions.Add(Target.Configuration == BuildConfiguration.Debug ? "_DEBUG" : "NDEBUG");
 
-        // Strips the API export and import macros and makes IMPLEMENT_MODULE register into a
-        // static table instead of exporting an entry point.
+        // Strips the API export and import macros and makes IMPLEMENT_MODULE register into a static table.
         if (Target.bMonolithic)
         {
             GlobalDefinitions.Add("LUMINA_MONOLITHIC");
@@ -91,16 +87,14 @@ public abstract class LuminaTargetRules : TargetRules
 
         ConfigureWarnings(Target);
 
-        // Layering the module graph cannot state for itself. Checked across the whole closure, so
-        // routing one of these through an intermediate module does not get past it.
+        // Checked across the whole closure, so routing through an intermediate module does not get past it.
         ForbidDependency(
             "Runtime",
             "Editor",
             "The runtime is what ships. An editor dependency here is not only a layering inversion, "
             + "it cannot link at all in a Game target, where the editor module does not exist.");
 
-        // Vendored SDKs whose reach is meant to stop at the plugin wrapping them. Left contained,
-        // the plugin can be disabled and the SDK goes with it.
+        // Vendored SDKs stay contained in their plugin so disabling it takes the SDK along.
         ForbidDependency(
             "Runtime",
             "NsightPerf",
@@ -129,22 +123,16 @@ public abstract class LuminaTargetRules : TargetRules
             CompilerWarning.FormatTruncation);      // a formatted write the destination cannot hold
 
         Warnings.Set(WarningSeverity.Off,
-            // The reflection generator takes offsetof of reflected types, which are rarely standard
-            // layout. Conditionally-supported by the letter of the standard, fine on every compiler
-            // the engine targets, and not something generated code can be rewritten to avoid.
+            // Generated code takes offsetof of reflected types that are rarely standard layout, and it cannot be rewritten to avoid that.
             CompilerWarning.InvalidOffsetof,
 
-            // std::hardware_destructive_interference_size is pinned in Thread.h precisely because its
-            // value moves between compilers; the warning is about the hazard we already removed.
+            // The interference size is already pinned in Thread.h, which removes the hazard this warns about.
             CompilerWarning.InterferenceSize,
 
-            // Third-party headers arrive through -isystem, which silences their front-end diagnostics
-            // but not the ones GCC raises after inlining, with nothing to fix on our side.
+            // The -isystem headers still raise GCC's post-inlining diagnostics, with nothing to fix on our side.
             CompilerWarning.DanglingPointer);
 
-        // Real defects, but the analysis behind them is flow-sensitive, so what they find moves with
-        // the optimiser. Visible rather than fatal: a Shipping or LTO build must not fail on a
-        // diagnostic a Development build never emits.
+        // Flow-sensitive analysis moves with the optimizer, so these stay visible but not fatal in Shipping or LTO builds.
         Warnings.Set(WarningSeverity.Warning,
             CompilerWarning.ArrayBounds,            // an index the optimiser can prove is out of range
             CompilerWarning.StringopOverflow,       // a mem/str call writing past the destination
@@ -172,8 +160,7 @@ public abstract class LuminaTargetRules : TargetRules
         }
         else
         {
-            // Verified clean on GCC. Left out on MSVC until the same pass runs there, because these
-            // are off by default for cl, so promoting them enables them as well as failing on them.
+            // Left out on MSVC until verified there, since these are off by default for cl and promoting them enables them.
             Warnings.Set(WarningSeverity.Fatal,
                 CompilerWarning.Switch,
 
@@ -234,8 +221,7 @@ public abstract class LuminaModuleRules : ModuleRules
         BinaryType = ModuleBinaryType.SharedLibrary;
         bEnableReflection = true;
 
-        // Force-included ahead of everything so the module's export macros are defined in every
-        // translation unit without each source having to include the header itself.
+        // Force-included so the export macros are defined in every translation unit without each source including the header.
         ForceIncludeFiles.Add("ModuleAPI.h");
 
         // Every engine image links the dynamic CRT; the static one arrives through some vendored
@@ -244,8 +230,7 @@ public abstract class LuminaModuleRules : ModuleRules
             PrivateLinkerOptions.Add("/NODEFAULTLIB:LIBCMT");
         }
 
-        // Replacing global new/delete is a per-binary link decision; an image without its own definition
-        // binds to the CRT, and one image out of step hands rpmalloc a CRT block.
+        // An image without its own new/delete binds to the CRT, and one out of step hands rpmalloc a CRT block.
         PerImageSourceFiles.Add(
             Path.Combine(Target.EngineSourceDirectory, "Runtime", "Source", "Memory", "GlobalAllocatorOverrides.cpp"));
     }

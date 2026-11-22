@@ -713,7 +713,9 @@ namespace Lumina::RHI
     // No-op unless collection is armed.
     RUNTIME_API void         CmdWriteTimestamp(FCmdListH CL, FQueryPoolH Pool, uint32 Index, EStageFlags Stage);
 
-    // Returns false without blocking while the GPU has not reached the writes yet.
+    inline constexpr uint64  kTimestampUnavailable = ~0ull;
+
+    // Returns false without blocking while any query is unwritten, and each of those reads as kTimestampUnavailable.
     RUNTIME_API bool         ReadTimestamps(FQueryPoolH Pool, uint32 First, uint32 Count, TSpan<uint64> OutTicks);
 
 #endif

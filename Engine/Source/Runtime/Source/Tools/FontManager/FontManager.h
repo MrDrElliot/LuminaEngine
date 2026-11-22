@@ -9,8 +9,7 @@ namespace Lumina
 {
     class CFont;
 
-    // Holds engine-default font assets, constructed at runtime (mirrors CPrimitiveManager). World text with
-    // no font assigned -- or one whose atlas failed to bake -- falls back to DefaultFont.
+    // Holds engine-default font assets, and world text with no usable font falls back to DefaultFont.
     REFLECT()
     class RUNTIME_API CFontManager : public CObject
     {

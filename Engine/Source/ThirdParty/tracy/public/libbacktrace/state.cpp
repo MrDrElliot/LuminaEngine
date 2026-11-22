@@ -73,4 +73,30 @@ backtrace_create_state (const char *filename, int threaded,
   return state;
 }
 
+/* Like backtrace_create_state, but marks the state as being for an
+   external file.  See backtrace.hpp for details.  */
+
+struct backtrace_state *
+backtrace_create_state_for_file (const char *filename, int threaded,
+				 backtrace_error_callback error_callback,
+				 void *data)
+{
+  /* The state opens the file lazily on first use (fileline_initialize),
+     so it must own the filename: the caller's buffer may be freed as
+     soon as this returns.  */
+  const size_t len = strlen (filename) + 1;
+  char *copy = (char*)backtrace_alloc (NULL, len, error_callback, data);
+  if (copy == NULL)
+    return NULL;
+  memcpy (copy, filename, len);
+
+  struct backtrace_state *state =
+    backtrace_create_state (copy, threaded, error_callback, data);
+  if (state == NULL)
+    return NULL;
+  state->external_file = 1;
+
+  return state;
+}
+
 }

@@ -275,8 +275,7 @@ public static unsafe class ScriptFunctionDispatch
             return false;
         }
 
-        // Only after TryBind validated the same signature, so the invoker can never widen what is accepted.
-        // Registered under the declaring type, so a subclass inheriting the function shares its invoker.
+        // Registered under the declaring type so a subclass inheriting the function shares its invoker, and only after TryBind validated the signature.
         nint Invoker = ScriptInvokerRegistry.Find(Method.DeclaringType!, Name);
         int* Offsets = null;
         if (Invoker != 0)

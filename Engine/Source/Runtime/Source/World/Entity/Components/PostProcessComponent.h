@@ -8,8 +8,7 @@
 namespace Lumina
 {
     class CMaterialInterface;
-    // Volumetric post-process override; its box (or bInfiniteExtent for global) is tested against the camera,
-    // blending Settings onto the camera's. Volumes stack by Priority (highest wins); BlendDistance softens entry.
+    // Volumetric post-process override tested against the camera, stacking by Priority (highest wins) and softened by BlendDistance.
     REFLECT(Component, Category = "Rendering")
     struct RUNTIME_API SPostProcessComponent
     {
@@ -45,8 +44,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Settings")
         SPostProcessSettings Settings;
 
-        // Post-process materials this volume contributes; while the camera is inside (or always, if bInfiniteExtent)
-        // they're appended after the camera's own, order preserved. Must be MaterialType = PostProcess.
+        // Post-process materials appended after the camera's own while the camera is inside, which must be MaterialType PostProcess.
         PROPERTY(Editable, Category = "Settings")
         TVector<TStrongObjectPtr<CMaterialInterface>> PostProcessMaterials;
     };

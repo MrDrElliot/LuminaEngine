@@ -26,6 +26,84 @@ namespace Lumina
 
         // Two timestamps per scope, so the pool has to hold both ends of every marker.
         constexpr uint32 kQueriesPerScope = 2;
+
+        constexpr uint32 BeginQuery(uint32 ScopeIndex) { return ScopeIndex * kQueriesPerScope; }
+        constexpr uint32 EndQuery(uint32 ScopeIndex)   { return ScopeIndex * kQueriesPerScope + 1; }
+
+        // A list of an aliased queue runs on the queue it aliases, so its scopes belong in that lane.
+        RHI::EQueueType HardwareQueueOf(RHI::FCmdListH CL)
+        {
+            const RHI::EQueueType Queue = RHI::GetCommandListQueue(CL);
+            if ((Queue == RHI::EQueueType::Compute && !RHI::SupportsAsyncCompute())
+                || (Queue == RHI::EQueueType::Transfer && !RHI::SupportsAsyncTransfer()))
+            {
+                return RHI::EQueueType::Graphics;
+            }
+            return Queue;
+        }
+
+        struct FInterval
+        {
+            uint64 Begin;
+            uint64 End;
+        };
+
+        // Expects intervals sorted by Begin, and merges them in place.
+        void MergeIntervals(TVector<FInterval>& Intervals)
+        {
+            int32 Write = 0;
+            for (int32 Read = 0; Read < Intervals.Num(); ++Read)
+            {
+                if (Write > 0 && Intervals[Read].Begin <= Intervals[Write - 1].End)
+                {
+                    Intervals[Write - 1].End = Math::Max(Intervals[Write - 1].End, Intervals[Read].End);
+                }
+                else
+                {
+                    Intervals[Write++] = Intervals[Read];
+                }
+            }
+            Intervals.SetNum(Write);
+        }
+
+        uint64 TotalLength(const TVector<FInterval>& Merged)
+        {
+            uint64 Sum = 0;
+            for (const FInterval& Interval : Merged)
+            {
+                Sum += Interval.End - Interval.Begin;
+            }
+            return Sum;
+        }
+
+        uint64 IntersectionLength(const TVector<FInterval>& A, const TVector<FInterval>& B)
+        {
+            uint64 Sum = 0;
+            int32 i = 0;
+            int32 j = 0;
+            while (i < A.Num() && j < B.Num())
+            {
+                const uint64 Begin = Math::Max(A[i].Begin, B[j].Begin);
+                const uint64 End   = Math::Min(A[i].End, B[j].End);
+                if (End > Begin)
+                {
+                    Sum += End - Begin;
+                }
+                (A[i].End < B[j].End) ? ++i : ++j;
+            }
+            return Sum;
+        }
+    }
+
+    const char* GPUProfileQueueName(RHI::EQueueType Queue)
+    {
+        switch (Queue)
+        {
+        case RHI::EQueueType::Graphics: return "Graphics";
+        case RHI::EQueueType::Compute:  return "Async compute";
+        case RHI::EQueueType::Transfer: return "Transfer";
+        }
+        return "Unknown";
     }
 
     FGPUProfiler& FGPUProfiler::Get()
@@ -46,7 +124,7 @@ namespace Lumina
 
     void FGPUProfiler::Shutdown()
     {
-        FScopeLock Lock(Mutex);
+        bInitialized.store(false, std::memory_order_release);
 
         for (FSlot& Slot : Slots)
         {
@@ -56,13 +134,10 @@ namespace Lumina
                 RHI::Retire(Slot.Pool);
                 Slot.Pool = {};
             }
-            Slot.Scopes.Reset();
-            Slot.Stack.Reset();
-            Slot.bPendingResolve = false;
+            Slot.NumClaimed.store(0, std::memory_order_relaxed);
         }
 
         RHI::SetTimestampCollection(false);
-        bInitialized = false;
         bHasResolvedFrame = false;
     }
 
@@ -75,17 +150,15 @@ namespace Lumina
 
         if (!bEnabled)
         {
-            if (bInitialized)
+            if (bInitialized.load(std::memory_order_relaxed))
             {
                 Shutdown();
             }
             return;
         }
 
-        FScopeLock Lock(Mutex);
-
-        CurrentSlot = SlotIndex % RHI::kFramesInFlight;
-        FSlot& Slot = Slots[CurrentSlot];
+        const uint32 Index = SlotIndex % RHI::kFramesInFlight;
+        FSlot& Slot = Slots[Index];
 
         if (!RHI::IsValid(Slot.Pool))
         {
@@ -94,135 +167,175 @@ namespace Lumina
             {
                 return;
             }
+            Slot.Scopes.SetNum(MaxScopesPerFrame);
+            Slot.NumClaimed.store(0, std::memory_order_relaxed);
         }
 
-        bInitialized = true;
-
-        // BeginFrame already waited this slot's timeline, so last cycle's writes are readable now.
-        if (Slot.bPendingResolve)
+        // BeginFrame already waited this slot's timeline on every queue, so last cycle's writes are readable now.
+        if (Slot.NumClaimed.load(std::memory_order_relaxed) != 0)
         {
             Resolve(Slot);
-            Slot.bPendingResolve = false;
         }
 
-        Slot.Scopes.Reset();
-        Slot.Stack.Reset();
-        Slot.QueryCursor = 0;
+        Slot.NumClaimed.store(0, std::memory_order_relaxed);
         Slot.FrameNumber = ++FrameCounter;
 
         // After the resolve read last cycle's values, and outside any render pass, which a scope may open inside.
         Slot.bHostReset = RHI::ResetTimestamps(Slot.Pool, 0, MaxScopesPerFrame * kQueriesPerScope);
+
+        CurrentSlot.store(Index, std::memory_order_release);
+        bInitialized.store(true, std::memory_order_release);
     }
 
-    void FGPUProfiler::BeginScope(RHI::FCmdListH CL, const char* Name)
+    int32 FGPUProfiler::BeginScope(RHI::FCmdListH CL, const char* Name, int32 ParentIndex, int32 Depth)
     {
-        if (!bInitialized || Name == nullptr)
+        if (!bInitialized.load(std::memory_order_acquire) || Name == nullptr)
         {
-            return;
+            return Constants::kIndexNone;
         }
 
-        FScopeLock Lock(Mutex);
-
-        FSlot& Slot = Slots[CurrentSlot];
-        if (!RHI::IsValid(Slot.Pool) || static_cast<uint32>(Slot.Scopes.Num()) >= MaxScopesPerFrame)
+        FSlot& Slot = Slots[CurrentSlot.load(std::memory_order_acquire)];
+        const uint32 Index = Slot.NumClaimed.fetch_add(1, std::memory_order_relaxed);
+        if (Index >= MaxScopesPerFrame)
         {
-            // A depth entry is still pushed so the matching EndScope stays balanced.
-            Slot.Stack.Add(Constants::kIndexNone);
-            return;
+            return Constants::kIndexNone;
         }
 
-        FPendingScope& Scope = Slot.Scopes.EmplaceGetRef();
+        FPendingScope& Scope = Slot.Scopes[Index];
         Scope.Name        = Name;
-        Scope.ParentIndex = Slot.Stack.IsEmpty() ? Constants::kIndexNone : Slot.Stack.Last();
-        Scope.Depth       = Slot.Stack.Num();
-        Scope.BeginQuery  = Slot.QueryCursor;
-        Scope.EndQuery    = Slot.QueryCursor + 1;
-        Slot.QueryCursor += kQueriesPerScope;
+        Scope.ParentIndex = ParentIndex;
+        Scope.Depth       = Depth;
+        Scope.Queue       = HardwareQueueOf(CL);
 
         // Without hostQueryReset, reset immediately before the write, so ordering inside this list is the only guarantee needed.
         if (!Slot.bHostReset)
         {
-            RHI::CmdResetTimestamps(CL, Slot.Pool, Scope.BeginQuery, kQueriesPerScope);
+            RHI::CmdResetTimestamps(CL, Slot.Pool, BeginQuery(Index), kQueriesPerScope);
         }
-        RHI::CmdWriteTimestamp(CL, Slot.Pool, Scope.BeginQuery, RHI::EStageFlags::AllCommands);
+        RHI::CmdWriteTimestamp(CL, Slot.Pool, BeginQuery(Index), RHI::EStageFlags::AllCommands);
 
-        Slot.Stack.Add(Slot.Scopes.Num() - 1);
+        return (int32)Index;
     }
 
-    void FGPUProfiler::EndScope(RHI::FCmdListH CL)
+    void FGPUProfiler::EndScope(RHI::FCmdListH CL, int32 ScopeIndex)
     {
-        if (!bInitialized)
+        if (ScopeIndex == Constants::kIndexNone || !bInitialized.load(std::memory_order_acquire))
         {
             return;
         }
 
-        FScopeLock Lock(Mutex);
-
-        FSlot& Slot = Slots[CurrentSlot];
-        if (Slot.Stack.IsEmpty())
-        {
-            return;
-        }
-
-        const int32 Index = Slot.Stack.Last();
-        Slot.Stack.Pop();
-
-        if (Index == Constants::kIndexNone || !RHI::IsValid(Slot.Pool))
-        {
-            return;
-        }
-
-        RHI::CmdWriteTimestamp(CL, Slot.Pool, Slot.Scopes[Index].EndQuery, RHI::EStageFlags::AllCommands);
-        Slot.bPendingResolve = true;
+        const FSlot& Slot = Slots[CurrentSlot.load(std::memory_order_acquire)];
+        RHI::CmdWriteTimestamp(CL, Slot.Pool, EndQuery((uint32)ScopeIndex), RHI::EStageFlags::AllCommands);
     }
 
     void FGPUProfiler::Resolve(FSlot& Slot)
     {
-        if (Slot.Scopes.IsEmpty() || Slot.QueryCursor == 0)
+        const uint32 Claimed   = Slot.NumClaimed.load(std::memory_order_relaxed);
+        const uint32 NumScopes = Math::Min(Claimed, MaxScopesPerFrame);
+        const double PeriodNs  = RHI::GetTimestampPeriodNs();
+        if (NumScopes == 0 || PeriodNs <= 0.0)
         {
             return;
         }
 
         TVector<uint64> Ticks;
-        Ticks.SetNum(Slot.QueryCursor);
+        Ticks.SetNum(NumScopes * kQueriesPerScope);
 
-        // A frame whose markers never reached the GPU is dropped rather than reported as zero-length work.
-        if (!RHI::ReadTimestamps(Slot.Pool, 0, Slot.QueryCursor, TSpan<uint64>(Ticks.GetData(), Ticks.Num())))
+        // A list that was discarded or a queue that cannot timestamp leaves its queries unavailable, which drops only those scopes.
+        RHI::ReadTimestamps(Slot.Pool, 0, NumScopes * kQueriesPerScope, TSpan<uint64>(Ticks.GetData(), Ticks.Num()));
+
+        // A child is claimed after its parent on the same thread, so one forward pass sees every parent first.
+        TVector<bool> bValid;
+        bValid.SetNum(NumScopes);
+        uint64 Origin = UINT64_MAX;
+        for (uint32 i = 0; i < NumScopes; ++i)
+        {
+            const FPendingScope& Pending = Slot.Scopes[i];
+            const uint64 Begin = Ticks[BeginQuery(i)];
+            const uint64 End   = Ticks[EndQuery(i)];
+            const bool bParentValid = Pending.ParentIndex == Constants::kIndexNone
+                || ((uint32)Pending.ParentIndex < i && bValid[Pending.ParentIndex]);
+
+            bValid[i] = bParentValid && Begin != RHI::kTimestampUnavailable && End != RHI::kTimestampUnavailable && End >= Begin;
+            if (bValid[i])
+            {
+                Origin = Math::Min(Origin, Begin);
+            }
+        }
+
+        TVector<uint32> Order;
+        Order.Reserve(NumScopes);
+        for (uint32 i = 0; i < NumScopes; ++i)
+        {
+            if (bValid[i])
+            {
+                Order.Add(i);
+            }
+        }
+
+        if (Order.IsEmpty())
         {
             return;
         }
 
-        const double PeriodNs = RHI::GetTimestampPeriodNs();
-        if (PeriodNs <= 0.0)
+        Algo::Sort(Order, [&](uint32 A, uint32 B)
         {
-            return;
-        }
+            const uint32 QueueA = (uint32)Slot.Scopes[A].Queue;
+            const uint32 QueueB = (uint32)Slot.Scopes[B].Queue;
+            if (QueueA != QueueB)
+            {
+                return QueueA < QueueB;
+            }
+            const uint64 BeginA = Ticks[BeginQuery(A)];
+            const uint64 BeginB = Ticks[BeginQuery(B)];
+            return BeginA != BeginB ? BeginA < BeginB : A < B;
+        });
 
-        uint64 Origin = Ticks[0];
-        for (const FPendingScope& Pending : Slot.Scopes)
+        TVector<int32> NewIndex;
+        NewIndex.SetNum(NumScopes);
+        for (int32 i = 0; i < Order.Num(); ++i)
         {
-            Origin = Math::Min(Origin, Ticks[Pending.BeginQuery]);
+            NewIndex[Order[i]] = i;
         }
 
         const double ToMs = PeriodNs / 1000000.0;
 
         Latest.Scopes.Reset();
-        Latest.Scopes.Reserve(Slot.Scopes.Num());
-        Latest.FrameNumber = Slot.FrameNumber;
+        Latest.Scopes.Reserve(Order.Num());
+        Latest.FrameNumber   = Slot.FrameNumber;
+        Latest.DroppedScopes = Claimed - (uint32)Order.Num();
 
-        double FrameEndMs = 0.0;
-        for (const FPendingScope& Pending : Slot.Scopes)
+        TVector<FInterval> RootIntervals[kGPUProfileQueueCount];
+        uint64 FrameEnd = Origin;
+        for (uint32 Old : Order)
         {
+            const FPendingScope& Pending = Slot.Scopes[Old];
+            const uint64 Begin = Ticks[BeginQuery(Old)];
+            const uint64 End   = Ticks[EndQuery(Old)];
+
             FGPUProfileScope& Out = Latest.Scopes.EmplaceGetRef();
             Out.Name        = Pending.Name;
-            Out.ParentIndex = Pending.ParentIndex;
+            Out.ParentIndex = Pending.ParentIndex == Constants::kIndexNone ? Constants::kIndexNone : NewIndex[Pending.ParentIndex];
             Out.Depth       = Pending.Depth;
-            Out.StartMs     = (double)(Ticks[Pending.BeginQuery] - Origin) * ToMs;
-            Out.EndMs       = (double)(Ticks[Pending.EndQuery] - Origin) * ToMs;
-            FrameEndMs      = Math::Max(FrameEndMs, Out.EndMs);
+            Out.Queue       = Pending.Queue;
+            Out.StartMs     = (double)(Begin - Origin) * ToMs;
+            Out.EndMs       = (double)(End - Origin) * ToMs;
+
+            FrameEnd = Math::Max(FrameEnd, End);
+            if (Pending.ParentIndex == Constants::kIndexNone)
+            {
+                RootIntervals[(uint32)Pending.Queue].Add(FInterval{ Begin, End });
+            }
         }
 
-        Latest.TotalMs = FrameEndMs;
+        for (uint32 Queue = 0; Queue < kGPUProfileQueueCount; ++Queue)
+        {
+            MergeIntervals(RootIntervals[Queue]);
+            Latest.QueueBusyMs[Queue] = (double)TotalLength(RootIntervals[Queue]) * ToMs;
+        }
+        Latest.AsyncOverlapMs = (double)IntersectionLength(RootIntervals[(uint32)RHI::EQueueType::Graphics],
+                                                            RootIntervals[(uint32)RHI::EQueueType::Compute]) * ToMs;
+        Latest.TotalMs = (double)(FrameEnd - Origin) * ToMs;
         bHasResolvedFrame = true;
 
         FrameTimeHistory.Add((float)Latest.TotalMs);

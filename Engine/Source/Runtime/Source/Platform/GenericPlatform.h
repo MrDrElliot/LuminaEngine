@@ -58,16 +58,14 @@ using UTF32CHAR = char32_t;
     #define PLATFORM_TCHAR_IS_WIDE 0
 #endif
 
-// For a class whose vtable crosses a shared library boundary. Empty on Windows, where MSVC emits a
-// vtable in every translation unit that needs one.
+// Empty on Windows, where MSVC emits a vtable in every translation unit that needs one.
 #if defined(LE_PLATFORM_WINDOWS)
     #define LUMINA_VISIBLE_TYPE
 #else
     #define LUMINA_VISIBLE_TYPE __attribute__((visibility("default")))
 #endif
 
-// TEXT() used to arrive only because <windows.h> leaked in transitively through a third-party
-// header chain. DECLARE_CLASS depends on it, so own it here instead.
+// DECLARE_CLASS depends on TEXT(), which used to arrive only by leaking in through a third-party header chain.
 #ifndef __TEXT
     #ifdef UNICODE
         #define __TEXT(quote) L##quote

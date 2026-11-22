@@ -29,8 +29,7 @@ namespace Lumina
         CAnimGraphPin* DeltaOutputPin = nullptr;
     };
 
-    // Layers an additive delta on top of a base pose by an alpha. Alpha 0 yields
-    // the base unchanged; alpha 1 yields the base with the full delta applied.
+    // Layers an additive delta on a base pose, where alpha 0 leaves the base unchanged and 1 applies the full delta.
     REFLECT()
     class CAnimGraphNode_ApplyAdditive : public CAnimGraphNode
     {

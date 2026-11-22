@@ -8,6 +8,7 @@
 #include "Renderer/RHI.h"
 #include "Renderer/TextureStreamingManager.h"
 #include "Renderer/Vertex.h"
+#include "Session/SessionOps.h"
 #include "Thumbnails/ThumbnailScene.h"
 #include "World/World.h"
 #include "World/Entity/Components/CameraComponent.h"
@@ -28,6 +29,8 @@ namespace Lumina
         constexpr uint32 kMinWarmFrames = 8;
         constexpr uint32 kMaxWarmFrames = 240;
         constexpr int32  kDilatePasses  = 8;
+        // Editor frames between looks for forest meshes that still need a bake.
+        constexpr uint32 kAutoScanIntervalFrames = 300;
 
         using ENamedImage = FDefaultSceneRenderer::ENamedImage;
         constexpr uint32      kReadCount = 4;
@@ -275,9 +278,50 @@ namespace Lumina
         return false;
     }
 
+    void FImpostorBaker::QueueMissingForestImpostors()
+    {
+        FString Error;
+        CWorld* World = SessionOps::IsSimulating() ? nullptr : SessionOps::GetSceneWorld(Error);
+        if (World == nullptr)
+        {
+            return;
+        }
+
+        uint32 Added = 0;
+        for (ECS::FEntity Entity : World->View<SForestComponent>())
+        {
+            for (const SForestSpecies& Species : World->GetComponent<SForestComponent>(Entity).Species)
+            {
+                CStaticMesh* Mesh = Species.Type.Mesh.Get();
+                if (Mesh == nullptr || Mesh->HasImpostor() || Mesh->TryGetMeshResource() == nullptr
+                    || Algo::AnyOf(AutoQueued, [Mesh](const TWeakObjectPtr<CStaticMesh>& Seen) { return Seen.Get() == Mesh; }))
+                {
+                    continue;
+                }
+                AutoQueued.Add(TWeakObjectPtr<CStaticMesh>(Mesh));
+                Enqueue(Mesh);
+                ++Added;
+            }
+        }
+        if (Added != 0u)
+        {
+            LOG_INFO("Impostor bake queued {} forest meshes that had none. Save them to keep the bakes.", Added);
+        }
+    }
+
     void FImpostorBaker::Tick()
     {
         using namespace ImpostorBakerInternal;
+
+        if (Active == nullptr && Queue.IsEmpty())
+        {
+            if (FramesToAutoScan == 0u)
+            {
+                FramesToAutoScan = kAutoScanIntervalFrames;
+                QueueMissingForestImpostors();
+            }
+            --FramesToAutoScan;
+        }
 
         if (Active == nullptr && !StartNext())
         {

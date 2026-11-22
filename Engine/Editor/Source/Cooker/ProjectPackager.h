@@ -56,8 +56,7 @@ namespace Lumina
         // Default: <ProjectDir>/Build/<ProjectName>/
         FString OutputDirectory;
 
-        // True builds the project's Game target with LuminaBuildTool before copying; false stops
-        // after cook.
+        // True builds the project's Game target before copying, false stops after cook.
         bool    bBuildExecutable = true;
 
         // Mirror loose /Game scripts next to the exe instead of in the PAK.
@@ -71,9 +70,7 @@ namespace Lumina
 
         EPackagePlatform Platform = EPackagePlatform::Windows64;
 
-        // Project root passed to the build tool as -Project, and the second place binaries are
-        // collected from. Carried in the options rather than read from the engine, because the
-        // build and copy stages run on a worker thread and must not touch engine state.
+        // Project root carried in the options, since the build and copy stages run on a worker thread and must not touch engine state.
         FString ProjectDirectory;
 
         // Embedded under /Extras/ in the PAK.
@@ -103,8 +100,7 @@ namespace Lumina
             const TFunction<void(FStringView)>& LogFunc = {},
             const FThreadStop* Stop = nullptr);
 
-        // Mirrors loose (non-.lasset) files from /Game and /Scripts under <OutDir>/{Game,Scripts}/.
-        // Main-thread only (walks VFS).
+        // Mirrors loose non-.lasset files from /Game and /Scripts, on the main thread only since it walks the VFS.
         static size_t ExtractLooseScripts(const FString& OutDir, const TFunction<void(FStringView)>& LogFunc = {});
 
         // Everything a package holds besides its exe, <OutputDirectory>/<ProjectName>_Data, which the runtime finds from the exe's own name.

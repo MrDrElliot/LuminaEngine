@@ -64,34 +64,25 @@ namespace Lumina
 
         void ValidateGraph() override;
 
-        // Hold-and-click quick-place: 1..4 -> ConstantFloat..Float4, 5 Time, 6 WorldPos, 7 TexCoords,
-        // 8 VertexNormal, 9 Multiply, 0 Add. Extend the dispatch table in HandleQuickPlace for more.
+        // Hold-and-click quick-place, with the digit dispatch table in HandleQuickPlace.
         void HandleQuickPlace(int Digit, ImVec2 CanvasPos) override;
 
-        // Letter variant of the same gesture: T -> TextureSample, C -> CurveSample. Declared alongside
-        // the int overload so overriding one does not hide the other.
+        // Letter variant, declared beside the int overload so overriding one does not hide the other.
         void HandleQuickPlace(char Key, ImVec2 CanvasPos) override;
 
-        // Accepts assets dropped anywhere on the canvas, spawning the node that samples them: textures
-        // become a TextureSample, curves a CurveSample.
+        // Spawns a TextureSample or CurveSample for an asset dropped on the canvas.
         void DrawCanvasDropTarget() override;
 
-        // Adds NodeClass already pointed at Asset, positioned at ScreenPos (converted to canvas space on
-        // the next draw). Asset is handed over through SetNodeValue, which casts without checking, so it
-        // must be the type NodeClass expects. Returns null if either argument is null. Public so a tool
-        // can reuse it for non-drop entry points.
+        // SetNodeValue casts without checking, so Asset must be the type NodeClass expects. Returns null if either is null.
         CEdGraphNode* SpawnAssetNode(CClass* NodeClass, CObject* Asset, ImVec2 ScreenPos);
 
-        // Reroute class to spawn (enables the double-click-on-wire UX); material reroutes carry
-        // typed CMaterialInput / CMaterialOutput pins so the existing compiler casts keep working.
+        // Material reroutes carry typed pins so the existing compiler casts keep working.
         CClass* GetRerouteNodeClass() const override;
 
-        // Float widths stay freely interconnectable; the schema exists to keep TextureHandle pins
-        // (raw bindless indices) out of the float graph. See FMaterialGraphSchema.
+        // The schema keeps TextureHandle pins out of the float graph.
         const FEdGraphSchema& GetSchema() const override;
 
-        // The single CMaterialOutputNode. Everything the compiler emits is reachable backwards from it,
-        // which is what makes the dead-node fade and Tidy meaningful here.
+        // The single CMaterialOutputNode, from which everything the compiler emits is reachable.
         bool IsGraphRootNode(CEdGraphNode* Node) const override;
 
         void SetMaterial(CMaterial* InMaterial);
@@ -102,8 +93,7 @@ namespace Lumina
         // Shared tail of both quick-place overloads: spawn at the cursor and select.
         void QuickPlaceNode(CClass* NodeClass, ImVec2 CanvasPos);
 
-        // Creates always-present nodes for this graph kind: the material graph ensures one
-        // CMaterialOutputNode; the function graph overrides to create nothing.
+        // The material graph ensures one CMaterialOutputNode while the function graph creates nothing.
         virtual void EnsureRootNodes();
 
     private:

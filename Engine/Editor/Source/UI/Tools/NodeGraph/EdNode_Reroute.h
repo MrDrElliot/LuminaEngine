@@ -11,8 +11,7 @@ namespace Lumina
 
 namespace Lumina
 {
-    // Wire-passthrough node drawn as a dot; graph walks skip it and chase through to the source.
-    // Pin classes are virtual so derived graphs (e.g. material) can swap in their typed pin subclass.
+    // Wire-passthrough node drawn as a dot, with virtual pin classes so derived graphs can swap in typed pins.
     REFLECT()
     class CEdNode_Reroute : public CEdGraphNode
     {
@@ -31,8 +30,7 @@ namespace Lumina
         ImVec2 GetMinNodeBodySize() const override { return ImVec2(0, 0); }
         ImVec2 GetMinNodeTitleBarSize() const override { return ImVec2(0, 0); }
 
-        // Override to use a typed pin subclass (e.g. CMaterialInput). Called from BuildNode at
-        // construction time, so changing the return value after the node is built has no effect.
+        // Called from BuildNode at construction, so changing the return value afterward has no effect.
         virtual CClass* GetInputPinClass() const;
         virtual CClass* GetOutputPinClass() const;
 

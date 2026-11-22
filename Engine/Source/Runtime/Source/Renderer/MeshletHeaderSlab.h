@@ -29,8 +29,7 @@ namespace Lumina
         // Re-read every frame, since growth moves the slab.
         RUNTIME_API RHI::GPUPtr GetAddress();
 
-        // Slots the published slab holds, so the scene root can carry the slab as a bounded span rather
-        // than as a bare address every consumer indexes on trust.
+        // Lets the scene root carry the slab as a bounded span rather than a bare address indexed on trust.
         RUNTIME_API uint32 GetCapacity();
 
         RUNTIME_API void Shutdown();

@@ -4,8 +4,7 @@
 
 namespace Lumina
 {
-    // Installs Lumina's netcode as the engine's INetworkRuntime. Loading at the Earliest phase because
-    // FEngine::Initialize drives INetworkRuntime::Initialize before any later phase has run.
+    // Installs Lumina's netcode as INetworkRuntime, loading Earliest since FEngine::Initialize drives it before later phases.
     class FNetworkingRuntimeModule : public IModuleInterface
     {
     public:

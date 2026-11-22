@@ -37,8 +37,7 @@ namespace Lumina
         ComponentSpace,
     };
 
-    // Whether the BoneTransform op layers the (T, R, S) onto the bone's existing
-    // transform or replaces it.
+    // Whether the BoneTransform op layers onto the bone's existing transform or replaces it.
     REFLECT()
     enum class EBoneTransformMode : uint8
     {
@@ -227,8 +226,7 @@ namespace Lumina
         // Curve values the output pose carried this update, indexed by CAnimationGraph::CurveNames.
         TVector<float> CurveValues;
 
-        // Graph this state was sized against; the VM re-initializes the state
-        // when the component's graph asset changes underneath it.
+        // The VM re-initializes the state when the component's graph asset changes underneath it.
         const void* SourceGraph = nullptr;
 
         bool bInitialized = false;

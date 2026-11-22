@@ -90,8 +90,7 @@ namespace Lumina
         /** Called when an item is being renamed */
         TFunction<void(FTreeListView&, FTreeNodeID, FStringView)>       RenameFunction;
 
-        // Called once when a lazy-children node is first expanded; add children via CreateNode().
-        // Must be idempotent (skip already-added children); explicit CreateNode doesn't mark built.
+        // Called once on first expand of a lazy node and must be idempotent since explicit CreateNode doesn't mark it built.
         TFunction<void(FTreeListView&, FTreeNodeID)>                    BuildChildrenFunction;
 
         // Shift-click selects the whole run of rows from the last plainly-clicked one to the clicked one.
@@ -100,13 +99,11 @@ namespace Lumina
         // Cleared by an owner whose filter would pass every row, so Draw skips the per-row filter pass.
         bool                                                            bFilterActive = true;
 
-        // Horizontal shift per tree depth. Deep hierarchies in narrow hosts (picker popups over
-        // 20+-level skeletons) want a tighter value than the outliner default.
+        // Horizontal shift per tree depth, and deep hierarchies in narrow popups want it tighter.
         float                                                           IndentPerDepth = 21.0f;
     };
 
-    // Hierarchical list over a flat node pool for very large trees; Draw iterates a cached visible-row
-    // list so the clipper skips off-screen work. Get<>/EmplaceUserData<> refs invalidate on mutation.
+    // Hierarchical list over a flat node pool, and Get and EmplaceUserData refs invalidate on mutation.
     class RUNTIME_API FTreeListView
     {
     public:
@@ -131,16 +128,13 @@ namespace Lumina
         /** Force the visible-row cache to rebuild on next Draw. Call after batched mutations. */
         void InvalidateVisibleList() { bVisibleListDirty = true; }
 
-        // Flag a node's children to be created on demand; BuildChildrenFunction fires the first time
-        // it's expanded. Eager CreateNode on the parent beforehand still works.
+        // Defers child creation to BuildChildrenFunction on first expand.
         void MarkHasLazyChildren(FTreeNodeID Handle, bool bHasLazy = true);
 
-        // Expands Handle, materializing its lazy children through Context first so descendants have
-        // rows. Use to walk a path open before revealing something below a collapsed node.
+        // Expands Handle after materializing its lazy children, so a path can be walked open.
         void ExpandNode(FTreeNodeID Handle, const FTreeListViewContext& Context);
 
-        // Scrolls Handle's row into view on the next Draw, expanding its ancestors so the row is
-        // actually in the visible list. Ancestors must already be materialized (see ExpandNode).
+        // Scrolls to Handle next Draw and expands its ancestors, which must already be materialized (see ExpandNode).
         void RequestScrollToNode(FTreeNodeID Handle);
 
         NODISCARD bool IsValid(FTreeNodeID Handle) const;
@@ -149,20 +143,17 @@ namespace Lumina
         // Parent node of Handle, or InvalidTreeNode if it's a root or invalid.
         NODISCARD FTreeNodeID GetParentNode(FTreeNodeID Handle) const;
 
-        // Child enumeration; pass InvalidTreeNode to walk the root nodes. Lets callers resolve a node
-        // by walking a path down from a root, expanding as they go.
+        // Child enumeration, and InvalidTreeNode walks the roots.
         NODISCARD int32 NumChildNodes(FTreeNodeID Handle) const;
         NODISCARD FTreeNodeID GetChildNode(FTreeNodeID Handle, int32 ChildIndex) const;
 
-        // Marks Handle as the sole selection without firing ItemSelectedFunction; for programmatic
-        // reveals where the caller has already applied whatever the selection would have done.
+        // Sole selection without firing ItemSelectedFunction, for reveals where the caller already applied its effects.
         void SetSelectionSilent(FTreeNodeID Handle);
 
         // What a click on Row selects, apart from the ImGui input that detected it.
         void ClickRow(FTreeNodeID Row, bool bShift, bool bCtrl, const FTreeListViewContext& Context);
 
-        // Get<FTreeNodeState>, Get<FTreeNodeDisplay>, or Get<UserDataT> (the type previously
-        // installed via EmplaceUserData on this node).
+        // Accepts FTreeNodeState, FTreeNodeDisplay, or the type installed via EmplaceUserData.
         template<typename T>
         T& Get(FTreeNodeID Handle)
         {
@@ -249,22 +240,16 @@ namespace Lumina
         // Node a shift-click ranges from, the last one clicked without shift, or -1.
         int32               SelectionAnchor = -1;
 
-        // VisibleList with the context's filter applied, rebuilt every frame a filter is set. Separate
-        // from VisibleList because that one is cached behind bVisibleListDirty and the widget has no way
-        // to know when the caller's filter text changed.
+        // Rebuilt every frame a filter is set, since VisibleList is cached and cannot see filter text changes.
         TVector<int32>      FilteredList;
         int32               AliveCount = 0;
 
-        // Node to scroll into view on the next Draw (-1 = none); resolved to a row once the
-        // visible list is rebuilt, then cleared.
+        // Node to scroll to next Draw, or -1, resolved once the visible list is rebuilt.
         int32               PendingScrollNode = -1;
 
         FString             EditLabel;
 
-        // Bumped by every node create/destroy. Row callbacks (drag-drop reparent, context-menu delete)
-        // restructure the tree from inside the draw loop, which invalidates both the row-index list being
-        // iterated and any FNode& held across the callback. Draw compares this before and after each row
-        // and stops the frame when it moves. See Draw().
+        // Bumped on every node create or destroy so Draw can stop the frame when a row callback restructures the tree.
         uint32              StructureVersion = 0;
 
         bool                bVisibleListDirty = true;

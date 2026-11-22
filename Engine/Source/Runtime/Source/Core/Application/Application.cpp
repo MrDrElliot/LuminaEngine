@@ -121,8 +121,7 @@ namespace Lumina
 
             if (!Global::GIsHeadless)
             {
-                // Ahead of the event pump, so the mouse position this frame acts on is sampled after the
-                // block rather than before it. Waiting later costs a whole frame of input latency.
+                // Waiting later than this costs a whole frame of input latency.
                 FRenderManager* RenderManager = TryRender();
                 if (RenderManager)
                 {

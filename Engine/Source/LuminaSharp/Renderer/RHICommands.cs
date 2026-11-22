@@ -3,8 +3,7 @@ using Lumina;
 
 namespace LuminaSharp.Rendering;
 
-// The command-recording surface of the RHI. These are the hot path: each just appends to a per-thread command
-// list, so they are bound with SuppressGCTransition (no GC-mode switch) for the lowest possible call cost.
+// Hot path commands that only append to a per-thread list, so they are bound with SuppressGCTransition.
 public static unsafe partial class RHI
 {
     // ---- Memory commands ----

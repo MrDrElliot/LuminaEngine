@@ -134,8 +134,7 @@ namespace Lumina
 
     private:
 
-        // Defaults are PCG32's documented initial state for sequence 1, so a default-constructed stream
-        // is immediately usable and produces the same sequence everywhere.
+        // Defaults are PCG32's documented initial state for sequence 1, so a default stream gives the same sequence everywhere.
         uint64 State     = 0x853c49e6748fea9bull;
         uint64 Increment = 0xda3e39cb94b95bdbull;
     };

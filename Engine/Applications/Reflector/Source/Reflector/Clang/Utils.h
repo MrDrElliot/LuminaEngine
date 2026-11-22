@@ -1,6 +1,4 @@
 #pragma once
-#include <clang/AST/Decl.h>
-#include <clang/AST/Type.h>
 #include <clang-c/CXFile.h>
 #include <clang-c/CXSourceLocation.h>
 #include <clang-c/CXString.h>
@@ -58,8 +56,7 @@ namespace Lumina::ClangUtils
         return Result;
     }
 
-    // Canonicalize a path for the AllHeaders hash key (forward slashes, case preserved): the JSON
-    // registration and parse-time cursor sides must agree byte-for-byte or types fail to register.
+    // Registration and parse-time cursor sides must agree byte-for-byte on this AllHeaders key or types fail to register.
     inline std::string NormalizeHeaderPath(std::string Input)
     {
         if (Input.empty())
@@ -223,8 +220,7 @@ namespace Lumina::ClangUtils
         return Search.bFound;
     }
 
-    // True when libclang fell back to its location-derived placeholder (e.g. "(unnamed struct at ...)"),
-    // which would leak the build path into generated identifiers and break consumers.
+    // A libclang location-derived placeholder name would leak the build path into generated identifiers.
     inline bool IsLibclangPlaceholderName(std::string_view Name)
     {
         return Name.find("(unnamed ") != std::string_view::npos
@@ -494,6 +490,14 @@ namespace Lumina::ClangUtils
         return true;
     }
 
+    // clang 22 answers with the first declaration, so a forward-declared record would show no bases or fields.
+    inline CXCursor GetTypeDefinition(CXType Type)
+    {
+        const CXCursor Declaration = clang_getTypeDeclaration(Type);
+        const CXCursor Definition  = clang_getCursorDefinition(Declaration);
+        return clang_Cursor_isNull(Definition) ? Declaration : Definition;
+    }
+
     /// The written type when libclang exposes one, else the canonical fallback. Keeps a typedef or
     /// alias spelling its own name instead of collapsing to whatever it resolves to.
     inline CXType PreferWritten(CXType Written, CXType Canonical)
@@ -531,13 +535,7 @@ namespace Lumina::ClangUtils
         case CXType_Pointer:
         case CXType_LValueReference:
         case CXType_RValueReference:
-            // Recurse rather than spelling the whole thing: the spelling of a pointer to an
-            // anonymous record bakes a build path into a generated identifier.
-            //
-            // Unwrap the written type, not the canonical one. The engine's math types are alias
-            // templates, so canonicalizing "const FTransform&" first yields TTransform<float> and
-            // the reflection database, which is keyed on FTransform, no longer recognizes it. A
-            // by-value FTransform never hit this because it is named from the written type below.
+            // Unwrap the written type, not the canonical one, since canonicalizing an alias template like FTransform yields a name the database does not key on.
             return GetQualifiedNameForCXType(PreferWritten(clang_getPointeeType(Type),
                 clang_getPointeeType(Canonical)), QualifiedName);
 
@@ -561,14 +559,12 @@ namespace Lumina::ClangUtils
             break;
         }
 
-        // Records and enums are named from their declaration, which gives the qualified name
-        // without template arguments so the alias table below can match it.
+        // Declaration naming drops template arguments so the alias table below can match.
         if (Canonical.kind == CXType_Record || Canonical.kind == CXType_Enum)
         {
-            // Name from the written type first so a typedef or alias keeps its own name;
-            // fall back to the canonical declaration when that yields nothing.
-            if (!GetQualifiedNameFromDeclCursor(clang_getTypeDeclaration(Type), QualifiedName)
-                && !GetQualifiedNameFromDeclCursor(clang_getTypeDeclaration(Canonical), QualifiedName))
+            // The written type goes first so a typedef or alias keeps its own name.
+            if (!GetQualifiedNameFromDeclCursor(GetTypeDefinition(Type), QualifiedName)
+                && !GetQualifiedNameFromDeclCursor(GetTypeDefinition(Canonical), QualifiedName))
             {
                 return false;
             }
@@ -586,26 +582,11 @@ namespace Lumina::ClangUtils
         return true;
     }
 
-    /// Qualified name of the type a declaration cursor declares, as libclang spells it.
+    /// Qualified name of the type a declaration cursor declares.
     inline bool GetQualifiedNameForDeclCursor(CXCursor Cursor, std::string& QualifiedName)
     {
-        CXString Spelling = clang_getTypeSpelling(clang_getCursorType(Cursor));
-        const char* Text = clang_getCString(Spelling);
-
-        QualifiedName = Text != nullptr ? Text : "";
-        clang_disposeString(Spelling);
-
-        StripElaboratedPrefix(QualifiedName);
-
-        // Anonymous and locally declared types spell as "(unnamed struct at <path>)", which would
-        // bake a build path into a generated identifier.
-        if (IsLibclangPlaceholderName(QualifiedName))
-        {
-            QualifiedName.clear();
-            return false;
-        }
-
-        return !QualifiedName.empty();
+        // From the semantic parents, since clang 22 spells a namespace-scope alias's type unqualified.
+        return GetQualifiedNameFromDeclCursor(Cursor, QualifiedName);
     }
 
     /// True when an integer type is unsigned.
@@ -632,8 +613,6 @@ namespace Lumina::ClangUtils
 
     /// Printable C++ type expression for casts in generated code, falling back to the semantic
     /// qualified name when libclang's printer would emit an "(unnamed ...)" placeholder.
-    // The type a call frame stores a parameter as: a reference is stored as its referent, and the top-level
-    // const goes with it, since the frame owns the value the call then passes along by reference.
     inline std::string GetParameterStorageTypeAsString(CXType Type);
 
     inline std::string GetSafeTypeAsString(CXType Type)

@@ -42,8 +42,6 @@ namespace Lumina
         InitSkyCube(AppliedIBLResolution.SkyCube);
         InitIBLConvolutionTargets(AppliedIBLResolution);
 
-        ShadowAtlas.InitImage();
-
         SceneViews.Reserve(MaxSceneViews);
 
         // Primary view (index 0) tracks the swapchain size.
@@ -285,6 +283,21 @@ namespace Lumina
         RetainedTransformBuffer.Release();
         RetainedStaticBuffer.Release();
         RetainedProxyBuffer.Release();
+        ImpostorPointBuffer.Release();
+        ImpostorTypeBuffer.Release();
+        ImpostorBlockBuffer.Release();
+        ImpostorShadowList.Release();
+        ImpostorShadowArgs.Release();
+        ImpostorPointsLive = 0u;
+        bImpostorResendAll.store(true, std::memory_order_release);
+        for (RHI::FGPUAllocation& Readback : ImpostorShadowReadback)
+        {
+            if (Readback.Gpu != 0)
+            {
+                RHI::Retire(Readback);
+                Readback = {};
+            }
+        }
         SunDFGrid.Release();
         SkyDFGrid.Release();
         DistanceFieldBlockListBuffer.Release();
@@ -3057,10 +3070,13 @@ namespace Lumina
     void FDefaultSceneRenderer::ReserveBuffer(RHI::FCmdListH CL, FSceneBuffer& Buffer, uint64 NeededBytes, bool bAllowShrink,
                                               bool bPreserveContents, uint64 RewrittenBytes)
     {
+        // A reallocation this large shows as a hitch, from the driver allocation and the GPU clear and copy, so it is named in the log.
+        constexpr uint64 kLoggedReallocBytes = 64ull * Constants::kMiB;
+
         NeededBytes = Math::Max<uint64>(NeededBytes, 16ull);
 
         // Allocates before retiring the old one, so a failed grow leaves the previous usable.
-        const auto Reallocate = [&]() -> bool
+        const auto Reallocate = [&](uint64 Bytes) -> bool
         {
             LUMINA_PROFILE_SECTION_COLORED("Reallocate Scene Buffer", tracy::Color::OrangeRed);
             if (Buffer.DebugName != nullptr)
@@ -3068,7 +3084,7 @@ namespace Lumina
                 LUMINA_PROFILE_TAG(Buffer.DebugName);
             }
 
-            const RHI::FGPUAllocation Grown = CreateSceneBuffer(Buffer.SlackedBytes(NeededBytes), Buffer.DebugName);
+            const RHI::FGPUAllocation Grown = CreateSceneBuffer(Bytes, Buffer.DebugName);
             if (!Grown)
             {
                 return false;
@@ -3077,7 +3093,14 @@ namespace Lumina
             const RHI::FGPUAllocation Previous = Buffer;
             Buffer.Adopt(Grown);
 
-            const RHI::FGPURange FillRange = RHI::FGPURange{ Buffer.Gpu, Buffer.Size }.Skip(Math::Min(RewrittenBytes, Buffer.Size));
+            // The preserved prefix is overwritten by the copy, so only what lies past it and past the caller's re-send needs a fill.
+            const uint64 Kept = bPreserveContents && Previous.Gpu != 0 ? Math::Min(Previous.Size, Buffer.Size) : 0ull;
+            const RHI::FGPURange FillRange = RHI::FGPURange{ Buffer.Gpu, Buffer.Size }.Skip(Math::Min(Math::Max(RewrittenBytes, Kept), Buffer.Size));
+            if (Buffer.Size >= kLoggedReallocBytes)
+            {
+                LOG_INFO("RenderScene: '{}' went from {} to {} MiB, copying {} MiB and filling {} MiB on the GPU.",
+                         Buffer.DebugName != nullptr ? Buffer.DebugName : "<unnamed>", Previous.Size >> 20, Buffer.Size >> 20, Kept >> 20, FillRange.Size >> 20);
+            }
             bool bFilled = false;
             if (FillRange.Size != 0 && Buffer.Init == EBufferInit::Zeroed)
             {
@@ -3102,9 +3125,8 @@ namespace Lumina
             }
 
             // Carried across on the GPU, so growing a large retained buffer costs a copy instead of a full re-upload.
-            if (bPreserveContents && Previous.Gpu != 0)
+            if (Kept != 0)
             {
-                const uint64 Kept = Math::Min(Previous.Size, Buffer.Size);
                 RHI::CmdBarrier(CL,
                     RHI::EStageFlags::AllCommands, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::TransferWrite,
                     RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
@@ -3121,9 +3143,12 @@ namespace Lumina
             return true;
         };
 
+        Buffer.ReservesSinceGrowth += Buffer.ReservesSinceGrowth != ~0u ? 1u : 0u;
         if (NeededBytes > Buffer.Size)
         {
-            if (!Reallocate())
+            const uint64 Bytes = Buffer.GrownBytes(NeededBytes);
+            Buffer.ReservesSinceGrowth = 0;
+            if (!Reallocate(Bytes))
             {
                 LOG_ERROR("RenderScene: scene buffer '{}' could not grow to {} MiB; keeping the {} MiB it "
                           "already has and running degraded.",
@@ -3138,7 +3163,7 @@ namespace Lumina
         {
             if (++Buffer.LowUsageFrames >= 120u)
             {
-                Reallocate();
+                Reallocate(Buffer.SlackedBytes(NeededBytes));
             }
         }
         else

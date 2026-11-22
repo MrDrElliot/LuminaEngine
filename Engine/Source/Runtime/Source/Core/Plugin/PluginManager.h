@@ -10,42 +10,35 @@
 
 namespace Lumina
 {
-    // Per-project plugin enable/disable from the .lproject "Plugins" array,
-    // overriding the descriptor default.
+    // Per-project plugin enable/disable from the .lproject "Plugins" array, overriding the descriptor default.
     struct FProjectPluginOverride
     {
         FString Name;
         bool    bEnabled = true;
     };
 
-    // Discovers .lplugin files, resolves deps, mounts content, loads module DLLs per declared
-    // phase. Engine plugins scanned in FEngine::Init, project plugins in Engine::LoadProject.
+    // Discovers .lplugin files, resolves deps, mounts content, and loads module DLLs per declared phase.
     class RUNTIME_API FPluginManager
     {
     public:
-        // Non-copyable: a synthesized copy ctor would instantiate the vector's copy
-        // and fail on TUniquePtr's deleted copy.
+        // A synthesized copy ctor would fail on TUniquePtr's deleted copy.
         LE_NO_COPYMOVE(FPluginManager);
 
         static FPluginManager& Get();
 
-        // Walk Engine/Plugins/ (relative to Paths::GetEngineDirectory()) and
-        // build the engine-plugin registry. Idempotent; safe to call twice.
+        // Builds the engine-plugin registry from Engine/Plugins/. Idempotent.
         void DiscoverEnginePlugins();
 
-        // Add project plugins from <ProjectDirectory>/Plugins/ (may depend on engine
-        // plugins). Idempotent for the same project root.
+        // Adds project plugins, which may depend on engine plugins. Idempotent for the same project root.
         void DiscoverProjectPlugins(FStringView ProjectDirectory);
 
-        // Apply per-project enable/disable overrides. Called once
-        // immediately after DiscoverProjectPlugins from LoadProject.
+        // Applies per-project enable/disable overrides right after DiscoverProjectPlugins.
         void ApplyProjectOverrides(const TVector<FProjectPluginOverride>& Overrides);
 
         // Bring up every enabled plugin module registered to this phase; already-loaded skip.
         void LoadModulesForPhase(EPluginLoadingPhase Phase);
 
-        // Reverse-order shutdown of every loaded plugin module. Called from
-        // FEngine::Shutdown before the module manager unloads anything else.
+        // Reverse-order shutdown that must run before the module manager unloads anything else.
         void ShutdownAllPlugins();
 
         FPlugin*               FindPlugin(FStringView Name);
@@ -63,30 +56,24 @@ namespace Lumina
         // Load one plugin module: resolve binary path, FModuleManager, StartupModule, record.
         bool LoadPluginModule(FPlugin& Plugin, const FPluginModuleDescriptor& Module);
 
-        // Mount /PluginName into the VFS. Skipped if !ContainsContent or
-        // the Content/ dir does not exist on disk.
+        // Skipped when the plugin has no content or its Content/ dir is missing.
         void MountPluginContent(FPlugin& Plugin);
 
-        // False = skip this module in this build (editor-in-non-editor, developer-in-shipping,
-        // or SupportedPlatforms mismatch).
+        // False means skip this module in this build (editor module in non-editor, developer in shipping, or platform mismatch).
         bool IsModuleApplicable(const FPluginModuleDescriptor& Module) const;
 
-        // Filter on the plugin level: EditorOnly + non-editor build skips
-        // the whole plugin, SupportedPlatforms misses ditto.
+        // Plugin-level filter that skips the whole plugin on editor-only or platform mismatch.
         bool IsPluginApplicable(const FPluginDescriptor& Desc) const;
 
-        // Topological sort so dependents load after deps; deterministic (peers and cycles
-        // fall back to insertion order, cycles logged).
+        // Topological sort, deterministic because peers and cycles fall back to insertion order.
         TVector<FPlugin*> BuildLoadOrder();
 
     private:
-        // Vector owns; map is O(1) name lookup. TUniquePtr can't be a map value
-        // (the hash map eagerly instantiates the value copy ctor).
+        // The hash map eagerly instantiates the value copy ctor, so the vector owns and the map only looks up.
         TVector<TUniquePtr<FPlugin>> OwnedPlugins;
         THashMap<FName, FPlugin*>    PluginLookup;
 
-        // Cache of the topological order so LoadModulesForPhase doesn't
-        // resort on every phase. Invalidated by discovery / overrides.
+        // Cached topological order, invalidated by discovery and overrides.
         TVector<FPlugin*> CachedLoadOrder;
         bool              bLoadOrderDirty = true;
 

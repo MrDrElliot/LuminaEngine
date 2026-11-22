@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2019-2025 Baldur Karlsson
+ * Copyright (c) 2015-2026 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,7 +35,7 @@
 
 #if defined(WIN32) || defined(__WIN32__) || defined(_WIN32) || defined(_MSC_VER)
 #define RENDERDOC_CC __cdecl
-#elif defined(__linux__) || defined(__FreeBSD__)
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__sun__) || defined(__OpenBSD__)
 #define RENDERDOC_CC
 #elif defined(__APPLE__)
 #define RENDERDOC_CC
@@ -67,6 +67,10 @@ extern "C" {
 
 // truncated version when only a uint64_t is available (e.g. Vulkan tags):
 #define RENDERDOC_ShaderDebugMagicValue_truncated 0x48656670eab25520ULL
+
+// this is a magic value for vulkan user tags to indicate which dispatchable API objects are which
+// for object annotations
+#define RENDERDOC_APIObjectAnnotationHelper 0xfbb3b337b664d0adULL
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // RenderDoc capture options
@@ -355,14 +359,14 @@ typedef enum RENDERDOC_OverlayBits
                                 eRENDERDOC_Overlay_FrameNumber | eRENDERDOC_Overlay_CaptureList),
 
   // Enable all bits
-  eRENDERDOC_Overlay_All = ~0U,
+  eRENDERDOC_Overlay_All = 0x7ffffff,
 
   // Disable all bits
   eRENDERDOC_Overlay_None = 0,
 } RENDERDOC_OverlayBits;
 
 // returns the overlay bits that have been set
-typedef uint32_t(RENDERDOC_CC *pRENDERDOC_GetOverlayBits)();
+typedef uint32_t(RENDERDOC_CC *pRENDERDOC_GetOverlayBits)(void);
 // sets the overlay bits with an and & or mask
 typedef void(RENDERDOC_CC *pRENDERDOC_MaskOverlayBits)(uint32_t And, uint32_t Or);
 
@@ -373,7 +377,7 @@ typedef void(RENDERDOC_CC *pRENDERDOC_MaskOverlayBits)(uint32_t And, uint32_t Or
 // injected hooks and shut down. Behaviour is undefined if this is called
 // after any API functions have been called, and there is still no guarantee of
 // success.
-typedef void(RENDERDOC_CC *pRENDERDOC_RemoveHooks)();
+typedef void(RENDERDOC_CC *pRENDERDOC_RemoveHooks)(void);
 
 // DEPRECATED: compatibility for code compiled against pre-1.4.1 headers.
 typedef pRENDERDOC_RemoveHooks pRENDERDOC_Shutdown;
@@ -383,7 +387,7 @@ typedef pRENDERDOC_RemoveHooks pRENDERDOC_Shutdown;
 // If you use your own crash handler and don't want RenderDoc's handler to
 // intercede, you can call this function to unload it and any unhandled
 // exceptions will pass to the next handler.
-typedef void(RENDERDOC_CC *pRENDERDOC_UnloadCrashHandler)();
+typedef void(RENDERDOC_CC *pRENDERDOC_UnloadCrashHandler)(void);
 
 // Sets the capture file path template
 //
@@ -405,14 +409,14 @@ typedef void(RENDERDOC_CC *pRENDERDOC_UnloadCrashHandler)();
 typedef void(RENDERDOC_CC *pRENDERDOC_SetCaptureFilePathTemplate)(const char *pathtemplate);
 
 // returns the current capture path template, see SetCaptureFileTemplate above, as a UTF-8 string
-typedef const char *(RENDERDOC_CC *pRENDERDOC_GetCaptureFilePathTemplate)();
+typedef const char *(RENDERDOC_CC *pRENDERDOC_GetCaptureFilePathTemplate)(void);
 
 // DEPRECATED: compatibility for code compiled against pre-1.1.2 headers.
 typedef pRENDERDOC_SetCaptureFilePathTemplate pRENDERDOC_SetLogFilePathTemplate;
 typedef pRENDERDOC_GetCaptureFilePathTemplate pRENDERDOC_GetLogFilePathTemplate;
 
 // returns the number of captures that have been made
-typedef uint32_t(RENDERDOC_CC *pRENDERDOC_GetNumCaptures)();
+typedef uint32_t(RENDERDOC_CC *pRENDERDOC_GetNumCaptures)(void);
 
 // This function returns the details of a capture, by index. New captures are added
 // to the end of the list.
@@ -443,7 +447,7 @@ typedef void(RENDERDOC_CC *pRENDERDOC_SetCaptureFileComments)(const char *filePa
                                                               const char *comments);
 
 // returns 1 if the RenderDoc UI is connected to this application, 0 otherwise
-typedef uint32_t(RENDERDOC_CC *pRENDERDOC_IsTargetControlConnected)();
+typedef uint32_t(RENDERDOC_CC *pRENDERDOC_IsTargetControlConnected)(void);
 
 // DEPRECATED: compatibility for code compiled against pre-1.1.1 headers.
 // This was renamed to IsTargetControlConnected in API 1.1.1, the old typedef is kept here for
@@ -475,7 +479,7 @@ typedef void(RENDERDOC_CC *pRENDERDOC_GetAPIVersion)(int *major, int *minor, int
 // This will return 1 if the request was successfully passed on, though it's not guaranteed that
 // the UI will be on top in all cases depending on OS rules. It will return 0 if there is no current
 // target control connection to make such a request, or if there was another error
-typedef uint32_t(RENDERDOC_CC *pRENDERDOC_ShowReplayUI)();
+typedef uint32_t(RENDERDOC_CC *pRENDERDOC_ShowReplayUI)(void);
 
 //////////////////////////////////////////////////////////////////////////
 // Capturing functions
@@ -506,7 +510,7 @@ typedef void(RENDERDOC_CC *pRENDERDOC_SetActiveWindow)(RENDERDOC_DevicePointer d
                                                        RENDERDOC_WindowHandle wndHandle);
 
 // capture the next frame on whichever window and API is currently considered active
-typedef void(RENDERDOC_CC *pRENDERDOC_TriggerCapture)();
+typedef void(RENDERDOC_CC *pRENDERDOC_TriggerCapture)(void);
 
 // capture the next N frames on whichever window and API is currently considered active
 typedef void(RENDERDOC_CC *pRENDERDOC_TriggerMultiFrameCapture)(uint32_t numFrames);
@@ -535,7 +539,7 @@ typedef void(RENDERDOC_CC *pRENDERDOC_StartFrameCapture)(RENDERDOC_DevicePointer
 // Returns whether or not a frame capture is currently ongoing anywhere.
 //
 // This will return 1 if a capture is ongoing, and 0 if there is no capture running
-typedef uint32_t(RENDERDOC_CC *pRENDERDOC_IsFrameCapturing)();
+typedef uint32_t(RENDERDOC_CC *pRENDERDOC_IsFrameCapturing)(void);
 
 // Ends capturing immediately.
 //
@@ -559,6 +563,128 @@ typedef uint32_t(RENDERDOC_CC *pRENDERDOC_DiscardFrameCapture)(RENDERDOC_DeviceP
 // Calling this function has no effect if no capture is currently running, and if it is called
 // multiple times only the last title will be used.
 typedef void(RENDERDOC_CC *pRENDERDOC_SetCaptureTitle)(const char *title);
+
+// Annotations API:
+//
+// These functions allow you to specify annotations either on a per-command level, or a per-object
+// level.
+//
+// Basic types of annotations are supported, as well as vector versions and references to API objects.
+//
+// The annotations are stored as keys, with the key being a dot-separated path allowing arbitrary
+// nesting and user organisation. The keys are sorted in human order so `foo.2.bar` will be displayed
+// before `foo.10.bar` to allow creation of arrays if desired.
+//
+// Deleting an annotation can be done by assigning an empty value to it.
+
+// the type of an annotation value, or Empty to delete an annotation
+typedef enum RENDERDOC_AnnotationType
+{
+  eRENDERDOC_Empty,
+  eRENDERDOC_Bool,
+  eRENDERDOC_Int32,
+  eRENDERDOC_UInt32,
+  eRENDERDOC_Int64,
+  eRENDERDOC_UInt64,
+  eRENDERDOC_Float,
+  eRENDERDOC_Double,
+  eRENDERDOC_String,
+  eRENDERDOC_APIObject,
+  eRENDERDOC_AnnotationMax = 0x7FFFFFFF,
+} RENDERDOC_AnnotationType;
+
+// a union with vector annotation value data
+typedef union RENDERDOC_AnnotationVectorValue
+{
+  bool boolean[4];
+  int32_t int32[4];
+  int64_t int64[4];
+  uint32_t uint32[4];
+  uint64_t uint64[4];
+  float float32[4];
+  double float64[4];
+} RENDERDOC_AnnotationVectorValue;
+
+// a union with scalar annotation value data
+typedef union RENDERDOC_AnnotationValue
+{
+  bool boolean;
+  int32_t int32;
+  int64_t int64;
+  uint32_t uint32;
+  uint64_t uint64;
+  float float32;
+  double float64;
+
+  RENDERDOC_AnnotationVectorValue vector;
+
+  const char *string;
+  void *apiObject;
+} RENDERDOC_AnnotationValue;
+
+// a struct for specifying a GL object, as we don't have pointers we can use so instead we specify a
+// pointer to this struct giving both the type and the name
+typedef struct RENDERDOC_GLResourceReference
+{
+  // this is the same GLenum identifier as passed to glObjectLabel
+  uint32_t identifier;
+  uint32_t name;
+} GLResourceReference;
+
+// simple C++ helpers to avoid the need for a temporary objects for value passing and GL object specification
+#ifdef __cplusplus
+struct RDGLObjectHelper
+{
+  RENDERDOC_GLResourceReference gl;
+
+  RDGLObjectHelper(uint32_t identifier, uint32_t name)
+  {
+    gl.identifier = identifier;
+    gl.name = name;
+  }
+
+  operator RENDERDOC_GLResourceReference *() { return &gl; }
+};
+
+struct RDAnnotationHelper
+{
+  RENDERDOC_AnnotationValue val;
+
+  RDAnnotationHelper(bool b) { val.boolean = b; }
+  RDAnnotationHelper(int32_t i) { val.int32 = i; }
+  RDAnnotationHelper(int64_t i) { val.int64 = i; }
+  RDAnnotationHelper(uint32_t i) { val.uint32 = i; }
+  RDAnnotationHelper(uint64_t i) { val.uint64 = i; }
+  RDAnnotationHelper(float f) { val.float32 = f; }
+  RDAnnotationHelper(double d) { val.float64 = d; }
+  RDAnnotationHelper(const char *s) { val.string = s; }
+
+  operator RENDERDOC_AnnotationValue *() { return &val; }
+};
+#endif
+
+// The device is specified in the same way as other API calls that take a RENDERDOC_DevicePointer
+// to specify the device.
+//
+// The object or queue/commandbuffer will depend on the graphics API in question.
+//
+// Return value:
+// 0 - The annotation was applied successfully.
+// 1 - The device is unknown/invalid
+// 2 - The device is valid but the annotation is not supported for API-specific reasons, such as an
+//     unrecognised or invalid object or queue/commandbuffer
+// 3 - The call is ill-formed or invalid e.g. empty is specified with a value pointer, or non-empty
+//     is specified with a NULL value pointer
+typedef uint32_t(RENDERDOC_CC *pRENDERDOC_SetObjectAnnotation)(RENDERDOC_DevicePointer device,
+                                                               void *object, const char *key,
+                                                               RENDERDOC_AnnotationType valueType,
+                                                               uint32_t valueVectorWidth,
+                                                               const RENDERDOC_AnnotationValue *value);
+
+typedef uint32_t(RENDERDOC_CC *pRENDERDOC_SetCommandAnnotation)(
+    RENDERDOC_DevicePointer device, void *queueOrCommandBuffer, const char *key,
+    RENDERDOC_AnnotationType valueType, uint32_t valueVectorWidth,
+    const RENDERDOC_AnnotationValue *value);
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // RenderDoc API versions
@@ -588,6 +714,7 @@ typedef enum RENDERDOC_Version
   eRENDERDOC_API_Version_1_4_2 = 10402,    // RENDERDOC_API_1_4_2 = 1 04 02
   eRENDERDOC_API_Version_1_5_0 = 10500,    // RENDERDOC_API_1_5_0 = 1 05 00
   eRENDERDOC_API_Version_1_6_0 = 10600,    // RENDERDOC_API_1_6_0 = 1 06 00
+  eRENDERDOC_API_Version_1_7_0 = 10700,    // RENDERDOC_API_1_7_0 = 1 07 00
 } RENDERDOC_Version;
 
 // API version changelog:
@@ -618,8 +745,10 @@ typedef enum RENDERDOC_Version
 // 1.5.0 - Added feature: ShowReplayUI() to request that the replay UI show itself if connected
 // 1.6.0 - Added feature: SetCaptureTitle() which can be used to set a title for a
 //         capture made with StartFrameCapture() or EndFrameCapture()
+// 1.7.0 - Added feature: SetObjectAnnotation() / SetCommandAnnotation() for adding rich
+//         annotations to objects and command streams
 
-typedef struct RENDERDOC_API_1_6_0
+typedef struct RENDERDOC_API_1_7_0
 {
   pRENDERDOC_GetAPIVersion GetAPIVersion;
 
@@ -697,20 +826,25 @@ typedef struct RENDERDOC_API_1_6_0
 
   // new function in 1.6.0
   pRENDERDOC_SetCaptureTitle SetCaptureTitle;
-} RENDERDOC_API_1_6_0;
 
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_0_0;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_0_1;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_0_2;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_1_0;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_1_1;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_1_2;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_2_0;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_3_0;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_4_0;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_4_1;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_4_2;
-typedef RENDERDOC_API_1_6_0 RENDERDOC_API_1_5_0;
+  // new functions in 1.7.0
+  pRENDERDOC_SetObjectAnnotation SetObjectAnnotation;
+  pRENDERDOC_SetCommandAnnotation SetCommandAnnotation;
+} RENDERDOC_API_1_7_0;
+
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_0_0;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_0_1;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_0_2;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_1_0;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_1_1;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_1_2;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_2_0;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_3_0;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_4_0;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_4_1;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_4_2;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_5_0;
+typedef RENDERDOC_API_1_7_0 RENDERDOC_API_1_6_0;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 // RenderDoc API entry point

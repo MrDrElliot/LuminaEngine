@@ -7,12 +7,10 @@ namespace Lumina
 {
     class CMaterialFunction;
 
-    // Name of the function graph child object inside a CMaterialFunction's package. Shared by the
-    // function editor (which creates/loads it) and the call node's inliner (which loads it).
+    // Child object name shared by the function editor and the call node's inliner.
     inline constexpr const char* GMaterialFunctionGraphObjectName = "MaterialFunctionGraph";
 
-    // The editable graph of a material function: the material node library minus the output node, plus
-    // FunctionInput / FunctionOutput. Produces no shader itself; the call node inlines it into a host material.
+    // The material node library minus the output node, plus FunctionInput and FunctionOutput, inlined by the call node.
     REFLECT()
     class CMaterialFunctionGraph : public CMaterialNodeGraph
     {
@@ -20,8 +18,7 @@ namespace Lumina
 
     public:
 
-        // Runs each node's GenerateDefinition into a throwaway compiler to surface type errors. Walks
-        // from every FunctionOutput node; FunctionInput nodes emit their preview-default constants.
+        // Walks from every FunctionOutput into a throwaway compiler, with FunctionInput nodes emitting preview-default constants.
         void CompileForValidation(FMaterialCompiler& Compiler);
 
     protected:

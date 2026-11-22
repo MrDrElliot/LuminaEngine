@@ -15,8 +15,7 @@ namespace Lumina::Reflection
 
         void AddReflectedType(FReflectedType* Type);
 
-        // Registers a SCRIPT_EXPORT free function under its header (parallel to ReflectedTypes). Takes
-        // ownership of Fn.
+        // Registers a SCRIPT_EXPORT free function under its header and takes ownership of Fn.
         void AddFreeFunction(FReflectedHeader* Header, FReflectedFunction* Fn);
 
         bool IsTypeRegistered(const FStringHash& Str) const;

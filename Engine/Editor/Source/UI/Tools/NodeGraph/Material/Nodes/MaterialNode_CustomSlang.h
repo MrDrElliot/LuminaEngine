@@ -10,9 +10,7 @@ namespace Lumina
     class CMaterialInput;
     class CMaterialOutput;
 
-    // What an unconnected input falls back to. These are the material graph's stage-agnostic aliases
-    // (declared for the pixel stage natively and mapped in the vertex preamble), so any of them is
-    // valid wherever the node compiles. Lets a node do something useful with nothing wired in.
+    // What an unconnected input falls back to, using stage-agnostic aliases valid wherever the node compiles.
     REFLECT()
     enum class ECustomSlangInputDefault : uint8
     {
@@ -23,8 +21,7 @@ namespace Lumina
         VertexColor,
     };
 
-    // One user-declared input or output of a Custom Slang node. Name becomes a real identifier in the
-    // emitted shader block, so it is validated (identifier syntax, keyword, uniqueness) at compile time.
+    // One user-declared input or output, whose Name becomes a real shader identifier and is validated at compile time.
     REFLECT()
     struct SCustomSlangPin
     {
@@ -108,16 +105,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Custom Slang")
         bool bProvidesGradients = false;
 
-        // Set once the starter signature has been installed, and serialized, so a node whose pins were
-        // deliberately deleted stays deleted instead of re-seeding itself on the next load.
+        // Serialized so a node whose pins were deliberately deleted does not re-seed on the next load.
         PROPERTY(Hidden)
         bool bDefaultsSeeded = false;
 
         // (Re)creates pins from Inputs/Outputs, preserving wires whose pin name still exists.
         void RebuildPins();
 
-        // Checks the declared signature and the body. Returns false with one message per problem;
-        // callers emit these as node errors. Pure -- no emission, safe to call from UI.
+        // Pure and safe to call from UI. Returns false with one message per problem.
         bool Validate(TVector<FString>& OutProblems) const;
 
         TVector<CMaterialInput*>  CustomInputPins;

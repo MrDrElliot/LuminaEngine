@@ -5,7 +5,7 @@
 
 namespace Lumina
 {
-    // A game build's developer overlay, opened with the grave key, holding the console and every script's OnDebugGui windows.
+    // A game build's developer overlay, opened with the grave key, holding the console and every world's OnDebugGui windows.
     class FGameDevUI : public IDevelopmentToolUI
     {
     public:

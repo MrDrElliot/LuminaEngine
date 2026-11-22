@@ -6,6 +6,7 @@
 
 #include "Scripting/ScriptableTest.h"
 #include "World/World.h"
+#include "World/Subsystems/NetSubsystem.h"
 #include "World/Subsystems/WorldSubsystem.h"
 
 using namespace Lumina;
@@ -135,4 +136,40 @@ TEST(WorldSubsystem, DropScriptedLeavesNativeSubsystemsAlone)
     EXPECT_NE(FindTestSubsystem(Subsystems), nullptr);
 
     WorldSubsystems::DestroyAll(Subsystems);
+}
+
+// Session events reach CNetSubsystem's delegates when the world dispatches them, in send order and once each.
+TEST(WorldSubsystem, NetSessionEventsBroadcastThroughDelegates)
+{
+    RegisterPendingTypes();
+    CWorld* World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    CNetSubsystem* Net = NewObject<CNetSubsystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    Net->SetOwningWorld(World);
+
+    FString Log;
+    Net->OnClientJoined.AddLambda([&Log](uint32 ConnectionId) { Log += Lumina::Format("C{} ", ConnectionId); });
+    Net->OnClientLeft.AddLambda([&Log](uint32 ConnectionId) { Log += Lumina::Format("D{} ", ConnectionId); });
+    Net->OnJoinedHost.AddLambda([&Log]() { Log += "J "; });
+    Net->OnLeftHost.AddLambda([&Log](ENetLeaveReason Reason) { Log += Lumina::Format("L{} ", (uint32)Reason); });
+
+    const ENetSessionEventKind Kinds[] = { ENetSessionEventKind::ClientJoined, ENetSessionEventKind::ClientLeft,
+                                           ENetSessionEventKind::JoinedHost, ENetSessionEventKind::LeftHost };
+    for (const ENetSessionEventKind Kind : Kinds)
+    {
+        SNetSessionEvent Event;
+        Event.Kind         = Kind;
+        Event.ConnectionId = 3;
+        Event.Reason       = ENetLeaveReason::HostClosed;
+        ECS::SendEvent(World->GetEventQueues(), Event);
+    }
+
+    Net->DispatchSessionEvents();
+    EXPECT_TRUE(Log.IsEmpty()) << "an event is only readable once its queue committed";
+
+    World->GetEventQueues().Commit();
+    Net->DispatchSessionEvents();
+    EXPECT_EQ(Log, FString("C3 D3 J L3 "));
+
+    Net->DispatchSessionEvents();
+    EXPECT_EQ(Log, FString("C3 D3 J L3 ")) << "each event is told once";
 }

@@ -29,14 +29,10 @@ namespace Lumina
         void  SerializeBits(void* Value, uint32 NumBits);
         void  SerializeBit(bool& bValue);
 
-        // Advance the cursor to the next byte boundary (no-op when already aligned). Writing pads with zero
-        // bits; reading just skips. Used to frame per-field net deltas so each changed field stays byte-addressable.
+        // Advances to the next byte boundary so each changed net field stays byte-addressable. Writing pads with zero bits.
         void  AlignToByte();
 
-        // Reader fast path: when the cursor is byte-aligned and NumBytes are available, return a pointer to
-        // those raw bytes IN the source buffer and advance past them (zero-copy). Returns nullptr when writing,
-        // not byte-aligned, or out of range -- the caller must fall back to Serialize. The pointer stays valid
-        // only as long as the source buffer does.
+        // Zero-copy reader path that returns nullptr when writing, unaligned or out of range, so the caller must fall back to Serialize.
         const uint8* ReadBytesInPlace(int64 NumBytes);
 
         int64 Tell() override      { return BitCursor / 8; }
@@ -56,8 +52,7 @@ namespace Lumina
         TFunction<uint32(uint32 /*LocalEntity*/)> EntityToNetGUID;
         TFunction<uint32(uint32 /*NetGUID*/)>     NetGUIDToEntity;
 
-        // Optional object-ref index translation. When set, refs serialize as a compact varint index
-        // exported once via ObjectExport. Null reads/writes the full GUID.
+        // When set, object refs serialize as a varint index exported once via ObjectExport, otherwise as a full GUID.
         TFunction<uint32(CObject*)> ObjectToNetIndex;
         TFunction<CObject*(uint32)> NetIndexToObject;
 
@@ -65,8 +60,7 @@ namespace Lumina
         TFunction<uint32(const SUIDocumentRef&)>    DocumentRefToNetIndex;
         TFunction<void(uint32, SUIDocumentRef&)>    NetIndexToDocumentRef;
 
-        // Same scheme for FName fields, exported once via NameExport. When set, names serialize as a compact
-        // varint index; the string is carried by the export. Null reads/writes the full string.
+        // Same scheme for FName fields via NameExport, otherwise the full string.
         TFunction<uint32(const FName&)>         NameToNetIndex;
         TFunction<void(uint32, FName&)>         NetIndexToName;
 

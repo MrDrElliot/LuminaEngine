@@ -13,8 +13,7 @@
 
 namespace Lumina::Memory
 {
-    // Categories are plain names (e.g. "Render Scene"), interned to a stable id on first use;
-    // adding one is just a new string at a LUMINA_MEMORY_SCOPE, no central enum.
+    // Categories are plain names interned on first use, so adding one needs no central enum.
     struct FMemoryCategoryStats
     {
         const char* Name        = "";
@@ -38,8 +37,7 @@ namespace Lumina::Memory
         void*       Frames[kMaxStackFrames] = {};
     };
 
-    // How GetTopCallSites ranks sites: by currently-live bytes (leaks / persistent), or by
-    // cumulative allocation count (transient churn -- the per-frame allocations to eliminate).
+    // Ranks by live bytes to find leaks, or by cumulative allocation count to find transient churn.
     enum class ECallSiteSort : uint8
     {
         LiveBytes,
@@ -59,16 +57,14 @@ namespace Lumina::Memory
 
 #if LUMINA_MEMORY_TRACKING
 
-    // Interns a category name and returns a stable id (idempotent, thread-safe, cached per call site).
-    // Name must outlive the process (a string literal); it is copied into the registry.
+    // Idempotent and thread-safe, and the name is copied into the registry.
     RUNTIME_API uint32 RegisterCategory(const char* Name);
 
     // Master switch. Cheap relaxed atomic; the alloc hooks early-out when false.
     RUNTIME_API void SetTrackingEnabled(bool bEnabled);
     RUNTIME_API bool IsTrackingEnabled();
 
-    // Zeroes all category/call-site counters. Keeps the registered categories
-    // (their ids are cached at call sites), so it just re-baselines the numbers.
+    // Keeps the registered categories because their ids are cached at call sites.
     RUNTIME_API void ResetTracking();
 
     // Fills Out with per-category stats, returns the number written (<= MaxOut).
@@ -80,12 +76,10 @@ namespace Lumina::Memory
     // Adds Reader's numbers to the category at report time, for an owner whose allocations skip the per-allocation ledger.
     RUNTIME_API void RegisterCountedCategory(const char* Name, FCountedCategoryReader Reader);
 
-    // Allocations that could not be recorded because a table hit its ceiling.
-    // Non-zero means reported live bytes under-count.
+    // Non-zero means reported live bytes under-count because a table hit its ceiling.
     RUNTIME_API uint64 GetTrackingOverflowCount();
 
-    // Per-allocation call-stack capture; heavier (walks the stack each alloc), so a separate opt-in.
-    // Lets the profiler attribute live bytes to the exact leaking call site.
+    // Walks the stack on every allocation, so it is a separate opt-in.
     RUNTIME_API void SetCaptureCallstacks(bool bEnabled);
     RUNTIME_API bool IsCapturingCallstacks();
 
@@ -118,8 +112,7 @@ namespace Lumina::Memory
     // Ranks call sites descending by the chosen key; CategoryName != null restricts to that category.
     RUNTIME_API uint32 GetTopCallSites(FCallSiteStat* Out, uint32 MaxOut, ECallSiteSort Sort = ECallSiteSort::LiveBytes, const char* CategoryName = nullptr);
 
-    // Resolves a captured return address to "function (file:line)" text. Returns
-    // false if symbols are unavailable (writes a hex address fallback in that case).
+    // Returns false if symbols are unavailable, writing a hex address fallback.
     RUNTIME_API bool ResolveSymbol(void* Address, char* OutText, size_t OutTextSize);
 
     namespace Hooks
@@ -133,8 +126,7 @@ namespace Lumina::Memory
         RUNTIME_API void PopCategory();
     }
 
-    // RAII scope: every allocation made on this thread while the scope is live is
-    // attributed to the named category (nesting is honored; innermost wins).
+    // Nesting is honored, and the innermost scope wins.
     struct FMemoryScope
     {
         FORCEINLINE explicit FMemoryScope(uint32 CategoryId) { Hooks::PushCategory(CategoryId); }

@@ -65,9 +65,7 @@ namespace Lumina
         // rgb = directional (sun) inscatter tint, w = directional exponent
         FVector4   DirectionalColor  = FVector4(1.0f, 0.9f, 0.7f, 4.0f);
         FVector4   VolumetricParams  = FVector4(1.0f, 0.6f, 200.0f, 0.0f);
-        // Multiple-scattering octaves (Fog_MultiScatterPhaseShadow): x = octave count, y = per-octave
-        // scattering attenuation, z = per-octave shadow attenuation, w = per-octave phase attenuation.
-        // x = 1 is single scattering and is a bit-exact no-op, so this is the default.
+        // Multiple-scattering octaves as count, scattering, shadow and phase attenuation, where x = 1 is a bit-exact no-op default.
         FVector4   MultiScatterParams = FVector4(1.0f, 0.5f, 0.5f, 0.5f);
         // x = noise strength (0 disables), y = inverse world scale, z = octave count, w = per-octave gain
         FVector4   NoiseParams        = FVector4(0.0f, 1.0f / 40.0f, 3.0f, 0.5f);

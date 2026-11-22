@@ -37,7 +37,7 @@ float RainExposureAt(FWeatherData W, float2 UV, float Depth, uint Width, uint He
     const float2 GatherUV = (floor(Texel) + 1.0) / float2(Width, Height);
 
     // A surface records itself in the map, so it must clear its own depth by a few centimeters to count as open.
-    constexpr float kSelfBiasMeters = 0.2;
+    const float kSelfBiasMeters = 0.2;
     const float Bias = kSelfBiasMeters / max(W.OcclusionDepthRange, 1.0);
     const float4 Occluder = W.RainOcclusion.GatherRed(Samplers::PointClamp, GatherUV);
     const float4 Open = select(Depth <= Occluder + Bias, float4(1.0), float4(0.0));
@@ -105,7 +105,7 @@ FRainGroundShape RainGroundShape(FWeatherData W, float3 WorldPos)
     W.RainOcclusion.GetDimensions(Width, Height);
 
     // A few texels apart, so individual cobbles and pebbles average out of the ground's slope.
-    constexpr float kFootprintTexels = 4.0;
+    const float kFootprintTexels = 4.0;
     const float2 Step = kFootprintTexels / float2(Width, Height);
     if (any(UV - Step <= 0.0) || any(UV + Step >= 1.0))
     {
@@ -216,9 +216,9 @@ static const float kRainMaxLight = 30000.0;
 float3 RainLightAt(float3 WorldPos)
 {
     // A light's own bulb has size, so a drop brushing past it is not lit by the point singularity.
-    constexpr float kLightMinDistance = 0.5;
+    const float kLightMinDistance = 0.5;
     // A drop lenses in sky from a wide cone around it, so it reads brighter than the ambient a surface gets.
-    constexpr float kRefractionGain = 2.0;
+    const float kRefractionGain = 2.0;
     float3 Light = GetVolumetricAmbientRadiance() * kRefractionGain + ClusteredLocalIrradiance(WorldPos, kLightMinDistance) * (0.5 * INV_PI);
     if (GetNumLights() > 0u && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional))
     {
@@ -272,7 +272,7 @@ float PuddleAmountAt(FWeatherData W, float3 WorldPos, float Flat, float Depressi
     }
 
     // Water finds the low spots first, so a few centimeters of dip counts like a much higher patch of noise.
-    constexpr float kPoolingPerMeter = 12.0;
+    const float kPoolingPerMeter = 12.0;
     const float2 Pattern   = WorldPos.xz / max(W.Surface.w, 0.25);
     const float  Height    = PuddleHeight(Pattern) + clamp(Depression * kPoolingPerMeter, -0.3, 0.3);
     const float  Threshold = 1.0 - W.Surface.z * W.Surface.y;

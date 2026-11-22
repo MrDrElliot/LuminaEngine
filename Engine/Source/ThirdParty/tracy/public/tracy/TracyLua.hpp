@@ -13,6 +13,7 @@ namespace tracy
 namespace detail
 {
 static inline int noop( lua_State* L ) { return 0; }
+static inline int zero( lua_State* L ) { lua_pushinteger( L, 0 ); return 1; }
 }
 
 static inline void LuaRegister( lua_State* L )
@@ -34,6 +35,10 @@ static inline void LuaRegister( lua_State* L )
     lua_setfield( L, -2, "ZoneName" );
     lua_pushcfunction( L, detail::noop );
     lua_setfield( L, -2, "Message" );
+    lua_pushcfunction( L, detail::zero );
+    lua_setfield( L, -2, "SectionEnter" );
+    lua_pushcfunction( L, detail::noop );
+    lua_setfield( L, -2, "SectionLeave" );
     lua_setglobal( L, "tracy" );
 }
 
@@ -108,6 +113,19 @@ static inline void LuaRemove( char* script )
                 memset( script, ' ', end - script );
                 script = end;
             }
+            else if( strncmp( script + 6, "SectionEnter(", 13 ) == 0 )
+            {
+                auto end = FindEnd( script + 19 );
+                *script = '0';
+                memset( script + 1, ' ', end - script - 1 );
+                script = end;
+            }
+            else if( strncmp( script + 6, "SectionLeave(", 13 ) == 0 )
+            {
+                auto end = FindEnd( script + 19 );
+                memset( script, ' ', end - script );
+                script = end;
+            }
             else
             {
                 script += 6;
@@ -126,9 +144,9 @@ static inline void LuaHook( lua_State* L, lua_Debug* ar ) {}
 
 #else
 
-#include <assert.h>
 #include <limits>
 
+#include "../common/TracyAssert.hpp"
 #include "../common/TracyColor.hpp"
 #include "../common/TracyAlign.hpp"
 #include "../common/TracyForceInline.hpp"
@@ -148,14 +166,18 @@ namespace detail
 static inline void LuaShortenSrc( char* dst, const char* src )
 {
     size_t l = std::min( (size_t)255, strlen( src ) );
-    memcpy( dst, src, l );
+    for( size_t i=0; i<l; i++ )
+    {
+        if( src[i] == '\n' ) dst[i] = ' ';
+        else dst[i] = src[i];
+    }
     dst[l] = 0;
 }
 
 #ifdef TRACY_HAS_CALLSTACK
 static tracy_force_inline void SendLuaCallstack( lua_State* L, uint32_t depth )
 {
-    assert( depth <= 64 );
+    TRACY_ASSERT( depth <= 64 );
     lua_Debug dbg[64];
     const char* func[64];
     uint32_t fsz[64];
@@ -182,14 +204,14 @@ static tracy_force_inline void SendLuaCallstack( lua_State* L, uint32_t depth )
     {
         const uint32_t line = dbg[i].currentline;
         memcpy( dst, &line, 4 ); dst += 4;
-        assert( fsz[i] <= (std::numeric_limits<uint16_t>::max)() );
+        TRACY_ASSERT( fsz[i] <= (std::numeric_limits<uint16_t>::max)() );
         memcpy( dst, fsz+i, 2 ); dst += 2;
         memcpy( dst, func[i], fsz[i] ); dst += fsz[i];
-        assert( ssz[i] <= (std::numeric_limits<uint16_t>::max)() );
+        TRACY_ASSERT( ssz[i] <= (std::numeric_limits<uint16_t>::max)() );
         memcpy( dst, ssz+i, 2 ); dst += 2;
         memcpy( dst, dbg[i].source, ssz[i] ), dst += ssz[i];
     }
-    assert( dst - ptr == spaceNeeded + 2 );
+    TRACY_ASSERT( dst - ptr == spaceNeeded + 2 );
 
     TracyQueuePrepare( QueueType::CallstackAlloc );
     MemWrite( &item->callstackAllocFat.ptr, (uint64_t)ptr );
@@ -200,17 +222,17 @@ static tracy_force_inline void SendLuaCallstack( lua_State* L, uint32_t depth )
 static inline int LuaZoneBeginS( lua_State* L )
 {
 #ifdef TRACY_ON_DEMAND
-    const auto zoneCnt = GetLuaZoneState().counter++;
-    if( zoneCnt != 0 && !GetLuaZoneState().active ) return 0;
-    GetLuaZoneState().active = GetProfiler().IsConnected();
-    if( !GetLuaZoneState().active ) return 0;
+    const auto connectionId = GetProfiler().IsConnected() ? GetProfiler().ConnectionId() : 0;
+    GetLuaZoneState().Push( connectionId );
+    if( !connectionId ) return 0;
 #endif
 
-#ifdef TRACY_CALLSTACK
+#if defined TRACY_CALLSTACK && TRACY_CALLSTACK > 0
     const uint32_t depth = TRACY_CALLSTACK;
 #else
     const auto depth = uint32_t( lua_tointeger( L, 1 ) );
 #endif
+    TRACY_ASSERT( depth > 0 ); // Would crash later anyway, this is not allowed
     SendLuaCallstack( L, depth );
 
     lua_Debug dbg;
@@ -231,17 +253,17 @@ static inline int LuaZoneBeginS( lua_State* L )
 static inline int LuaZoneBeginNS( lua_State* L )
 {
 #ifdef TRACY_ON_DEMAND
-    const auto zoneCnt = GetLuaZoneState().counter++;
-    if( zoneCnt != 0 && !GetLuaZoneState().active ) return 0;
-    GetLuaZoneState().active = GetProfiler().IsConnected();
-    if( !GetLuaZoneState().active ) return 0;
+    const auto connectionId = GetProfiler().IsConnected() ? GetProfiler().ConnectionId() : 0;
+    GetLuaZoneState().Push( connectionId );
+    if( !connectionId ) return 0;
 #endif
 
-#ifdef TRACY_CALLSTACK
+#if defined TRACY_CALLSTACK && TRACY_CALLSTACK > 0
     const uint32_t depth = TRACY_CALLSTACK;
 #else
     const auto depth = uint32_t( lua_tointeger( L, 2 ) );
 #endif
+    TRACY_ASSERT( depth > 0 ); // Would crash later anyway, this is not allowed
     SendLuaCallstack( L, depth );
 
     lua_Debug dbg;
@@ -264,14 +286,13 @@ static inline int LuaZoneBeginNS( lua_State* L )
 
 static inline int LuaZoneBegin( lua_State* L )
 {
-#if defined TRACY_HAS_CALLSTACK && defined TRACY_CALLSTACK
+#if defined TRACY_HAS_CALLSTACK && defined TRACY_CALLSTACK && TRACY_CALLSTACK > 0
     return LuaZoneBeginS( L );
 #else
 #ifdef TRACY_ON_DEMAND
-    const auto zoneCnt = GetLuaZoneState().counter++;
-    if( zoneCnt != 0 && !GetLuaZoneState().active ) return 0;
-    GetLuaZoneState().active = GetProfiler().IsConnected();
-    if( !GetLuaZoneState().active ) return 0;
+    const auto connectionId = GetProfiler().IsConnected() ? GetProfiler().ConnectionId() : 0;
+    GetLuaZoneState().Push( connectionId );
+    if( !connectionId ) return 0;
 #endif
 
     lua_Debug dbg;
@@ -291,14 +312,13 @@ static inline int LuaZoneBegin( lua_State* L )
 
 static inline int LuaZoneBeginN( lua_State* L )
 {
-#if defined TRACY_HAS_CALLSTACK && defined TRACY_CALLSTACK
+#if defined TRACY_HAS_CALLSTACK && defined TRACY_CALLSTACK && TRACY_CALLSTACK > 0
     return LuaZoneBeginNS( L );
 #else
 #ifdef TRACY_ON_DEMAND
-    const auto zoneCnt = GetLuaZoneState().counter++;
-    if( zoneCnt != 0 && !GetLuaZoneState().active ) return 0;
-    GetLuaZoneState().active = GetProfiler().IsConnected();
-    if( !GetLuaZoneState().active ) return 0;
+    const auto connectionId = GetProfiler().IsConnected() ? GetProfiler().ConnectionId() : 0;
+    GetLuaZoneState().Push( connectionId );
+    if( !connectionId ) return 0;
 #endif
 
     lua_Debug dbg;
@@ -321,14 +341,8 @@ static inline int LuaZoneBeginN( lua_State* L )
 static inline int LuaZoneEnd( lua_State* L )
 {
 #ifdef TRACY_ON_DEMAND
-    assert( GetLuaZoneState().counter != 0 );
-    GetLuaZoneState().counter--;
-    if( !GetLuaZoneState().active ) return 0;
-    if( !GetProfiler().IsConnected() )
-    {
-        GetLuaZoneState().active = false;
-        return 0;
-    }
+    const auto connectionId = GetLuaZoneState().Pop();
+    if( !connectionId || GetProfiler().ConnectionId() != connectionId ) return 0;
 #endif
 
     TracyQueuePrepare( QueueType::ZoneEnd );
@@ -340,17 +354,13 @@ static inline int LuaZoneEnd( lua_State* L )
 static inline int LuaZoneText( lua_State* L )
 {
 #ifdef TRACY_ON_DEMAND
-    if( !GetLuaZoneState().active ) return 0;
-    if( !GetProfiler().IsConnected() )
-    {
-        GetLuaZoneState().active = false;
-        return 0;
-    }
+    const auto connectionId = GetLuaZoneState().Top();
+    if( !connectionId || GetProfiler().ConnectionId() != connectionId ) return 0;
 #endif
 
     auto txt = lua_tostring( L, 1 );
     const auto size = strlen( txt );
-    assert( size < (std::numeric_limits<uint16_t>::max)() );
+    TRACY_ASSERT( size < (std::numeric_limits<uint16_t>::max)() );
 
     auto ptr = (char*)tracy_malloc( size );
     memcpy( ptr, txt, size );
@@ -365,17 +375,13 @@ static inline int LuaZoneText( lua_State* L )
 static inline int LuaZoneName( lua_State* L )
 {
 #ifdef TRACY_ON_DEMAND
-    if( !GetLuaZoneState().active ) return 0;
-    if( !GetProfiler().IsConnected() )
-    {
-        GetLuaZoneState().active = false;
-        return 0;
-    }
+    const auto connectionId = GetLuaZoneState().Top();
+    if( !connectionId || GetProfiler().ConnectionId() != connectionId ) return 0;
 #endif
 
     auto txt = lua_tostring( L, 1 );
     const auto size = strlen( txt );
-    assert( size < (std::numeric_limits<uint16_t>::max)() );
+    TRACY_ASSERT( size < (std::numeric_limits<uint16_t>::max)() );
 
     auto ptr = (char*)tracy_malloc( size );
     memcpy( ptr, txt, size );
@@ -395,16 +401,67 @@ static inline int LuaMessage( lua_State* L )
 
     auto txt = lua_tostring( L, 1 );
     const auto size = strlen( txt );
-    assert( size < (std::numeric_limits<uint16_t>::max)() );
+    TRACY_ASSERT( size < (std::numeric_limits<uint16_t>::max)() );
 
     auto ptr = (char*)tracy_malloc( size );
     memcpy( ptr, txt, size );
 
+    TaggedUserlandAddress taggedPtr{ (uint64_t)ptr, MakeMessageMetadata( MessageSourceType::User, MessageSeverity::Info ) };
+
     TracyQueuePrepare( QueueType::Message );
     MemWrite( &item->messageFat.time, Profiler::GetTime() );
-    MemWrite( &item->messageFat.text, (uint64_t)ptr );
+    MemWrite( &item->messageFat.textAndMetadata, taggedPtr );
     MemWrite( &item->messageFat.size, (uint16_t)size );
     TracyQueueCommit( messageFatThread );
+    return 0;
+}
+
+static inline int LuaSectionEnter( lua_State* L )
+{
+    auto& profiler = GetProfiler();
+#ifdef TRACY_ON_DEMAND
+    if( !profiler.IsConnected() )
+    {
+        lua_pushinteger( L, 0 );
+        return 1;
+    }
+#endif
+
+    auto txt = lua_tostring( L, 1 );
+    const auto size = strlen( txt );
+    TRACY_ASSERT( size < (std::numeric_limits<uint16_t>::max)() );
+
+    uint16_t category = lua_isnumber( L, 2 ) ? lua_tointeger( L, 2 ) : 0;
+
+    auto ptr = (char*)tracy_malloc( size );
+    memcpy( ptr, txt, size );
+
+    const auto id = profiler.GetNextSectionId();
+    TracyLfqPrepare( QueueType::SectionEnter );
+    MemWrite( &item->sectionEnterFat.time, Profiler::GetTime() );
+    MemWrite( &item->sectionEnterFat.id, id );
+    MemWrite( &item->sectionEnterFat.category, category );
+    MemWrite( &item->sectionEnterFat.text, (uint64_t)ptr );
+    MemWrite( &item->sectionEnterFat.size, (uint16_t)size );
+    TracyLfqCommit;
+
+    lua_pushinteger( L, id );
+    return 1;
+}
+
+static inline int LuaSectionLeave( lua_State* L )
+{
+#ifdef TRACY_ON_DEMAND
+    if( !GetProfiler().IsConnected() ) return 0;
+#endif
+
+    const auto id = uint32_t( lua_tointeger( L, 1 ) );
+    if( id == 0 ) return 0;
+
+    TracyLfqPrepare( QueueType::SectionLeave );
+    MemWrite( &item->sectionLeave.time, Profiler::GetTime() );
+    MemWrite( &item->sectionLeave.id, id );
+    TracyLfqCommit;
     return 0;
 }
 
@@ -436,6 +493,10 @@ static inline void LuaRegister( lua_State* L )
     lua_setfield( L, -2, "ZoneName" );
     lua_pushcfunction( L, detail::LuaMessage );
     lua_setfield( L, -2, "Message" );
+    lua_pushcfunction( L, detail::LuaSectionEnter );
+    lua_setfield( L, -2, "SectionEnter" );
+    lua_pushcfunction( L, detail::LuaSectionLeave );
+    lua_setfield( L, -2, "SectionLeave" );
     lua_setglobal( L, "tracy" );
 }
 
@@ -446,10 +507,9 @@ static inline void LuaHook( lua_State* L, lua_Debug* ar )
     if ( ar->event == LUA_HOOKCALL )
     {
 #ifdef TRACY_ON_DEMAND
-        const auto zoneCnt = GetLuaZoneState().counter++;
-        if ( zoneCnt != 0 && !GetLuaZoneState().active ) return;
-        GetLuaZoneState().active = GetProfiler().IsConnected();
-        if ( !GetLuaZoneState().active ) return;
+        const auto connectionId = GetProfiler().IsConnected() ? GetProfiler().ConnectionId() : 0;
+        GetLuaZoneState().Push( connectionId );
+        if ( !connectionId ) return;
 #endif
         lua_getinfo( L, "Snl", ar );
 
@@ -464,14 +524,8 @@ static inline void LuaHook( lua_State* L, lua_Debug* ar )
     }
     else if (ar->event == LUA_HOOKRET) {
 #ifdef TRACY_ON_DEMAND
-        assert( GetLuaZoneState().counter != 0 );
-        GetLuaZoneState().counter--;
-        if ( !GetLuaZoneState().active ) return;
-        if ( !GetProfiler().IsConnected() )
-        {
-            GetLuaZoneState().active = false;
-            return;
-        }
+        const auto connectionId = GetLuaZoneState().Pop();
+        if ( !connectionId || GetProfiler().ConnectionId() != connectionId ) return;
 #endif
         TracyQueuePrepare( QueueType::ZoneEnd );
         MemWrite( &item->zoneEnd.time, Profiler::GetTime() );

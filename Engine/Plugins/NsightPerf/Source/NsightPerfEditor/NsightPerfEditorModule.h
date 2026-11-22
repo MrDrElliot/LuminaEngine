@@ -4,9 +4,7 @@
 
 namespace Lumina
 {
-    // Loads at the Core phase (before RHI device creation) so it can register the Vulkan instance/
-    // device extensions the Nsight Perf periodic sampler requires, then contributes a Tools-menu
-    // entry that opens the live GPU HUD. Editor-only; toggled per-project via .lproject.
+    // Loads at the Core phase before RHI device creation so it can register the Vulkan extensions the Nsight Perf sampler requires.
     class NSIGHTPERFEDITOR_API FNsightPerfEditorModule : public IModuleInterface
     {
     public:
@@ -14,8 +12,7 @@ namespace Lumina
         void ShutdownModule() override;
 
     private:
-        // Our Tools-menu entry's handle. Must be unregistered in ShutdownModule (before this DLL
-        // unloads), its callbacks are code in this DLL, but the registry outlives the plugin.
+        // Must be unregistered in ShutdownModule since its callbacks live in this DLL but the registry outlives the plugin.
         uint32 ToolsMenuHandle = 0;
     };
 }

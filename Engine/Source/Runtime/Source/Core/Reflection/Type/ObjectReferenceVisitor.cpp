@@ -24,8 +24,7 @@ namespace Lumina
         using FSlotFunc     = FObjectReferenceVisitor::FSlotFunc;
         using FSoftSlotFunc = FObjectReferenceVisitor::FSoftSlotFunc;
 
-        // One walk serves both entry points; the soft callback is a pointer because a TFunctionRef cannot be
-        // absent, and a caller that does not want soft references should not have to invent one.
+        // The soft callback is a pointer because a TFunctionRef cannot be absent.
         void VisitStructImpl(const CStruct* Struct, void* Instance, FSlotFunc Func, const FSoftSlotFunc* SoftFunc);
 
         void VisitPropertyImpl(const FProperty* Property, void* Value, FSlotFunc Func, const FSoftSlotFunc* SoftFunc)
@@ -89,8 +88,7 @@ namespace Lumina
 
             case EPropertyTypeFlags::InstancedStruct:
                 {
-                    // The held type is never repointed, and never needs to be: IsInstancableStructType refuses
-                    // a CClass, so an instanced struct cannot hold one of the types a reinstance replaces.
+                    // The held type never needs repointing since IsInstancableStructType refuses a CClass.
                     auto* Instanced = static_cast<FInstancedStruct*>(Value);
                     VisitStructImpl(Instanced->GetScriptStruct(), Instanced->GetMutableMemory(), Func, SoftFunc);
                     break;
@@ -121,8 +119,7 @@ namespace Lumina
                         break;
                     }
 
-                    // A key is reported but never rewritten: changing one in place leaves it in the bucket its
-                    // old hash chose, so the entry becomes unfindable. Remapping keys means rebuilding the map.
+                    // A key is never rewritten in place because it would stay in the bucket its old hash chose and become unfindable.
                     FSlotFunc ReadOnly = [&Func](CObject* Current) -> CObject*
                     {
                         Func(Current);

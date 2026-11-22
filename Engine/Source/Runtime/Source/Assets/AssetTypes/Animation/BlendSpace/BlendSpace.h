@@ -101,8 +101,7 @@ namespace Lumina
         int32 C = 0;
     };
 
-    // The result of sampling a blend space: which samples contribute and how much. At most three, so
-    // this stays a fixed-size POD the VM can put on the stack every frame.
+    // The samples contributing to a blend space result, at most three so it stays a stack POD.
     struct FBlendSpaceWeights
     {
         static constexpr int32 MaxContributions = 3;
@@ -114,8 +113,7 @@ namespace Lumina
         void Add(int32 SampleIndex, float Weight);
     };
 
-    // A set of animation clips placed in a 1D or 2D value space, blended by where an input lands
-    // between them. The usual case is locomotion: speed on X, strafe on Y.
+    // Animation clips placed in a 1D or 2D value space and blended by where an input lands.
     REFLECT()
     class RUNTIME_API CBlendSpace : public CObject
     {
@@ -166,8 +164,7 @@ namespace Lumina
         void EvaluateOneAxis(float X, FBlendSpaceWeights& OutWeights) const;
         void EvaluateTwoAxis(const FVector2& Input, FBlendSpaceWeights& OutWeights) const;
 
-        // Derived from Samples, never serialized: a stale triangulation loaded from disk would be worse
-        // than no triangulation, and rebuilding is cheap at these counts.
+        // Derived from Samples and never serialized, since a stale triangulation is worse than none.
         TVector<FBlendSpaceTriangle> Triangles;
         TVector<int32>               SortedOrder;
         int32                        TopologySampleCount = 0;

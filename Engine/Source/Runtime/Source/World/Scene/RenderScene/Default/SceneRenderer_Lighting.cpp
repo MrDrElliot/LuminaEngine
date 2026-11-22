@@ -8,7 +8,6 @@ namespace Lumina
     static constexpr uint32 GMaterialMaxSlots = MATERIAL_MAX_SLOTS;
 
     // One allocation means one barrier between the three classify dispatches instead of three.
-    // Indirect-argument offsets need only 4-byte alignment; 16 costs nothing and keeps the triples tidy.
     static uint32 AlignClassifyRegion(uint32 Offset) { return (Offset + 15u) & ~15u; }
 
     bool FDefaultSceneRenderer::BuildDeferredMaterialBinning(RHI::FCmdListH CL)
@@ -64,8 +63,7 @@ namespace Lumina
             }
         }
 
-        // Overflow shades through the default material rather than not at all. It reads the overflowed
-        // material's own uniforms, so the surface is wrong but lit, which reads as a bug instead of a hole.
+        // Overflow shades through the default material so the surface is wrong but lit, which reads as a bug instead of a hole.
         CMaterial* DefaultMaterial = CMaterial::GetDefaultMaterial();
         const FShaderH FallbackShader = IsValid(DefaultMaterial) ? DefaultMaterial->GetStage(EMaterialShaderStage::Deferred) : FShaderH{};
 
@@ -115,8 +113,7 @@ namespace Lumina
 
                 const FShaderH BinShader = bFull ? FallbackShader : M.DeferredShader;
 
-                // The fallback may already own a bin, either from a visible default material or an
-                // earlier overflow, in which case it costs no extra slot.
+                // The fallback may already own a bin from a default material or earlier overflow, costing no extra slot.
                 if (auto Found = BinnedDeferredSlotLookup.Find(BinShader.Handle); Found != nullptr)
                 {
                     Slot = (*Found);

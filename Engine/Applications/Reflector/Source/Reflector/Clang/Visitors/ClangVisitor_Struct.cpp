@@ -1,4 +1,3 @@
-#include <clang/AST/Type.h>
 #include <clang-c/CXString.h>
 #include <clang-c/Index.h>
 #include <cctype>
@@ -134,7 +133,7 @@ namespace Lumina::Reflection::Visitor
 			return true;
 		}
 
-		const CXCursor TemplateCursor = clang_getSpecializedCursorTemplate(clang_getTypeDeclaration(Canonical));
+		const CXCursor TemplateCursor = clang_getSpecializedCursorTemplate(ClangUtils::GetTypeDefinition(Canonical));
 		if (clang_Cursor_isNull(TemplateCursor))
 		{
 			return false;
@@ -473,7 +472,7 @@ namespace Lumina::Reflection::Visitor
 		case EPropertyTypeFlags::Enum:
 		{
 			NewProperty = CreateProperty<FReflectedEnumProperty>(FieldInfo);
-			const CXCursor EnumCursor = clang_getTypeDeclaration(FieldInfo.Type);
+			const CXCursor EnumCursor = ClangUtils::GetTypeDefinition(FieldInfo.Type);
 
 			if (clang_getCursorKind(EnumCursor) == CXCursor_EnumDecl)
 			{
@@ -494,8 +493,7 @@ namespace Lumina::Reflection::Visitor
 		break;
 		case EPropertyTypeFlags::Object:
 		{
-			// A member is a TStrongObjectPtr<T>, whose T is the template argument. A function parameter is a raw
-			// T*, where the class is the pointee; both spellings describe the same object property.
+			// A member is a TStrongObjectPtr<T> but a function parameter is a raw T*, so the class is the pointee there.
 			CXType ArgType = clang_Type_getTemplateArgumentAsType(FieldInfo.Type, 0);
 			if (ArgType.kind == CXType_Invalid)
 			{
@@ -785,9 +783,7 @@ namespace Lumina::Reflection::Visitor
 	}
 
 
-	// Whether a record derives from CObject, which is what separates an object reference from a pointer to a
-	// plain struct. CreateFuncField calls every pointer an object, and an ECS component is a struct, so a
-	// raw pointer to one would otherwise be described as an object property naming a class that has none.
+	// CreateFuncField calls every pointer an object, so a raw pointer to an ECS component struct needs this to be told apart.
 	static bool DerivesFromCObject(CXType RecordType, int Depth = 0)
 	{
 		if (Depth > 16)
@@ -795,7 +791,7 @@ namespace Lumina::Reflection::Visitor
 			return false;
 		}
 
-		const CXCursor Declaration = clang_getTypeDeclaration(clang_getCanonicalType(RecordType));
+		const CXCursor Declaration = ClangUtils::GetTypeDefinition(clang_getCanonicalType(RecordType));
 		if (clang_Cursor_isNull(Declaration) != 0)
 		{
 			return false;
@@ -846,7 +842,7 @@ namespace Lumina::Reflection::Visitor
 			return true;
 		}
 
-		const CXCursor Declaration = clang_getTypeDeclaration(clang_getCanonicalType(RecordType));
+		const CXCursor Declaration = ClangUtils::GetTypeDefinition(clang_getCanonicalType(RecordType));
 		if (clang_Cursor_isNull(Declaration) != 0)
 		{
 			return false;
@@ -874,14 +870,7 @@ namespace Lumina::Reflection::Visitor
 		return Search.bFound;
 	}
 
-	// Kinds a call frame can hold today.
-	//
-	// Containers and maps are out because their inners are created through the same factory, which attaches
-	// them to the owning type, and untangling that for a parameter is worth doing on its own. Object and
-	// class are out for a sharper reason: the property factory derives the pointee from a TStrongObjectPtr<T>'s
-	// template argument, and a raw CWorld* parameter carries no such argument, so it cannot be qualified.
-	// Both want CreateFuncField to describe the inner type, which is the next piece of this rather than a
-	// reason to hold the rest back.
+	// Containers, maps, objects and classes are excluded until CreateFuncField can describe their inner types.
 	static bool IsSupportedParameterKind(EPropertyTypeFlags Kind)
 	{
 		switch (Kind)
@@ -912,8 +901,7 @@ namespace Lumina::Reflection::Visitor
 		}
 	}
 
-	// Turns the parsed signature into the properties the generated frame is described by. A function whose
-	// arguments cannot all be described stays unreflected natively, which costs nothing that worked before.
+	// A function whose arguments cannot all be described stays unreflected natively.
 	static void BuildNativeFunctionParameters(FClangParserContext* Context, FReflectedStruct* Struct,
 	                                         FReflectedFunction& Function, const CXCursor& Cursor)
 	{
@@ -922,8 +910,7 @@ namespace Lumina::Reflection::Visitor
 			return;
 		}
 
-		// Qualified, because offsetof against it is emitted at file scope while the frame itself is declared
-		// inside the type's namespace.
+		// Qualified because offsetof is emitted at file scope while the frame sits in the type's namespace.
 		const std::string ParmsStruct = (Struct->Namespace.empty() ? std::string() : Struct->Namespace + "::")
 			+ Names::FunctionParmsStruct(Struct->DisplayName, Function.Name);
 
@@ -964,18 +951,14 @@ namespace Lumina::Reflection::Visitor
 				StorageType = "Lumina::TFrameObject<" + ClangUtils::GetSafeTypeAsString(clang_getUnqualifiedType(Pointee)) + ">";
 			}
 
-			// Described as what the frame stores, not as the signature spelled it. A TVector<float> reaches
-			// here as const TVector<float>&, and template arguments live on the record rather than on the
-			// reference to it, so the inner type could not be found without looking through it first.
+			// Described as what the frame stores, since template arguments live on the record and not on a reference to it.
 			FFieldInfo StoredInfo = Info;
 			StoredInfo.Type = Stored;
 
-			// The raw spelling drives a container's ops lookup and its casts, so it has to be the stored
-			// type as well; left as written it would form a pointer to a reference.
+			// Left as written the raw spelling would form a pointer to a reference.
 			StoredInfo.RawFieldType = StorageType;
 
-			// A container adds its inners here too, so everything added from this mark belongs to the
-			// function. Taking only the outer back would leave the inners as fake members of the type.
+			// A container adds its inners too, and leaving them behind would make them fake members of the type.
 			const size_t Mark = Struct->NumProperties();
 
 			FReflectedProperty* Raw = nullptr;
@@ -990,8 +973,7 @@ namespace Lumina::Reflection::Visitor
 				return false;
 			}
 
-			// The outer is pushed after its inners, so it is the last one taken and the only one that is
-			// a frame member; an inner is described by its owner and emits offset 0.
+			// The outer is pushed after its inners, and only it is a frame member.
 			Taken.back()->Name  = MemberName;
 			Taken.back()->Outer = ParmsStruct;
 
@@ -1039,6 +1021,32 @@ namespace Lumina::Reflection::Visitor
 
 		Function.bReflectNatively = true;
 		(void)Cursor;
+	}
+
+	// A call reaches the network through the generated override, so an RPC it cannot override would silently run only here.
+	static void ValidateRpcSignature(const CXCursor& Cursor, const FReflectedFunction& Function)
+	{
+		if (FindMetadata(Function.Metadata, "Rpc") == nullptr)
+		{
+			return;
+		}
+
+		if (!Function.bIsVirtual)
+		{
+			LRT_ERROR(Cursor, Reflection::EDiagId::RpcSignature,
+				"RPC '%s' must be virtual. A generated override routes each call to where FUNCTION(Rpc = ...) says, then runs this body when it belongs here.",
+				Function.Name.c_str());
+		}
+		if (Function.Return.has_value())
+		{
+			LRT_ERROR(Cursor, Reflection::EDiagId::RpcSignature,
+				"RPC '%s' must return void, since a call sent to another peer has nothing to hand back.", Function.Name.c_str());
+		}
+		if (Function.bHasOmittedArgs)
+		{
+			LRT_ERROR(Cursor, Reflection::EDiagId::RpcSignature,
+				"RPC '%s' has an argument the reflector cannot serialize, so the call could not be sent.", Function.Name.c_str());
+		}
 	}
 
 	static bool CreateFunctionForType(const CXCursor& Cursor, FClangParserContext* Context, FReflectedStruct* Struct, FReflectedFunction*& OutFunction)
@@ -1153,7 +1161,7 @@ namespace Lumina::Reflection::Visitor
 		FClangParserContext* Context = (FClangParserContext*)pClientData;
 		const CXType FieldType = clang_getCursorType(Cursor);
 
-		if (clang_Cursor_isAnonymousRecordDecl(clang_getTypeDeclaration(FieldType)) != 0)
+		if (clang_Cursor_isAnonymousRecordDecl(ClangUtils::GetTypeDefinition(FieldType)) != 0)
 		{
 			const bool bWasInAnonymousRecord = Context->bInAnonymousRecord;
 			Context->bInAnonymousRecord = true;
@@ -1251,6 +1259,7 @@ namespace Lumina::Reflection::Visitor
 			CreateFunctionForType(Cursor, Context, Type, NewFunction);
 			NewFunction->GenerateMetadata(Specifiers);
 			ValidateSpecifiers(*Context->Specifiers, Cursor, ESpecifierTarget::Function, NewFunction->Metadata);
+			ValidateRpcSignature(Cursor, *NewFunction);
 
 			std::string Comment = GetCursorComment(Cursor);
 			if (!Comment.empty())
@@ -1339,7 +1348,7 @@ namespace Lumina::Reflection::Visitor
 		}
 
 		const CXType Target = clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(Cursor));
-		const CXCursor TargetCursor = clang_getTypeDeclaration(Target);
+		const CXCursor TargetCursor = ClangUtils::GetTypeDefinition(Target);
 		if (Target.kind != CXType_Record || clang_Cursor_isNull(TargetCursor))
 		{
 			LRT_ERROR(Cursor, EDiagId::ReflectedAliasInvalid,

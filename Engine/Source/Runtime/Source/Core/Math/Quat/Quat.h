@@ -6,8 +6,7 @@
 #include "Core/Reflection/ReflectionMacros.h"
 #include <cmath>
 
-// Lumina quaternion. Layout x,y,z,w but the 4-scalar ctor takes real FIRST: TQuat(w,x,y,z).
-// Left-handed; plain members (no union) so offsetof on x/y/z/w is well-defined for reflection.
+// The 4-scalar ctor takes real first as TQuat(w,x,y,z) though layout is x,y,z,w. Plain members keep offsetof well-defined for reflection.
 
 #if defined(_MSC_VER)
     #pragma warning(push)
@@ -34,8 +33,7 @@ namespace Lumina
         PROPERTY(Editable)
         T w;
 
-        // Trivial default ctor: uninitialized; keeps the type trivial
-        // for unions / bulk serialization). Use TQuat::Identity() for identity.
+        // Uninitialized to keep the type trivial for unions and bulk serialization.
         TQuat() = default;
 
         // Real part first: TQuat(w, x, y, z).

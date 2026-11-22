@@ -18,9 +18,7 @@ namespace Lumina
 
 namespace Lumina
 {
-    // What an action is handed when it runs. Asset is the registry entry for the item that was
-    // right-clicked; the action loads it itself if it needs the object (most do not -- a GUID and a
-    // path is usually enough, and not loading keeps the menu cheap to draw).
+    // Asset is the right-clicked registry entry, and actions load the object only when needed to keep the menu cheap to draw.
     struct FAssetActionContext
     {
         IEditorToolContext* ToolContext = nullptr;
@@ -53,8 +51,7 @@ namespace Lumina
         THashMap<CClass*, TVector<FAssetAction>> Actions;
     };
 
-    // Registers the engine's own asset actions. Called once during editor startup, alongside the
-    // built-in tool registrations.
+    // Called once during editor startup alongside the built-in tool registrations.
     void RegisterBuiltinAssetActions();
 
 

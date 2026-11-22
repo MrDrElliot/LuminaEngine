@@ -47,9 +47,7 @@ namespace Lumina
 
             Words.Init(0ull, static_cast<int32>((InCapacity + 63u) / 64u));
 
-            // The tail of the last word addresses slots past Capacity. Marking them allocated up front is
-            // what lets the scan below trust a whole word without a per-bit capacity compare -- they can
-            // never come back free, so they can never be handed out.
+            // Slots past Capacity are marked allocated up front so the scan below can trust a whole word without a per-bit compare.
             const uint32 Tail = InCapacity & 63u;
             if (Tail != 0u && !Words.IsEmpty())
             {
@@ -60,9 +58,7 @@ namespace Lumina
         /** Lowest free slot, or kInvalidHandle when the region is full. */
         uint32 Alloc()
         {
-            // Everything below HintWord is full: Alloc only moves the hint forward past words it found
-            // full, and Free pulls it back to whatever it just released. So this never skips a free slot
-            // and never needs a wrap-around second pass.
+            // Everything below HintWord is full, so the scan never skips a free slot or needs a wrap-around pass.
             for (uint32 w = HintWord; w < static_cast<uint32>(Words.Num()); ++w)
             {
                 const uint64 Free = ~Words[w];

@@ -9,8 +9,7 @@ namespace Lumina
 
         LUMINA_EDITOR_TOOL(FGamePreviewTool)
 
-        // ClientIndex > 0 names the tool "Client: N" so multiple previews are uniquely named (the tool name
-        // is the window/dock identity); 0 keeps the lone "Game Preview" title.
+        // A positive ClientIndex names the tool uniquely since the tool name is the window and dock identity.
         FGamePreviewTool(IEditorToolContext* Context, CWorld* InWorld, int32 ClientIndex = 0);
 
 
@@ -24,8 +23,7 @@ namespace Lumina
         void DrawHelpMenu() override;
         void InitializeDockingLayout(ImGuiID InDockspaceID, const ImVec2& InDockspaceSize) const override;
 
-        // Game previews open as floating windows so each becomes its own OS viewport; docked tabs can't take
-        // game-input focus (the active-viewport switch is keyed on native window focus).
+        // Docked tabs cannot take game-input focus since the active-viewport switch is keyed on native window focus.
         NODISCARD bool ShouldOpenDocked() const override { return false; }
 
         void DrawViewportOverlayElements(const FUpdateContext& UpdateContext, ImTextureRef ViewportTexture, ImVec2 ViewportSize) override;

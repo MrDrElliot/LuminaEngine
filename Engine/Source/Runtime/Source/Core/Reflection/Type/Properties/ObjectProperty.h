@@ -17,16 +17,13 @@ namespace Lumina
         void Serialize(FArchive& Ar, void* Value) override;
         void SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults) override;
 
-        // Send the referenced object's stable GUID and resolve it on the receiver
-        // (assets have deterministic/persistent GUIDs identical on both ends).
+        // Sends the stable GUID and resolves it on the receiver, since assets share GUIDs on both ends.
         RUNTIME_API void NetSerialize(FNetArchive& Ar, void* Value) override;
 
-        // Assign through TStrongObjectPtr; a raw memcpy (base impl) would skip the strong-ref
-        // add/release and corrupt the refcount (crash on a later release).
+        // Assigns through TStrongObjectPtr because a raw memcpy would skip the add and release and corrupt the refcount.
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
-        // A zeroed TStrongObjectPtr IS a valid null, so construction has nothing to do -- but destruction must
-        // release the strong ref or the referenced object never dies.
+        // A zeroed TStrongObjectPtr is a valid null, but destruction must release the strong ref or the object never dies.
         RUNTIME_API void DestructValue(void* Value) const override;
         bool OwnsStorage() const override { return true; }
 

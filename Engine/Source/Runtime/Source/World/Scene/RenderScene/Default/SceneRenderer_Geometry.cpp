@@ -581,8 +581,7 @@ namespace Lumina
     bool FDefaultSceneRenderer::BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,
                                                       FShaderH PixelShader, bool* bOutStandIn, EFormat DepthFormat)
     {
-        // A masked caster needs the interpolant-carrying geometry and a PS that can clip, or its shadow is
-        // the silhouette of the whole quad instead of the leaf.
+        // A masked caster needs interpolant-carrying geometry and a clipping PS, or its shadow is the whole quad.
         const bool bMaskedClip = Batch.bMasked
                               && Batch.MeshShaderShadowMasked  != nullptr
                               && Batch.ShadowMaskedPixelShader != nullptr;

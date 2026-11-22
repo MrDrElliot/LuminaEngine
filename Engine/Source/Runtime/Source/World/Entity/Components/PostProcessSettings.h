@@ -16,8 +16,7 @@ namespace Lumina
         GranTurismo = 5,    // Uchimura's Gran Turismo curve; linear midtones with a soft shoulder
     };
 
-    // Per-camera color grading + tone mapping. Grading is linear HDR before the tone mapper; vignette is
-    // display-space after. Defaults to an identity grade with AGX.
+    // Per-camera color grading and tone mapping, with grading in linear HDR before the mapper and vignette in display space after.
     REFLECT()
     struct RUNTIME_API SPostProcessSettings
     {

@@ -413,6 +413,9 @@ namespace Lumina
         const RHI::FRect   Full{ 0, (int32)VSM_VIRTUAL_SIZE, 0, (int32)VSM_VIRTUAL_SIZE };
         const FUIntVector2 Extent(VSM_VIRTUAL_SIZE, VSM_VIRTUAL_SIZE);
 
+        // A compute pass, so it lists the point casters before the static layer's render pass opens.
+        CullImpostorShadows(CL);
+
         // The static views draw into the static layer, then the requested pages copy it into the dynamic layer the movers draw over.
         for (uint32 Split = 0u; Split < 2u; ++Split)
         {
@@ -426,6 +429,7 @@ namespace Lumina
 
             RHI::FRenderPassDesc Pass;
             Pass.RenderArea = Extent;
+            SCENE_GPU_SCOPE(CL, Split == 0u ? "Static Layer" : "Dynamic Layer");
             RHI::CmdBeginRenderPass(CL, Pass);
             RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
 
@@ -444,10 +448,14 @@ namespace Lumina
                     }
                 }
             }
-            // Particles move every frame, so they draw only over the dynamic layer.
+            // Particles move every frame, so they draw only over the dynamic layer, while impostor points never move.
             if (Split == 1u)
             {
                 ParticleShadowCasters(CL, Virtual.ShadowDataBase, Virtual.FirstLevel, Virtual.LastLevel);
+            }
+            else
+            {
+                DrawImpostorShadows(CL);
             }
             RHI::CmdEndRenderPass(CL);
 
@@ -459,6 +467,7 @@ namespace Lumina
                 {
                     ComputeRaster(/*bStatic*/ true);
                 }
+                SCENE_GPU_SCOPE(CL, "Copy Static Pages");
                 FFillPC Fill;
                 Fill.Pages     = { Res.Pages, kTotalPages };
                 Fill.List      = { Res.RequestedList, Res.PoolPages };

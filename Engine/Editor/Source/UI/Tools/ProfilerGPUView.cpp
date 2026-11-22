@@ -55,13 +55,18 @@ namespace Lumina
         DrawGPUFlameGraph();
     }
 
-    // A matching name at the same index is the same pass; anything else snaps rather than blending two bars.
+    // Lanes top to bottom, so async compute sits right under the graphics work it overlaps.
+    static constexpr RHI::EQueueType kLaneOrder[] = { RHI::EQueueType::Graphics, RHI::EQueueType::Compute, RHI::EQueueType::Transfer };
+
+    // A matching name, depth and queue at the same index is the same pass; anything else snaps rather than blending two bars.
     void FProfilerEditorTool::SmoothTowards(const FGPUProfileFrame& Live)
     {
         const double Keep = (double)Math::Clamp(Smoothing, 0.0f, 0.98f);
         const double Take = 1.0 - Keep;
+        auto Blend = [&](double Current, double Target) { return Current > 0.0 ? Current * Keep + Target * Take : Target; };
 
-        GPUFrame.FrameNumber = Live.FrameNumber;
+        GPUFrame.FrameNumber   = Live.FrameNumber;
+        GPUFrame.DroppedScopes = Live.DroppedScopes;
         GPUFrame.Scopes.SetNum(Live.Scopes.Num());
 
         for (int32 Index = 0; Index < Live.Scopes.Num(); ++Index)
@@ -69,18 +74,23 @@ namespace Lumina
             const FGPUProfileScope& In = Live.Scopes[Index];
             FGPUProfileScope& Out = GPUFrame.Scopes[Index];
 
-            const bool bSamePass = Out.Name == In.Name && Out.Depth == In.Depth;
+            const bool bSamePass = Out.Name == In.Name && Out.Depth == In.Depth && Out.Queue == In.Queue;
 
             Out.Name        = In.Name;
             Out.ParentIndex = In.ParentIndex;
             Out.Depth       = In.Depth;
+            Out.Queue       = In.Queue;
             Out.StartMs     = bSamePass ? (Out.StartMs * Keep + In.StartMs * Take) : In.StartMs;
             Out.EndMs       = bSamePass ? (Out.EndMs   * Keep + In.EndMs   * Take) : In.EndMs;
         }
 
-        GPUFrame.TotalMs = GPUFrame.TotalMs > 0.0
-            ? GPUFrame.TotalMs * Keep + Live.TotalMs * Take
-            : Live.TotalMs;
+        GPUFrame.TotalMs = Blend(GPUFrame.TotalMs, Live.TotalMs);
+        for (uint32 Queue = 0; Queue < kGPUProfileQueueCount; ++Queue)
+        {
+            // A queue that went idle drops out at once instead of fading through the smoothing.
+            GPUFrame.QueueBusyMs[Queue] = Live.QueueBusyMs[Queue] > 0.0 ? Blend(GPUFrame.QueueBusyMs[Queue], Live.QueueBusyMs[Queue]) : 0.0;
+        }
+        GPUFrame.AsyncOverlapMs = Live.AsyncOverlapMs > 0.0 ? Blend(GPUFrame.AsyncOverlapMs, Live.AsyncOverlapMs) : 0.0;
     }
 
     void FProfilerEditorTool::DrawGPUSummary()
@@ -94,6 +104,30 @@ namespace Lumina
         ImGui::TextDisabled("|");
         ImGui::SameLine();
         ImGui::Text("%d passes", GPUFrame.Scopes.Num());
+
+        if (GPUFrame.DroppedScopes > 0)
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%u dropped)", GPUFrame.DroppedScopes);
+        }
+
+        for (RHI::EQueueType Queue : kLaneOrder)
+        {
+            if (!GPUFrame.HasQueue(Queue))
+            {
+                continue;
+            }
+            ImGui::Text("%s busy %.3f ms", GPUProfileQueueName(Queue), GPUFrame.QueueBusyMs[(uint32)Queue]);
+            if (Queue == RHI::EQueueType::Compute)
+            {
+                const double ComputeMs = GPUFrame.QueueBusyMs[(uint32)Queue];
+                ImGui::SameLine();
+                ImGui::TextDisabled("|");
+                ImGui::SameLine();
+                ImGui::Text("overlapping graphics %.3f ms (%.0f%%)", GPUFrame.AsyncOverlapMs,
+                    ComputeMs > 0.0 ? GPUFrame.AsyncOverlapMs / ComputeMs * 100.0 : 0.0);
+            }
+        }
 
         if (SelectedScope >= 0 && SelectedScope < GPUFrame.Scopes.Num())
         {
@@ -154,16 +188,33 @@ namespace Lumina
         const double ViewDur = FrameMs * (double)ZoomT;
         const double ViewT0  = (double)PanT * (FrameMs - ViewDur);
 
-        int32 MaxDepth = 0;
+        int32 MaxDepth[kGPUProfileQueueCount];
+        for (int32& Depth : MaxDepth)
+        {
+            Depth = Constants::kIndexNone;
+        }
         for (const FGPUProfileScope& Scope : GPUFrame.Scopes)
         {
-            MaxDepth = Math::Max(MaxDepth, Scope.Depth);
+            MaxDepth[(uint32)Scope.Queue] = Math::Max(MaxDepth[(uint32)Scope.Queue], Scope.Depth);
         }
 
         // Derived from the font rather than a fixed pixel count, so a label always fits at any DPI.
         const float TextHeight = ImGui::GetTextLineHeight();
         const float RowH       = ProfilerView::RowHeight(GPURowHeight);
-        const float Height     = (MaxDepth + 1) * RowH + 8.0f;
+        const float HeaderH    = TextHeight + 6.0f;
+
+        float LaneTop[kGPUProfileQueueCount] = {};
+        float Height = 0.0f;
+        for (RHI::EQueueType Queue : kLaneOrder)
+        {
+            if (MaxDepth[(uint32)Queue] == Constants::kIndexNone)
+            {
+                continue;
+            }
+            LaneTop[(uint32)Queue] = Height + HeaderH;
+            Height += HeaderH + (MaxDepth[(uint32)Queue] + 1) * RowH + 4.0f;
+        }
+        Height += 4.0f;
 
         ImGui::BeginChild("##flame", ImVec2(0.0f, 0.0f), true);
 
@@ -171,6 +222,17 @@ namespace Lumina
         const ImVec2 Origin = ImGui::GetCursorScreenPos();
         const float  Width  = ImGui::GetContentRegionAvail().x;
         const ImVec2 Mouse  = ImGui::GetIO().MousePos;
+
+        for (RHI::EQueueType Queue : kLaneOrder)
+        {
+            if (MaxDepth[(uint32)Queue] == Constants::kIndexNone)
+            {
+                continue;
+            }
+            const float HeaderY = Origin.y + LaneTop[(uint32)Queue] - HeaderH;
+            DL->AddLine(ImVec2(Origin.x, HeaderY), ImVec2(Origin.x + Width, HeaderY), ImGui::GetColorU32(ImGuiCol_Separator));
+            DL->AddText(ImVec2(Origin.x + 4.0f, HeaderY + 3.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled), GPUProfileQueueName(Queue));
+        }
 
         const FGPUProfileScope* Hovered = nullptr;
         int32 HoveredIndex = Constants::kIndexNone;
@@ -188,7 +250,7 @@ namespace Lumina
 
             const float X0 = Origin.x + (float)Math::Max(0.0, A) * Width;
             const float X1 = Origin.x + (float)Math::Min(1.0, B) * Width;
-            const float Y  = Origin.y + Scope.Depth * RowH;
+            const float Y  = Origin.y + LaneTop[(uint32)Scope.Queue] + Scope.Depth * RowH;
 
             // A sub-pixel pass still gets a visible sliver rather than vanishing from the graph.
             const ImVec2 Min(X0, Y + 1.0f);
@@ -226,6 +288,7 @@ namespace Lumina
             ImGui::BeginTooltip();
             ImGui::TextUnformatted(*Hovered->Name);
             ImGui::Separator();
+            ImGui::Text("Queue     %s", GPUProfileQueueName(Hovered->Queue));
             ImGui::Text("Duration  %.3f ms", Hovered->DurationMs());
             ImGui::Text("Share     %.1f%% of frame", Share);
             ImGui::Text("Start     %.3f ms", Hovered->StartMs);

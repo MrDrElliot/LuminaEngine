@@ -241,16 +241,44 @@ namespace Lumina::MCP
             return Agent::FToolResult::Ok(Lumina::Format("Focusing '{}'.", In.Tab));
         }
 
-        Agent::FToolResult OpenEditorToolPanel(const SEditorTabsParams& In, SEditorTabsResult& Out)
+        void ListEditorTools(SEditorToolsResult& Out)
         {
-            FString Error;
-            Out.bDone = SessionOps::OpenToolPanel(FStringView(In.Tab), Error);
-            if (!Out.bDone)
+            Out.Tools.Reset();
+            SessionOps::ForEachToolPanel([&Out](const SessionOps::FToolPanelInfo& Panel)
             {
-                return Agent::FToolResult::Error(Error);
+                SEditorToolInfo& Info = Out.Tools.EmplaceGetRef();
+                Info.Name  = Panel.Name;
+                Info.bOpen = Panel.bOpen;
+            });
+        }
+
+        Agent::FToolResult ControlEditorTools(const SEditorToolsParams& In, SEditorToolsResult& Out)
+        {
+            if (In.Action != EEditorToolsAction::List)
+            {
+                if (In.Name.IsEmpty())
+                {
+                    return Agent::FToolResult::Error("Set Name to a tool from editor.tools List.");
+                }
+
+                FString Error;
+                const bool bOpen = In.Action == EEditorToolsAction::Open;
+                Out.bDone = bOpen ? SessionOps::OpenToolPanel(FStringView(In.Name), Error)
+                                  : SessionOps::CloseToolPanel(FStringView(In.Name), Error);
+                if (!Out.bDone)
+                {
+                    return Agent::FToolResult::Error(Error);
+                }
+                return Agent::FToolResult::Ok(Lumina::Format("{} '{}'. It changes on the next frames.", bOpen ? "Opening" : "Closing", In.Name));
             }
 
-            return Agent::FToolResult::Ok(Lumina::Format("Opening '{}'.", In.Tab));
+            ListEditorTools(Out);
+            FString Text;
+            for (const SEditorToolInfo& Tool : Out.Tools)
+            {
+                Text.Append(Lumina::Format("{}{}\n", Tool.Name, Tool.bOpen ? " (open)" : ""));
+            }
+            return Agent::FToolResult::Ok(Text.IsEmpty() ? FString("No editor is running.") : Text);
         }
 
         Agent::FToolResult CloseEditorTab(const SEditorTabsParams& In, SEditorTabsResult& Out)
@@ -893,7 +921,7 @@ namespace Lumina::MCP
             Agent::FToolRegistry::Get().Register<SEditorTabsParams, SEditorTabsResult>(
                 Owner, "editor.tabs",
                 "List open editor tabs, Focus or Close one, Float it to a screen rect, or Target it so the scene, entity and undo "
-                "tools act on it, such as a prefab editor. Open shows a Tools menu panel such as Memory. Changes land on the next frames.",
+                "tools act on it, such as a prefab editor. Changes land on the next frames. editor.tools opens tool windows.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SEditorTabsParams& In, SEditorTabsResult& Out)
                 {
@@ -903,9 +931,21 @@ namespace Lumina::MCP
                     case EEditorTabsAction::Close:  return CloseEditorTab(In, Out);
                     case EEditorTabsAction::Float:  return FloatEditorTab(In, Out);
                     case EEditorTabsAction::Target: return TargetEditorTab(In, Out);
-                    case EEditorTabsAction::Open:   return OpenEditorToolPanel(In, Out);
                     default:                        return ListEditorTabs(Out);
                     }
+                });
+        }
+
+        void RegisterEditorTools(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SEditorToolsParams, SEditorToolsResult>(
+                Owner, "editor.tools",
+                "List the editor's tool windows from the Tools and File menus, such as Profiler, Memory, Settings, Terminal, Code "
+                "and plugin tools, with which are open. Open shows one by Name, focusing it if open; Close hides it.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SEditorToolsParams& In, SEditorToolsResult& Out)
+                {
+                    return ControlEditorTools(In, Out);
                 });
         }
 
@@ -1092,6 +1132,7 @@ namespace Lumina::MCP
         RegisterEditorHistory(Owner);
         RegisterEditorPlay(Owner);
         RegisterEditorTabs(Owner);
+        RegisterEditorTools(Owner);
         RegisterEditorOpen(Owner);
         RegisterEditorInput(Owner);
         RegisterEditorGraph(Owner);

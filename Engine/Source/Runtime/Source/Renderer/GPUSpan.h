@@ -4,12 +4,7 @@
 
 namespace Lumina::RHI
 {
-    // What a pass hands a shader instead of a bare device address. The element count travels in the same
-    // 16 bytes as the pointer and is derived from the allocation that produced it, so the two cannot be
-    // authored separately and cannot disagree. Every out-of-bounds read this renderer has page-faulted on
-    // came from a count that lived somewhere else than the address it was supposed to bound.
-    //
-    // Mirrors GPUSpan<T> in Includes/RHI.slang.
+    // The count is derived from the allocation that produced the pointer so the two cannot disagree. Mirrors GPUSpan<T> in Includes/RHI.slang.
     template<typename T>
     struct TGPUSpan
     {
@@ -19,16 +14,14 @@ namespace Lumina::RHI
 
         TGPUSpan() = default;
 
-        // The whole allocation, counted in elements. Truncates rather than rounding up: a partial trailing
-        // element is not addressable, and a count that claims it is what walks off the end.
+        // Truncates rather than rounding up, since a count claiming a partial trailing element walks off the end.
         TGPUSpan(const FGPUAllocation& Allocation)
             : Address(Allocation.Gpu)
             , Count((uint32)Math::Min<uint64>(Allocation.Size / sizeof(T), 0xFFFFFFFFull))
         {
         }
 
-        // A prefix of the allocation. Clamped to what the allocation actually holds, so a caller's stale
-        // element count cannot widen the span past its memory.
+        // Clamped to what the allocation holds, so a stale element count cannot widen the span past its memory.
         TGPUSpan(const FGPUAllocation& Allocation, uint32 InCount)
             : Address(Allocation.Gpu)
             , Count(Math::Min(InCount, (uint32)Math::Min<uint64>(Allocation.Size / sizeof(T), 0xFFFFFFFFull)))
@@ -57,8 +50,7 @@ namespace Lumina::RHI
             return Out;
         }
 
-        // For the handful of spans a compute pass writes into a region the CPU only knows by address,
-        // such as a counter packed at a fixed offset of a shared buffer.
+        // For spans a compute pass writes into a region the CPU only knows by address, such as a packed counter.
         static TGPUSpan FromAddress(GPUPtr InAddress, uint32 InCount)
         {
             TGPUSpan Out;

@@ -42,8 +42,7 @@ namespace Lumina
             }
         }
 
-        // Signed distance of a SIMD center (x,y,z in lanes 0..2; w ignored) to all 8 planes.
-        // Center stays register-resident -- lanes are broadcast via shuffles, no store/reload.
+        // Signed distance of a SIMD center (w ignored) to all 8 planes, kept register-resident.
         FORCEINLINE SIMD::VFloat8 SignedDistances(SIMD::VFloat4 Center) const
         {
             using namespace SIMD;
@@ -143,8 +142,7 @@ namespace Lumina
 
             const FMatrix4 InverseVP = Math::Inverse(ViewProjection);
 
-            // Columns of the inverse VP, loaded once. NDC corner coords are all +/-1, so
-            // each corner is C3 +/- C0 +/- C1 +/- C2.
+            // NDC corner coords are all +/-1, so each corner is C3 +/- C0 +/- C1 +/- C2 of the inverse VP.
             const VFloat4 C0 = VFloat4::LoadAligned(&InverseVP.Cols[0][0]);
             const VFloat4 C1 = VFloat4::LoadAligned(&InverseVP.Cols[1][0]);
             const VFloat4 C2 = VFloat4::LoadAligned(&InverseVP.Cols[2][0]);
@@ -178,9 +176,7 @@ namespace Lumina
     static_assert(offsetof(FFrustum, SoaNz) % SIMD::kAlignment == 0, "SoaNz must stay 32-byte aligned");
     static_assert(offsetof(FFrustum, SoaD)  % SIMD::kAlignment == 0, "SoaD must stay 32-byte aligned");
 
-    // 96-byte GPU upload mirror of the shader's `struct FFrustum { float4 Planes[6]; }`. The rich
-    // CPU FFrustum (above) carries a SoA tail and must NEVER be embedded in a GPU struct; embed
-    // this instead and convert with AsGPU/FromGPU (SceneRenderTypes.h).
+    // 96-byte GPU mirror of the shader FFrustum. The CPU FFrustum has a SoA tail and must not be embedded in a GPU struct.
     struct FGPUFrustum
     {
         FVector4 Planes[FFrustum::NUM];

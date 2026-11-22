@@ -1,12 +1,17 @@
 #include "RuntimePCH.h"
-#include "World/Subsystems/DebugDrawSubsystem.h"
+#include "World/Subsystems/DebugSubsystem.h"
 #include "Core/Math/Math.h"
 #include "Renderer/Vertex.h"
 #include "World/World.h"
 
+#if USING(WITH_DEV_UI)
+#include <imgui.h>
+#include <imgui_internal.h>
+#endif
+
 namespace Lumina
 {
-    void CDebugDrawSubsystem::DrawLine(FVector3 Start, FVector3 End, FVector4 Color,
+    void CDebugSubsystem::DrawLine(FVector3 Start, FVector3 End, FVector4 Color,
         float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -18,7 +23,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSphere(FVector3 Center, float Radius, FVector4 Color,
+    void CDebugSubsystem::DrawSphere(FVector3 Center, float Radius, FVector4 Color,
         float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -30,7 +35,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawBox(FVector3 Center, FVector3 HalfExtents, FQuat Rotation,
+    void CDebugSubsystem::DrawBox(FVector3 Center, FVector3 HalfExtents, FQuat Rotation,
         FVector4 Color, float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -42,7 +47,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawBoxCorners(FVector3 Center, FVector3 HalfExtents, FQuat Rotation,
+    void CDebugSubsystem::DrawBoxCorners(FVector3 Center, FVector3 HalfExtents, FQuat Rotation,
         FVector4 Color, float CornerFraction, float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -54,7 +59,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawCapsule(FVector3 Start, FVector3 End, float Radius, FVector4 Color,
+    void CDebugSubsystem::DrawCapsule(FVector3 Start, FVector3 End, float Radius, FVector4 Color,
         float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -66,7 +71,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawCone(FVector3 Apex, FVector3 Direction, float AngleRadians, float Length,
+    void CDebugSubsystem::DrawCone(FVector3 Apex, FVector3 Direction, float AngleRadians, float Length,
         FVector4 Color, float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -78,7 +83,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawArrow(FVector3 Start, FVector3 Direction, float Length, FVector4 Color,
+    void CDebugSubsystem::DrawArrow(FVector3 Start, FVector3 Direction, float Length, FVector4 Color,
         float HeadSize, float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -90,7 +95,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawCircle(FVector3 Center, FVector3 Normal, float Radius, FVector4 Color,
+    void CDebugSubsystem::DrawCircle(FVector3 Center, FVector3 Normal, float Radius, FVector4 Color,
         uint8 Segments, float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -102,7 +107,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawArc(FVector3 Center, FVector3 Normal, float Radius, float StartAngle,
+    void CDebugSubsystem::DrawArc(FVector3 Center, FVector3 Normal, float Radius, float StartAngle,
         float SweepAngle, FVector4 Color, uint8 Segments, float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -114,7 +119,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawCylinder(FVector3 Start, FVector3 End, float Radius, FVector4 Color,
+    void CDebugSubsystem::DrawCylinder(FVector3 Start, FVector3 End, float Radius, FVector4 Color,
         uint8 Segments, float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -126,7 +131,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawAxes(FVector3 Origin, FQuat Rotation, float Length,
+    void CDebugSubsystem::DrawAxes(FVector3 Origin, FQuat Rotation, float Length,
         float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -138,7 +143,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawPoint(FVector3 Position, float Size, FVector4 Color,
+    void CDebugSubsystem::DrawPoint(FVector3 Position, float Size, FVector4 Color,
         float Thickness, float Duration, bool bDepthTest)
     {
         CWorld* World = GetWorld();
@@ -150,7 +155,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidTriangles(const SDebugDrawVertex* Vertices, int32 Count,
+    void CDebugSubsystem::DrawSolidTriangles(const SDebugDrawVertex* Vertices, int32 Count,
         EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -162,7 +167,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidTriangle(FVector3 A, FVector3 B, FVector3 C, FVector4 Color,
+    void CDebugSubsystem::DrawSolidTriangle(FVector3 A, FVector3 B, FVector3 C, FVector4 Color,
         EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -174,7 +179,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidQuad(FVector3 A, FVector3 B, FVector3 C, FVector3 D, FVector4 Color,
+    void CDebugSubsystem::DrawSolidQuad(FVector3 A, FVector3 B, FVector3 C, FVector3 D, FVector4 Color,
         EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -186,7 +191,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidBox(FVector3 Center, FVector3 HalfExtents, FQuat Rotation, FVector4 Color,
+    void CDebugSubsystem::DrawSolidBox(FVector3 Center, FVector3 HalfExtents, FQuat Rotation, FVector4 Color,
         EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -198,7 +203,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidSphere(FVector3 Center, float Radius, FVector4 Color,
+    void CDebugSubsystem::DrawSolidSphere(FVector3 Center, float Radius, FVector4 Color,
         EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -210,7 +215,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidCylinder(FVector3 Start, FVector3 End, float Radius, FVector4 Color,
+    void CDebugSubsystem::DrawSolidCylinder(FVector3 Start, FVector3 End, float Radius, FVector4 Color,
         EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -222,7 +227,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidCone(FVector3 Apex, FVector3 Direction, float AngleRadians, float Length,
+    void CDebugSubsystem::DrawSolidCone(FVector3 Apex, FVector3 Direction, float AngleRadians, float Length,
         FVector4 Color, EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -234,7 +239,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidCapsule(FVector3 Start, FVector3 End, float Radius, FVector4 Color,
+    void CDebugSubsystem::DrawSolidCapsule(FVector3 Start, FVector3 End, float Radius, FVector4 Color,
         EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -246,7 +251,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidCircle(FVector3 Center, FVector3 Normal, float Radius, FVector4 Color,
+    void CDebugSubsystem::DrawSolidCircle(FVector3 Center, FVector3 Normal, float Radius, FVector4 Color,
         EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -258,7 +263,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidArc(FVector3 Center, FVector3 Normal, float Radius, float StartAngle,
+    void CDebugSubsystem::DrawSolidArc(FVector3 Center, FVector3 Normal, float Radius, float StartAngle,
         float SweepAngle, FVector4 Color, EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -270,7 +275,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawSolidArrow(FVector3 Start, FVector3 Direction, float Length, FVector4 Color,
+    void CDebugSubsystem::DrawSolidArrow(FVector3 Start, FVector3 Direction, float Length, FVector4 Color,
         float HeadSize, EDebugFillMode Mode, float Duration)
     {
         CWorld* World = GetWorld();
@@ -282,7 +287,7 @@ namespace Lumina
         #endif
     }
 
-    void CDebugDrawSubsystem::DrawText(const FString& Text, FVector4 Color)
+    void CDebugSubsystem::DrawText(const FString& Text, FVector4 Color)
     {
         CWorld* World = GetWorld();
         #if !defined(LE_SHIPPING)
@@ -292,4 +297,29 @@ namespace Lumina
         }
         #endif
     }
+
+    #if USING(WITH_DEV_UI)
+    void CDebugSubsystem::BroadcastDebugGui()
+    {
+        if (ImGui::GetCurrentContext() == nullptr || !OnDebugGui.IsBound())
+        {
+            return;
+        }
+
+        // A handler's unbalanced Begin is recovered rather than asserted on, then the host's own setting comes back.
+        ImGuiIO& IO = ImGui::GetIO();
+        const bool bAssertOnRecovery = IO.ConfigErrorRecoveryEnableAssert;
+        IO.ConfigErrorRecoveryEnableAssert = false;
+
+        OnDebugGui.BroadcastGuarded([](FScriptDelegateBase::FThunk Thunk, void* Context, const void* Payload)
+        {
+            ImGuiErrorRecoveryState Recovery;
+            ImGui::ErrorRecoveryStoreState(&Recovery);
+            Thunk(Context, Payload);
+            ImGui::ErrorRecoveryTryToRecoverState(&Recovery);
+        });
+
+        IO.ConfigErrorRecoveryEnableAssert = bAssertOnRecovery;
+    }
+    #endif
 }

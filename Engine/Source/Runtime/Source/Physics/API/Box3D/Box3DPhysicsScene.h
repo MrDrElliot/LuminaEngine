@@ -673,8 +673,7 @@ namespace Lumina::Physics
 
         enum class EInterpFlag : uint8 { Interpolate = 0, Skip = 1, BelowKill = 2 };
 
-        // Grow-only SoA holding only the bodies that actually moved this frame. Rotations are deinterleaved
-        // to x/y/z/w so the nlerp vectorizes.
+        // Rotations are deinterleaved to x/y/z/w so the nlerp vectorizes.
         struct FInterpStaging
         {
             TVector<ECS::FEntity>   Entities;

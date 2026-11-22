@@ -45,19 +45,17 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
         return;
     }
 
-    const uint Slot = Pass().ProxyList.Get(Index);
-    if (!RetainedTransforms().Contains(Slot) || !RetainedProxies().Contains(Slot))
+    const uint      Entry = Pass().ProxyList.Get(Index);
+    const FVisProxy P     = LoadProxyEntry(Entry);
+    if (!P.bValid)
     {
         return;
     }
 
-    const FTransform3x4  Transform = RetainedTransforms().Get(Slot);
-    const FInstanceProxy Proxy     = RetainedProxies().GetAligned(Slot);
-
     // Bounds the quad ProxyVisBufferVert draws, whose corners sit a diagonal from the center.
     float3 GroundWiden;
-    const float3 Center = ProxyWidenedCenter(Transform.ToMatrix(), Proxy, GroundWiden);
-    const float  Radius = Proxy.SplatHalfSize * TransformMaxScale(Transform) * GroundWiden.x * sqrt(2.0);
+    const float3 Center = ProxyWidenedCenter(P.Model, P.Proxy, GroundWiden);
+    const float  Radius = P.Proxy.SplatHalfSize * MatrixMaxScale(P.Model) * GroundWiden.x * sqrt(2.0);
 
     const FCullSphereProjection Proj = ProjectCullSphere(Center, Radius);
     if (Proj.bValid && IsHiZOccluded(Proj))
@@ -68,7 +66,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
     const uint OutSlot = AppendReserve(Pass().OutProxyDrawArgs.At(1u), Pass().OutProxyList.Count, 0u);
     if (OutSlot != kAppendFull)
     {
-        Pass().OutProxyList.Set(OutSlot, Slot);
+        Pass().OutProxyList.Set(OutSlot, Entry);
     }
 }
 

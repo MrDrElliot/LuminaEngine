@@ -102,8 +102,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Physics")
         uint32 MaxCollisionIterations = 8;
 
-        // When true, the capsule contributes to NavMesh bakes so agents path around it. Default false: a path-follower
-        // that obstructs the navmesh carves out its own floor poly and can't query. On only for obstacle characters.
+        // When true, the capsule contributes to NavMesh bakes, which a path-follower must not do or it carves its own floor poly.
         PROPERTY(Editable, Category = "Navigation")
         bool bAffectsNavigation = false;
 
@@ -272,16 +271,14 @@ namespace Lumina
         PROPERTY(Hidden)
         TScriptDelegate<SCharacterCrouchEvent> OnCrouchChanged;
 
-        // Internal staging: input is latched from the controller once per
-        // frame in PrePhysics, then consumed at fixed-step rate in physics.
+        // Input latched from the controller once per frame in PrePhysics and consumed at the fixed step.
         FVector3 PendingMoveDirection = FVector3(0.0f);
         float     PendingLookYaw       = 0.0f;
         bool      bHasPendingMoveInput = false;
         bool      bPendingJump         = false;
         uint32    PendingButtons       = 0;
 
-        // Input magnitude clamped to [0,1], scales MoveSpeed this step. Lets an
-        // analog stick (or a path follower's Speed) walk below full speed.
+        // Input magnitude clamped to [0,1] that scales MoveSpeed this step.
         float     PendingMoveThrottle  = 0.0f;
 
         // Staged Launch (jump pad / knockback / dash) consumed in the physics step.
@@ -290,8 +287,7 @@ namespace Lumina
         bool      bLaunchOverrideHorizontal = false;
         bool      bLaunchOverrideVertical   = false;
 
-        // Staged teleport consumed in the physics step, since the mover owns the pose and a plain
-        // transform write would be overwritten by it.
+        // Staged teleport consumed in the physics step, since the mover owns the pose and overwrites a plain transform write.
         FVector3 PendingTeleportLocation = FVector3(0.0f);
         bool      bPendingTeleport        = false;
     };

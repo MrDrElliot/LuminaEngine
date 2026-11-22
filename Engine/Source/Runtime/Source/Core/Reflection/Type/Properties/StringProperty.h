@@ -20,8 +20,7 @@ namespace Lumina
         RUNTIME_API bool Identical(const void* ValueA, const void* ValueB) const override;
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 
-        // Owns heap memory, so zeroed bytes are NOT a valid value: a memzeroed FString reads as a plausible
-        // empty string and corrupts on the first assignment.
+        // Zeroed bytes are not a valid value, since a memzeroed FString reads as empty and corrupts on first assignment.
         void ConstructValue(void* Value) const override { Memory::ConstructAt(static_cast<FString*>(Value)); }
         bool OwnsStorage() const override { return true; }
         void DestructValue(void* Value) const override  { static_cast<FString*>(Value)->~FString(); }
@@ -41,8 +40,7 @@ namespace Lumina
         RUNTIME_API void Serialize(FArchive& Ar, void* Value) override;
         RUNTIME_API void SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults) override;
 
-        // Tight: a compact net index when the archive binds the name-index hooks (string exported once via
-        // NameExport), else the raw string.
+        // Tight form uses a compact net index when the archive binds the name-index hooks, else the raw string.
         RUNTIME_API void NetSerialize(FNetArchive& Ar, void* Value) override;
 
     };

@@ -973,8 +973,7 @@ internal static unsafe class InteropTestHooks
         View.bCastShadow = false;
     }
 
-    // Failure bits, four per form, for a root, an extension and a component compiled together the way the editor compiles them.
-    // Script structs picked by the interface they implement, the strategy pattern C# structs reach without inheritance.
+    // Failure bits, four per form, for script structs picked by interface since C# structs cannot inherit.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     public static int Test_ScriptStructStrategies()

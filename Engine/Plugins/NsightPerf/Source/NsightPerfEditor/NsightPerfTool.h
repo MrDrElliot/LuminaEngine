@@ -4,15 +4,10 @@
 
 namespace Lumina
 {
-    // pImpl: owns the NvPerf periodic sampler + HUD model/renderer. Defined in the .cpp so the heavy
-    // (and std::-heavy) Nsight Perf headers never leak into anything that includes this tool.
+    // pImpl defined in the .cpp so the heavy Nsight Perf headers never leak into includers of this tool.
     struct FNsightPerfState;
 
-    // "Nsight Perf HUD": a live GPU metrics dashboard driven by the NVIDIA Nsight Perf periodic
-    // sampler (SM occupancy, throughputs, memory bandwidth, ...). Sampling starts when the window
-    // opens and stops when it closes. Requires an NVIDIA GPU and the device created with NvPerf's
-    // required extensions (registered by FNsightPerfEditorModule at the Core loading phase). When
-    // those aren't available the window opens and explains why. Editor-only singleton.
+    // Live GPU metrics dashboard driven by the Nsight Perf sampler, which needs an NVIDIA GPU and NvPerf's device extensions or the window explains why.
     class FNsightPerfTool : public FEditorTool
     {
     public:
@@ -32,16 +27,13 @@ namespace Lumina
 
         void DrawWindow(bool bIsFocused);
 
-        // The numeric side of the same data the HUD plots: every metric the active preset collects, with
-        // its current value and its min/avg/max over the plot window. The plots answer "is it moving";
-        // these answer "what is it", which is what you need to write a number down or compare two runs.
+        // The numeric side of the plotted data, with each metric's current value and min, avg and max over the plot window.
         void DrawMetricTable();
 
         // Writes every live counter to Saved/Profiling/NsightPerf.csv, since the HUD has no other output.
         void ExportMetrics();
 
-        // Session/config facts that make the numbers above interpretable (chip, sample rate, how much
-        // history a plot actually covers, how many metrics are live).
+        // Session facts that make the numbers interpretable, such as chip, sample rate and plot history covered.
         void DrawSessionInfo();
 
         TUniquePtr<FNsightPerfState> State;

@@ -143,7 +143,7 @@ namespace Lumina
             Desc.Width     = Impostor.GetAtlasSize();
             Desc.Height    = Impostor.GetAtlasSize();
             Desc.Mips      = Impostor.GetMipCount();
-            Desc.Format    = EFormat::RGBA8_UNORM;
+            Desc.Format    = Impostor.bCompressed ? EFormat::BC7_UNORM : EFormat::RGBA8_UNORM;
             Desc.DebugName = DebugName;
 
             RHI::FManagedTexture Texture = RHI::Textures::Create(Desc);
@@ -152,13 +152,11 @@ namespace Lumina
                 return Texture;
             }
 
-            uint64 Offset = 0;
             for (uint32 Mip = 0; Mip < Desc.Mips; ++Mip)
             {
                 const uint32 Side  = Desc.Width >> Mip;
-                const uint64 Bytes = (uint64)Side * Side * 4u;
-                RHI::Textures::Upload(Texture, Mip, Texels.GetData() + Offset, Bytes, 0, Side, Side);
-                Offset += Bytes;
+                const uint64 Bytes = (uint64)Side * Side * Impostor.GetBytesPerTexel();
+                RHI::Textures::Upload(Texture, Mip, Texels.GetData() + Impostor.GetMipOffset(Mip), Bytes, Side, Side, Side);
             }
             return Texture;
         }
@@ -1045,6 +1043,7 @@ namespace Lumina
             return;
         }
         MeshResources->Impostor = Move(Impostor);
+        Lumina::Impostor::Compress(MeshResources->Impostor);
         MeshBuffers::RefreshTextures(*MeshResources);
 
         // Instances carry whether their mesh has an impostor, so they re-resolve to pick the change up.

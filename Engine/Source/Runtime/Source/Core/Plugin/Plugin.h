@@ -18,8 +18,7 @@ namespace Lumina
         bool                    bStartupCalled  = false;
     };
 
-    // Runtime state for one plugin: parsed descriptor, loaded modules, and discovery
-    // location (resolves module DLL paths + Content/).
+    // Runtime state for one plugin, with the discovery location that resolves module DLL paths and Content/.
     class RUNTIME_API FPlugin
     {
     public:

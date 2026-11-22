@@ -46,7 +46,9 @@ internal static unsafe class DelegateBindings
             return default;
         }
 
-        ulong Id = Native.DelegateBind((IntPtr)Address, ScriptCallback.Bind(Invoker).Token);
+        // A script's own method is tied to it, so the binding ends when the script detaches without an OnDetach unbind.
+        IntPtr Owner = Invoker.BoundHandler.Target is Lumina.CEntityScript Script ? Script.Self : IntPtr.Zero;
+        ulong Id = Native.DelegateBind((IntPtr)Address, ScriptCallback.Bind(Invoker).Token, Owner);
         return Id == 0 ? default : new DelegateBinding((IntPtr)Address, Id);
     }
 

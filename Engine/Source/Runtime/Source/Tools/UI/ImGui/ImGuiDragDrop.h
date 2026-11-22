@@ -17,8 +17,7 @@ namespace Lumina
     struct FAssetData;
 }
 
-// Single typed drag-drop channel ("LumDD") for editor and runtime UIs; replaces ad-hoc
-// per-tool payload strings. Set* on the source side, Accept*/PeekPayload on the target.
+// Single typed drag-drop channel ("LumDD") with Set* on the source side and Accept*/PeekPayload on the target.
 namespace Lumina::DragDrop
 {
     enum class EPayloadKind : uint8
@@ -82,8 +81,7 @@ namespace Lumina::DragDrop
     // True only on the frame the mouse releases over an active drop target.
     RUNTIME_API bool IsDelivered();
 
-    // Class-checked asset accept; returns the resolved CObject only on delivery when the
-    // dragged asset is-a Class. Lazily loads if the source gave no loaded object.
+    // Returns the resolved CObject only on delivery of an asset that is-a Class, loading it lazily if needed.
     RUNTIME_API CObject* AcceptAssetOfClass(CClass* Class);
 
     template <typename T>
@@ -104,7 +102,6 @@ namespace Lumina::DragDrop
     // A palette entry from Palette, refused before it highlights anything when the drag carries something else.
     RUNTIME_API bool AcceptPaletteItem(FName Palette, int32& OutIndex);
 
-    // Internal: cleared when no drag is active so a stale payload does not
-    // leak across frames. Safe to call from a per-frame top-level place.
+    // Internal. Clears the payload when no drag is active so it cannot leak across frames.
     RUNTIME_API void EndFrameTick();
 }

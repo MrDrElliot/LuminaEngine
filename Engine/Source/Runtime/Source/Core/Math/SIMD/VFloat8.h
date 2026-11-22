@@ -1,8 +1,7 @@
 #pragma once
 #include "SIMDConfig.h"
 
-// VFloat8: 8-lane f32 SIMD register (__m256, AVX), lanes [0..7] low-to-high.
-// Comparisons return a per-lane mask; combine with Select/MoveMask/Any/All.
+// 8-lane f32 AVX register where comparisons return a per-lane mask.
 
 namespace Lumina::SIMD
 {

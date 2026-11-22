@@ -127,8 +127,7 @@ namespace Lumina
         ECS::FEntity            ParticleEntity;
         ECS::FEntity            DirectionalLightEntity;
 
-        // The object the Details panel edits. Raw, not a TStrongObjectPtr: modules and emitters are owned by the
-        // stack and the asset, and a strong ref here would keep a deleted one alive behind the panel.
+        // Raw rather than strong because the stack and asset own it, and a strong ref would keep a deleted one alive.
         CObject*                SelectedObject = nullptr;
         // Non-null only when SelectedObject is a module; the module-specific paths key off this.
         CParticleModule*        SelectedModule = nullptr;
@@ -144,11 +143,7 @@ namespace Lumina
         CParticleEmitter*       SelectedEmitterObject = nullptr;
         FCompilationResultInfo  CompilationResult;
 
-        // Emitter whose stack changed structurally (add / remove / reorder / toggle) this frame, or
-        // Constants::kIndexNone. Consumed at the end of DrawStack so the recompile happens after the UI loop rather
-        // than mid-iteration. Tracked per emitter rather than as a flag because a rebuild swaps the
-        // FShaderEntry the dispatch binds, which restarts that emitter's particles -- recompiling all of
-        // them would make editing one column visibly reset every other column.
+        // Tracked per emitter because a rebuild restarts that emitter's particles, and it is consumed at the end of DrawStack.
         int32                   DirtyEmitter = Constants::kIndexNone;
 
         // A one-shot burst plays once and then shows nothing, so the preview re-fires it when this is on.
@@ -161,8 +156,7 @@ namespace Lumina
         bool                    bStepPending = false;
         float                   PreviewSpeed = 1.0f;
 
-        // Emitter the delete button asked to remove; applied after the column loop. Removing mid-loop
-        // would shift every later column's index out from under the emitter it is drawing.
+        // Applied after the column loop, since removing mid-loop would shift later column indices.
         CParticleEmitter*       PendingRemoveEmitter = nullptr;
 
         // Concrete module classes discovered by reflection, rebuilt each time the palette opens.
@@ -176,8 +170,7 @@ namespace Lumina
 
         FCategorizedPicker      EmitterAssetPicker;
 
-        // Parallel to the asset's Emitters, one authoring stack each. Rebuilt by SyncEmitterStacks rather
-        // than maintained at every mutation site, so an emitter added anywhere still gets a stack.
+        // Parallel to the asset's Emitters and rebuilt by SyncEmitterStacks, so an emitter added anywhere still gets a stack.
         TVector<TStrongObjectPtr<CParticleEmitterStack>> EmitterStacks;
     };
 }

@@ -9,9 +9,7 @@ namespace Lumina
 {
     class CStruct;
 
-    // Inner flat archive the structured layer writes leaf values through. Each leaf
-    // Serialize() routes here via the (virtual) FArchive operators; we read/write the
-    // node the structured layer parked in PendingNode.
+    // Flat archive the structured layer writes leaf values through, reading and writing the node parked in PendingNode.
     class RUNTIME_API FJsonLeafArchive : public FArchive
     {
     public:
@@ -92,8 +90,7 @@ namespace Lumina
             {
                 if (PendingNode->IsString())
                 {
-                    // JSON carries no file version; files written before None's wire form became
-                    // the empty string stored its "NAME_None" display rendering.
+                    // JSON carries no file version, and older files stored None as its "NAME_None" display rendering.
                     const FStringView Text = PendingNode->AsString();
                     Name = Text == "NAME_None" ? FName() : FName(Text);
                 }
@@ -113,15 +110,11 @@ namespace Lumina
 
     namespace Private
     {
-        // base-from-member: constructs the leaf archive before the IStructuredArchive
-        // base, which stores it by reference.
+        // Base-from-member so the leaf archive exists before the IStructuredArchive base stores it by reference.
         struct FJsonLeafHolder { FJsonLeafArchive Leaf; };
     }
 
-    // JSON backend for IStructuredArchive. Maintains a node stack mirroring the
-    // record/array scope; reflected properties serialize through their existing
-    // SerializeItem(FSlot) implementations. FName/enums are written as strings;
-    // missing keys on load leave the C++ value at its default.
+    // JSON backend for IStructuredArchive. Missing keys on load leave the C++ value at its default.
     class RUNTIME_API FJsonStructuredArchive : private Private::FJsonLeafHolder, public IStructuredArchive
     {
     public:
@@ -165,8 +158,7 @@ namespace Lumina
         FJsonValue* CurrentContainer() { return Containers.IsEmpty() ? RootNode : Containers.Last().Node; }
 
         FJsonValue*                 RootNode = nullptr;
-        // Null sentinel for absent keys on load, and the discard sink on save: any node that cannot be
-        // resolved routes writes here rather than leaving PendingNode pointing at stale storage.
+        // Null sentinel for absent keys on load and discard sink on save, so PendingNode never points at stale storage.
         FJsonValue              MissingNode;
         TVector<FContainer>         Containers;
     };

@@ -26,13 +26,11 @@ namespace Lumina
         PROPERTY(Hidden)
         FScriptDelegate OnPreEngineShutdown;
 
-        // Fired by FEngine::RequestExitGame when gameplay asks to quit. The editor binds this to end the
-        // PIE session instead; when unbound (packaged game) the engine exits the process.
+        // Fired when gameplay asks to quit. The editor ends the PIE session, and when unbound the engine exits the process.
         PROPERTY(Hidden)
         FScriptDelegate OnGameQuitRequested;
 
-        // Fired each frame right after the OS event pump, before input actions are evaluated. Synthetic input
-        // delivered here takes the same path and the same frame as a real key.
+        // Fired each frame after the OS event pump and before input actions, so synthetic input here acts like a real key.
         PROPERTY(Hidden)
         FScriptDelegate OnInputPumped;
     };
@@ -42,8 +40,7 @@ namespace Lumina
         /** The reflected events, whose slots are what a script resolves its bindings against. */
         RUNTIME_API static SCoreDelegates& Get();
 
-        // Exported so applications (e.g. the Lumina launcher) and game DLLs
-        // can register handlers across DLL boundaries.
+        // Exported so applications and game DLLs can register handlers across DLL boundaries.
         RUNTIME_API static TMulticastDelegate<void>		            OnPreEngineInit;
         RUNTIME_API static TMulticastDelegate<void>		            OnPostEngineInit;
         RUNTIME_API static TMulticastDelegate<void, FModuleInfo*>   OnModuleLoaded;
@@ -51,8 +48,7 @@ namespace Lumina
         // First thing in engine shutdown, while every system is still alive, for work that must stop before any of it goes.
         RUNTIME_API static TMulticastDelegate<void>                 OnEngineShutdownStarted;
 
-        // A reflected object argument is a strong TStrongObjectPtr, which would keep the torn-down OldWorld
-        // alive across the handler, so these stay native-only until a weak reflected form exists.
+        // A reflected object argument is a strong pointer that would keep the torn-down OldWorld alive, so these stay native-only.
         RUNTIME_API static TMulticastDelegate<void, CWorld*, CWorld*> OnWorldTraveled;
         RUNTIME_API static TMulticastDelegate<void, FStringView>     OnContentFileModified;
         RUNTIME_API static TMulticastDelegate<void, FStringView, FStringView> OnContentFileRenamed;

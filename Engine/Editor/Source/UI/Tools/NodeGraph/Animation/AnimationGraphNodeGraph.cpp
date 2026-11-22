@@ -141,8 +141,7 @@ namespace Lumina
             return false;
         }
 
-        // A Save branch can read another cache from inside a nested state graph, which the pin-level
-        // sort cannot see. So order the Save nodes by that dependency and emit one branch at a time.
+        // A Save branch can read another cache inside a nested state graph, which the pin-level sort cannot see.
         TVector<CAnimGraphNode_SaveCachedPose*> PendingSaves;
         for (const auto& NodeRef : Nodes)
         {

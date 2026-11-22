@@ -8,7 +8,11 @@ namespace Lumina::RHI::Internal
     void CreateDevice(const FDeviceDesc& Desc);
     void FreeDevice();
 
-    // The raw queue submit. Every public path routes through the queue timelines in RHICore.cpp instead.
+    // The lock that orders submits to one queue, shared by aliased queue types.
+    void LockQueue(EQueueType Queue);
+    void UnlockQueue(EQueueType Queue);
+
+    // The raw queue submit, called with LockQueue held. Every public path routes through the queue timelines in RHICore.cpp instead.
     void Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits, TSpan<const FSemaphoreInfo> Signals);
 
     void DestroyNow(const FGPUAllocation& Allocation);

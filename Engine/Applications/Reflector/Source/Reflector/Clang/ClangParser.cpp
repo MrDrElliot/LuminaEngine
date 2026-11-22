@@ -29,9 +29,7 @@ namespace Lumina::Reflection
 
     namespace
     {
-        // libclang resolves its builtin headers relative to the host executable, which for the Reflector
-        // is Binaries/, never the bundle. Windows does not need them: clang takes stddef.h, float.h and
-        // the intrinsics from the MSVC headers it auto-detects, which is why only Linux breaks without this.
+        // libclang resolves builtin headers relative to the host executable, which is never the bundle, and only Linux lacks MSVC headers to fall back on.
         std::string FindClangResourceDir()
         {
 #if defined(_WIN32)
@@ -335,8 +333,7 @@ namespace Lumina::Reflection
         // A Debug target's _STL_VERIFY calls builtins this libclang lacks, breaking the STL types it guards.
         AppendArg("-D_ITERATOR_DEBUG_LEVEL=0");
         AppendArg("-D_CONTAINER_DEBUG_LEVEL=0");
-        // These exist to parse the MSVC STL. Elsewhere the standard library is libstdc++, and MS mode
-        // demotes char16_t/char32_t to the library typedefs only <vcruntime.h> supplies.
+        // Only for the MSVC STL, since MS mode demotes char16_t/char32_t to typedefs only <vcruntime.h> supplies.
         AppendArg("-fms-extensions");
         AppendArg("-fms-compatibility");
 #endif

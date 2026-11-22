@@ -210,7 +210,7 @@ namespace Lumina::Shaders
         Algo::Sort(Files, [](const FEntry& A, const FEntry& B) { return A.Path < B.Path; });
 
         size_t Result = Files.Num();
-        Hash::HashCombine(Result, (size_t)FShaderCache::kShaderCacheVersion);
+        Hash::HashCombine(Result, (size_t)FShaderCache::GetCompilerSeed());
         for (const FEntry& File : Files)
         {
             Hash::HashCombine(Result, Hash::GetHash64(File.Path));

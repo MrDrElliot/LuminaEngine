@@ -154,8 +154,7 @@ namespace Lumina
 
     void CStruct::Flatten()
     {
-        // Copied, not spliced: a struct with no own properties used to adopt the super's list head outright,
-        // so a later AddProperty walked into the super and appended there instead.
+        // Copied, not spliced, so a later AddProperty cannot walk into the super's list and append there.
         AllProperties = OwnProperties;
         if (SuperStruct != nullptr)
         {

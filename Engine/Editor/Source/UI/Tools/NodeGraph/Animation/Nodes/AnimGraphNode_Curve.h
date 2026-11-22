@@ -5,8 +5,7 @@
 
 namespace Lumina
 {
-    // Reads a named animation curve off an incoming pose. Curves are authored on clips and blended
-    // through the graph with the pose, so the value reflects whatever the branch weights did to it.
+    // Reads a named curve off a pose, blended with the pose so the value reflects the branch weights.
     REFLECT()
     class CAnimGraphNode_GetCurve : public CAnimGraphNode
     {

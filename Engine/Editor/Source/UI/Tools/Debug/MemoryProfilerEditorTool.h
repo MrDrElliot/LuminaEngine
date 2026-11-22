@@ -7,10 +7,7 @@
 
 namespace Lumina
 {
-    // Unified CPU + GPU memory tool. CPU = always-on category tracker (baseline, watch Delta,
-    // then capture call-stacks). GPU = per-heap allocator stats via RHI::GetGPUMemoryStats, plus
-    // the editor-only per-purpose breakdown built from RHI::GetGPUAllocations -- the GPU-side
-    // answer to the CPU category table.
+    // Unified CPU and GPU memory tool, with the GPU side adding a per-purpose breakdown from RHI::GetGPUAllocations.
     class FMemoryProfilerEditorTool : public FEditorTool
     {
     public:
@@ -33,8 +30,7 @@ namespace Lumina
         void DrawWindow(bool bIsFocused);
         void RefreshSnapshot();
 
-        // Serializes the full snapshot (CPU + GPU + resources + call sites) to the clipboard
-        // as a structured text report, formatted for pasting into an AI assistant.
+        // Copies the full snapshot as a structured text report formatted for pasting into an AI assistant.
         void CopyAllStatsToClipboard();
 
         void DrawHeaderCards();
@@ -47,9 +43,7 @@ namespace Lumina
         void DrawGPUPurpose();
         void DrawGPUAllocations();
 
-        // Pulls the RHI's live-allocation ledger and rolls it up per purpose. Costs the allocator
-        // locks plus a copy of every live allocation, so it runs only while the GPU tab is open
-        // (and once more when a report is copied).
+        // Costs the allocator locks plus a copy of every live allocation, so it runs only while the GPU tab is open.
         void RefreshGPUAllocations();
 
         // CPU sub-panels.
@@ -68,8 +62,7 @@ namespace Lumina
         RHI::FGPUDeviceInfo     DeviceInfo;
         bool                    bDeviceInfoValid = false;
 
-        // One purpose -- the "Scene" in "Scene.HDR" -- with its buffers and textures kept apart, because
-        // "3 GB of textures" and "3 GB of structured buffers" are different problems with different fixes.
+        // One purpose with buffers and textures kept apart, since they are different problems with different fixes.
         struct FGPUPurposeRow
         {
             FString Name;
@@ -103,8 +96,7 @@ namespace Lumina
 
         float                   RefreshTimer = 0.0f;
 
-        // On-demand OS-level scan: the only view that sees memory no engine allocator touched.
-        // Held between scans (never per-tick -- the heap walk locks every heap process-wide).
+        // On-demand OS scan that sees memory no engine allocator touched, never per tick since the heap walk locks every heap.
         Platform::FAddressSpaceStats AddressSpace;
         bool                    bAddressSpaceValid = false;
         bool                    bScanHeaps         = true;
@@ -126,8 +118,7 @@ namespace Lumina
         // Whether -memcallstacks put the process in capture mode; closing the window must not undo that.
         bool  bCaptureAtStartup = false;
 
-        // Drops the frames every stack ends in (CRT entry, thread start thunks) and the container /
-        // allocator plumbing at the top, leaving the frames that name actual engine code.
+        // Drops CRT entry, thread thunks and container plumbing so the frames that name engine code remain.
         bool  bHideNoiseFrames = true;
 
         // Row text derives purely from Function, so it is built once per symbol, not per row per frame.
@@ -145,9 +136,7 @@ namespace Lumina
             bool    bNoise    = false;   // CRT/OS entry frames, identical on every stack
         };
 
-        // Symbol resolution goes through DbgHelp under a process-wide lock, so resolving a panel's
-        // worth of frames every UI frame is far too slow to do live. Addresses are stable for the
-        // process, so each one is resolved exactly once.
+        // DbgHelp resolves under a process-wide lock, so each stable address is resolved once.
         THashMap<void*, FResolvedFrame> SymbolCache;
 
         // One row per category, rebuilt every frame; held as a member so the buffer is reused.

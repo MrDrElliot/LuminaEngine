@@ -265,7 +265,7 @@ namespace Lumina
                 {
                     if (Index < Component->Scripts.Num())
                     {
-                        if (CEntityScript* Removed = Component->Scripts[Index].Get(); Removed != nullptr && Removed->IsAttached())
+                        if (CEntityScript* Removed = Component->Scripts[Index].Get(); Removed != nullptr && FEntityScriptAccess::IsAttached(*Removed))
                         {
                             Removed->OnDetach();
                         }
@@ -283,8 +283,7 @@ namespace Lumina
                     View.ValueTable->DrawTree(Args);
                 }
 
-                // The instance is created on demand, so a script that has never been dispatched to still has
-                // something to invoke against.
+                // Created on demand so a script never dispatched to still has an instance to invoke against.
                 if (!View.Buttons.IsEmpty())
                 {
                     ImGui::Spacing();

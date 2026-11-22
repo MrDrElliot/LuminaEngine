@@ -10,6 +10,7 @@
 #include "Core/Templates/NumericLimits.h"
 #include "Core/Profiler/Profile.h"
 #include "Memory/MemoryTracking.h"
+#include "Renderer/RHIUpload.h"
 #include "Core/Threading/Thread.h"
 #include "Log/Log.h"
 #include "MaterialManager.h"
@@ -285,6 +286,8 @@ namespace Lumina
 
         // Splitting it per stage would let two stages each spend the budget and double the spike.
         FrameUploadBudget = (uint64)Math::Max(Settings().MaxUploadMBPerFrame, 1) * Constants::kMiB;
+        // Half the free staging at most, so streaming leaves the scene's own uploads room and never makes a reservation wait on the GPU.
+        FrameUploadBudget = Math::Min(FrameUploadBudget, RHI::Upload::GetStagingHeadroom() / 2);
 
         // A demotion recreates the image while copying zero host bytes, which the upload budget cannot see.
         FrameResidencyChanges = (uint32)Math::Max(Settings().MaxResidencyChangesPerFrame, 1);

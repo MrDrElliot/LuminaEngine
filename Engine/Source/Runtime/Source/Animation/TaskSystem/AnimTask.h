@@ -10,8 +10,7 @@ namespace Lumina
     class CAnimation;
     struct FSkeletonResource;
 
-    // Pose operation deferred out of the graph update. The update pass records these (cheap logic,
-    // no pose math); the executor runs only the chains reachable from the output task.
+    // The update pass records these without pose math, and the executor runs only chains reachable from the output task.
     enum class EAnimTaskType : uint8
     {
         ReferencePose,
@@ -32,8 +31,7 @@ namespace Lumina
         TranslateBone,
     };
 
-    // Which side of the physics step a task must run on. Everything is Any today; the split exists
-    // so physics-coupled tasks (ragdoll write/read) can interleave with the simulation later.
+    // Everything is Any today, so physics-coupled tasks can interleave with the simulation later.
     enum class EAnimTaskStage : uint8
     {
         AnyStage,
@@ -41,7 +39,6 @@ namespace Lumina
         PostPhysics,
     };
 
-    // One decaying inertialization channel (Bollo 2018), split per component to match the pose streams.
     // Six streams in one allocation, laid out like FPose so the decay and the apply both stride one block.
     struct FInertChannelSet
     {
@@ -89,9 +86,7 @@ namespace Lumina
         return 1.0f - U * U * U * (U * (U * 6.0f - 15.0f) + 10.0f);
     }
 
-    // One smoothing record, held per state machine and per Inertialization node. Control fields
-    // (bActive/Elapsed/Duration) are advanced by the graph update pass; channel capture/apply and the
-    // 2-frame pose history run execute-side in the Inertialize task, since they need evaluated poses.
+    // Control fields advance in the graph update pass, while capture, apply and pose history run in the Inertialize task.
     struct FAnimInertializer
     {
         bool  bActive  = false;
@@ -104,8 +99,7 @@ namespace Lumina
         FPose PrevPrevOutput;
         int32 HistoryCount = 0; // 0/1/2 - velocity is only estimated once 2 frames of history exist
 
-        // Curve seam, driven entirely by the graph update pass (curves never reach the executor):
-        // the offset from the last shown values decays to zero over the same transition.
+        // Curves never reach the executor, so this seam is driven entirely by the graph update pass.
         TVector<float> CurveOffsets;
         TVector<float> PrevCurves;
         bool bHasCurveHistory = false;
@@ -117,9 +111,7 @@ namespace Lumina
         uint32 LastUpdate = 0;
     };
 
-    // Dead blending (Boulic-style extrapolation, UE5-style node). Where inertialization decays an offset
-    // onto the target, this extrapolates the source pose forward from its seam velocity while the decayed
-    // source cross-fades into the target, so a fast-moving source does not read as a stuck offset.
+    // Extrapolates the source pose forward from its seam velocity so a fast-moving source does not read as a stuck offset.
     struct FAnimDeadBlend
     {
         bool  bActive  = false;
@@ -147,9 +139,7 @@ namespace Lumina
         uint32 LastUpdate = 0;
     };
 
-    // A recorded pose operation. Dependencies are indices of earlier tasks in the same list, so
-    // registration order is already a valid execution order. Flat payload rather than a per-type
-    // class: the recipe comes from a fixed opcode set and stays POD/reusable with zero allocation.
+    // Dependencies are indices of earlier tasks, so registration order is already a valid execution order.
     struct FAnimTask
     {
         static constexpr int16 NoTask = -1;
@@ -173,8 +163,7 @@ namespace Lumina
         // BlendMasked: dense per-bone weights on the graph asset; null falls back to a plain blend.
         const TVector<float>* MaskWeights = nullptr;
 
-        // Inertialize / DeadBlend: per-instance smoothing state + this frame's capture/apply decisions
-        // (made update-side; Time carries the pre-advance Elapsed the apply evaluates at).
+        // Inertialize and DeadBlend decisions are made update-side, and Time carries the pre-advance Elapsed.
         FAnimInertializer* Inert = nullptr;
         FAnimDeadBlend* Dead = nullptr;
 
@@ -184,11 +173,7 @@ namespace Lumina
         bool bCapture = false;
         bool bApply = false;
 
-        // BoneTransform: offset TRS + target bone + space/mode. TwoBoneIK reuses T as the component-space
-        // target, S as the pole, and BoneA/B/C as root/mid/end. FABRIK reuses T as the target and BoneC as
-        // the iteration count; LookAt reuses T as the target, S as the local forward axis and Time as the
-        // clamp; FootIK reuses T as the offset, R.xyz as the ground normal, S as the foot up axis and Time
-        // as the align alpha; TranslateBone reuses T as the component-space offset.
+        // IK, LookAt and FootIK tasks reuse T, R, S, Time and BoneA/B/C with per-opcode meanings.
         FVector3 T = FVector3(0.0f);
         FQuat    R = FQuat(1.0f, 0.0f, 0.0f, 0.0f);
         FVector3 S = FVector3(1.0f);
@@ -199,8 +184,7 @@ namespace Lumina
         uint8 Mode  = 0; // AnimPose::EBoneApplyMode
     };
 
-    // Per-entity recipe for one frame: the update pass fills it, the executor consumes it into
-    // skinning matrices and clears it. Capacity persists across frames.
+    // The update pass fills this and the executor consumes and clears it, keeping capacity across frames.
     struct FAnimTaskList
     {
         TVector<FAnimTask> Tasks;
@@ -211,8 +195,7 @@ namespace Lumina
         bool bLockRoot = false;
         int32 RootBoneIndex = Constants::kIndexNone;
 
-        // Skeleton LOD: bones sampled/blended this frame (0 = all). Bones past the cut ride along
-        // at bind-pose locals; FK still runs the full hierarchy so skinning and attachments stay valid.
+        // Bones past the cut stay at bind-pose locals, and FK still runs the full hierarchy so attachments stay valid.
         int32 ActiveBoneCount = 0;
 
         // Set when poses evaluate in a bone LOD order other than the asset's; task bones and RootBoneIndex stay asset indices.
@@ -240,9 +223,7 @@ namespace Lumina
         }
     };
 
-    // One task's recorded parameters plus what the executor actually did with it. Filled only while a
-    // capture is armed (Anim::ArmTaskCapture), so tools can show the real execution rather than a
-    // re-derived guess. Everything here is a fact recorded at the point the executor made the decision.
+    // Filled only while a capture is armed (Anim::ArmTaskCapture), so tools show the real execution.
     struct FAnimTaskDebugEntry
     {
         EAnimTaskType  Type  = EAnimTaskType::ReferencePose;
@@ -259,12 +240,10 @@ namespace Lumina
         int32 MaskWeightedBones = 0;
         int32 MaskTotalBones    = 0;
 
-        // Ran this frame. False = unreachable from the output task (an inactive state-machine
-        // branch), so the executor skipped it entirely and it cost nothing.
+        // False means unreachable from the output task, so the executor skipped it.
         bool  bReachable = false;
 
-        // Wrote its result in place into DepA's buffer (this task was DepA's last consumer) instead
-        // of taking a fresh one from the pool.
+        // Wrote in place into DepA's buffer because this task was its last consumer.
         bool  bStoleBuffer = false;
 
         int16 ExecOrder   = -1; // position in the executed sequence; -1 when skipped

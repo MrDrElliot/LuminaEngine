@@ -2,11 +2,7 @@
 #include "Containers/Vector.h"
 #include "Platform/GenericPlatform.h"
 
-// Image encoding for the whole engine. stb_image_write is a header-only library whose
-// implementation must be compiled in exactly one translation unit per image; Runtime and Editor
-// each used to compile their own, which works only for as long as they stay separate DLLs and
-// breaks a monolithic link with duplicate symbols. StbImageImpl.cpp is now the single owner, and
-// these exported entry points are how anything outside Runtime reaches it.
+// stb_image_write is compiled only in StbImageImpl.cpp, so these exports are how anything outside Runtime reaches it.
 
 namespace Lumina::ImageWrite
 {

@@ -96,13 +96,11 @@ namespace Lumina
 		bool bLoopingDirty = false;
 		bool bAttenuationDirty = false;
 
-		// Occlusion state owned by the audio system: last trace result, the smoothed value pushed to
-		// the mixer, and the countdown to the next trace.
+		// Occlusion state owned by the audio system.
 		float OcclusionTarget = 0.0f;
 		float OcclusionCurrent = 0.0f;
 		float OcclusionTraceTimer = 0.0f;
 
-		// World position sampled last tick; drives the emitter velocity used for doppler.
 		// Last count this component observed per watched trigger output, so a fire is reported once.
 		TVector<TPair<FName, uint32>> TriggerOutputCursors;
 

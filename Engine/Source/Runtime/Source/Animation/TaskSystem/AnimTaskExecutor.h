@@ -7,15 +7,7 @@ namespace Lumina
 {
     namespace Anim
     {
-        // Runs a recorded task list into GPU skinning matrices, then clears the list. Only tasks
-        // reachable from the output task execute (inactive state-machine branches are skipped).
-        // Pose buffers come from a per-thread pool with steal-in-place semantics, so a whole entity
-        // costs at most a few live buffers regardless of graph size. Parallel-safe across entities;
-        // one list executes on one thread.
-        //
-        // OutSnapshot (optional) records what actually happened -- reachability, execution order,
-        // buffer ownership -- as the executor decides it, so tools never have to re-derive it.
-        // False when the list named no usable skeleton, in which case OutMatrices is left untouched.
+        // Parallel-safe across entities, but one list executes on one thread. False leaves OutMatrices untouched.
         RUNTIME_API bool ExecuteTaskList(FAnimTaskList& List, TVector<FMatrix4>& OutMatrices,
                                          FAnimTaskSnapshot* OutSnapshot = nullptr);
 
@@ -23,15 +15,12 @@ namespace Lumina
         RUNTIME_API void InertCaptureForTest(FAnimInertializer& In, const FPose& Source, const FPose& SourcePrev, const FPose& Target,
                                              float Dt, bool bHasVel, int32 NumActiveBones, bool bScalarOnly);
 
-        // Debug capture. A tool arms one component (any stable pointer identifying the mesh); the
-        // animation system then passes a snapshot for that component only. Disarmed, the cost is a
-        // single relaxed atomic load per mesh, so this stays live-safe in a populated world.
+        // Disarmed, the cost is a single relaxed atomic load per mesh, so this stays live-safe in a populated world.
         RUNTIME_API void ArmTaskCapture(const void* Owner);
         RUNTIME_API void DisarmTaskCapture();
         RUNTIME_API bool IsTaskCaptureArmed(const void* Owner);
 
-        // Publishes a filled snapshot (animation thread) / copies the last published one out (tool
-        // thread). Both sides are serialized by one mutex held for the duration of the copy.
+        // Publish and copy-out are serialized by one mutex held for the duration of the copy.
         RUNTIME_API void StoreTaskCapture(const FAnimTaskSnapshot& Snapshot);
         RUNTIME_API bool GetTaskCapture(FAnimTaskSnapshot& OutSnapshot);
     }

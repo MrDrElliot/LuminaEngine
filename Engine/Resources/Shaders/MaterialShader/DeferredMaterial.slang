@@ -98,15 +98,26 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             FImpostorSample Impostor  = (FImpostorSample)0;
             if (bImpostor)
             {
-                const float4x4 Model     = ProxyWidenedModel(P.Model, GroundWiden);
-                const float2   PixelUV   = (float2(Texel) + 0.5) / ScreenSize - GetTemporalJitterUV();
-                const float3   NearPoint = ReconstructWorldPos(PixelUV, 1.0);
-                const FImpostorRay   Ray   = MakeImpostorRay(Header, Model, NearPoint);
+                const float4x4 Model   = ProxyWidenedModel(P.Model, GroundWiden);
+                // Unjittered by the inverse projection itself, which carries the jitter the raster drew with.
+                const float2   PixelUV = (float2(Texel) + 0.5) / ScreenSize;
+                const float3   Center  = mul(Model, float4(Header.ImpostorCenter, 1.0)).xyz;
+                const float3   Forward = GetCameraForward();
+                // A perspective ray is rotated out of view space, since the near point minus the camera keeps too few bits to aim at a far quad.
+                const float3 RayStart  = IsCameraOrthographic() ? ReconstructWorldPos(PixelUV, 1.0) : GetCameraPosition();
+                const float3 PixelRay  = IsCameraOrthographic() ? Forward : GetCameraWorldRayDir(PixelUV);
+                // Moved along the pixel's ray to the plane the raster's quad lies in, so the mesh-local origin stays small at any distance.
+                const float3 QuadPoint = RayStart + PixelRay * (dot(Center - RayStart, Forward) / max(dot(PixelRay, Forward), 1.0e-4));
+                const FImpostorRay   Ray   = MakeImpostorRay(Header, Model, QuadPoint);
                 const FImpostorViews Views = SelectImpostorViews(Ray.ToEye, Header.ImpostorFrames);
-                const float3 Center = mul(Model, float4(Header.ImpostorCenter, 1.0)).xyz;
                 const float3 Scale  = GetInstanceScale(P.Model);
                 const float  Mip    = ImpostorMipLevel(Header, Center, Header.ImpostorRadius * max(Scale.x, max(Scale.y, Scale.z)));
                 Impostor = SampleImpostor(Header, Views, Ray.Origin, Ray.Dir, Mip);
+                // A pixel the raster kept can still miss every texel here, and the view's average beats the black an empty sample normalizes to.
+                if (Impostor.Coverage < kImpostorMissCoverage)
+                {
+                    Impostor = SampleImpostor(Header, Views, Ray.Origin, Ray.Dir, log2(float(Header.ImpostorFrameSize)));
+                }
 
                 const float3 ImpostorNormal = mul(CalculateNormalMatrix(Model), Impostor.Normal);
                 NormalWS = dot(ImpostorNormal, ImpostorNormal) > 1e-12 ? normalize(ImpostorNormal) : NormalWS;
@@ -253,7 +264,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             Pass().Velocity[int2(Texel)] = float4(Motion, 0.0, 0.0);
         }
 
-        const float3 OrientedNormalWS = OrientVisNormal(T.Ref, S.NormalWS, S.WorldPosition);
+        const float3 CornerNormals[3] = { W[0].NormalWS, W[1].NormalWS, W[2].NormalWS };
+        const float3 OrientedNormalWS = OrientVisNormal(T.Ref, S.NormalWS, S.WorldPosition, FinalWorldPos, CornerNormals);
         const float4 ViewPos          = CameraViewPosition(S.WorldPosition);
         const float4 ClipPos          = CameraClipPosition(ViewPos);
         const float  InvW             = 1.0 / max(ClipPos.w, 1e-6);

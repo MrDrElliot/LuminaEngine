@@ -3,12 +3,7 @@
 
 namespace Lumina
 {
-    // Reflectable handle to a CClass guaranteed to be T or a subclass of T. Lets a property pick a
-    // class TYPE (not an instance) at runtime; the editor renders a type dropdown and serialization
-    // persists the class by name.
-    //
-    // Layout invariant: exactly one CClass* (pointer-sized) at offset 0. FClassProperty reads the
-    // member as a CClass* directly, so don't add members.
+    // Handle to a CClass that is T or a subclass. It must stay exactly one CClass* at offset 0 because FClassProperty reads it directly.
     template<typename T>
     class TSubclassOf
     {

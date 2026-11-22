@@ -40,9 +40,7 @@ namespace Lumina
         void Redo() override;
         void Finalize() override;   // captures the after-image
 
-        // A drag that ended where it started leaves no undo step. Same reasoning as the registry
-        // snapshot's, but an exact comparison rather than a conservative one: these are the actual
-        // transforms, so equal really does mean nothing happened.
+        // A drag that ended where it started leaves no undo step, and the comparison is exact since these are the actual transforms.
         bool IsNoOp() const override { return Before == After; }
         void MarkChanged() const override;
 

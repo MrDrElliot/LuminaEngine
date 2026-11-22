@@ -57,8 +57,7 @@ namespace Lumina
         uint32 Seed      = 1337u;
     };
 
-    // Pre-fractured geometry asset: baked convex pieces of a source mesh, shattered into chunks at runtime.
-    // Pure data; piece meshes are built on demand (Fracture::BuildPieceMesh), so it holds no GPU resources.
+    // Pre-fractured asset of baked convex pieces, pure data with piece meshes built on demand.
     REFLECT()
     class RUNTIME_API CGeometryCollection : public CObject
     {
@@ -119,8 +118,7 @@ namespace Lumina
 
     namespace Fracture
     {
-        // Convex Voronoi fracture: clip the mesh's convex hull by perpendicular bisectors between seed
-        // points, so pieces follow the silhouette. Falls back to the AABB for degenerate/dense meshes.
+        // Convex Voronoi fracture of the mesh's hull, falling back to the AABB for degenerate or dense meshes.
         RUNTIME_API void GenerateConvexFracture(const CMesh* SourceMesh, const FFractureSettings& Settings, TVector<FFracturePiece>& OutPieces);
 
         // Outward planes (normal, distance) of the triangles that have every position on one side.

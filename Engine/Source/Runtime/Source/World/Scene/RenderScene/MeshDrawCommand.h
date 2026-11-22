@@ -15,14 +15,7 @@ namespace Lumina
 		FShaderH PixelShader = {};
 	};
 
-	// Keyed by what forces a distinct PIPELINE, not by material identity. Two materials that compile to the
-	// same shaders share one batch and therefore one draw -- which is every material without World Position
-	// Offset, since their geometry stages are byte-identical and the shader library hands out one entry for
-	// identical bytecode.
-	//
-	// The material is carried per INSTANCE (FGPUInstance::MaterialIndex) and per deferred slot
-	// (FBatch::DeferredMaterials, which unions across every material in the batch), so nothing downstream
-	// needs a batch to be one material.
+	// Keyed by what forces a distinct pipeline, so materials that compile to the same shaders share one batch and one draw.
 	struct FDrawBatchKey
 	{
 		FShaderH VisBufferMeshShader = {};
@@ -107,8 +100,7 @@ namespace Lumina
 		uint32                      		bWorldPositionOffset : 1;
 	};
 
-	// SPEC_SKINNED: 0 static-only, 1 skinned-only, 2 runtime branch. Specializing away a path the batch
-	// turns out to contain reads that geometry at the other vertex stride, so anything unproven takes 2.
+	// SPEC_SKINNED is 0 static-only, 1 skinned-only, 2 runtime branch, and anything unproven takes 2 to avoid a wrong vertex stride.
 	FORCEINLINE uint8 SelectSkinnedMode(const FMeshDrawCommand& Batch)
 	{
 		if (Batch.bAnySkinned && Batch.bAnyStatic)

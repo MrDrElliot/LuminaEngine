@@ -97,7 +97,6 @@ internal static class ScriptDelegateArgs
     }
 
     // A blittable slot is the argument's own bytes, so reading it as T skips the box FrameMarshal.Read returns.
-    // IsReferenceOrContainsReferences is folded by the JIT, so the branch costs nothing per instantiation.
     internal static unsafe T Read<T>(IntPtr Payload, in FrameMarshal.FSlot Slot)
     {
         if (Slot.Access == EElementKind.Blittable && !RuntimeHelpers.IsReferenceOrContainsReferences<T>())

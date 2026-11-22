@@ -416,12 +416,19 @@ struct FBaseVertexOutput
     nointerpolation uint MaterialIndex : MATERIAL_INDEX;
     nointerpolation uint InstanceFlags : INSTANCE_FLAGS;
     nointerpolation uint MeshletIndex  : MESHLET_INDEX;
+#ifdef MESHLET_SHADOW_PAGE_CLIP
+    // Keeps a virtual shadow meshlet inside the drawn pages under it, and open for every other view.
+    float  PageClip[4]                 : SV_ClipDistance;
+#endif
     precise float4 Position            : SV_Position;
 };
 
-// Mesh output storage is sized from the declared type and caps workgroup residency, so depth-only carries only Position.
+// Mesh output storage is sized from the declared type and caps workgroup residency, so depth-only carries only Position and the page clip.
 struct FDepthOnlyVertexOutput
 {
+#ifdef MESHLET_SHADOW_PAGE_CLIP
+    float  PageClip[4]                 : SV_ClipDistance;
+#endif
     precise float4 Position : SV_Position;
 };
 
@@ -456,6 +463,9 @@ struct FMaskedVertexOutput
     nointerpolation uint InstanceFlags : INSTANCE_FLAGS;
 #endif
     nointerpolation uint MaterialIndex : MATERIAL_INDEX;
+#ifdef MESHLET_SHADOW_PAGE_CLIP
+    float  PageClip[4]                 : SV_ClipDistance;
+#endif
     precise float4 Position            : SV_Position;
 };
 #endif

@@ -4,10 +4,7 @@
 #include "Core/Object/ObjectCore.h"
 #include "imgui.h"
 
-// Central editor color palette. Reference these semantic colors instead of hardcoding ImVec4s so the
-// editor stays consistent and users can theme it -- the values live on CEditorColorSettings and persist
-// with the editor preferences. Each accessor reads the live setting, so edits apply immediately (the ImGui
-// renderer re-derives the global style on change).
+// Semantic editor colors read live from CEditorColorSettings, so use these instead of hardcoded ImVec4s.
 namespace Lumina::EditorColors
 {
     inline ImVec4 ToImVec4(const FVector4& C) { return ImVec4(C.x, C.y, C.z, C.w); }

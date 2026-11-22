@@ -1329,7 +1329,7 @@ namespace Lumina
                        : (_ErrorAxis.z > _ErrorAxis.y) ? float2(-sign(WorldNormal.z) * WorldPosition.x, WorldPosition.y)
                        : float2(-WorldPosition.x, -sign(WorldNormal.y) * WorldPosition.z);
     // Shifted by a multiple of 180 so the row and column math never sees a negative cell and the tiling is unchanged.
-    uint2 _ErrorCell = uint2(int2(floor(_ErrorPlane.x / 0.015), floor(-_ErrorPlane.y / 0.015)) + 1048680);
+    uint2 _ErrorCell = uint2(int2(floor(float2(_ErrorPlane.x, -_ErrorPlane.y) / 0.015)) + 1048680);
     uint _ErrorRow = _ErrorCell.y % 10u;
     uint _ErrorColumn = (_ErrorCell.x + ((_ErrorCell.y / 10u) & 1u) * 18u) % 36u;
     bool _ErrorInk = false;

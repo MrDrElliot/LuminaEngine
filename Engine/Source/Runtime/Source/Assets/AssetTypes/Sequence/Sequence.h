@@ -25,8 +25,7 @@ namespace Lumina
     {
         // Resolve an entity that already exists in the world, by name.
         Possess,
-        // Spawn one from a prefab for the sequence's lifetime, then destroy it. Makes a cutscene portable
-        // between levels because it carries its own cast.
+        // Spawn one from a prefab for the sequence's lifetime, so a cutscene carries its own cast.
         Spawn,
         // Spawn a bare camera named after the binding for the sequence's lifetime, the usual subject of camera cuts.
         Camera,
@@ -48,8 +47,7 @@ namespace Lumina
         TStrongObjectPtr<CPrefab> SpawnPrefab;
     };
 
-    // What a track is handed when it evaluates. Bindings are resolved once per play rather than per track,
-    // so a shot with twenty tracks on one actor does one lookup.
+    // What a track is handed when it evaluates, with bindings resolved once per play rather than per track.
     struct FSequenceEvalContext
     {
         CWorld*                      World = nullptr;
@@ -61,8 +59,7 @@ namespace Lumina
         // Indexed by binding index; ECS::NullEntity where a binding did not resolve.
         const TVector<ECS::FEntity>* BoundEntities = nullptr;
 
-        // True on the frame playback started or jumped, so tracks that latch state (camera cuts) can
-        // re-apply rather than assuming continuity.
+        // True on the frame playback started or jumped, so tracks that latch state can re-apply.
         bool                         bJumped = false;
 
         // The first frame after binding, when keys sitting exactly on the start time still fire.
@@ -83,8 +80,7 @@ namespace Lumina
         bool Crossed(float KeyTime) const;
     };
 
-    // Base for everything that drives something over time. A new track type is a new subclass with an
-    // Evaluate override; nothing in the sequence, player, or editor needs to know about it.
+    // Base for everything that drives something over time, extended by subclassing with an Evaluate override.
     REFLECT()
     class RUNTIME_API CSequenceTrack : public CObject
     {
@@ -115,8 +111,7 @@ namespace Lumina
         virtual void OnRelease(FSequenceInstance& Instance, CWorld* World) const {}
     };
 
-    // Three curves treated as one channel group, so a track stores Location/Rotation/Scale rather than
-    // nine loose curves.
+    // Three curves treated as one channel group.
     REFLECT()
     struct RUNTIME_API SSequenceVectorCurve
     {
@@ -185,8 +180,7 @@ namespace Lumina
         float BlendTime = 0.0f;
     };
 
-    // Which bound camera is live over each range. One per sequence in practice; cuts are ordered and the
-    // first containing the playhead wins, so overlaps resolve predictably rather than fighting.
+    // Which bound camera is live over each range, and the first cut containing the playhead wins.
     REFLECT()
     class RUNTIME_API CSequenceTrack_CameraCut : public CSequenceTrack
     {
@@ -434,8 +428,7 @@ namespace Lumina
         SCurve Intensity;
     };
 
-    // Live binding state for one sequence being played. Held by the player component and by the editor's
-    // sequencer mode, so authoring and playback resolve, restore and clean up through identical code.
+    // Live binding state for one playing sequence, shared by the player component and the editor's sequencer mode.
     struct RUNTIME_API FSequenceInstance
     {
         struct FRestoreEntry

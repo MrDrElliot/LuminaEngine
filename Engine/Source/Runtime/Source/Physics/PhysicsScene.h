@@ -61,8 +61,7 @@ namespace Lumina::Physics
         Position = 2,   // Drive toward a target position (rad hinge, m slider) via the motor spring.
     };
 
-    // Backend-neutral description of one constraint, built by gameplay/editor code and resolved by the scene.
-    // World-space frames; a body set to ECS::NullEntity is treated as "fixed to the world".
+    // Frames are world space, and a body set to ECS::NullEntity is fixed to the world.
     REFLECT()
     struct SConstraintDesc
     {
@@ -414,8 +413,7 @@ namespace Lumina::Physics
         virtual void DestroyBody(const SPhysicsBodyTarget& Body) {}
         virtual void SetBodyTransform(const SPhysicsBodyTarget& Body, const FVector3& Position, const FQuat& Rotation) {}
 
-        // Build a ragdoll's bodies + constraints and add them to the scene. Returns an opaque handle the
-        // caller stores; null on failure. Must be called outside the physics step (PrePhysics is fine).
+        // Must be called outside the physics step, and returns null on failure.
         virtual TSharedPtr<FPhysicsRagdollHandle> CreateRagdoll(const FRagdollDesc& Desc) = 0;
 
         // Remove a ragdoll's bodies + constraints from the scene. Safe with a null/empty handle.
@@ -427,9 +425,7 @@ namespace Lumina::Physics
         // Retunes the entity's simulating ragdoll to Asset's joint limits and soft limit springs without rebuilding it.
         virtual void RetuneRagdollLimits(ECS::FEntity Entity, const CPhysicsAsset& Asset) {}
 
-        // Constraints / joints. Create returns an opaque non-zero handle (0 == failure); the caller stores it
-        // to drive motors, query break state, or destroy the joint. Must be called outside the physics step
-        // (gameplay/PrePhysics is fine), mirroring CreateRagdoll. Default no-op.
+        // Create returns a non-zero handle, and like CreateRagdoll it must be called outside the physics step.
         virtual uint32 CreateConstraint(const SConstraintDesc& Desc) { return 0; }
         virtual void DestroyConstraint(uint32 ConstraintID) {}
         virtual void SetConstraintEnabled(uint32 ConstraintID, bool bEnabled) {}
@@ -437,8 +433,7 @@ namespace Lumina::Physics
         virtual void SetConstraintMotor(uint32 ConstraintID, EConstraintMotorMode Mode, float Target) {}
         // True once a breakable joint's applied force exceeded its BreakForce (the joint is then disabled).
         virtual bool IsConstraintBroken(uint32 ConstraintID) { return false; }
-        // Current value of a powered joint: a Hinge's angle (radians) or a Slider's position (meters). 0 for
-        // joints without a single driven scalar (Fixed/Point/Distance/Cone).
+        // A Hinge's angle in radians or a Slider's position in meters, and 0 for joints without a single driven scalar.
         virtual float GetConstraintValue(uint32 ConstraintID) { return 0.0f; }
 
     protected:

@@ -1,7 +1,6 @@
 namespace LuminaSharp;
 
-// Convenience over the generated Lumina.SInputEvent mirror, which is emitted as a plain blittable struct
-// and so cannot carry methods of its own.
+// Methods for the generated SInputEvent mirror, which is a plain blittable struct.
 public static class InputEventExtensions
 {
     public static bool IsShiftDown(this Lumina.SInputEvent Event) => (Event.Flags & Lumina.EInputEventFlags.Shift) != 0;

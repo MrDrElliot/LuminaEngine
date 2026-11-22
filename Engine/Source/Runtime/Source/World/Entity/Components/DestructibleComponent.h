@@ -12,15 +12,13 @@ namespace Lumina
     class CStaticMesh;
     class CGeometryCollection;
 
-    // Marks an entity breakable (alongside a StaticMeshComponent); World.Fracture/FractureAt shatters it
-    // at runtime into physics-driven chunks that inherit its motion plus an outward launch impulse.
+    // Marks an entity breakable so World.Fracture shatters it into physics chunks that inherit its motion.
     REFLECT(Component, Category = "Destruction")
     struct RUNTIME_API SDestructibleComponent
     {
         GENERATED_BODY()
 
-        // Pre-baked fracture pieces; the entity shatters into these convex chunks. Null = on-the-fly
-        // convex Voronoi fracture from the source mesh bounds.
+        // Pre-baked fracture pieces, and null fractures on the fly from the source mesh bounds.
         PROPERTY(Editable, Category = "Destruction")
         TStrongObjectPtr<CGeometryCollection> Collection;
 

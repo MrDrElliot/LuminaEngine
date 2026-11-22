@@ -42,7 +42,6 @@ namespace Lumina::SkeletalMeshMerge
                                           TVector<TVector<int32>>& OutBoneRemap,
                                           FString&                OutError);
 
-    // Every input's geometry on one unified skeleton. Inputs are untouched; the result has no distance field.
     // Identical inputs and settings return the mesh an earlier call built, so callers must not modify it.
     RUNTIME_API FResult Merge(TSpan<CSkeletalMesh* const> Meshes, const FSettings& Settings = FSettings());
 }

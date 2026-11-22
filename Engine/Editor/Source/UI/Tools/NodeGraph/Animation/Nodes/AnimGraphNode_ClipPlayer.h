@@ -9,8 +9,7 @@ namespace Lumina
 {
     class CAnimation;
 
-    // Plays a clip on a persistent VM-slot playback clock (time survives across frames);
-    // the Speed input scales how fast the clock advances.
+    // Plays a clip on a persistent VM-slot clock that survives across frames and scales with the Speed input.
     REFLECT(MinimalAPI)
     class CAnimGraphNode_ClipPlayer : public CAnimGraphNode
     {

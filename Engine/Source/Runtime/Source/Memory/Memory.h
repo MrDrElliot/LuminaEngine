@@ -97,8 +97,7 @@ namespace Lumina::Memory
         rpmalloc_thread_finalize(1);
     }
 
-    // rpmalloc global stats; MUST be exported (each module links its own rpmalloc, an inline body
-    // would query the caller's empty instance). Return 0 unless built with ENABLE_STATISTICS.
+    // Exported because each module links its own rpmalloc, so an inline body would query the caller's empty instance.
     NODISCARD RUNTIME_API size_t GetCurrentMappedMemory();
     NODISCARD RUNTIME_API size_t GetPeakMappedMemory();
     NODISCARD RUNTIME_API size_t GetCachedMemory();

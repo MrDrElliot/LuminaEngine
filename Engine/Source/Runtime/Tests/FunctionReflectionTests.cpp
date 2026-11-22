@@ -239,8 +239,7 @@ namespace
 
 TEST(FunctionReflection, FFunctionStaysTheSizeOfAProperty)
 {
-    // 48 of description plus the two pointers script dispatch calls through. They are on the function rather
-    // than behind a lookup because finding them is the cost the direct call exists to avoid.
+    // The dispatch pointers live on the function rather than behind a lookup, since finding them is the cost the direct call avoids.
     EXPECT_EQ(sizeof(FFunction), 64u) << "a function is a call descriptor, not an object";
 }
 
@@ -364,8 +363,7 @@ TEST(FunctionReflection, InvokingAnInstanceFunctionWithNoObjectIsRefused)
     EXPECT_EQ(Frame.Return<int32>(), 0);
 }
 
-// A container parameter contributes an inner to the params array, which is not a frame member: the frame
-// declares Values and ReturnValue, so the argument list and the return index count only those.
+// A container parameter's inner is not a frame member, so the argument list and return index count only Values and ReturnValue.
 TEST(FunctionReflection, AContainerParameterIsOneArgumentDespiteItsInner)
 {
     const FFunction* Total = SubjectStruct().FindFunction("Total");
@@ -402,8 +400,7 @@ TEST(FunctionReflection, ACallWithAContainerArgumentRoundTrips)
     EXPECT_EQ(Subject.Summed, 42);
 }
 
-// An object parameter is a handle, so the frame holds a strong reference for the duration of the call and
-// releases it on teardown; a raw pointer could not, which is why FObjectProperty describes a handle.
+// An object parameter is a handle, so the frame holds a strong reference for the call and releases it on teardown.
 TEST(FunctionReflection, AnObjectArgumentTravelsAsAHandle)
 {
     const FFunction* Echo = SubjectStruct().FindFunction("Echo");

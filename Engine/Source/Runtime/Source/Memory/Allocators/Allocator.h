@@ -104,8 +104,7 @@ namespace Lumina
         struct FLargeAllocation;
     public:
 
-        // Snapshot of the allocation cursor. Restore to free everything allocated since,
-        // without touching earlier allocations. The basis for FMemMark-style scopes.
+        // Restoring frees everything allocated since without touching earlier allocations.
         struct FMark
         {
             Block*            MarkBlock  = nullptr;
@@ -208,8 +207,7 @@ namespace Lumina
             return { CurrentBlock, CurrentOffset, LargeAllocations };
         }
 
-        // Rewind the cursor to a previously captured mark. Blocks past the mark stay
-        // allocated and are reused by later Allocate calls (no free, no destructors).
+        // Blocks past the mark stay allocated and are reused by later Allocate calls, with no destructors run.
         void RestoreToMark(const FMark& Mark)
         {
             FreeLargeAllocationsUntil(Mark.MarkLarge);
@@ -398,23 +396,16 @@ namespace Lumina
     using TFrameHashMap = Containers::THashMap<K, V, Lumina::Containers::FDefaultHash, Containers::FDefaultEqual, FFrameAllocator>;
 
 
-    // Per-thread scratch stack; reclaimed only by FMemMark scopes (or thread exit), never per-allocation.
-    // Use it through FMemMark, not directly.
+    // Per-thread scratch stack reclaimed only by FMemMark scopes, so use it through FMemMark.
     RUNTIME_API FBlockLinearAllocator& GetThreadScratchAllocator();
 
-    // Per-thread frame arena: a bump allocator that lives for the whole frame and is bulk-reset at the
-    // frame boundary by ResetThreadFrameAllocators() (NOT per FMemMark scope). Use for per-thread scratch
-    // whose data must outlive a parallel-for and be consumed later in the same frame (gather -> merge).
-    // Registered globally on first touch so the boundary reset can reclaim it; grows to the per-thread
-    // high-water mark and is reused every frame, so a parallel pass never reallocates its own arena pool.
+    // Reset at the frame boundary by ResetThreadFrameAllocators rather than per FMemMark scope, so data outlives a parallel-for.
     RUNTIME_API FBlockLinearAllocator& GetThreadFrameAllocator();
 
-    // Reset every registered thread frame arena (rewind to empty, keep blocks for reuse). MUST run at a
-    // quiescent frame boundary with no tasks touching frame arenas, i.e. engine frame-begin. Registry walk.
+    // Must run at a quiescent frame boundary with no tasks touching frame arenas.
     RUNTIME_API void ResetThreadFrameAllocators();
 
-    // RAII bump-allocator scope: mark on construction, restore on destruction (O(1) bulk free).
-    // No destructors run on exit, so store only trivially destructible data. Nested marks compose (LIFO).
+    // No destructors run on exit, so store only trivially destructible data.
     class FMemMark
     {
     public:

@@ -17,7 +17,6 @@ namespace Lumina
 {
     class CAnimationGraph;
 
-    // Drives a skeletal mesh from a compiled animation graph.
     // A notify crossed this frame by a simple or graph animator, queued for systems only while something reads it.
     REFLECT(Event)
     struct RUNTIME_API SAnimNotifyFiredEvent
@@ -148,12 +147,10 @@ namespace Lumina
         // Per-instance VM state (registers, playback clocks, parameter values). Sized lazily from Graph; not serialized.
         FAnimGraphVMState VMState;
 
-        // This frame's blended root-motion delta, extracted in the parallel update and applied to the
-        // entity transform in the serial pass. Transient.
+        // This frame's blended root-motion delta, applied in the serial pass. Transient.
         FRootMotionDelta PendingRootMotion;
 
-        // Notify events that fired this frame from the graph's active branches, weighted by their
-        // branch's blend alpha. Cleared every update. Transient.
+        // Notify events from the graph's active branches this frame, cleared every update. Transient.
         TVector<FAnimNotifyEvent> NotifyEvents;
 
         // Montages playing on this entity, layered into the graph by its Slot nodes. Transient.
@@ -268,8 +265,7 @@ namespace Lumina
         FUNCTION()
         float GetEvaluatedParameter(const FName& ParameterName, float Default = 0.0f) const;
 
-        // Curve values are produced by the graph's own evaluation (clips carry the keys, blends weight
-        // them), so they are read-only here: the last evaluated frame's value of the output pose.
+        // Read-only because the graph's own evaluation produces curve values, as of the last evaluated frame.
 
         /** Value the named animation curve carried into the output pose this frame. */
         FUNCTION()
@@ -279,8 +275,7 @@ namespace Lumina
         FUNCTION()
         bool HasCurve(const FName& CurveName) const;
 
-        // Sizes VMState from the current graph if it has not been initialized
-        // yet, so a script or the system can set parameters before the VM's first tick.
+        // Sizes VMState from the current graph if uninitialized, so parameters can be set before the first tick.
         void EnsureStateInitialized();
     };
 

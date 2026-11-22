@@ -8,6 +8,7 @@
 #include "Scripting/EntityScript.h"
 #include "World/ECS/Entity.h"
 #include "World/Entity/Systems/EntitySystem.h"
+#include "World/World.h"
 #include "SaveGameTestTypes.generated.h"
 
 namespace Lumina
@@ -62,8 +63,17 @@ namespace Lumina
 
     public:
 
-        void OnRestored() override { ++RestoredCount; }
-        void OnSaving() override { ++SavingCount; }
+        void OnAttach() override
+        {
+            if (CWorld* World = GetWorld())
+            {
+                World->GetSaveGames()->OnRestored.AddMember(this, &CSaveGameTestScript::CountRestored);
+                World->GetSaveGames()->OnSaving.AddMember(this, &CSaveGameTestScript::CountSaving);
+            }
+        }
+
+        void CountRestored() { ++RestoredCount; }
+        void CountSaving() { ++SavingCount; }
 
         PROPERTY(Hidden, SaveGame)
         int32 Level = 0;

@@ -18,9 +18,7 @@ namespace Lumina
     class CSkeleton;
     struct FSkeletonResource;
 
-    // Editor for CBlendSpace: the grid is the asset. Samples are dragged where they belong, the preview
-    // cursor is dropped anywhere between them, and the mesh in the viewport plays exactly what the runtime
-    // would produce at that position.
+    // Editor for CBlendSpace where the grid is the asset and the viewport plays what the runtime produces at the cursor.
     class FBlendSpaceEditorTool : public FAssetEditorTool
     {
     public:
@@ -56,15 +54,13 @@ namespace Lumina
         void RefreshPreviewMesh();
         FSkeletonResource* GetPreviewSkeletonResource() const;
 
-        // Runs the same weight -> sample -> fold recipe the VM's SampleBlendSpace opcode does, so what
-        // the viewport shows is what the runtime will produce rather than an editor-only approximation.
+        // Mirrors the VM's SampleBlendSpace opcode so the viewport is not an editor-only approximation.
         void EvaluatePreviewPose(float DeltaTime);
 
         ImVec2 AxisToCanvas(const FVector2& AxisPosition) const;
         FVector2 CanvasToAxis(const ImVec2& CanvasPosition) const;
 
-        // Ctrl inverts the toggle rather than forcing snapping on, so the one modifier both enables it
-        // when the toggle is off and suspends it when the toggle is on.
+        // Ctrl inverts the toggle, so it enables snapping when off and suspends it when on.
         bool IsSnapActive() const;
         FVector2 SnapToGrid(const FVector2& AxisPosition) const;
 

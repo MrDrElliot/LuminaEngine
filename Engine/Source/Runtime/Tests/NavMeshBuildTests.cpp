@@ -437,8 +437,7 @@ TEST(NavMeshBuild, LargeGridExceedsTheThirtyTwoBitRefBudget)
 
 TEST(NavMeshBuild, TileBlobKeepsItsLinkArrayEightByteAligned)
 {
-    // dtLink holds a dtPolyRef, so under 64-bit refs the links block has to start 8-byte aligned.
-    // sizeof(dtMeshHeader) is 100, so a stock dtAlign4 walk misaligns it whenever vertCount is even.
+    // sizeof(dtMeshHeader) is 100, so a stock dtAlign4 walk misaligns the 8-byte aligned links block whenever vertCount is even.
     FNavBuildOutput Out;
     ASSERT_TRUE(NavMeshBuilder::BakeSync(MakeGroundPlane(20.0f), Out));
 
@@ -460,8 +459,7 @@ TEST(NavMeshBuild, StaleTileBlobIsRejectedRatherThanRead)
     FNavBuildOutput Out;
     ASSERT_TRUE(NavMeshBuilder::BakeSync(MakeGroundPlane(), Out));
 
-    // Truncating leaves magic and version intact, which is all dtNavMesh::addTile checks. A blob
-    // baked against a different Detour layout gets through the same gap.
+    // Truncating leaves magic and version intact, which is all dtNavMesh::addTile checks.
     int32 Corrupted = 0;
     for (SNavTileData& Tile : Out.Tiles)
     {
@@ -479,8 +477,7 @@ TEST(NavMeshBuild, StaleTileBlobIsRejectedRatherThanRead)
 
 TEST(NavMeshBuild, QueriesSurviveConcurrentRetiling)
 {
-    // removeTile frees the tile while pooled queries may be walking it, so this used to be a
-    // use after free whenever a hot rebake landed next to a worker running FindPath.
+    // removeTile used to cause a use after free when a hot rebake landed next to a worker running FindPath.
     FNavBuildOutput Out;
     ASSERT_TRUE(NavMeshBuilder::BakeSync(MakeGroundPlane(20.0f), Out));
 
@@ -818,8 +815,7 @@ TEST(NavMeshStreaming, HysteresisStopsBoundaryThrash)
 
 TEST(NavMeshBuild, BatchRebakeReproducesTheFullBake)
 {
-    // A hot rebake has to land byte for byte on what the full bake produced, or swapping a tile in
-    // shifts geometry at the seams against its neighbours.
+    // A hot rebake must match the full bake byte for byte, or swapping a tile shifts geometry at the seams.
     FNavBuildInput In = MakeGroundPlane(24.0f);
     FNavBuildInput Copy = In;
 
@@ -1117,8 +1113,7 @@ TEST(NavMeshBuild, PathResultDefaultsToNotQueriedAndEveryReasonIsDistinct)
     }
 }
 
-// A flat plane spanning thousands of tiles has to come back walkable everywhere. Partial coverage on a
-// world-sized bake is the live symptom, so this is the smallest thing that reproduces it.
+// A flat plane spanning thousands of tiles must come back walkable everywhere, which reproduces partial coverage on world-sized bakes.
 TEST(NavMeshBuild, WorldSizedPlaneIsWalkableInEveryTile)
 {
     FNavBuildInput In = MakeGroundPlane(450.0f);
@@ -1144,8 +1139,7 @@ TEST(NavMeshBuild, WorldSizedPlaneIsWalkableInEveryTile)
         << Out.TilesX << "x" << Out.TilesY << "); geometry is not reaching every tile";
 }
 
-// A large raised mesh sitting on ground must not leave a ring of empty tiles around its footprint. Whole
-// tiles going empty is tile-granular, so it is a geometry-reaching-the-tile fault, not a slope one.
+// A large raised mesh on ground must not leave a ring of empty tiles, which is a geometry-reaching-the-tile fault.
 TEST(NavMeshBuild, LargeRaisedMeshLeavesNoRingOfEmptyTiles)
 {
     FNavBuildInput In;

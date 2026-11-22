@@ -71,15 +71,13 @@ namespace Lumina
         virtual FString GetAssetDescription() const { return ""; }
         virtual CClass* GetAssetClass() const = 0;
 
-        // Groups this asset type in the content browser's "New Asset" menu. Keep the set of
-        // category strings small and shared across related factories.
+        // Groups this asset type in the New Asset menu, so keep the category strings few and shared.
         virtual FString GetCategory() const { return "Miscellaneous"; }
         virtual FStringView GetDefaultAssetCreationName() { return "New_Asset"; }
         
         virtual CObject* CreateNew(const FName& Name, CPackage* Package) = 0;
 
-        // Importing source files is CImporter's job (Tools/Import/Importer.h); a factory only mints empty
-        // assets from the content browser's New Asset menu.
+        // Importing source files is CImporter's job, a factory only mints empty assets.
 
         // True once the dialogue is done, with bOutCreating saying whether it handed creation to a task rather than canceled.
         static bool ShowCreationDialogue(CFactory* Factory, FStringView Path, bool& bOutCreating);

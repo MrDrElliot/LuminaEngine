@@ -231,7 +231,7 @@ TEST(Coroutine, OwnerDestructionEndsItsCoroutines)
     CWorld* World = NewCoroutineWorld();
     ECS::FRegistry& Registry = World->GetEntityRegistry();
     CEntityScript* Script = NewObject<CEntityScript>(nullptr, NAME_None, FGuid::New(), OF_Transient);
-    Script->SetOwner(Registry.Create(), World);
+    FEntityScriptAccess::SetOwner(*Script, Registry.Create(), World);
 
     int32 Ticks = 0;
     auto Run = [](CEntityScript* Owner, int32& Ticks) -> TCoroutine<>

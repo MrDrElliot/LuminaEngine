@@ -7,10 +7,7 @@
 
 #include "imgui.h"
 
-// Shared ImGui-side key capture helpers: poll the first key / mouse button pressed this frame and map
-// ImGui's key ids onto the engine's EKey / EMouseKey. Used by the Input Action editor and the SKey
-// property customization. We poll ImGui rather than FEventProcessor because detached tool windows are
-// secondary ImGui viewports whose GLFW key callbacks never chain back to Lumina's window callback.
+// Polls ImGui rather than FEventProcessor because detached tool windows are secondary viewports whose GLFW key callbacks never reach Lumina's window.
 
 namespace Lumina::ImGuiX
 {
@@ -154,8 +151,7 @@ namespace Lumina::ImGuiX
         return EMouseKey::Num;
     }
 
-    // True for the standalone modifier keys, so a chord capture doesn't double-count the held modifier
-    // when the bound key IS that modifier (binding "Ctrl" shouldn't also set bCtrl).
+    // Lets a chord capture avoid double-counting a held modifier when the bound key is that modifier.
     inline bool IsModifierEKey(EKey K)
     {
         return K == EKey::LeftControl || K == EKey::RightControl
@@ -178,8 +174,7 @@ namespace Lumina::ImGuiX
         }
     }
 
-    // True when the chord described by Key was pressed this frame, with its modifiers held exactly.
-    // Use to drive rebindable editor hotkeys from an SKey setting.
+    // True when the chord described by Key was pressed this frame with its modifiers held exactly.
     inline bool IsChordPressed(const SKey& Key)
     {
         if (!Key.IsValid())

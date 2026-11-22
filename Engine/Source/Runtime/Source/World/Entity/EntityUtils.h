@@ -21,10 +21,6 @@ namespace Lumina
 
 namespace Lumina::ECS::Utils
 {
-	//-------------------------------------------------------------------------
-	// Serialization
-	//-------------------------------------------------------------------------
-
 	// Parent links read before every entity of a batch exists, attached together once they all do.
 	struct FParentLinks
 	{
@@ -49,17 +45,9 @@ namespace Lumina::ECS::Utils
 	// A write skips every entity ShouldWrite refuses.
 	RUNTIME_API bool SerializeRegistry(FArchive& Ar, ECS::FRegistry& Registry, bool (*ShouldWrite)(const ECS::FRegistry&, ECS::FEntity) = nullptr);
 
-	//-------------------------------------------------------------------------
-	// Hierarchy
-	//-------------------------------------------------------------------------
-
 	// Queries and plain links live on Registry.GetHierarchy() and Registry.AttachChild; these also keep the world transform.
 	RUNTIME_API void ReparentEntity(ECS::FRegistry& Registry, ECS::FEntity Child, ECS::FEntity Parent, bool bPreserveWorld = true);
 	RUNTIME_API void RemoveFromParent(ECS::FRegistry& Registry, ECS::FEntity Child);
-
-	//-------------------------------------------------------------------------
-	// Lifetime
-	//-------------------------------------------------------------------------
 
 	RUNTIME_API void DestroyEntity(ECS::FRegistry& Registry, ECS::FEntity Entity);
 	RUNTIME_API void DestroyEntityHierarchy(ECS::FRegistry& Registry, ECS::FEntity Entity);
@@ -70,10 +58,6 @@ namespace Lumina::ECS::Utils
 
 	// Gives each entity without an SEntityGuidComponent one, derived from Seed and its index when Seed is set.
 	RUNTIME_API void AssignMissingEntityGuids(ECS::FRegistry& Registry, FStringView Seed = {});
-
-	//-------------------------------------------------------------------------
-	// Transform resolve
-	//-------------------------------------------------------------------------
 
 	// The current world transform composed from the nearest ancestor that has not moved, writing nothing, so any thread may call it.
 	RUNTIME_API FTransform ComputeWorldTransform(const ECS::FRegistry& Registry, ECS::FEntity Entity);
@@ -124,21 +108,17 @@ namespace Lumina::ECS::Utils
 		std::atomic<uint32> PublishEpoch{ 1 };
 	};
 
-	// Opaque per-registry transform dirty state (lock-free dirty queues + resolve guard). Lives in the
-	// registry context; cached on each STransformComponent at Bind so setters enqueue without a lookup.
 	// Derives from FTransformDirtyGate, single and non-virtual, so the two pointers are interchangeable.
 	struct FTransformDirtyState;
 	RUNTIME_API FTransformDirtyState* EnsureTransformDirtyState(ECS::FRegistry& Registry);
 
-	// The same object seen as its gate. Exists because a caller that only has the forward declaration
-	// cannot perform the derived-to-base conversion itself; this is what components cache.
+	// The same object seen as its gate, for callers that only have the forward declaration.
 	RUNTIME_API FTransformDirtyGate* EnsureTransformDirtyGate(ECS::FRegistry& Registry);
 
 	// The exact test the resolve uses for its flat path, so STransformComponent::bIsFlat never disagrees with it.
 	RUNTIME_API bool IsEntityTransformFlat(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
-	// A flat setter already made world equal local, so this only records the move for the render sync and queues a bodied entity's physics re-sync, without raising the dirty signal.
-	// A move the gate's writer took skips that writer's consumer.
+	// A flat setter already made world equal local, so this only records the move and queues a bodied entity's physics re-sync, and a move the gate's writer took skips that writer's consumer.
 	RUNTIME_API void PublishFlatMove(FTransformDirtyGate* Gate, ECS::FEntity Entity, bool bPublish, bool bQueueBody, bool bTaken);
 
 	// Offers a flat move to the gate's writer, reporting whether it took it.
@@ -154,16 +134,12 @@ namespace Lumina::ECS::Utils
 	// Removes the writer if it is still the installed one.
 	RUNTIME_API void ClearFlatMoveWriter(ECS::FRegistry& Registry, const FFlatMoveWriter* Writer);
 
-	// Enqueue an entity whose local transform changed (lock-free, any thread); raises the dirty signal.
-	// The two queues are independent, each deduped by its own guard on the caller (bWorldDirty /
-	// bBodyDirtyQueued): bQueueTransform feeds the resolve, bQueueBody feeds the physics body re-sync.
-	// Bodiless entities pass bQueueBody=false to skip that queue (and its drain) entirely.
+	// Lock-free from any thread. The resolve and body queues are deduped by the caller's own guards, and bodiless entities pass bQueueBody false.
 	RUNTIME_API void QueueDirtyTransform(FTransformDirtyGate* Gate, ECS::FEntity Entity, bool bQueueTransform, bool bQueueBody);
 
 
 	inline constexpr uint32 kMaxMovedTransformConsumers = 4;
 
-	// Start recording which entities the resolve moved for one more consumer, such as the render scene or navigation, each draining its own copy.
 	// A filtered consumer records only the entities it marks with SetMovedTransformInterest, so a world of moving props costs it nothing.
 	RUNTIME_API uint32 AddMovedTransformConsumer(ECS::FRegistry& Registry, bool bFiltered = false);
 
@@ -180,32 +156,21 @@ namespace Lumina::ECS::Utils
 	// Tag the entity's body (if any) for the physics sync. Single-threaded; for external (non-setter) paths.
 	RUNTIME_API void MarkPhysicsBodyDirtyIfBodied(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
-	// Drain the lock-free body-dirty queue (setter-moved entities) and tag the bodied ones with
-	// FNeedsPhysicsBodyUpdate. Call once at the physics boundary, just before the body sync consumes the tags.
+	// Call once at the physics boundary, just before the body sync consumes the tags.
 	RUNTIME_API void FlushDirtyPhysicsBodies(ECS::FRegistry& Registry);
 
-	// External (non-setter) dirtying; the bridge hook converts the tag to the component flag. Single-threaded.
-	// Per-frame gameplay uses the component setters instead (ParallelFor-safe).
+	// External dirtying for single-threaded paths, since per-frame gameplay uses the component setters.
 	RUNTIME_API void MarkTransformDirty(ECS::FRegistry& Registry, ECS::FEntity Entity);
-
-	//-------------------------------------------------------------------------
-	// Entity transform accessors
-	//-------------------------------------------------------------------------
 
 	RUNTIME_API FQuat    GetEntityRotation(ECS::FRegistry& Registry, ECS::FEntity Entity);
 	RUNTIME_API FVector3 GetEntityScale(ECS::FRegistry& Registry, ECS::FEntity Entity);
 	RUNTIME_API void     SetEntityScale(ECS::FRegistry& Registry, ECS::FEntity Entity, const FVector3& Scale);
 
-	// Set an entity's world transform by converting to the parent-relative local that resolves back to it.
-	// The single source of truth for world->local conversion; writing WorldTransform directly is discarded next resolve.
+	// The single world to local conversion, since writing WorldTransform directly is discarded at the next resolve.
 	RUNTIME_API void SetEntityWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FTransform& WorldTransform);
 
 	// Rotates in world space against the parent's current world rotation, computed without a lock so parallel writers of disjoint entities may call it.
 	RUNTIME_API void SetEntityWorldRotationCached(ECS::FRegistry& Registry, ECS::FEntity Entity, const FQuat& WorldRotation);
-
-	//-------------------------------------------------------------------------
-	// Reflection / queries
-	//-------------------------------------------------------------------------
 
 	RUNTIME_API bool EntityHasTag(const FName& Tag, ECS::FRegistry& Registry, ECS::FEntity Entity);
 

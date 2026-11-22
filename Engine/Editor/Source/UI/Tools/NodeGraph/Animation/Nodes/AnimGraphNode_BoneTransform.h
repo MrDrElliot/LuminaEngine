@@ -6,8 +6,7 @@
 
 namespace Lumina
 {
-    // Procedural per-bone transform: drops a (Translation, Rotation, Scale) onto a named bone in its
-    // local or component frame. For hand-IK style overrides, aim offsets, lean, look-at, etc.
+    // Applies a translation, rotation and scale to a named bone in its local or component frame.
     REFLECT()
     class CAnimGraphNode_BoneTransform : public CAnimGraphNode
     {

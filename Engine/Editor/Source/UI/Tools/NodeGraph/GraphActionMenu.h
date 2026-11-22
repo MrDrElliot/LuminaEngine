@@ -30,14 +30,12 @@ namespace Lumina
         bool                bAcceptsSource = true;
     };
 
-    // Incremental fuzzy search over the graph's registered node classes (keyboard nav, highlighting,
-    // relevance order). State persists between frames; call Reset() when the popup opens.
+    // Incremental fuzzy search over registered node classes, with state that persists between frames until Reset.
     class FGraphActionMenu
     {
     public:
 
-        // Draws the action menu inside an already-open ImGui popup. Returns true if an action was
-        // committed this frame, caller should CloseCurrentPopup in that case.
+        // Draws inside an already-open popup, and the caller should CloseCurrentPopup when it returns true.
         bool Draw(CEdNodeGraph* Graph);
 
         // Call when the popup is opened to clear query state and refocus the input next frame.
@@ -62,7 +60,6 @@ namespace Lumina
         bool                    bOnlyAcceptingNodes = true;
     };
 
-    // Case-insensitive fuzzy subsequence match; OutScore valid only on match (higher is better),
-    // OutMatchIndices receives the matched Target positions for highlighting.
+    // Case-insensitive subsequence match, where OutScore is valid only on a match and higher is better.
     bool FuzzyMatch(const char* Query, const char* Target, int32& OutScore, TVector<uint16>& OutMatchIndices);
 }

@@ -138,8 +138,7 @@ namespace Lumina
 
         void Clear();
 
-        // A stacked command outlives the edit that made it, so a reinstanced object has to reach it too or
-        // the next undo writes into an object that is no longer the one on screen.
+        // A stacked command outlives its edit, so a reinstanced object must reach it or undo writes into a stale object.
         void VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func);
 
         // Set by the owning tool to rebuild caches after any Undo/Redo (selection resync, outliner, etc.).

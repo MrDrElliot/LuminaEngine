@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Containers/FunctionRef.h"
 #include "Containers/Queue.h"
 #include "Core/Object/ObjectReferenceProvider.h"
 #include <imgui/imgui.h>
@@ -36,8 +37,7 @@ namespace Lumina
     {
     public:
 
-        //~ IObjectReferenceProvider: a tool is not a CObject, so the assets and worlds the open editors hold
-        //~ are reachable from nowhere else.
+        //~ IObjectReferenceProvider, since a tool is not a CObject and its held assets are reachable nowhere else.
 
         const char* GetReferenceProviderName() const override { return "editor tools"; }
 
@@ -141,8 +141,7 @@ namespace Lumina
         requires std::is_base_of_v<FEditorTool, T>
         bool IsToolActive() const { return FindTool<T>() != nullptr; }
 
-        // Toggle a singleton-style debug tool. Creates one with the given args
-        // if none exists; otherwise schedules the live one for destruction.
+        // Toggle a singleton-style debug tool, creating it with the given args or scheduling the live one for destruction.
         template<typename T, typename... Args>
         requires std::is_base_of_v<FEditorTool, T> && std::is_constructible_v<T, Args...>
         void ToggleTool(Args&&... args);
@@ -165,8 +164,16 @@ namespace Lumina
         // A MenuItem whose check state mirrors the panel's existence and whose click toggles it.
         void DrawToolMenuItem(const FToolPanel& Panel);
 
-        // Opens a Tools menu debug window or plugin entry by name, focusing it when it is already open.
+        bool IsToolPanelOpen(const FToolPanel& Panel) const;
+
+        // Every window the Tools and File menus toggle, named by its label after the icon.
+        void ForEachToolPanel(TFunctionRef<void(FStringView, bool)> Visit) const;
+
+        // By exact name or a unique part of one, focusing a window that is already open.
         bool OpenToolPanel(FStringView Name, FString& OutError);
+
+        // Closing a window that is not open succeeds and does nothing.
+        bool CloseToolPanel(FStringView Name, FString& OutError);
 
         void VerifyDirtyPackages();
 
@@ -200,8 +207,7 @@ namespace Lumina
         // File > Save: saves the focused tool, which is what Ctrl+S already does.
         void SaveActiveTool();
 
-        // File > Save All: every dirty package, routed through its open editor tool when there is one
-        // so type-specific save work still runs.
+        // File > Save All, routed through each open editor tool so type-specific save work still runs.
         void SaveAllDirtyPackages() override;
         void SavePackages(TVector<CPackage*> Packages) override;
         void OpenPropertyMatrix(TVector<FGuid> Assets) override;
@@ -226,8 +232,7 @@ namespace Lumina
         const FString& GetSceneTargetTab() const { return SceneTargetTab; }
         void SetSceneTargetTab(FString InTab) { SceneTargetTab = std::move(InTab); }
 
-        // Re-entry guard for the dirty-packages prompt; true while the dialog is open.
-        // A member (not a function-local static) so Cancel can re-arm it.
+        // Re-entry guard for the dirty-packages prompt, a member so Cancel can re-arm it.
         bool bVerifyingDirtyPackages = false;
 
         int32 PendingQuitFrames = 0;
@@ -235,26 +240,21 @@ namespace Lumina
 
     private:
 
-        // Shared tail of tool creation: initializes the tool and queues it. Passes
-        // through nullptr so registry-driven creation can chain without null checks.
+        // Shared tail of tool creation, passing nullptr through so registry-driven creation chains without null checks.
         FEditorTool* FinalizeNewTool(FEditorTool* Tool);
 
-        // Registers the built-in asset/file editors with FEditorToolRegistry.
-        // Plugins add their own via the same registry in StartupModule.
+        // Registers the built-in asset and file editors with FEditorToolRegistry, which plugins also use.
         void RegisterBuiltinEditorTools();
 
         FEditorTool* FindToolByTypeID(uint32 TypeID) const;
         
-        // Adds Tool's tab to the persisted list and writes it out immediately. Key is "asset:<guid>" or
-        // "file:<path>". A key already in the list (i.e. this open IS the restore) is not re-appended,
-        // which is also what keeps replay from rewriting the file it is reading.
+        // Adds Tool's tab to the persisted list, skipping a key already present so replay does not rewrite the file it reads.
         void RecordSessionTab(FEditorTool* Tool, FString Key);
 
         // Drops Tool's tab from the persisted list and writes it out. No-op for unrecorded tools.
         void ForgetSessionTab(FEditorTool* Tool);
 
-        // Reopens the persisted tabs in order, skipping any whose asset or file no longer resolves, then
-        // prunes those dead entries. Runs once, on the first update, so the asset registry is populated.
+        // Reopens the persisted tabs and prunes dead entries, running on the first update so the asset registry is populated.
         void RestoreSessionTabs();
 
         void EditorToolLayoutCopy(FEditorTool* SourceTool);
@@ -263,32 +263,26 @@ namespace Lumina
         bool SubmitToolMainWindow(const FUpdateContext& UpdateContext, FEditorTool* EditorTool, ImGuiID TopLevelDockspaceID);
         void DrawToolContents(const FUpdateContext& UpdateContext, FEditorTool* Tool);
 
-        // Right-click menu on a tool's dock tab: Close / Close Others / Close to the Right / Close All.
-        // Called between the tool's Begin() and End(), where ImGui's "last item" is that tool's tab.
+        // Right-click menu on a tool's dock tab, called between the tool's Begin() and End() where the last item is its tab.
         void DrawToolTabContextMenu(FEditorTool* EditorTool);
 
-        // Closes a tool exactly as its tab's X button does, so a batch close and a manual one cannot drift:
-        // a docked drawer tool returns to its drawer, the world editor is never closable, and anything else
-        // is queued for destruction at the end of the frame.
+        // Closes a tool exactly as its tab's X does, so batch and manual closes cannot drift.
         void RequestCloseTool(FEditorTool* Tool);
         bool CanCloseTool(const FEditorTool* Tool) const;
 
         FEditorTool* FindToolByWindowName(const char* WindowName) const;
 
 
-        // Multiplayer PIE: spawn/destroy the extra-player Game Preview tools (players 2..N).
-        // Driven by FWorldEditorTool's OnGamePreviewStart/StopRequested delegates.
+        // Multiplayer PIE spawns and destroys the extra-player Game Preview tools (players 2..N).
         void CreateGameViewportTool();
         void DestroyGameViewportTool();
 
         void DrawTitleBarMenu(const FUpdateContext& UpdateContext);
 
-        // Packages with unsaved changes, skipping deleted assets awaiting the deferred drain. Walks every
-        // package, so callers on a per-frame path must throttle it.
+        // Packages with unsaved changes, which walks every package so per-frame callers must throttle it.
         uint32 CountDirtyPackages() const;
 
-        // Titlebar stats, composed once per frame so the right-hand region can be sized from their
-        // measured width rather than a constant that silently clips when a stat is added.
+        // Titlebar stats, composed once per frame so the right-hand region is sized from their measured width.
         struct FTitleBarStat
         {
             const char*      Label   = nullptr;
@@ -307,8 +301,7 @@ namespace Lumina
         FTitleBarStats BuildTitleBarStats(const FUpdateContext& UpdateContext);
         void DrawTitleBarInfoStats(const FTitleBarStats& Stats);
 
-        // Footer drawer: status-bar toggle that slides up as a transient overlay
-        // when undocked; "Dock in Layout" pins it back into the dockspace.
+        // Footer drawer that slides up as a transient overlay when undocked.
         struct FFooterDrawer
         {
             FEditorTool*  Tool       = nullptr;
@@ -343,36 +336,26 @@ namespace Lumina
         void NewProjectDialog();
         void ProjectCreatedDialog(FStringView ProjectFile);
 
-        // Queues a modal for next frame to chain dialogs (Open -> New), since
-        // FEditorModalManager allows only one active modal at a time.
+        // Queues a modal for next frame, since FEditorModalManager allows only one active modal at a time.
         void DeferShowDialog(TFunction<void()> Action) { PendingDialogAction = std::move(Action); }
 
         void OnProjectLoaded();
 
-        // Opens Project.EditorStartupMap if asset discovery has already found it. Returns false when the
-        // map is configured but not in the registry yet, which is the caller's cue to wait for discovery
-        // rather than to report an error.
+        // Opens Project.EditorStartupMap, returning false while discovery has not found it yet.
         bool TryOpenEditorStartupMap();
 
-        // Confirmation for opening a different world while PIE/Simulate is live, since doing so tears the
-        // session down. Takes the GUID rather than the loaded CWorld*: the modal spans frames and nothing
-        // here roots the asset, so the world is re-resolved once the user confirms.
+        // Confirms opening another world during PIE, taking a GUID since nothing roots the asset across frames.
         void PromptOpenWorldDuringPlay(const FGuid& AssetGUID, const FString& WorldName);
 
-        // Live only between a project load and the startup map opening. Discovery runs asynchronously, so
-        // the map usually is not in the registry yet when the project finishes loading; this retries on
-        // each registry update instead of blocking the main thread until the scan drains.
+        // Live only until the startup map opens, retrying on each registry update instead of blocking on discovery.
         FDelegateHandle PendingStartupMapHandle;
 
-        // Global reaction to a texture's data being replaced: re-upload the texture bindings of every
-        // material that binds it. Lives here rather than in the material editor because a material whose
-        // editor is closed is still being rendered, and is stale in exactly the same way.
+        // Lives here rather than in the material editor because a material with a closed editor still renders stale.
         FDelegateHandle AssetDataChangedHandle;
 
         void HandleUserInput(const FUpdateContext& UpdateContext);
 
-        // Launches the bundled Tracy profiler (F8, and Tools > Tracy Profiler). Reports the path it looked
-        // at when the tool is missing, rather than failing silently.
+        // Launches the bundled Tracy profiler, reporting the path it looked at when missing.
         void LaunchTracyProfiler();
 
     private:
@@ -394,9 +377,7 @@ namespace Lumina
 
         FWorldEditorTool*                               WorldEditorTool = nullptr;
 
-        // Tracks the game-owns-input state so the ImGui stand-down flags are reasserted while the game owns
-        // input and cleared ONCE on the way out -- never per-frame, which would clobber the editor camera's
-        // own NoMouse capture during RMB-look.
+        // The stand-down flags clear once on exit, since clearing per frame would clobber the editor camera's NoMouse capture.
 
         struct FShortcutLayer final : IEventHandler
         {
@@ -405,8 +386,7 @@ namespace Lumina
         };
         FShortcutLayer                                  ShortcutLayer;
 
-        // Extra-player (players 2..N) Game Preview tools spawned for multiplayer PIE. Each tool owns its
-        // own PIE world (torn down on the tool's Deinitialize), so this list is non-owning bookkeeping.
+        // Extra-player Game Preview tools, non-owning since each tool owns its own PIE world.
         struct FExtraGamePreview
         {
             CWorld*           World = nullptr;
@@ -445,12 +425,12 @@ namespace Lumina
         FEditorTool*                                    PendingBottomDockTool = nullptr;
         float                                           PendingBottomDockHeightFrac = 0.0f;
 
-        // Splits the bottom strip off the dockspace, or returns the live one. HeightFrac seeds the split
-        // ratio so a docked drawer keeps the height it had as an overlay. Returns MainDockspaceID when the
-        // dockspace has no node yet, which is the pre-existing behavior and simply tabs into the root.
+        // Splits the bottom strip off the dockspace, seeding the ratio so a docked drawer keeps its overlay height.
         ImGuiID GetOrCreateBottomDockID(float HeightFrac);
 
         FEditorTool*                                    LastActiveTool = nullptr;
+        // The last focused tool that has a world, which keeps full rate while a worldless tool such as the Profiler has focus.
+        FEditorTool*                                    LastActiveWorldTool = nullptr;
         FString                                         FocusTargetWindowName; // If this is set we need to switch focus to this window
 
         struct FFloatRequest
@@ -468,23 +448,17 @@ namespace Lumina
         // Live tool -> its persisted session key, so closing a tab can find the entry to remove.
         THashMap<FEditorTool*, FString>                 ToolSessionKeys;
 
-        // Armed by OnProjectLoaded, consumed on the next update. NOT armed at construction: the tab list
-        // lives in the project's own config, so restoring before a project is loaded would read an empty
-        // list and burn the one shot.
+        // Armed by OnProjectLoaded rather than construction, since the tab list lives in the project config.
         bool                                            bSessionRestorePending = false;
 
-        // Set for the duration of editor teardown. Deinitialize closes every tool through DestroyTool,
-        // which would otherwise "forget" each tab on the way out and leave an empty list on disk -- the
-        // exact state we are trying to preserve. Only a user closing a tab may shorten the list.
+        // Set during teardown so closing every tool does not forget each tab and leave an empty list on disk.
         bool                                            bTearingDownTools = false;
 
         // Retry hook for tabs whose asset had not been scanned into the registry yet at restore time.
         FDelegateHandle                                 SessionRestoreRetryHandle;
         FDelegateHandle                                 AssetDeletedHandle;
 
-        // Session keys already handed to OpenAssetEditor/OpenFileEditor. The retry pass runs on every
-        // registry change, and re-opening an open tool focuses it -- which yanks focus away from whatever
-        // the user is actually using.
+        // Session keys already opened, since re-opening an open tool during the retry pass yanks focus away.
         THashSet<FString>                               RestoredSessionTabs;
         TQueue<FEditorTool*>                            ToolsPendingAdd;
         TQueue<FEditorTool*>                            ToolsPendingDestroy;
@@ -499,9 +473,7 @@ namespace Lumina
         float                                           SmoothedGPUMemoryMiB = 0.0f; // <= 0 seeds from the first sample
         float                                           GPUMemoryBudgetMiB = 0.0f;  // device-local budget; not smoothed, it does not move
 
-        // Time constants, not per-frame blend factors: a fixed factor makes the settling time depend on
-        // the frame rate, so the readout was sluggish at 30 fps and twitchy at 300 -- worst at exactly the
-        // moment you are reading it. Seconds to reach ~63% of a step change, frame rate independent.
+        // Time constants in seconds to reach 63% of a step, so settling is frame rate independent.
         static constexpr float                          FrameTimeSmoothingSeconds = 0.2f;
         static constexpr float                          MemorySmoothingSeconds = 1.0f;
 
@@ -509,8 +481,7 @@ namespace Lumina
         static constexpr double                         MemorySampleSeconds = 0.25;
         double                                          LastMemorySampleSeconds = -1.0;
 
-        // Drives the title bar's unsaved-changes hint. Counting means walking every package, so it is
-        // recounted on a timer instead of per frame -- a hint does not need to be frame-accurate.
+        // Recounted on a timer since counting walks every package and a hint need not be frame-accurate.
         uint32                                          DirtyPackageCount = 0;
         float                                           DirtyPackageScanCountdown = 0.0f;
         static constexpr float                          DirtyPackageScanInterval = 0.5f;

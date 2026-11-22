@@ -739,7 +739,6 @@ TEST(PrefabVariantStress, RandomEditsRoundTripThroughAChain)
                 break;
             }
 
-            // The placed instance is refreshed the way a save propagates, and must then match the variant node for node.
             // An empty prefab is refused on purpose, since it reads the same as one that failed to load.
             if (WorldRegistry.IsValid(InstanceRoot) && Leaf->Registry.NumEntities() > 0)
             {

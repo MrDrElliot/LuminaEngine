@@ -99,8 +99,7 @@ namespace Lumina
                 DL->AddTriangleFilled(Tip, Back + Side, Back - Side, Color);
             }
 
-            // A head at the target alone is easy to lose behind a node, so the shaft states the
-            // direction too. Skipped on a short edge, where the two would collide.
+            // A head at the target is easy to lose behind a node, so the shaft shows direction too except on short edges.
             void DrawShaftChevron(ImDrawList* DL, const ImVec2& Start, const ImVec2& End, const ImVec2& Dir, ImU32 Color)
             {
                 const ImVec2 Shaft = End - Start;

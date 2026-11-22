@@ -102,8 +102,7 @@ namespace Lumina
         CStruct*        Struct = nullptr;
         FProperty*      Field  = nullptr;
 
-        // A function parameter belongs to neither, so it is collected here and the function takes it from
-        // there. Set in place of Struct, which is what keeps a parameter off the owning type's member list.
+        // Set in place of Struct so a function parameter stays off the owning type's member list.
         TVector<FProperty*>* Collector = nullptr;
 
         template<typename T>

@@ -16,8 +16,7 @@ namespace Lumina
     struct SCameraComponent;
     struct STerrainComponent;
 
-    // Terrain sculpt/paint viewport mode: brush settings window, cursor ring overlay,
-    // per-frame stroke integration. Activation owned by the host mode registry.
+    // Terrain sculpt and paint viewport mode, activated by the host mode registry.
     class EDITOR_API FTerrainEditMode final : public IWorldEditorMode
     {
     public:
@@ -64,16 +63,14 @@ namespace Lumina
         float FlattenHeight   = 0.0f;
         int32 ActiveLayer     = 0;
 
-        // Sculpt direction sign; held key (LAlt) momentarily flips it during a stroke.
-        // Replaces the older Shift-modifier so Shift remains free for other shortcuts.
+        // Holding LAlt flips the sculpt direction during a stroke, which leaves Shift free for other shortcuts.
         bool  bInvertSculpt   = false;
 
         // Noise brush controls.
         float NoiseFrequency  = 1.0f / 512.0f;
         int32 NoiseOctaves    = 4;
 
-        // Ramp brush state. Stroke captures Start on mousedown and updates End each
-        // frame until release; dabs apply the current Start->End line.
+        // Ramp brush state, capturing Start on mouse down and updating End each frame until release.
         bool      bRampStarted   = false;
         FVector3 RampStart      = FVector3(0.0f);
         FVector3 RampEnd        = FVector3(0.0f);
@@ -87,13 +84,11 @@ namespace Lumina
         FVector3 LastHit     = FVector3(0.0f);
         bool      bHitValid   = false;
 
-        // Footprint brushes interpolate dabs from the previous frame's hit to this
-        // frame's so fast strokes stay gap-free. Reset whenever the stroke breaks.
+        // Dabs interpolate from the previous hit so fast strokes stay gap-free, and it resets when the stroke breaks.
         FVector3 LastStrokeHit = FVector3(0.0f);
         bool      bHasStrokeHit = false;
 
-        // True while an undo transaction is open for the current stroke (begun on the
-        // first dab, committed on mouse release). Lets one Ctrl+Z revert a whole stroke.
+        // Open from the first dab to mouse release so one Ctrl+Z reverts a whole stroke.
         bool      bTransactionOpen = false;
 
         // Undo name of the layer Name or UV Scale edit in flight, null when no such edit is open.

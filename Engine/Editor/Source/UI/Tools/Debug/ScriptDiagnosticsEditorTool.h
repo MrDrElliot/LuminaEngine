@@ -7,11 +7,7 @@
 
 namespace Lumina
 {
-    // "C# Diagnostics": live view of the managed (LuminaSharp) runtime, managed heap + GC counters, the
-    // allocation-churn rate, and the collectible-ALC / script-generation health that reveals a hot-reload
-    // unload leak ("Resident generations": 1 is healthy, a climbing count is a leak). Polls the managed host
-    // only while this window is open, so there is zero runtime cost otherwise (and none at all without the
-    // editor). Editor-only.
+    // Live managed runtime view that polls only while open, where a climbing Resident generations count reveals a hot-reload unload leak.
     class FScriptDiagnosticsEditorTool : public FEditorTool
     {
     public:

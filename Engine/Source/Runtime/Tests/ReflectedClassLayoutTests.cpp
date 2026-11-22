@@ -39,8 +39,7 @@ namespace
     }
 }
 
-// Link caches the flattened list and latches. A class published before its properties were attached used to
-// cache an empty one permanently, which read as a type with no properties to serialization and the editor.
+// A class published before its properties were attached used to latch an empty flattened list permanently.
 TEST(ReflectedClassLayout, EveryOwnPropertyReachesTheFlattenedList)
 {
     for (CStruct* Struct : AllReflectedStructs())

@@ -79,8 +79,7 @@ namespace Lumina
         FUNCTION()
         void UnCrouch() { bWantsToCrouch = false; }
 
-        // Add a velocity impulse (jump pad, knockback, dash). Override flags replace velocity on that axis
-        // instead of adding: horizontal = X/Z plane, vertical = Y (up).
+        // Add a velocity impulse, where override flags replace velocity on that axis instead of adding.
         FUNCTION()
         void Launch(const FVector3& Velocity, bool bOverrideHorizontal, bool bOverrideVertical)
         {
@@ -90,8 +89,7 @@ namespace Lumina
             bLaunchRequested          = true;
         }
 
-        // Move the character to a world location. Use this, not a direct transform write -- the physics
-        // capsule owns position and a plain write is overwritten next physics step.
+        // Move the character to a world location, since the physics capsule overwrites a plain transform write.
         FUNCTION()
         void TeleportTo(const FVector3& Location)
         {
@@ -126,8 +124,7 @@ namespace Lumina
         PROPERTY(Hidden, NoSerialize, Category = "Network")
         uint32 Buttons = 0;
 
-        // Transient Launch/Teleport requests, latched into the movement
-        // component before the physics step (same path as bJumpPressed).
+        // Transient Launch and Teleport requests latched into the movement component before the physics step.
         FVector3 PendingLaunchVelocity     = FVector3(0.0f);
         bool      bLaunchRequested          = false;
         bool      bLaunchOverrideHorizontal = false;

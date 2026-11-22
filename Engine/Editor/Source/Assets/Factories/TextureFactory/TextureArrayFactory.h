@@ -23,9 +23,7 @@ namespace Lumina
         FString GetCategory() const override { return "Texture"; }
         FStringView GetDefaultAssetCreationName() override { return "NewTextureArray"; }
 
-        // Deliberately NOT an importer: layers are existing texture ASSETS, not files, so there is
-        // nothing for TryImport to read. They are dropped onto the asset in the texture editor, which
-        // then calls Rebuild below.
+        // Not an importer, since layers are existing texture assets dropped in the texture editor, which then calls Rebuild.
 
         /**
          * Assembles Array->SourceTextures into a single Tex2DArray, in list order, and republishes the

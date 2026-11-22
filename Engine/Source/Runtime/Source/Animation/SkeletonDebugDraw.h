@@ -26,14 +26,11 @@ namespace Lumina
             float     AxisLength    = 0.06f;
             float     BoneThickness = 2.4f;
 
-            // Distance tiers for the world pass, in meters from the camera to the mesh bounds. Past
-            // JointDistance the joint spheres and axes are dropped, past ShapeDistance every bone
-            // collapses to one line. A crowd only ever pays the full 36 lines per bone up close.
+            // Past JointDistance joints are dropped and past ShapeDistance each bone collapses to one line, in meters to the mesh bounds.
             float     JointDistance = 20.0f;
             float     ShapeDistance = 75.0f;
 
-            // Warm, saturated palette: reads clearly over both dark and lit viewports,
-            // and deliberately avoids white (which washes out against bright geometry).
+            // Avoids white deliberately, since it washes out against bright geometry.
             FVector4 BoneColor    = { 1.00f, 0.66f, 0.22f, 1.0f }; // amber
             FVector4 RootColor    = { 0.30f, 0.92f, 0.70f, 1.0f }; // teal-green (roots stand out)
             FVector4 JointColor   = { 1.00f, 0.82f, 0.40f, 1.0f }; // bright gold
@@ -46,8 +43,7 @@ namespace Lumina
             FVector3 WorldPosition;
         };
 
-        // Model-space global transform per bone: from a live pose recovers Global = Skinning * BindGlobal,
-        // else falls back to the bind pose via FK.
+        // A live pose recovers Global as Skinning * BindGlobal, otherwise this falls back to the bind pose via FK.
         RUNTIME_API void ComputeGlobalBoneTransforms(const FSkeletonResource* Skeleton,
                                                      const TVector<FMatrix4>& BoneTransforms,
                                                      TVector<FMatrix4>& OutGlobals);

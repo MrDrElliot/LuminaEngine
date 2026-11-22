@@ -3,8 +3,7 @@ using System.Runtime.CompilerServices;
 
 namespace Lumina;
 
-// Scalar math helpers and engine constants that complement System.MathF. Mirrors the gap-fillers from C++
-// Core/Math (Scalar.h): clamping, interpolation, angle helpers, and the engine tolerance constants.
+// Scalar helpers and tolerance constants that fill the gaps in System.MathF, mirroring Scalar.h.
 public static class Mathf
 {
     public const float Pi = 3.14159265358979323846f;

@@ -5,8 +5,7 @@
 
 namespace Lumina
 {
-    // FObjectProperty counterpart for soft refs; Serialize routes through FSoftObjectPath::operator<<
-    // so the saver records a Soft ImportTable entry.
+    // Serialize routes through FSoftObjectPath::operator<< so the saver records a Soft ImportTable entry.
     class LUMINA_VISIBLE_TYPE FSoftObjectProperty : public FProperty
     {
     public:
@@ -14,17 +13,14 @@ namespace Lumina
             : FProperty(InDesc)
         {
             ObjectClass = InDesc.Type->GetClass();
-            // Storage is FSoftObjectPath (path + GUID). TSoftObjectPtr<T> is
-            // layout-identical (single FSoftObjectPath member, no vtable).
+            // TSoftObjectPtr<T> is layout-identical to FSoftObjectPath.
             SetElementSize(sizeof(FSoftObjectPath));
         }
 
         RUNTIME_API void Serialize(FArchive& Ar, void* Value) override;
         RUNTIME_API void SerializeItem(IStructuredArchive::FSlot Slot, void* Value, void const* Defaults) override;
 
-        // Storage holds an FString; a raw memcpy (base impl) would share the heap buffer between
-        // Dst and Src (double-free), and a byte memcmp would compare heap pointers + CachedGUID
-        // instead of the path. Route through FSoftObjectPath's assignment / path-only equality.
+        // Storage holds an FString, so a raw memcpy would double-free and a byte compare would test heap pointers instead of the path.
         RUNTIME_API bool Identical(const void* ValueA, const void* ValueB) const override;
         RUNTIME_API void CopyCompleteValue(void* Dst, const void* Src) const override;
 

@@ -1,3 +1,4 @@
+#include "../common/TracyAssert.hpp"
 #include "../server/tracy_robin_hood.h"
 #include "TracyProfiler.hpp"
 #include "TracyThread.hpp"
@@ -15,6 +16,7 @@
 #include <vector>
 
 #define ROCPROFILER_CALL( result, msg )                                                                                \
+    do                                                                                                                 \
     {                                                                                                                  \
         rocprofiler_status_t CHECKSTATUS = result;                                                                     \
         if( CHECKSTATUS != ROCPROFILER_STATUS_SUCCESS )                                                                \
@@ -27,7 +29,7 @@
                    << ")";                                                                                             \
             throw std::runtime_error( errmsg.str() );                                                                  \
         }                                                                                                              \
-    }
+    } while( false )
 
 namespace
 {
@@ -79,14 +81,9 @@ uint8_t gpu_context_allocate( ToolData* data )
     float timestamp_period = 1.0f;
     data->previous_cpu_time = cpu_timestamp;
 
-    // Allocate the process-unique GPU context ID. There's a max of 255 available;
-    // if we are recreating devices a lot we may exceed that. Don't do that, or
-    // wrap around and get weird (but probably still usable) numbers.
-    uint8_t context_id = tracy::GetGpuCtxCounter().fetch_add( 1, std::memory_order_relaxed );
-    if( context_id >= 255 )
-    {
-        context_id %= 255;
-    }
+    // Allocate the process-unique GPU context ID. There's a max of 256 available
+    // (ids are 8-bit); if we are recreating devices a lot we may exceed that.
+    uint8_t context_id = uint8_t( tracy::NextGpuContextId() );
 
     uint8_t context_flags = 0;
 #ifdef TRACY_ROCPROF_CALIBRATION
@@ -98,13 +95,16 @@ uint8_t gpu_context_allocate( ToolData* data )
     {
         auto* item = tracy::Profiler::QueueSerial();
         tracy::MemWrite( &item->hdr.type, tracy::QueueType::GpuNewContext );
-        tracy::MemWrite( &item->gpuNewContext.cpuTime, cpu_timestamp );
-        tracy::MemWrite( &item->gpuNewContext.gpuTime, gpu_timestamp );
+        tracy::MemWrite( &item->gpuNewContext.cpuTime, int64_t( cpu_timestamp ) );
+        tracy::MemWrite( &item->gpuNewContext.gpuTime, int64_t( gpu_timestamp ) );
         memset( &item->gpuNewContext.thread, 0, sizeof( item->gpuNewContext.thread ) );
         tracy::MemWrite( &item->gpuNewContext.period, timestamp_period );
         tracy::MemWrite( &item->gpuNewContext.context, context_id );
-        tracy::MemWrite( &item->gpuNewContext.flags, context_flags );
+        tracy::MemWrite( &item->gpuNewContext.flags, GpuContextFlags( context_flags ) );
         tracy::MemWrite( &item->gpuNewContext.type, tracy::GpuContextType::Rocprof );
+#ifdef TRACY_ON_DEMAND
+        GetProfiler().DeferItem( *item );
+#endif
         tracy::Profiler::QueueSerialFinish();
     }
 
@@ -119,8 +119,11 @@ uint8_t gpu_context_allocate( ToolData* data )
         auto* item = tracy::Profiler::QueueSerial();
         tracy::MemWrite( &item->hdr.type, tracy::QueueType::GpuContextName );
         tracy::MemWrite( &item->gpuContextNameFat.context, context_id );
-        tracy::MemWrite( &item->gpuContextNameFat.ptr, (uint64_t)cloned_name );
-        tracy::MemWrite( &item->gpuContextNameFat.size, name_length );
+        tracy::MemWrite( &item->gpuContextNameFat.ptr, uint64_t( cloned_name ) );
+        tracy::MemWrite( &item->gpuContextNameFat.size, uint16_t( name_length ) );
+#ifdef TRACY_ON_DEMAND
+        GetProfiler().DeferItem( *item );
+#endif
         tracy::Profiler::QueueSerialFinish();
     }
 
@@ -181,8 +184,8 @@ void record_interval( ToolData* data, rocprofiler_timestamp_t start_timestamp, r
         {
             auto* item = tracy::Profiler::QueueSerial();
             tracy::MemWrite( &item->hdr.type, tracy::QueueType::GpuZoneBeginAllocSrcLocSerial );
-            tracy::MemWrite( &item->gpuZoneBegin.cpuTime, cpu_start_time );
-            tracy::MemWrite( &item->gpuZoneBegin.srcloc, (uint64_t)src_loc );
+            tracy::MemWrite( &item->gpuZoneBegin.cpuTime, int64_t( cpu_start_time ) );
+            tracy::MemWrite( &item->gpuZoneBegin.srcloc, src_loc );
             tracy::MemWrite( &item->gpuZoneBegin.thread, tracy::GetThreadHandle() );
             tracy::MemWrite( &item->gpuZoneBegin.queryId, query_id );
             tracy::MemWrite( &item->gpuZoneBegin.context, context_id );
@@ -195,7 +198,7 @@ void record_interval( ToolData* data, rocprofiler_timestamp_t start_timestamp, r
         {
             auto* item = tracy::Profiler::QueueSerial();
             tracy::MemWrite( &item->hdr.type, tracy::QueueType::GpuZoneBeginSerial );
-            tracy::MemWrite( &item->gpuZoneBegin.cpuTime, cpu_start_time );
+            tracy::MemWrite( &item->gpuZoneBegin.cpuTime, int64_t( cpu_start_time ) );
             tracy::MemWrite( &item->gpuZoneBegin.srcloc, (uint64_t)&src_loc );
             tracy::MemWrite( &item->gpuZoneBegin.thread, tracy::GetThreadHandle() );
             tracy::MemWrite( &item->gpuZoneBegin.queryId, query_id );
@@ -207,7 +210,7 @@ void record_interval( ToolData* data, rocprofiler_timestamp_t start_timestamp, r
     {
         auto* item = tracy::Profiler::QueueSerial();
         tracy::MemWrite( &item->hdr.type, tracy::QueueType::GpuTime );
-        tracy::MemWrite( &item->gpuTime.gpuTime, start_timestamp );
+        tracy::MemWrite( &item->gpuTime.gpuTime, int64_t( start_timestamp ) );
         tracy::MemWrite( &item->gpuTime.queryId, query_id );
         tracy::MemWrite( &item->gpuTime.context, context_id );
         tracy::Profiler::QueueSerialFinish();
@@ -216,7 +219,7 @@ void record_interval( ToolData* data, rocprofiler_timestamp_t start_timestamp, r
     {
         auto* item = tracy::Profiler::QueueSerial();
         tracy::MemWrite( &item->hdr.type, tracy::QueueType::GpuZoneEndSerial );
-        tracy::MemWrite( &item->gpuZoneEnd.cpuTime, cpu_end_time );
+        tracy::MemWrite( &item->gpuZoneEnd.cpuTime, int64_t( cpu_end_time ) );
         tracy::MemWrite( &item->gpuZoneEnd.thread, tracy::GetThreadHandle() );
         tracy::MemWrite( &item->gpuZoneEnd.queryId, query_id );
         tracy::MemWrite( &item->gpuZoneEnd.context, context_id );
@@ -226,7 +229,7 @@ void record_interval( ToolData* data, rocprofiler_timestamp_t start_timestamp, r
     {
         auto* item = tracy::Profiler::QueueSerial();
         tracy::MemWrite( &item->hdr.type, tracy::QueueType::GpuTime );
-        tracy::MemWrite( &item->gpuTime.gpuTime, end_timestamp );
+        tracy::MemWrite( &item->gpuTime.gpuTime, int64_t( end_timestamp ) );
         tracy::MemWrite( &item->gpuTime.queryId, query_id );
         tracy::MemWrite( &item->gpuTime.context, context_id );
         tracy::Profiler::QueueSerialFinish();
@@ -237,7 +240,7 @@ void record_callback( rocprofiler_dispatch_counting_service_data_t dispatch_data
                       rocprofiler_record_counter_t* record_data, size_t record_count,
                       rocprofiler_user_data_t /*user_data*/, void* callback_data )
 {
-    assert( callback_data != nullptr );
+    TRACY_ASSERT( callback_data != nullptr );
     ToolData* data = static_cast<ToolData*>( callback_data );
     if( !data->init ) return;
 
@@ -256,7 +259,7 @@ void record_callback( rocprofiler_dispatch_counting_service_data_t dispatch_data
         auto _lk = std::unique_lock{ data->mut };
         // An assumption is made here that the counter values are supplied after the dispatch
         // complete callback.
-        assert( data->dispatch_data.count( dispatch_data.dispatch_info.dispatch_id ) );
+        TRACY_ASSERT( data->dispatch_data.count( dispatch_data.dispatch_info.dispatch_id ) );
         DispatchData& ddata = data->dispatch_data[dispatch_data.dispatch_info.dispatch_id];
         query_id = ddata.query_id;
         thread_id = ddata.thread_id;
@@ -266,7 +269,7 @@ void record_callback( rocprofiler_dispatch_counting_service_data_t dispatch_data
     {
         auto* item = tracy::Profiler::QueueSerial();
         tracy::MemWrite( &item->hdr.type, tracy::QueueType::GpuZoneAnnotation );
-        tracy::MemWrite( &item->zoneAnnotation.noteId, p.first );
+        tracy::MemWrite( &item->zoneAnnotation.noteId, int64_t( p.first ) );
         tracy::MemWrite( &item->zoneAnnotation.queryId, query_id );
         tracy::MemWrite( &item->zoneAnnotation.thread, thread_id );
         tracy::MemWrite( &item->zoneAnnotation.value, p.second );
@@ -284,7 +287,7 @@ void dispatch_callback( rocprofiler_dispatch_counting_service_data_t dispatch_da
                         rocprofiler_profile_config_id_t* config, rocprofiler_user_data_t* /*user_data*/,
                         void* callback_data )
 {
-    assert( callback_data != nullptr );
+    TRACY_ASSERT( callback_data != nullptr );
     ToolData* data = static_cast<ToolData*>( callback_data );
     if( !data->init ) return;
 
@@ -356,9 +359,9 @@ void dispatch_callback( rocprofiler_dispatch_counting_service_data_t dispatch_da
                 auto* item = tracy::Profiler::QueueSerial();
                 tracy::MemWrite( &item->hdr.type, tracy::QueueType::GpuAnnotationName );
                 tracy::MemWrite( &item->gpuAnnotationNameFat.context, data->context_id );
-                tracy::MemWrite( &item->gpuAnnotationNameFat.noteId, counter.handle );
-                tracy::MemWrite( &item->gpuAnnotationNameFat.ptr, (uint64_t)cloned_name );
-                tracy::MemWrite( &item->gpuAnnotationNameFat.size, name_length );
+                tracy::MemWrite( &item->gpuAnnotationNameFat.noteId, int64_t( counter.handle ) );
+                tracy::MemWrite( &item->gpuAnnotationNameFat.ptr, uint64_t( cloned_name ) );
+                tracy::MemWrite( &item->gpuAnnotationNameFat.size, uint16_t( name_length ) );
                 tracy::Profiler::QueueSerialFinish();
             }
         }
@@ -378,10 +381,12 @@ void dispatch_callback( rocprofiler_dispatch_counting_service_data_t dispatch_da
 void tool_callback_tracing_callback( rocprofiler_callback_tracing_record_t record, rocprofiler_user_data_t* user_data,
                                      void* callback_data )
 {
-    assert( callback_data != nullptr );
+    TRACY_ASSERT( callback_data != nullptr );
     ToolData* data = static_cast<ToolData*>( callback_data );
-    if( !data->init ) return;
 
+    // Kernel symbol registrations happen at HIP init time, before any Tracy
+    // client connects (and before data->init is set). Record them regardless
+    // of init state so that kernel names are available when profiling starts.
     if( record.kind == ROCPROFILER_CALLBACK_TRACING_CODE_OBJECT &&
         record.operation == ROCPROFILER_CODE_OBJECT_DEVICE_KERNEL_SYMBOL_REGISTER )
     {
@@ -398,7 +403,13 @@ void tool_callback_tracing_callback( rocprofiler_callback_tracing_record_t recor
             data->client_kernels.erase( sym_data->kernel_id );
         }
     }
-    else if( record.kind == ROCPROFILER_CALLBACK_TRACING_KERNEL_DISPATCH )
+
+    // Gate dispatch and memory-copy recording on data->init, which is set
+    // once the GPU context is allocated (under TRACY_ON_DEMAND this waits
+    // for a client connection).
+    if( !data->init ) return;
+
+    if( record.kind == ROCPROFILER_CALLBACK_TRACING_KERNEL_DISPATCH )
     {
         auto* rdata = static_cast<rocprofiler_callback_tracing_kernel_dispatch_data_t*>( record.payload );
         if( record.operation == ROCPROFILER_KERNEL_DISPATCH_ENQUEUE )

@@ -41,6 +41,7 @@ public static class BuildMode
         Stopwatch Timer = Stopwatch.StartNew();
 
         bPhaseTimings = Arguments.HasFlag("PhaseTimings");
+        SetupMode.WarnIfStale(Directories);
 
         Stopwatch RulesTimer = Stopwatch.StartNew();
         RulesAssembly Assembly = RulesAssembly.Create(Directories, Arguments.HasFlag("RecompileRules"));

@@ -14,8 +14,7 @@ namespace Lumina
         FStringView GetNodeDisplayName() const override;
 
     private:
-        // Backing store for the state-dependent display name above; mutable so the const getter can
-        // refresh it. FFixedString = inline storage, so this costs no allocation per frame.
+        // Mutable so the const getter can refresh it, with inline storage costing no allocation per frame.
         mutable FFixedString CachedDisplayName;
     public:
         FStringView GetNodeTooltip() const override { return "Selects a subset of the input vector's channels (R/G/B/A)."; }

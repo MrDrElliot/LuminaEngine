@@ -1016,8 +1016,7 @@ namespace Lumina::Containers
             ArrayMax = static_cast<SizeType>(NewMax);
         }
 
-        // Constructs into the new block before relocating, so an argument aliasing our own buffer stays live.
-        // Never inlined, so the allocation path stays out of every Emplace call site.
+        // Constructs into the new block before relocating so an argument aliasing our own buffer stays live, and is never inlined.
         template <typename... TArgs>
         FORCENOINLINE T& EmplaceGrowing(TArgs&&... Args)
         {

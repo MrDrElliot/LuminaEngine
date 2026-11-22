@@ -12,7 +12,6 @@
 
 namespace Lumina::SIMD
 {
-    // Natural alignment for the widest register type (256-bit). Use for buffers
-    // fed to LoadAligned/StoreAligned.
+    // Natural alignment for the widest (256-bit) register type, for LoadAligned and StoreAligned buffers.
     inline constexpr int kAlignment = 32;
 }

@@ -13,12 +13,10 @@ namespace Lumina::Screenshot
 {
     enum class ECaptureSource : uint8
     {
-        // Final post-tonemap render target produced by IRenderScene::GetRenderTarget().
-        // Stored as 8-bit RGBA -- exported as PNG.
+        // Final post-tonemap render target, stored as 8-bit RGBA and exported as PNG.
         FinalLDR,
 
-        // Pre-tonemap linear HDR scene color (ENamedImage::HDR on FDefaultSceneRenderer).
-        // RGBA16_FLOAT -- exported as Radiance .hdr.
+        // Pre-tonemap linear HDR scene color as RGBA16_FLOAT, exported as Radiance .hdr.
         SceneHDR,
     };
 

@@ -170,9 +170,9 @@ namespace Lumina
         {
             const ECS::FEntity Entity = Arrived[Carried.Entity];
             ECS::Utils::RemapEntityReferences(Carried.Script.Get(), Arrived, /*bClearUnmapped*/ true);
-            Carried.Script->SetOwner(Entity, To);
+            FEntityScriptAccess::SetOwner(*Carried.Script, Entity, To);
             Registry.GetOrEmplace<SEntityScriptComponent>(Entity).Scripts.Add(Carried.Script);
-            Carried.Script->BindComponentRefs();
+            FEntityScriptAccess::BindComponentRefs(*Carried.Script);
         }
         EntityScripts::NoteStructureChange();
 
@@ -194,7 +194,7 @@ namespace Lumina
             {
                 UIScripts::Hide(Carried.Script.Get());
             }
-            if (!Carried.Script->IsFaulted())
+            if (!FEntityScriptAccess::IsFaulted(*Carried.Script))
             {
                 Carried.Script->OnTraveled();
             }

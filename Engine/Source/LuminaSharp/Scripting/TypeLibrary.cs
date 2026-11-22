@@ -941,15 +941,6 @@ internal sealed class TypeDescription
         return (IReadOnlyList<ScriptProperty>?)Result ?? Array.Empty<ScriptProperty>();
     }
 
-    // Gives a script declaring input bindings the component that feeds them, idempotent so EnableInput() still works beside it.
-    public void EnsureInputComponent(Lumina.CEntityScript Script)
-    {
-        if (InputBindings.Count > 0)
-        {
-            Script.World.GetOrEmplaceComponent<Lumina.SInputComponent>(Script.Entity);
-        }
-    }
-
     // Hands one action's state to each of the instance's bindings that listens to it.
     public void DispatchAction(Lumina.CEntityScript Script, Lumina.FName Action, in Lumina.SInputActionState State)
     {

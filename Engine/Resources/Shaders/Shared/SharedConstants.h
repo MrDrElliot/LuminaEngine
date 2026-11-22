@@ -239,3 +239,12 @@
 #define GPU_INSTANCE_SHADOW_CACHED_BIT  0x40000u
 // Retained slots per instance cull workgroup, which is also the span one FInstanceBlockBounds covers.
 #define INSTANCE_CULL_BLOCK_SIZE        64u
+
+// An impostor point's type for a plant that draws nothing.
+#define IMPOSTOR_TYPE_NONE              0xFFFFFFFFu
+#define IMPOSTOR_TYPE_FLAG_ACTIVE       0x1u
+#define IMPOSTOR_TYPE_FLAG_CAST_SHADOW  0x2u
+// Set on a far proxy list entry that names an impostor point rather than a retained slot.
+#define PROXY_ENTRY_POINT_BIT           0x80000000u
+// Impostor points per cull thread group, and the span one point block's bounds cover.
+#define IMPOSTOR_POINT_GROUP_SIZE       64u

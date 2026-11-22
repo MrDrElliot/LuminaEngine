@@ -3,41 +3,41 @@
 #include "Includes/Impostor.slang"
 #include "Includes/ProxyVisBuffer.slang"
 
-// One camera-facing quad per retained slot the cull listed as too small for its meshlets, stamped into the VisBuffer with the proxy bit.
+// One camera-facing quad per retained slot or impostor point the cull listed as too small for its meshlets, stamped into the VisBuffer with the proxy bit.
 
 [shader("vertex")]
 FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex : SV_VulkanInstanceID)
 {
     FProxyVertexOutput Out;
-    Out.VisID       = VISBUFFER_PROXY_BIT | (InstanceIndex + 1u);
-    Out.SlotAndTest = 0u;
-    Out.WorldPos    = float3(0.0, 0.0, 0.0);
-    Out.Position    = float4(0.0, 0.0, 0.0, 0.0);
+    Out.VisID      = VISBUFFER_PROXY_BIT | (InstanceIndex + 1u);
+    Out.Entry      = 0u;
+    Out.bAlphaTest = 0u;
+    Out.WorldPos   = float3(0.0, 0.0, 0.0);
+    Out.Position   = float4(0.0, 0.0, 0.0, 0.0);
 
     if (!ProxyList().Contains(InstanceIndex))
     {
         return Out;
     }
-    const uint Slot = ProxyList().Get(InstanceIndex);
-    if (!RetainedTransforms().Contains(Slot) || !RetainedProxies().Contains(Slot) || !RetainedStatic().Contains(Slot))
+    const uint      Entry = ProxyList().Get(InstanceIndex);
+    const FVisProxy P     = LoadProxyEntry(Entry);
+    if (!P.bValid)
     {
         return Out;
     }
 
-    const FTransform3x4  Transform = RetainedTransforms().Get(Slot);
-    const FInstanceProxy Proxy     = RetainedProxies().GetAligned(Slot);
-    FMeshletHeader*      Header    = MeshletHeaderAt(RetainedStatic().GetAligned(Slot).MeshletHeaderSlot);
-    const bool           bImpostor = Header.bHasImpostor;
+    FMeshletHeader* Header    = MeshletHeaderAt(P.Static.MeshletHeaderSlot);
+    const bool      bImpostor = Header.bHasImpostor;
 
     float3 GroundWiden;
-    float3 Center   = ProxyWidenedCenter(Transform.ToMatrix(), Proxy, GroundWiden);
-    float  HalfSize = Proxy.SplatHalfSize * TransformMaxScale(Transform);
-    const float4x4 Model = ProxyWidenedModel(Transform.ToMatrix(), GroundWiden);
+    float3 Center   = ProxyWidenedCenter(P.Model, P.Proxy, GroundWiden);
+    float  HalfSize = P.Proxy.SplatHalfSize * MatrixMaxScale(P.Model);
+    const float4x4 Model = ProxyWidenedModel(P.Model, GroundWiden);
     if (bImpostor)
     {
         // The quad frames the sphere the bake framed.
         Center   = mul(Model, float4(Header.ImpostorCenter, 1.0)).xyz;
-        HalfSize = Header.ImpostorRadius * TransformMaxScale(Transform) * kImpostorQuadGrowth;
+        HalfSize = Header.ImpostorRadius * MatrixMaxScale(P.Model) * kImpostorQuadGrowth;
     }
 
     // A strip's two triangles, so the quad's shared corners are emitted once.
@@ -63,20 +63,21 @@ FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instanc
         float Coverage = 4.0 * abs(RightPixels.x * UpPixels.y - RightPixels.y * UpPixels.x);
         if (bImpostor)
         {
-            // An impostor's last mip holds one texel per view, its coverage of the whole square.
+            // An impostor's coarsest mip holds a few texels per view, which the view's center averages.
             const FImpostorRay   Ray   = MakeImpostorRay(Header, Model, Center);
             const FImpostorViews Views = SelectImpostorViews(Ray.ToEye, Header.ImpostorFrames);
             Coverage *= SampleImpostor(Header, Views, Ray.Origin, Ray.Dir, log2(float(Header.ImpostorFrameSize))).Coverage;
         }
-        if (float(PCGHash(Slot) >> 8u) / 16777216.0 < Coverage)
+        if (float(PCGHash(Entry) >> 8u) / 16777216.0 < Coverage)
         {
             Out.Position = ClipCenter + float4(C * ClipCenter.w / ScreenSize, 0.0, 0.0);
         }
         return Out;
     }
 
-    Out.SlotAndTest = bImpostor ? (Slot | kProxyAlphaTestBit) : Slot;
-    Out.WorldPos    = Center + WorldRight * C.x + WorldUp * C.y;
-    Out.Position    = ClipCenter + ClipRight * C.x + ClipUp * C.y;
+    Out.Entry      = Entry;
+    Out.bAlphaTest = bImpostor ? 1u : 0u;
+    Out.WorldPos   = Center + WorldRight * C.x + WorldUp * C.y;
+    Out.Position   = ClipCenter + ClipRight * C.x + ClipUp * C.y;
     return Out;
 }

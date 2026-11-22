@@ -273,9 +273,7 @@ namespace Lumina
             return *this;
         }
 
-        // Try to get a strong reference; returns null if the object was deleted. Atomic: the validate +
-        // acquire happen together inside the object array, so this never races a concurrent destroy into
-        // a use-after-free (unlike Get()-then-wrap). This is the safe way to pin a weakly-held object.
+        // Atomic validate and acquire inside the object array, so unlike Get() then wrap it never races a destroy.
         TStrongObjectPtr<T> Lock() const
         {
             CObjectBase* Obj = Object::Internal::TryAddStrongRef(Handle);

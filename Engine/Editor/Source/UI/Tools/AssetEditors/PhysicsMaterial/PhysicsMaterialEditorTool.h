@@ -5,8 +5,7 @@
 
 namespace Lumina
 {
-    // Editor for CPhysicsMaterial: all fields are reflected, so this just hosts
-    // FAssetEditorTool's PropertyTable in a docked window. No 3D preview.
+    // Editor for CPhysicsMaterial that just hosts the reflected PropertyTable, with no 3D preview.
     class FPhysicsMaterialEditorTool : public FAssetEditorTool
     {
     public:

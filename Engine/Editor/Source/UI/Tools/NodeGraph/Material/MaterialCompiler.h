@@ -28,8 +28,7 @@ namespace Lumina
 
 namespace Lumina
 {
-    // Which codegen chunk the compiler is currently emitting into (pixel vs vertex graph). Distinct from
-    // the runtime EMaterialShaderStage (Material.h), which enumerates every COMPILED stage on the asset.
+    // Which codegen chunk is being emitted into, distinct from the runtime EMaterialShaderStage in Material.h.
     enum class EMaterialCompileStage : uint8
     {
         Pixel,
@@ -65,12 +64,7 @@ namespace Lumina
             FString NodeName;
         };
 
-        // Whether a value's screen-space derivative is known analytically.
-        //
-        // The deferred pass reconstructs its surface from the VisBuffer, so a 2x2 quad there can straddle
-        // unrelated triangles and implicit ddx/ddy are garbage. It has to sample with explicit gradients,
-        // which means every UV chain needs its derivative carried alongside it. Forward lanes have correct
-        // implicit derivatives and ignore all of this (see SampleTexture2DAuto).
+        // Whether a value's derivative is known analytically, since deferred quads can straddle triangles and implicit ddx/ddy are garbage there.
         enum class EDerivState : uint8
         {
             Zero,       // constant / parameter / uniform -- derivative is identically zero, emit nothing
@@ -84,8 +78,7 @@ namespace Lumina
             EMaterialInputType  Type;
             EComponentMask      Mask;
             int32               ComponentCount;
-            // Filled from DerivByVar by GetTypedInputValue. A literal default has no producing node and
-            // therefore no derivative, which is Zero rather than Unknown.
+            // A literal default has no producing node, so its derivative is Zero rather than Unknown.
             EDerivState         Deriv = EDerivState::Zero;
             FString             DDX;
             FString             DDY;
@@ -99,8 +92,7 @@ namespace Lumina
             FString     DDY;
         };
 
-        // Aggregated cost / complexity metrics derived from the generated chunks. Computed on demand
-        // by GetStats(); not maintained incrementally so it is safe to query multiple times after compile.
+        // Cost metrics computed on demand by GetStats from the generated chunks.
         struct FShaderStats
         {
             uint32 PixelInstructions     = 0;   // newline-terminated lines in the pixel chunks
@@ -116,8 +108,7 @@ namespace Lumina
             uint32 PixelCharacters       = 0;
             uint32 VertexCharacters      = 0;
             bool   bUsesVertexStage      = false;
-            // Rough relative cost: weighted sum biased toward expensive ops. Not a real GPU cycle count
-            // but useful for comparing materials side-by-side.
+            // Weighted sum for comparing materials, not a real GPU cycle count.
             uint32 EstimatedCost         = 0;
         };
 
@@ -127,37 +118,28 @@ namespace Lumina
         // Backwards-compatible single-stage path (pixel shader only).
         FString BuildTree(size_t& StartReplacement, size_t& EndReplacement, EMaterialType MaterialType = EMaterialType::PBR) const;
 
-        // Per-stage build: substitutes $MATERIAL_INPUTS / $MATERIAL_VERTEX_INPUTS with the pixel / vertex
-        // chunks (plus a vertex-stage alias preamble so node code naming WorldPosition / UV0 / etc. is valid).
+        // Substitutes the pixel and vertex tokens, with a vertex alias preamble so names like WorldPosition and UV0 resolve.
         void BuildShaders(FString& OutPixelShader, FString& OutVertexShader, EMaterialType MaterialType = EMaterialType::PBR) const;
 
-        // Substitute $MATERIAL_VERTEX_INPUTS in a depth/shadow vertex template with the base-pass vertex
-        // chunks (per-material depth/shadow shaders for WPO materials). MaterialType picks the alias preamble.
+        // Fills a depth or shadow vertex template with the base-pass vertex chunks for WPO materials.
         FString BuildVertexShaderFromTemplate(const FString& TemplateAbsolutePath, EMaterialType MaterialType = EMaterialType::PBR) const;
 
-        // Substitute BOTH material tokens in a deferred template (DeferredMaterial.slang): the vertex graph
-        // ($MATERIAL_VERTEX_INPUTS, for WPO reconstruction) and the pixel graph ($MATERIAL_INPUTS, shading).
+        // Fills both the vertex graph (WPO reconstruction) and the pixel graph of a deferred template.
         FString BuildDeferredShaderFromTemplate(const FString& TemplateAbsolutePath, EMaterialType MaterialType = EMaterialType::PBR) const;
 
-        // Substitute only $MATERIAL_INPUTS in a pixel template with the pixel-graph chunks (e.g. the masked
-        // VisBuffer pixel shader, which runs the graph just to evaluate Opacity for the geometry-stage clip).
+        // Fills only the pixel graph, as the masked VisBuffer shader does to evaluate Opacity.
         FString BuildPixelShaderFromTemplate(const FString& TemplateAbsolutePath) const;
 
         // The pixel graph exactly as the pixel templates substitute it.
         FString GetPixelGraphSource() const { return PixelChunks + PixelOutputChunks; }
 
-        // True when the graph fed any chunks into the vertex stage. Equivalent
-        // to "WorldPositionOffset pin had a connection."
+        // True when the graph fed any chunks into the vertex stage.
         bool UsesVertexStage() const { return !VertexChunks.IsEmpty() || !VertexOutputChunks.IsEmpty(); }
 
-        // The body substituted for $MATERIAL_VERTEX_INPUTS. Always assigns WorldPositionOffset, and emits
-        // NOTHING else when the graph has no WPO, so every such material generates an identical stage.
+        // Always assigns WorldPositionOffset and emits nothing else without WPO, so such materials share one stage.
         FString BuildVertexStageBody(EMaterialType MaterialType) const;
 
-        // Stage routing: each node-emit op writes the current stage's chunk. CompileGraph flips this around
-        // the two-root walk (WPO->vertex, pixel pins->pixel); shared nodes are visited once per stage.
-        // Clears the parameter-fetch dedupe map: the two stages emit into separate scopes, so a variable
-        // hoisted in one is not reachable from the other.
+        // Clears the fetch dedupe map because the two stages emit into separate scopes.
         void SetStage(EMaterialCompileStage InStage) { CurrentStage = InStage; EmittedParamFetches.Reset(); }
         EMaterialCompileStage GetStage() const { return CurrentStage; }
         FString& GetActiveChunk() { return CurrentStage == EMaterialCompileStage::Vertex ? VertexChunks : PixelChunks; }
@@ -171,12 +153,10 @@ namespace Lumina
         void SetWorldPositionOffsetDriven(bool bDriven) { bWorldPositionOffsetDriven = bDriven; }
         bool IsWorldPositionOffsetDriven() const { return bWorldPositionOffsetDriven; }
 
-        // Stage gate for pixel-only nodes (ScreenPosition, FragmentDepth, ...). Returns true when emission
-        // may proceed; on a vertex-stage call pushes an error at Node and returns false. Call first in GenerateDefinition.
+        // Errors at Node and returns false on the vertex stage. Call first in GenerateDefinition.
         bool RequirePixelStage(CMaterialGraphNode* Node, const FString& NodeKindName);
 
-        // UI materials are a fullscreen brush pass with no geometry/camera/depth/vertex attributes. Returns
-        // true (and errors on Node) when the input node is unavailable in the UI domain; caller emits a default.
+        // UI materials have no geometry, camera or depth. Returns true and errors on Node when unavailable, so the caller emits a default.
         bool RejectInUI(CMaterialGraphNode* Node, const char* NodeName);
 
         // True (and errors on Node) outside the Particle domain, whose templates alone declare these locals.
@@ -239,20 +219,17 @@ namespace Lumina
         void TextureSampleParameter(const FString& ID, const FName& ParamID, CTexture* Texture, CMaterialInput* Input,
                                     CEdGraphNode* Node = nullptr, FStringView SamplerName = "SAMPLER_LINEAR_WRAP");
 
-        // Raises a non-fatal warning when UVValue carries no analytic derivative, so the deferred pass has
-        // to sample it with UV0's gradient. No-op when the derivative is valid.
+        // Warns when UVValue has no analytic derivative, so the deferred pass samples it with UV0's gradient.
         void WarnUVGradientFallback(const FInputValue& UVValue, CEdGraphNode* Node);
         
         int32 BindTexture(CTexture* Texture, CEdGraphNode* Node = nullptr);
         int32 BindTextureParameter(const FName& ParamID, CTexture* Texture, CEdGraphNode* Node = nullptr);
 
-        // Texture2DArray sample (Includes/GlobalRHI.slang). NumLayers is the asset's layer count, used
-        // to clamp the Slice input at compile time; 0 means "unknown", which skips the clamp.
+        // NumLayers clamps the Slice input at compile time, and 0 skips the clamp.
         void TextureSampleArray(CMaterialGraphNode* Node, int32 TextureIndex, uint32 NumLayers,
                                 CMaterialInput* UV, CMaterialInput* Slice);
 
-        // Curve operations. The curve is baked into shader constants at compile time, so no bindings
-        // are involved and an edited curve only takes effect on the next material recompile.
+        // The curve is baked into shader constants, so an edit only takes effect on the next recompile.
         void CurveSample(const FString& ID, const SKeyedCurve& Curve, CMaterialInput* TimeInput);
 
         // Built-in inputs
@@ -269,8 +246,7 @@ namespace Lumina
         void PolarCoordinates(CMaterialInput* UV, CMaterialInput* Center);
         void TwirlUV(CMaterialInput* UV, CMaterialInput* Center, CMaterialInput* Strength);
 
-        // Parallax Occlusion Mapping (Includes/ParallaxOcclusion.slang). Emits the height-field march and
-        // binds its two outputs by ResolvedVar: the displaced UV, and the sun self-shadow term.
+        // Emits the height-field march and binds the displaced UV and the sun self-shadow term by ResolvedVar.
         struct FParallaxInputs
         {
             CMaterialInput* UV           = nullptr;
@@ -313,9 +289,7 @@ namespace Lumina
         void MeshDistanceFieldThickness(CMaterialGraphNode* Node, CMaterialInput* Normal, CMaterialInput* MaxDistance,
                                         int32 StepCount, CMaterialOutput* ThicknessOut, CMaterialOutput* NormalizedOut);
 
-        // Procedural wind vertex displacement (Includes/Wind.slang). Vertex-stage only: the offset it
-        // produces is meaningful solely on the path from WorldPositionOffset. Octaves is baked into the
-        // emitted call so the fBm loop unrolls; bLODGate picks the distance fade over a constant 1.
+        // Vertex-stage only. Octaves is baked into the call so the fBm loop unrolls.
         struct FWindInputs
         {
             CMaterialInput* Position   = nullptr;
@@ -480,8 +454,7 @@ namespace Lumina
         void SetMaterialType(EMaterialType InType) { CurrentMaterialType = InType; }
         EMaterialType GetMaterialType() const { return CurrentMaterialType; }
 
-        // Masked materials run the whole pixel graph a second time in the VisBuffer masked pre-pass (just
-        // to evaluate Opacity), so expensive nodes are paid for twice. Nodes that care warn on it.
+        // Masked materials run the pixel graph a second time in the VisBuffer pre-pass, so expensive nodes cost twice.
         void SetMasked(bool bInMasked) { bMasked = bInMasked; }
         bool IsMasked() const { return bMasked; }
 
@@ -493,8 +466,7 @@ namespace Lumina
         /** Export the dynamic parameter manifest discovered during compile and seed default values into the uniform block. */
         void GetParameters(TVector<SMaterialParameter>& OutParams, FMaterialUniforms& OutUniforms) const;
 
-        // Computes shader complexity / cost metrics from the current chunk state. Call after
-        // CompileGraph so the chunks are populated. Cheap (single linear scan per chunk).
+        // Call after CompileGraph so the chunks are populated.
         FShaderStats GetStats() const;
 
         // Compiles only what feeds Pin, shown as unlit emissive, in place of the material itself.
@@ -514,11 +486,7 @@ namespace Lumina
         // Moves diagnostics raised since the given counts from nodes outside CallNode's graph onto CallNode.
         void RetargetDiagnosticsToCallNode(int32 FirstError, int32 FirstWarning, CEdGraphNode* CallNode, const FString& FunctionName);
 
-        // Warnings: the graph compiled, but something about it will cost quality or performance at runtime.
-        //
-        // A SEPARATE vector rather than a severity flag on FError, because HasErrors() is what decides
-        // whether the compile succeeded -- every caller of CompileMaterialGraph branches on it. A warning
-        // pushed into Errors would fail the material outright, which is the opposite of what a warning is.
+        // Kept apart from Errors because HasErrors decides whether the compile succeeded.
         FORCEINLINE void AddWarning(const EdNodeGraph::FError& Warning) { Warnings.Add(Warning); }
         FORCEINLINE const TVector<EdNodeGraph::FError>& GetWarnings() const { return Warnings; }
 
@@ -532,24 +500,15 @@ namespace Lumina
         // An unconnected input falling back to a varying alias such as UV0 takes the gradient pair its pixel template declares, not a literal's zero.
         void ApplyFallbackAliasDeriv(FInputValue& Value) const;
 
-        // Emit "<TypeStr> <NodeID> = <FetchExpr>;", or an alias to the first variable that already holds
-        // <FetchExpr> in this stage. Material parameters are loop- and pixel-invariant, so a repeat fetch is
-        // pure redundant load traffic; the alias is a register copy the backend coalesces away.
+        // Aliases the first variable already holding FetchExpr in this stage, since parameters are invariant and a repeat fetch is redundant load traffic.
         void EmitDedupedParamFetch(const FString& TypeStr, const FString& NodeID, const FString& FetchExpr);
 
-        // Publish ID's screen-space derivative. Valid emits the two companion chunks (<ID>_DDX/_DDY) from
-        // the supplied expressions; Zero and Unknown emit nothing and only record the state.
-        // Call AFTER the value chunk, so the expressions can reference it.
-        //
-        // ComponentCount types the companions and must match the value's width, or the emitted chunk does
-        // not type-check. A Valid registration in the VERTEX stage is downgraded to Unknown: screen-space
-        // derivatives do not exist there and the vertex templates declare no companions.
+        // Call after the value chunk. ComponentCount must match the value's width, and Valid is downgraded to Unknown in the vertex stage.
         void RegisterDeriv(const FString& ID, EDerivState State,
                            const FString& DdxExpr = FString(), const FString& DdyExpr = FString(),
                            int32 ComponentCount = 2);
 
-        // The derivative of a value the caller is about to multiply by a derivative-free scale, i.e. the
-        // affine UV case (TexCoords, Panner). Returns Unknown unchanged so it keeps propagating.
+        // The affine UV case (TexCoords, Panner), where Unknown propagates unchanged.
         void RegisterScaledDeriv(const FString& ID, const FInputValue& Source, const FString& ScaleExpr);
 
         // dA times Factor, an expression of the input; an empty Factor passes the gradient through.
@@ -567,49 +526,33 @@ namespace Lumina
         void RegisterBinaryFuncDeriv(const FString& ID, const FString& Func, const FInputValue& A, const FString& AExpr,
                                      const FInputValue& B, const FString& BExpr, EMaterialInputType ResultType);
 
-        // What a texture sample should pass for explicit gradients. Valid -> the value's own pair;
-        // anything else -> UV0's, which is what every sample used before this existed.
-        // Only legal in a lane that HAS gradients -- see LaneSamplesWithGradients.
+        // Falls back to UV0's gradient unless Valid. Only legal in a lane with gradients, see LaneSamplesWithGradients.
         void GetUVGradients(const FInputValue& UV, FString& OutDdx, FString& OutDdy) const;
 
-        // Pixel and the deferred compute lane both sample with gradients (the *Auto call shape, which the
-        // deferred template redirects to SampleGrad). The VERTEX lane has neither: no screen-space
-        // footprint to differentiate, no *_DDX companions declared in any vertex template, and an
-        // implicit-LOD Sample() is not even legal outside a fragment shader. It takes an explicit LOD 0,
-        // which is what a vertex texture fetch means anyway.
+        // The vertex lane has no screen-space footprint and implicit-LOD Sample is illegal there, so it takes an explicit LOD 0.
         bool LaneSamplesWithGradients() const { return CurrentStage != EMaterialCompileStage::Vertex; }
 
-        // Chain rule for + - * / at the EmitBinaryOp choke point. AExpr/BExpr are the already-swizzled
-        // operand expressions. Only carries a derivative for UV-shaped values (<= 2 components); anything
-        // wider cannot feed a texture coordinate and its companion chunks would not be float2.
+        // Only UV-shaped values (2 components or fewer) carry a derivative, since wider ones cannot feed a texture coordinate.
         void RegisterBinaryDeriv(const FString& ID, const FString& Op,
                                  const FInputValue& A, const FString& AExpr,
                                  const FInputValue& B, const FString& BExpr,
                                  EMaterialInputType ResultType);
 
-        // Walks back through any passthrough nodes (plain reroutes and named reroutes) to the output
-        // pin that actually produces the value. Returns nullptr when the chain dead-ends unconnected
-        // or a named reroute resolves to nothing, which callers must treat as "no connection".
-        //
-        // Anything that reads a connected pin's owning node has to go through this. A reroute emits no
-        // variable of its own, so binding to its node name yields an identifier that was never declared.
+        // Reroutes emit no variable, so anything reading a connected pin's node must resolve through this. Nullptr means no connection.
         static CMaterialOutput* ResolveThroughReroutes(CMaterialOutput* OutputPin);
 
         static int32 GetComponentCount(EComponentMask Mask);
         static int32 GetComponentCount(EMaterialInputType Type);
 
-        // HLSL scalar/vector type name ("float", "float2", ...) for an input type. Public so the
-        // material-function call node can declare its argument/result locals.
+        // Public so the material-function call node can declare its argument and result locals.
         static FString GetHLSLTypeName(EMaterialInputType Type);
 
-        // Inlined function nodes get variable-name prefixes so repeated/nested calls never collide;
-        // a call node pushes a per-call prefix (composed with the current one, so nesting accumulates).
+        // Per-call prefixes compose with the current one so repeated and nested inlined calls never collide.
         void PushInlinePrefix(const FString& Prefix) { InlinePrefixStack.Add(Prefix); }
         void PopInlinePrefix() { if (!InlinePrefixStack.IsEmpty()) { InlinePrefixStack.Pop(); } }
         const FString& GetCurrentInlinePrefix() const;
 
-        // Recursion guard: returns false when Function is already inlined higher on the stack (self-call);
-        // caller emits an error and bails. Pair a true result with EndInlineFunction.
+        // Returns false on a self-call. Pair a true result with EndInlineFunction.
         bool BeginInlineFunction(CMaterialFunction* Function);
         void EndInlineFunction(CMaterialFunction* Function);
 
@@ -627,8 +570,7 @@ namespace Lumina
         // Sets the owning node's output type so downstream nodes see the right width/swizzle.
         void SetOwningOutputType(CMaterialInput* AnyInputOnNode, EMaterialInputType Type);
 
-        // Emits "float4x4 <ID>_M = <this stage's instance>.ModelMatrix;" and returns the local's name.
-        // The vertex and pixel lanes reach the instance differently; see the definition.
+        // The vertex and pixel lanes reach the instance differently.
         FString EmitInstanceModelMatrix(const FString& ID);
 
         // Binds the primitive's header to a local and returns its name; slot 0 is the readable null header.
@@ -639,13 +581,11 @@ namespace Lumina
 
     private:
 
-        // Per-stage graph body chunks. The active chunk for general node
-        // emission is selected by CurrentStage.
+        // Per-stage graph body chunks, selected by CurrentStage.
         FString PixelChunks;
         FString VertexChunks;
 
-        // Output-node assignments, kept separate so they always land at the end of the substituted block
-        // regardless of topo order and the output node can target each stage without driving the cursor.
+        // Output-node assignments, kept separate so they always land at the end of the block.
         FString PixelOutputChunks;
         FString VertexOutputChunks;
 
@@ -669,18 +609,13 @@ namespace Lumina
         THashMap<FName, FVectorParam>  VectorParameters;
         THashMap<FName, FTextureParam> TextureParameters;
 
-        // Derivative published per emitted variable name (the key is FInputValue::Value, i.e. the producing
-        // node's full name). Absent = Unknown, which is the safe default: consumers fall back to UV0's
-        // gradient, exactly what every sample did before derivative propagation existed.
+        // Keyed by the producing node's full name, and absent means Unknown so consumers fall back to UV0's gradient.
         THashMap<FString, FDerivInfo> DerivByVar;
 
         // Counted by GetUVGradients (const, hence mutable) and surfaced as FShaderStats::UVGradientFallbacks.
         mutable uint32 UVGradientFallbackCount = 0;
 
-        // Parameter fetches already emitted in the CURRENT stage, keyed by the fetch expression. Two graph
-        // nodes reading the same material parameter emit the same right-hand side; the second and later ones
-        // alias the first instead of re-issuing the load. Cleared per stage in SetStage, because the pixel
-        // and vertex chunks are separate scopes and a variable from one is not in scope in the other.
+        // Fetches already emitted in the current stage, keyed by expression. Cleared in SetStage because the stages are separate scopes.
         THashMap<FString, FString> EmittedParamFetches;
 
         uint16 NumScalarParams = 0;

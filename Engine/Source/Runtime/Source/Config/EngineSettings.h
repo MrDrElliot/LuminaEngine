@@ -63,8 +63,7 @@ namespace Lumina
         FString SharedArtifactCachePath;
     };
 
-    // Texture streaming budget and policy. Project-scoped rather than per-user: the pool size a project
-    // targets is a shipping decision, and it has to travel with the content it was tuned against.
+    // Project-scoped rather than per-user, since the pool size is a shipping decision that travels with the content.
     REFLECT(MinimalAPI, ConfigFile = "/Config/GameSettings.json", DisplayName = "Texture Streaming", Category = "Rendering")
     class CTextureStreamingSettings : public CDeveloperSettings
     {
@@ -98,14 +97,12 @@ namespace Lumina
         PROPERTY(Editable, Category = "Performance")
         int32 MaxUploadMBPerFrame = 32;
 
-        // Promotions + demotions per frame. Separate from the upload budget: a residency change recreates
-        // the GPU image and retires the old one, which a demotion pays while moving zero host bytes.
+        // Promotions and demotions per frame, separate from the upload budget since a demotion moves zero host bytes.
         PROPERTY(Editable, Category = "Performance")
         int32 MaxResidencyChangesPerFrame = 4;
     };
 
-    // Editor-wide preferences + launch state. Lives in the runtime module so the runtime
-    // ImGui renderer can read UIScale, while the editor edits it through the Settings panel.
+    // Lives in the runtime module so the runtime ImGui renderer can read UIScale.
     REFLECT(MinimalAPI, ConfigFile = "/Editor/Config/EditorPreferences.json", DisplayName = "General", Category = "Editor")
     class CEditorSettings : public CDeveloperSettings
     {

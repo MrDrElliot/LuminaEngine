@@ -53,9 +53,7 @@ namespace Lumina
             uint32 NumPromotedLastFrame = 0;
             uint32 NumDemotedLastFrame  = 0;
 
-            // Cumulative since startup. The counters are what distinguish "the budget happens to fit" from
-            // "streaming is actually running": a session with zero promotions is not streaming, it just
-            // never needed to.
+            // Cumulative since startup, so zero promotions means streaming never needed to run.
             uint64 TotalPromotions  = 0;
             uint64 TotalDemotions   = 0;
             uint64 TotalBytesRead   = 0;
@@ -231,8 +229,7 @@ namespace Lumina
         // Shared by staged fills and newly applied loads, so one frame never uploads more than MaxUploadMBPerFrame.
         uint64                                  FrameUploadBudget = 0;
 
-        // Residency changes left this frame, promotions and demotions together. Meters image create/retire
-        // churn, which a demotion pays in full while spending no host bytes.
+        // Meters image create and retire churn, which a demotion pays in full while spending no host bytes.
         uint32                                  FrameResidencyChanges = 0;
 
         // Set when a promotion was refused because the pool was full, which lets demotions skip their dead band.

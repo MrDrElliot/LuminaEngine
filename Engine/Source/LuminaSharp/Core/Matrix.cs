@@ -4,11 +4,7 @@ using System.Runtime.InteropServices;
 
 namespace Lumina;
 
-// Blittable mirror of the engine's FMatrix4 (TMat<float, 4, 4>). COLUMN-MAJOR storage: the 16 floats are
-// laid out column-by-column (C0.X, C0.Y, C0.Z, C0.W, C1.X, ...), identical to the native type, so this can
-// be passed across interop without conversion. Conventions match C++ (Core/Math/Matrix): LEFT-HANDED,
-// +Z forward, ZERO-TO-ONE clip depth. Math is ported 1:1 from MatrixMath.h. Do not "fix" the conventions.
-// M[c] is column c; M[c, r] is the element at column c, row r. A transform is applied as M * V.
+// Column-major mirror of FMatrix4 that crosses interop unconverted, with left-handed and zero-to-one depth conventions copied from MatrixMath.h.
 
 [StructLayout(LayoutKind.Sequential)]
 [LuminaSharp.NativeLayout("FMatrix4")]
@@ -335,7 +331,6 @@ public struct FMatrix4 : IEquatable<FMatrix4>
         return true;
     }
 
-    // Projection / view.
     // Left-handed perspective, zero-to-one depth.
     public static FMatrix4 Perspective(float FovYRadians, float Aspect, float Near, float Far)
     {

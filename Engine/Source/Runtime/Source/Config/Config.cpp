@@ -273,8 +273,7 @@ namespace Lumina
 {
     void FConfig::VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func)
     {
-        // Keyed by class, so a repointed key means a rebuilt table rather than an in-place write: the old
-        // key would keep the bucket its old hash chose and the entry would never be found again.
+        // A repointed key needs a rebuilt table, since the old key would keep the bucket its old hash chose.
         THashMap<CClass*, CObject*> RebuiltDefaults;
         RebuiltDefaults.Reserve(SettingsDefaults.Num());
         for (const auto& [Class, Snapshot] : SettingsDefaults)

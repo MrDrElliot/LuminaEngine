@@ -121,8 +121,7 @@ namespace Lumina
         }
     };
         
-    // A named float track authored on the clip and sampled by the clip's playhead. Curves ride the
-    // animation graph alongside the pose: blends lerp them, so a value follows whatever the pose does.
+    // A named float track sampled by the clip's playhead, which blends lerp alongside the pose.
     struct FAnimationCurve
     {
         FName Name;
@@ -153,8 +152,7 @@ namespace Lumina
         // The only pose data the sampler reads.
         FCompressedAnimData Compressed;
 
-        // Notify lanes in display order; persisted separately so empty tracks and ordering survive
-        // save/reload. A notify references its lane by name (NotifyTrack).
+        // Notify lanes in display order, persisted separately so empty tracks survive reload.
         TVector<FName> NotifyTracks;
 
         // Notify lane whose entries mark the cycle points a synchronized blend lines up on.
@@ -285,8 +283,6 @@ namespace Lumina
         void SamplePose(float Time, FSkeletonResource* InSkeleton, TVector<FMatrix4>& OutBoneTransforms) const;
 
         /** Samples the clip into a local-space TRS pose, or into its additive delta when the clip is additive. */
-        // MaxBones < 0 samples every animated bone; otherwise only channels targeting bones below
-        // MaxBones are sampled and the rest stay at bind pose (skeleton LOD for distant meshes).
         void SampleLocalPose(float Time, FSkeletonResource* InSkeleton, FPose& OutPose, int32 MaxBones = -1) const;
 
         /** Samples the authored pose as-is, ignoring the additive settings. */

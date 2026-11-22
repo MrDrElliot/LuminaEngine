@@ -36,16 +36,14 @@ namespace Lumina
         FString ToText() const;
     };
 
-    // Data behind a transition wire (not a graph node): holds the condition, shown in the properties
-    // panel when its wire is selected. CAnimStateMachineGraph owns and reconciles these in ValidateGraph().
+    // Condition data behind a transition wire, owned and reconciled by CAnimStateMachineGraph in ValidateGraph.
     REFLECT()
     class CAnimStateTransition : public CObject
     {
         GENERATED_BODY()
     public:
 
-        // Node IDs of the source / destination State nodes this transition wires
-        // together. Used to match the object back to its canvas link.
+        // Source and destination State node IDs, used to match the object back to its canvas link.
         PROPERTY(Hidden)
         int64 FromStateNodeID = 0;
 
@@ -93,8 +91,7 @@ namespace Lumina
 
         void PostLoad() override;
 
-        // Folds a pre-list transition into one condition, then clears the old fields so it happens once.
-        // Idempotent, and called from the compiler too, so no load path can drop an authored rule.
+        // Idempotent and also called from the compiler, so no load path can drop an authored rule.
         void MigrateLegacyCondition();
     };
 }

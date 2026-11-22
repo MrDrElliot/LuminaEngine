@@ -20,8 +20,7 @@ namespace Lumina
             return MakeShared<FEntityPropertyCustomization>();
         }
 
-        // Cancels an in-flight eyedropper pick if this picker is torn down mid-pick
-        // (e.g. the details panel rebuilds), so the viewport doesn't stay in pick mode.
+        // Cancels an in-flight eyedropper pick on teardown so the viewport does not stay in pick mode.
         ~FEntityPropertyCustomization() override;
         FEntityPropertyCustomization() = default;
         FEntityPropertyCustomization(const FEntityPropertyCustomization&) = delete;

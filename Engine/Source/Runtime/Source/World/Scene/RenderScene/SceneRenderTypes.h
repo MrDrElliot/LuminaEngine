@@ -388,7 +388,7 @@ namespace Lumina
         FShadowAtlas(FShadowAtlas&&) = delete;
         FShadowAtlas& operator=(FShadowAtlas&&) = delete;
 
-        // Created lazily because the atlas is a scene member constructed before scene Init.
+        // Created on the first frame a spot or point light casts, so a scene lit only by the sun never holds it.
         void InitImage()
         {
             if (ShadowAtlas.IsValid())
@@ -1145,6 +1145,61 @@ namespace Lumina
     static_assert(sizeof(FInstanceProxy) == 32, "FInstanceProxy layout must match shader");
     VERIFY_SSBO_ALIGNMENT(FInstanceProxy);
 
+    // Aligned to 16, since a float3-led struct otherwise strides differently in the material shaders than in the engine.
+    struct alignas(16) FImpostorPoint
+    {
+        FVector3 Position;
+        float    Scale;
+        // PackImpostorRotation's smallest-three quaternion.
+        uint32   Rotation;
+        // Into the impostor types, IMPOSTOR_TYPE_NONE for a plant that draws nothing.
+        uint32   Type;
+        uint32   Reserved[2];
+    };
+    static_assert(sizeof(FImpostorPoint) == 32, "FImpostorPoint layout must match Common.slang");
+    VERIFY_SSBO_ALIGNMENT(FImpostorPoint);
+
+    // What every point of one foliage type shares, the impostor surface's proxy and material.
+    struct alignas(16) FImpostorType
+    {
+        FInstanceProxy Proxy;
+        uint32         MeshletHeaderSlot;
+        uint32         MaterialIndex;
+        uint32         EntityID;
+        // IMPOSTOR_TYPE_FLAG_* bits.
+        uint32         Flags;
+        // 0 never distance-culls.
+        float          MaxDrawDistance;
+        uint32         Reserved[3];
+    };
+    static_assert(sizeof(FImpostorType) == 64, "FImpostorType layout must match Common.slang");
+    VERIFY_SSBO_ALIGNMENT(FImpostorType);
+
+    // Three components at 10 bits with the dropped largest one's index on top, the precision a far impostor needs.
+    FORCEINLINE uint32 PackImpostorRotation(const FQuat& Q)
+    {
+        float C[4] = { Q.x, Q.y, Q.z, Q.w };
+        uint32 Largest = 0;
+        for (uint32 i = 1; i < 4; ++i)
+        {
+            Largest = Math::Abs(C[i]) > Math::Abs(C[Largest]) ? i : Largest;
+        }
+        const float Sign = C[Largest] < 0.0f ? -1.0f : 1.0f;
+        uint32 Packed = Largest << 30;
+        uint32 Shift  = 20;
+        for (uint32 i = 0; i < 4; ++i)
+        {
+            if (i == Largest)
+            {
+                continue;
+            }
+            const float Unit = Math::Clamp(C[i] * Sign * 0.70710678f + 0.5f, 0.0f, 1.0f);
+            Packed |= (uint32)(Unit * 1023.0f + 0.5f) << Shift;
+            Shift  -= 10;
+        }
+        return Packed;
+    }
+
     struct alignas(16) FInstanceCullEntry
     {
         FVector4    SphereBounds;       // world space; xyz = center, w = radius
@@ -1582,8 +1637,11 @@ namespace Lumina
         RHI::TGPUSpan<FTransform3x4>        RetainedTransforms;
         RHI::TGPUSpan<FInstanceStatic>      RetainedStatic;
         RHI::TGPUSpan<FInstanceProxy>       RetainedProxies;
-        // Retained slots CullInstances turned into proxies this frame, in proxy draw order.
+        // Retained slots CullInstances turned into proxies this frame, in proxy draw order, with PROXY_ENTRY_POINT_BIT on impostor points.
         RHI::TGPUSpan<uint32>               ProxyList;
+        // Far plants held as bare impostor points, and the per-type data they share.
+        RHI::TGPUSpan<FImpostorPoint>       ImpostorPoints;
+        RHI::TGPUSpan<FImpostorType>        ImpostorTypes;
         // One bit per retained slot the sun's shadow cache holds, empty while the cache is off.
         RHI::TGPUSpan<uint32>               ShadowCacheBits;
         // Every terrain the frame draws, in the order their VisID slot ranges follow.
@@ -1607,7 +1665,7 @@ namespace Lumina
         uint32 _Pad1                    = 0;
         uint32 _Pad2                    = 0;
     };
-    static_assert(sizeof(FSceneRoot) == 576, "FSceneRoot must match SceneGlobals.slang");
+    static_assert(sizeof(FSceneRoot) == 608, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {

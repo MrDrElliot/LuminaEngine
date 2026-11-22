@@ -27,8 +27,7 @@ namespace Lumina::RHI
         TakePresentRejected();
         if (IsValid(Swapchain))
         {
-            // Recording is synchronous, so only submitted work can still name these images.
-            // Present fences already drain this swapchain, so only the fallback path needs the idle.
+            // Recording is synchronous and present fences already drain this swapchain, so only the fallback path needs the idle.
             if (!SupportsSwapchainMaintenance1())
             {
                 WaitDeviceIdle();

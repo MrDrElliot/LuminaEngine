@@ -109,8 +109,7 @@ namespace Lumina
 
         NewObject->AddObject();
 
-        // Only a runtime-minted class has a trailing block, so the cast is the test. The flag is what lets
-        // the destructor skip its class unless there is trailing storage.
+        // Only a runtime-minted class has a trailing block, so the destructor skips its class otherwise.
         if (const CScriptClass* ScriptClass = ToScriptClass(Params.Class);
             ScriptClass != nullptr && ScriptClass->ConstructScriptProperties(NewObject))
         {
@@ -465,8 +464,7 @@ namespace Lumina
         }
     }
 
-    // Sized from the widest property, so one type's whole set lands in a single block; an undershoot only
-    // costs another block, never a move, so nothing that already points into the arena is disturbed.
+    // An undershoot only costs another block, never a move, so nothing pointing into the arena is disturbed.
     static constexpr size_t kArenaBytesPerProperty = 192;
 
     // The function itself plus the pointer array for its parameters, which are counted as properties above.

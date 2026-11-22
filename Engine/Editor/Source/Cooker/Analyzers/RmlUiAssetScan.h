@@ -9,15 +9,13 @@ namespace Lumina
 {
     class FAssetRegistry;
 
-    // Scans .rml/.rcss for asset references (src/href/sprite, CSS url(), material: URIs), resolving to registered FAssetData; follows link/@import chains transitively.
-    // Folded into the cook graph as implicit Soft cook roots so UI-only assets (no inbound .lasset import) still reach the PAK.
+    // Scans .rml and .rcss for asset references, folded into the cook graph as implicit Soft roots so UI-only assets still reach the PAK.
     class FRmlUiAssetScan
     {
     public:
         struct FResult
         {
-            // Virtual paths to assets that resolved through FAssetRegistry.
-            // Deduplicated; each entry suitable for FCookRoot.Asset.
+            // Deduplicated virtual paths to assets that resolved through FAssetRegistry.
             TVector<FString> AssetPaths;
 
             // Per-file counts for diagnostics.
@@ -26,15 +24,13 @@ namespace Lumina
             size_t ResolvedRefs    = 0;
         };
 
-        // Walk the given VFS roots recursively; scan every .rml / .rcss.
-        // LogFunc gets one line per discovered ref (or {} to suppress).
+        // Scans every .rml and .rcss under the given VFS roots, with LogFunc getting one line per ref.
         static FResult ScanRoots(
             const TVector<FString>& VirtualRoots,
             const FAssetRegistry& Registry,
             const TFunction<void(FStringView)>& LogFunc = {});
 
-        // Lower-level: scan a single in-memory buffer; emits raw candidate
-        // paths (no registry filter). Exposed for testing.
+        // Scans one in-memory buffer for raw candidate paths without a registry filter, exposed for testing.
         static TVector<FString> ExtractCandidates(FStringView Contents);
     };
 }

@@ -58,8 +58,7 @@ namespace Lumina
     inline constexpr FStringView CookedProjectIconPath = "/Engine/ProjectIcon.png";
     inline constexpr FStringView ProjectIconRecordSuffix = ".icon.png";
 
-    // Reachability-driven cooker, seeded from FEngine::GetCookRoots(); only .lasset reachable via FAssetData::Dependencies enters a PAK.
-    // Chunked output: "Main" uses OutputPakPath verbatim + holds shared content; other chunks land at <stem>-<chunk>.pak.
+    // Reachability-driven cooker seeded from FEngine::GetCookRoots(), where only .lasset reachable via FAssetData::Dependencies enters a PAK.
     class EDITOR_API FAssetCooker
     {
     public:

@@ -93,8 +93,7 @@ TEST(ScriptObjectFactory, ANullClassIsRefusedRatherThanCrashing)
     EXPECT_EQ(LuminaSharp_NewObject(nullptr, nullptr, nullptr, 0), nullptr);
 }
 
-// Every generated class carries a factory, so the export's factory check has nothing to refuse here. Left
-// asserted the other way round, so that if a class ever does arrive without one this stops being silent.
+// Every generated class carries a factory, so this is asserted to stop being silent if one ever arrives without.
 TEST(ScriptObjectFactory, EveryClassAScriptCanNameCanBeInstantiated)
 {
     CClass* Class = static_cast<CClass*>(FindTestClass());

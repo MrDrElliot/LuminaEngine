@@ -170,7 +170,7 @@ namespace Lumina
         // R32_FLOAT mirror of the CPU heightmap.
         FSceneImage     HeightmapTexture;
 
-        // RGBA8 normals derived on the GPU.
+        // RG8 normals derived on the GPU, the packed XZ slope every reader rebuilds Y from.
         FSceneImage     NormalTexture;
 
         // R8_UNORM array, one slice per layer.

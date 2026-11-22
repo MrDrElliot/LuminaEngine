@@ -4,11 +4,7 @@ using Lumina;
 
 namespace LuminaSharp.Rendering;
 
-// Blittable mirrors of the engine RHI descriptor structs (Runtime/Renderer/RHI.h). Field order and types
-// match the native structs byte-for-byte so they pass by value with zero marshalling. C++ `bool`/`uint8`
-// are mirrored as C# `byte` (a C# `bool` is not reliably 1 byte in a blittable struct). Descriptors that
-// embed a native span (FRasterDesc, FRenderPassDesc, FShaderSource) are handled at the RHI call site, which
-// takes the span as a separate ReadOnlySpan argument; the scalar parts live here.
+// C++ bool and uint8 are mirrored as byte since a C# bool is not reliably 1 byte, and span-bearing descriptors pass the span at the call site.
 
 [StructLayout(LayoutKind.Sequential)]
 [NativeLayout("RHI::FRect")]
@@ -274,7 +270,6 @@ public struct FRenderAttachment
         => new() { Texture = Texture, LoadOp = ELoadOp.Load, StoreOp = EStoreOp.Store };
 }
 
-// One allocation from RHI::Malloc. Cpu is null for EMemoryType.GPUOnly; both pointers name the same first byte.
 // An address and the bytes a command may touch there.
 [StructLayout(LayoutKind.Sequential)]
 [NativeLayout("RHI::FGPURange")]

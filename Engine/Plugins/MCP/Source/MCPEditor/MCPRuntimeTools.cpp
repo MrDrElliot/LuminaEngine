@@ -331,21 +331,28 @@ namespace Lumina::MCP
 
             const FGPUProfileFrame& Frame = Profiler.GetLatest();
             Out.bReady  = true;
-            Out.TotalMs = (float)Frame.TotalMs;
+            Out.TotalMs        = (float)Frame.TotalMs;
+            Out.GraphicsMs     = (float)Frame.QueueBusyMs[(uint32)RHI::EQueueType::Graphics];
+            Out.AsyncComputeMs = (float)Frame.QueueBusyMs[(uint32)RHI::EQueueType::Compute];
+            Out.AsyncOverlapMs = (float)Frame.AsyncOverlapMs;
             for (const FGPUProfileScope& Scope : Frame.Scopes)
             {
                 SGpuPassTime& Pass = Out.Passes.EmplaceGetRef();
                 Pass.Name  = *Scope.Name;
                 Pass.Ms    = (float)Scope.DurationMs();
                 Pass.Depth = Scope.Depth;
+                Pass.Queue = GPUProfileQueueName(Scope.Queue);
             }
             Algo::Sort(Out.Passes, [](const SGpuPassTime& A, const SGpuPassTime& B) { return A.Ms > B.Ms; });
             Out.Passes.SetNum(Math::Min(Out.Passes.Num(), Math::Max(In.Top, 1)));
 
-            FString Summary = Lumina::Format("GPU {:.2f} ms.", Out.TotalMs);
+            FString Summary = Lumina::Format("GPU {:.2f} ms, graphics {:.2f} ms, async compute {:.2f} ms with {:.2f} ms overlapped.",
+                Out.TotalMs, Out.GraphicsMs, Out.AsyncComputeMs, Out.AsyncOverlapMs);
             for (const SGpuPassTime& Pass : Out.Passes)
             {
-                Summary += Lumina::Format(" {}[{}] {:.2f}", Pass.Name, Pass.Depth, Pass.Ms);
+                const bool bGraphics = Pass.Queue == GPUProfileQueueName(RHI::EQueueType::Graphics);
+                Summary += bGraphics ?Lumina::Format(" {}[{}] {:.2f}", Pass.Name, Pass.Depth, Pass.Ms)
+                                     : Lumina::Format(" {}[{} {}] {:.2f}", Pass.Name, Pass.Queue, Pass.Depth, Pass.Ms);
             }
             return Agent::FToolResult::Ok(Summary);
         }

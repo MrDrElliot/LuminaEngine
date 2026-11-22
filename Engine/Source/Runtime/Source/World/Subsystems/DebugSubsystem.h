@@ -2,18 +2,19 @@
 
 #include "Containers/String.h"
 #include "Containers/Span.h"
+#include "Core/Delegates/ScriptDelegate.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Math/Quat/Quat.h"
 #include "Core/Math/Vector/VectorTypes.h"
 #include "World/DebugDrawTypes.h"
 #include "World/Subsystems/WorldSubsystem.h"
-#include "DebugDrawSubsystem.generated.h"
+#include "DebugSubsystem.generated.h"
 
 namespace Lumina
 {
-    // Transient debug geometry, where a Duration at or below zero draws for one frame.
+    // Transient debug geometry, where a Duration at or below zero draws for one frame, and the world's debug windows.
     REFLECT()
-    class RUNTIME_API CDebugDrawSubsystem : public CWorldSubsystem
+    class RUNTIME_API CDebugSubsystem : public CWorldSubsystem
     {
         GENERATED_BODY()
 
@@ -114,5 +115,14 @@ namespace Lumina
         /** One screen-space line, stacked from the top left of the world viewport for this frame only. */
         FUNCTION()
         void DrawText(const FString& Text, FVector4 Color);
+
+        // Once a frame while the developer overlay shows, between ImGui's NewFrame and Render, so handlers build debug windows.
+        PROPERTY(Hidden)
+        FScriptDelegate OnDebugGui;
+
+        #if USING(WITH_DEV_UI)
+        // Recovers ImGui's stacks after each handler, so one that throws or forgets End leaves the rest intact.
+        void BroadcastDebugGui();
+        #endif
     };
 }

@@ -38,8 +38,7 @@ namespace Lumina
         TVector<FPacket> Delayed;
     };
 
-    // ENet-backed transport. All ENet state lives behind FImpl in the .cpp so no vendored
-    // networking header leaks past this translation unit.
+    // ENet-backed transport, with all ENet state behind FImpl so no vendored header leaks past the .cpp.
     class FENetTransport final : public INetworkTransport
     {
     public:

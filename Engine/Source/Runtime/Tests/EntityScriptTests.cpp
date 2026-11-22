@@ -18,6 +18,10 @@
 #include "Core/Reflection/Type/ObjectReferenceVisitor.h"
 #include "ScriptTestUtil.h"
 #include "Scripting/ScriptableTest.h"
+#include "Scripting/ScriptNet.h"
+#include "WorldTestAccess.h"
+#include "Networking/INetworkRuntime.h"
+#include "World/WorldContext.h"
 #include "Scripting/ScriptStruct.h"
 #include "Core/Threading/Thread.h"
 #include "Containers/HashTable.h"
@@ -27,7 +31,7 @@
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/Component.h"
 #include "World/Entity/Components/LifetimeComponent.h"
-#include "Networking/NetworkEvents.h"
+#include "World/Entity/Components/InputComponent.h"
 #include <chrono>
 #include <cstdio>
 
@@ -35,8 +39,7 @@ using namespace Lumina;
 
 namespace
 {
-    // A registry a unit test owns is not reachable from GWorldManager, so it takes part in a reinstance the
-    // same way the engine's own holders do rather than through anything test-specific in the reinstancer.
+    // A registry a unit test owns is not reachable from GWorldManager, so it joins a reinstance like the engine's own holders.
     class FLocalRegistryReferenceProvider final : public IObjectReferenceProvider
     {
     public:
@@ -87,8 +90,7 @@ namespace
             EntityScripts::Attach(Registry, Entity, CEntityScriptTest::StaticClass()));
     }
 
-    // An update phase is C# data, so only a minted class carries one. This is the shape production has:
-    // a script type minted over a native scriptable base, which is what the driver then dispatches.
+    // An update phase is C# data, so only a minted class carries one, as in production.
     CEntityScriptTest* AttachMintedTestScript(ECS::FRegistry& Registry, ECS::FEntity Entity, const char* TypeName)
     {
         FScriptableNativeInfo Info;
@@ -141,6 +143,88 @@ TEST(EntityScriptUnification, CppScriptRunsThroughTheDriver)
     EntityScripts::DetachAll(Registry, Entity);
     EXPECT_EQ(Script->DetachCount, 1);
     EXPECT_TRUE(Registry.Get<SEntityScriptComponent>(Entity).Scripts.IsEmpty());
+}
+
+// A member handler belongs to its script, so detaching the script ends the binding with no unbind in OnDetach.
+TEST(EntityScriptBindings, AMemberHandlerStopsWhenItsScriptDetaches)
+{
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
+    Registry.Emplace<SInputComponent>(Entity);
+
+    CEntityScriptTest* Script = AttachTestScript(Registry, Entity);
+    ASSERT_NE(Script, nullptr);
+    TStrongObjectPtr<CEntityScript> Pinned(Script);
+    TVector<FString> Log;
+    Script->EventLog = &Log;
+
+    Registry.Get<SInputComponent>(Entity).OnInput.AddMember(Script, &CEntityScriptTest::RecordInput);
+    Registry.Get<SInputComponent>(Entity).OnInput.Broadcast(SInputEvent{});
+    EXPECT_EQ(Log.Num(), 1) << "an attached script hears its binding";
+
+    EntityScripts::DetachAll(Registry, Entity);
+    Registry.Get<SInputComponent>(Entity).OnInput.Broadcast(SInputEvent{});
+    EXPECT_EQ(Log.Num(), 1) << "a detached script must not be called";
+    EXPECT_EQ(Registry.Get<SInputComponent>(Entity).OnInput.GetBindingCount(), 0u) << "the broadcast retires what it skipped";
+
+    const FDelegateHandle Late = Registry.Get<SInputComponent>(Entity).OnInput.AddMember(Script, &CEntityScriptTest::RecordInput);
+    EXPECT_EQ(Late.ID, 0u) << "a script that has detached cannot bind again";
+}
+
+// The token outlives the script, so a delegate that never broadcast again frees the binding safely.
+TEST(EntityScriptBindings, ABindingOutlivesItsDestroyedScriptSafely)
+{
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
+    Registry.Emplace<SInputComponent>(Entity);
+    TScriptDelegate<SInputEvent> Elsewhere;
+
+    CEntityScriptTest* Script = AttachTestScript(Registry, Entity);
+    ASSERT_NE(Script, nullptr);
+    Elsewhere.AddMember(Script, &CEntityScriptTest::RecordInput);
+    Registry.Get<SInputComponent>(Entity).OnInput.AddMember(Script, &CEntityScriptTest::RecordInput);
+
+    EntityScripts::DetachAll(Registry, Entity);
+    EXPECT_TRUE(Elsewhere.IsBound()) << "nothing walks the delegates a script bound, which is what the token is for";
+
+    Elsewhere.Broadcast(SInputEvent{});
+    EXPECT_FALSE(Elsewhere.IsBound());
+    Registry.Destroy(Entity);
+}
+
+// A lambda carries no owner, so it stays until removed, which is the rule for anything not bound as a member.
+TEST(EntityScriptBindings, ALambdaIsNotTiedToAScript)
+{
+    ECS::FRegistry Registry{};
+    const ECS::FEntity Entity = Registry.Create();
+    TScriptDelegate<SInputEvent> Event;
+    int32 Calls = 0;
+
+    CEntityScriptTest* Script = AttachTestScript(Registry, Entity);
+    ASSERT_NE(Script, nullptr);
+    Event.AddLambda([&Calls](const SInputEvent&) { ++Calls; });
+    EntityScripts::DetachAll(Registry, Entity);
+
+    Event.Broadcast(SInputEvent{});
+    EXPECT_EQ(Calls, 1);
+}
+
+// A managed listener can carry a token too, which is how a C# handler that is a script method ends with its script.
+TEST(EntityScriptBindings, AnEndedTokenRetiresAManagedListener)
+{
+    TScriptDelegate<int32> Event;
+    int32 Calls = 0;
+    FBindingToken* Token = FBindingToken::Create();
+
+    Event.BindManaged([](void* Context, const void*) { ++*static_cast<int32*>(Context); }, &Calls, Token);
+    Event.Broadcast(1);
+    EXPECT_EQ(Calls, 1);
+
+    Token->End();
+    Event.Broadcast(2);
+    EXPECT_EQ(Calls, 1) << "an ended token stops its managed listener";
+    EXPECT_FALSE(Event.HasManagedBindings());
+    Token->Release();
 }
 
 // [Reflect(UpdatePhase = PostPhysics)] moves OnUpdate to the pass after the physics step, keeping OnReady where it was.
@@ -294,7 +378,7 @@ TEST(EntityScriptUnification, DetachSkipsAScriptThatNeverAttached)
     ASSERT_NE(Unadopted, nullptr);
     Registry.GetOrEmplace<SEntityScriptComponent>(Entity).Scripts.Add(Unadopted);
 
-    EXPECT_FALSE(Unadopted->IsAttached());
+    EXPECT_FALSE(FEntityScriptAccess::IsAttached(*Unadopted));
 
     // Detaching drops the component's only strong ref, so the counters are read through pins.
     TStrongObjectPtr<CEntityScript> PinnedUnadopted(Unadopted);
@@ -336,7 +420,7 @@ TEST(EntityScriptUnification, AFaultedScriptStopsTickingButStillDetaches)
 
     CEntityScriptTest* Script = AttachTestScript(Registry, Entity);
     ASSERT_NE(Script, nullptr);
-    Script->MarkFaulted();
+    FEntityScriptAccess::MarkFaulted(*Script);
 
     EntityScripts::Tick(Registry, 0.1f);
     EntityScripts::Tick(Registry, 0.1f);
@@ -398,7 +482,7 @@ TEST(EntityScriptUnification, MintedScriptClassTicksThroughTheSameDriver)
     EntityScripts::Tick(Registry, 0.1f);
 
     EXPECT_EQ(Registry.Get<SEntityScriptComponent>(Entity).Scripts.Num(), 2);
-    EXPECT_TRUE(Managed->IsReady()) << "the minted script was readied by the same pass as the C++ one";
+    EXPECT_TRUE(FEntityScriptAccess::IsReady(*Managed)) << "the minted script was readied by the same pass as the C++ one";
     EXPECT_EQ(Native->UpdateCount, 2);
     EXPECT_EQ(Managed->GetClass(), Minted);
 
@@ -980,7 +1064,7 @@ TEST(EntityScriptUnification, ComponentSerializationRoundTripsScriptsAndAdoptsTh
 
     // Freshly loaded, so no owner yet and no lifecycle has run.
     EXPECT_EQ(Restored.Scripts[0].Get()->GetOwningEntity(), ECS::FEntity{ECS::NullEntity});
-    EXPECT_FALSE(Restored.Scripts[0].Get()->IsReady());
+    EXPECT_FALSE(FEntityScriptAccess::IsReady(*Restored.Scripts[0].Get()));
 
     EntityScripts::Tick(Loaded, 0.1f);
 
@@ -1931,29 +2015,138 @@ TEST(EntityScriptUnification, LifecycleOrderHoldsForAScriptAddedLater)
     EXPECT_EQ(Joined(Log), FString("A:late A:child R:child R:late"));
 }
 
-// A session event reaches scripts through the queue's fan-out at commit, after every ready script was gathered.
-TEST(EntityScriptUnification, SessionEventsFanOutToReadyScripts)
+namespace
+{
+    // Records what a script sends, so a test sees where a call went without a transport.
+    struct FRecordingNetworkRuntime final : INetworkRuntime
+    {
+        bool SendScriptRpc(CEntityScript*, uint32 RpcId, ERpcTarget Target, uint8, const uint8* Payload, uint32 PayloadSize) override
+        {
+            Sent.Add(Target);
+            LastRpcId = RpcId;
+            LastPayload.Reset();
+            LastPayload.Append(Payload, Payload + PayloadSize);
+            return true;
+        }
+
+        TVector<ERpcTarget> Sent;
+        uint32              LastRpcId = 0;
+        TVector<uint8>      LastPayload;
+    };
+
+    // A client world with the recording runtime installed, so a Host RPC called here has to leave instead of running.
+    struct FClientRpcFixture
+    {
+        FClientRpcFixture()
+        {
+            RegisterPendingTypes();
+            Previous = GetNetworkRuntime();
+            SetNetworkRuntime(&Runtime);
+            Context.NetMode = ENetMode::Client;
+            World = NewObject<CWorld>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+            FWorldTestAccess::SetOwningContext(*World, &Context);
+        }
+
+        ~FClientRpcFixture()
+        {
+            FWorldTestAccess::SetOwningContext(*World, nullptr);
+            SetNetworkRuntime(Previous);
+        }
+
+        // Held by an entity's script component at index 0, which is how a received call names its script.
+        template<typename TScript>
+        TScript* MakeScript()
+        {
+            TScript* Script = NewObject<TScript>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+            ECS::FRegistry& Registry = World->GetEntityRegistry();
+            const ECS::FEntity Entity = Registry.Create();
+            Registry.Emplace<SEntityScriptComponent>(Entity).Scripts.Add(Script);
+            FEntityScriptAccess::SetOwner(*Script, Entity, World);
+            return Script;
+        }
+
+        FRecordingNetworkRuntime Runtime;
+        INetworkRuntime*         Previous = nullptr;
+        FWorldContext            Context;
+        CWorld*                  World = nullptr;
+    };
+}
+
+// A plain call to a C++ RPC goes through the generated override, so a Host RPC on a client is sent and not run here.
+TEST(EntityScriptRpc, CallingANativeRpcRoutesItThroughTheGeneratedOverride)
+{
+    FClientRpcFixture Fixture;
+    CEntityScriptRpcTest* Script = Fixture.MakeScript<CEntityScriptRpcTest>();
+
+    Script->Ping(7, "seven");
+
+    ASSERT_EQ(Fixture.Runtime.Sent.Num(), 1) << "the call ran without routing, so the class factory did not build the override";
+    EXPECT_EQ(Fixture.Runtime.Sent[0], ERpcTarget::Host);
+    EXPECT_TRUE(Script->Received.IsEmpty()) << "a Host RPC called on a client runs on the host only";
+}
+
+// With nothing to send to, the override runs the body here once with the arguments it was given.
+TEST(EntityScriptRpc, AStandaloneCallRunsTheBodyOnce)
 {
     RegisterPendingTypes();
-    ECS::FRegistry Registry{};
-    ECS::FEventQueues Events{ Registry };
-    TVector<FString> Log;
+    CEntityScriptRpcTest* Script = NewObject<CEntityScriptRpcTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
 
-    AddUnattached(Registry, CreatePlaced(Registry), "host", Log);
-    EntityScripts::Tick(Registry, 0.1f);
-    Log.Reset();
+    Script->Ping(7, "seven");
 
-    const ENetSessionEventKind Kinds[] = { ENetSessionEventKind::ClientJoined, ENetSessionEventKind::ClientLeft,
-                                           ENetSessionEventKind::JoinedHost, ENetSessionEventKind::LeftHost };
-    for (const ENetSessionEventKind Kind : Kinds)
+    ASSERT_EQ(Script->Received.Num(), 1);
+    EXPECT_EQ(Script->Received[0], FString("base 7 seven"));
+}
+
+// An inherited RPC is routed by the derived class's own override, which still reaches the most derived body.
+TEST(EntityScriptRpc, AnInheritedRpcRoutesAndReachesTheMostDerivedBody)
+{
     {
-        SNetSessionEvent Event;
-        Event.Kind         = Kind;
-        Event.ConnectionId = 3;
-        ECS::SendEvent(Events, Event);
+        FClientRpcFixture Fixture;
+        CEntityScriptRpcTest* Script = Fixture.MakeScript<CEntityScriptRpcDerivedTest>();
+        Script->Ping(3, "three");
+        EXPECT_EQ(Fixture.Runtime.Sent.Num(), 1);
+        EXPECT_TRUE(Script->Received.IsEmpty());
     }
-    EXPECT_TRUE(Log.IsEmpty()) << "scripts hear a session event at the sync point, not when it is sent";
 
-    Events.Commit();
-    EXPECT_EQ(Joined(Log), FString("C:host D:host J:host L:host"));
+    RegisterPendingTypes();
+    CEntityScriptRpcTest* Local = NewObject<CEntityScriptRpcDerivedTest>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+    Local->Ping(3, "three");
+    ASSERT_EQ(Local->Received.Num(), 1);
+    EXPECT_EQ(Local->Received[0], FString("derived 3 three"));
+}
+
+// A received RPC is queued by the network system and its body runs at the next sync point, never inside the network system.
+TEST(EntityScriptRpc, AReceivedRpcRunsAtTheSyncPointNotWhenQueued)
+{
+    FClientRpcFixture Fixture;
+    CEntityScriptRpcTest* Script = Fixture.MakeScript<CEntityScriptRpcTest>();
+    Script->Ping(5, "five");
+    ASSERT_EQ(Fixture.Runtime.Sent.Num(), 1);
+
+    ScriptNet::QueueRpc(*Fixture.World, Script->GetOwningEntity(), 0, Fixture.Runtime.LastRpcId, 0, Fixture.Runtime.LastPayload);
+    EXPECT_TRUE(Script->Received.IsEmpty()) << "queuing ran the body, so script code ran inside the network system";
+
+    Fixture.World->GetEventQueues().Commit();
+    ASSERT_EQ(Script->Received.Num(), 1);
+    EXPECT_EQ(Script->Received[0], FString("base 5 five"));
+    EXPECT_EQ(Fixture.Runtime.Sent.Num(), 1) << "an arriving call runs here and is not sent straight back";
+}
+
+// Replicated values land while the network system runs, and the change handler sees old and new only at the sync point.
+TEST(EntityScriptSync, ArrivingValuesReachTheChangeHandlerAtTheSyncPoint)
+{
+    FClientRpcFixture Fixture;
+    CEntityScriptSyncTest* Script = Fixture.MakeScript<CEntityScriptSyncTest>();
+    ECS::FRegistry& Registry = Fixture.World->GetEntityRegistry();
+    const ECS::FEntity Entity = Script->GetOwningEntity();
+
+    static constexpr char Names[] = "Health";
+    ScriptNet::BeginSyncArrival(Registry, Entity, *Script, Names, sizeof(Names));
+    Script->Health = 40;
+    ScriptNet::QueueSyncArrival(*Fixture.World, Entity, 0, Names, sizeof(Names));
+    EXPECT_TRUE(Script->Changes.IsEmpty()) << "the handler ran inside the network system";
+
+    Fixture.World->GetEventQueues().Commit();
+    ASSERT_EQ(Script->Changes.Num(), 1);
+    EXPECT_EQ(Script->Changes[0], FString("100 40"));
 }
