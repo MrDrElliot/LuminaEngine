@@ -46,6 +46,35 @@ uint ShareOfArena(uint Offset, uint TotalDemand, uint Capacity)
 // Where the last view that writes visibility IDs ends, since only those slots have to fit the ID range.
 groupshared uint gsVisIDEnd;
 
+bool IsShadowOnlyBucket(uint BucketIndex)
+{
+    return CullViewHasFlag(BucketIndex / Pass().NumDraws, CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
+}
+
+// Views that write visibility IDs take their whole demand first, since a skinned mesh has no coarser LOD and its share of a short list would drop it from the frame.
+struct FArenaTiers
+{
+    uint SceneDemand;
+    uint SceneCapacity;
+    uint ShadowDemand;
+    uint ShadowCapacity;
+
+    uint Position(uint SceneRunning, uint ShadowRunning)
+    {
+        return ShareOfArena(SceneRunning, SceneDemand, SceneCapacity) + ShareOfArena(ShadowRunning, ShadowDemand, ShadowCapacity);
+    }
+};
+
+FArenaTiers MakeArenaTiers(uint SceneDemand, uint ShadowDemand, uint Capacity)
+{
+    FArenaTiers Tiers;
+    Tiers.SceneDemand    = SceneDemand;
+    Tiers.SceneCapacity  = min(SceneDemand, Capacity);
+    Tiers.ShadowDemand   = ShadowDemand;
+    Tiers.ShadowCapacity = Capacity - Tiers.SceneCapacity;
+    return Tiers;
+}
+
 [shader("compute")]
 [numthreads(DRAW_PREFIX_THREADS, 1, 1)]
 void ComputeMain(uint ThreadIndex : SV_GroupIndex)
@@ -64,35 +93,54 @@ void ComputeMain(uint ThreadIndex : SV_GroupIndex)
     const uint DrawCapacity  = Pass().DrawList.Count;
     const uint BlockCapacity = Pass().BlockList.Count;
 
-    uint2 Local = uint2(0u, 0u);
+    uint2 LocalScene  = uint2(0u, 0u);
+    uint2 LocalShadow = uint2(0u, 0u);
     for (uint i = First; i < Last; ++i)
     {
         FRenderBucket* Bucket = Pass().Buckets.At(i);
-        Local += uint2(Bucket.DrawCapacity, Bucket.BlockCapacity);
+        const uint2 Reserved = uint2(Bucket.DrawCapacity, Bucket.BlockCapacity);
+        if (IsShadowOnlyBucket(i))
+        {
+            LocalShadow += Reserved;
+        }
+        else
+        {
+            LocalScene += Reserved;
+        }
     }
 
-    uint2 Demand;
-    const uint2 Running = GroupExclusiveScan(Local, ThreadIndex, DRAW_PREFIX_THREADS, Demand);
-    uint DrawRunning  = Running.x;
-    uint BlockRunning = Running.y;
+    uint2 SceneDemand;
+    uint2 SceneRunning = GroupExclusiveScan(LocalScene, ThreadIndex, DRAW_PREFIX_THREADS, SceneDemand);
+    // The scan's wave totals are shared, so every thread finishes reading them before the second scan writes.
+    GroupMemoryBarrierWithGroupSync();
+    uint2 ShadowDemand;
+    uint2 ShadowRunning = GroupExclusiveScan(LocalShadow, ThreadIndex, DRAW_PREFIX_THREADS, ShadowDemand);
+
+    const uint2 Demand = SceneDemand + ShadowDemand;
+    const FArenaTiers DrawTiers  = MakeArenaTiers(SceneDemand.x, ShadowDemand.x, DrawCapacity);
+    const FArenaTiers BlockTiers = MakeArenaTiers(SceneDemand.y, ShadowDemand.y, BlockCapacity);
 
     uint VisIDEnd = 0u;
     for (uint i = First; i < Last; ++i)
     {
         FRenderBucket* Bucket = Pass().Buckets.At(i);
 
-        const uint DrawCount  = Bucket.DrawCapacity;
-        if (!CullViewHasFlag(i / Pass().NumDraws, CULL_VIEW_FLAG_CAST_SHADOW_ONLY))
+        const uint DrawCount   = Bucket.DrawCapacity;
+        const uint BlockCount  = Bucket.BlockCapacity;
+        const bool bShadowOnly = IsShadowOnlyBucket(i);
+        if (!bShadowOnly)
         {
-            VisIDEnd = max(VisIDEnd, DrawRunning + DrawCount);
+            VisIDEnd = max(VisIDEnd, SceneRunning.x + ShadowRunning.x + DrawCount);
         }
-        const uint BlockCount = Bucket.BlockCapacity;
 
-        // Every bucket keeps a share of a short arena, so a batch drops to coarse LODs instead of vanishing.
-        const uint DrawStart  = ShareOfArena(DrawRunning, Demand.x, DrawCapacity);
-        const uint DrawEnd    = ShareOfArena(DrawRunning + DrawCount, Demand.x, DrawCapacity);
-        const uint BlockStart = ShareOfArena(BlockRunning, Demand.y, BlockCapacity);
-        const uint BlockEnd   = ShareOfArena(BlockRunning + BlockCount, Demand.y, BlockCapacity);
+        const uint2 SceneEnd  = SceneRunning + (bShadowOnly ? uint2(0u, 0u) : uint2(DrawCount, BlockCount));
+        const uint2 ShadowEnd = ShadowRunning + (bShadowOnly ? uint2(DrawCount, BlockCount) : uint2(0u, 0u));
+
+        // Every bucket keeps a share of its tier, so a short arena drops static batches to coarse LODs instead of vanishing.
+        const uint DrawStart  = DrawTiers.Position(SceneRunning.x, ShadowRunning.x);
+        const uint DrawEnd    = DrawTiers.Position(SceneEnd.x, ShadowEnd.x);
+        const uint BlockStart = BlockTiers.Position(SceneRunning.y, ShadowRunning.y);
+        const uint BlockEnd   = BlockTiers.Position(SceneEnd.y, ShadowEnd.y);
 
         Bucket.DrawDemand    = DrawCount;
         Bucket.BlockDemand   = BlockCount;
@@ -101,8 +149,8 @@ void ComputeMain(uint ThreadIndex : SV_GroupIndex)
         Bucket.BlockBase     = BlockStart;
         Bucket.BlockCapacity = BlockEnd - BlockStart;
 
-        DrawRunning  += DrawCount;
-        BlockRunning += BlockCount;
+        SceneRunning  = SceneEnd;
+        ShadowRunning = ShadowEnd;
     }
 
     InterlockedMax(gsVisIDEnd, VisIDEnd);
@@ -114,8 +162,8 @@ void ComputeMain(uint ThreadIndex : SV_GroupIndex)
     Pass().OutTotals.Set(9u, gsVisIDEnd);
 
     // Demand, from the unclamped counts, since the CPU sizes the next allocation from what was needed.
-    DrawRunning  = Demand.x;
-    BlockRunning = Demand.y;
+    const uint DrawRunning  = Demand.x;
+    const uint BlockRunning = Demand.y;
 
     const uint InstanceCapacity   = Pass().VisibleInstances.Count;
     const uint RequestedInstances = Pass().InstanceCount.Get(0u);

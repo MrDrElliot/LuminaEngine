@@ -14,6 +14,8 @@
 #include "Tools/Impostor/ImpostorBaker.h"
 #include "Play/StandaloneLauncher.h"
 
+struct ImGuiSettingsHandler;
+
 
 
 namespace Lumina
@@ -328,6 +330,16 @@ namespace Lumina
         void ShowDrawer(FFooterDrawer& Drawer);
 
         FFooterDrawer* FindDrawerForTool(const FEditorTool* Tool);
+
+        void RegisterFooterDrawer(FEditorTool* Tool, const char* Icon, const char* Label, ImGuiKeyChord Shortcut);
+        void SetDrawerDocked(FFooterDrawer& Drawer, bool bDocked);
+
+        // Docked drawers are saved in the layout file beside the dock nodes they sit in, so a layout reset clears both.
+        static constexpr const char* DockedDrawersSettingsName = "LuminaDockedDrawers";
+        void RegisterDockedDrawerSettings();
+        static void* ReadDockedDrawersOpen(ImGuiContext* Context, ImGuiSettingsHandler* Handler, const char* Name);
+        static void ReadDockedDrawersLine(ImGuiContext* Context, ImGuiSettingsHandler* Handler, void* Entry, const char* Line);
+        static void WriteDockedDrawers(ImGuiContext* Context, ImGuiSettingsHandler* Handler, ImGuiTextBuffer* Buffer);
         void DrawFileMenu();
         void DrawProjectMenu();
         void DrawToolsMenu();
@@ -405,6 +417,9 @@ namespace Lumina
         FString                                         SceneTargetTab;
 
         TVector<FFooterDrawer>                          FooterDrawers;
+
+        // Drawers the layout file lists as docked, kept for a plugin drawer that registers later or is absent this run.
+        TVector<FString>                                SavedDockedDrawers;
         FEditorTool*                                    OpenDrawer = nullptr;   // tool whose drawer is open (nullptr = none)
         float                                           DrawerOpenAmount = 0.0f; // 0..1 slide animation
         bool                                            bDrawerActivatedThisFrame = false; // guards focus-loss auto-close
@@ -499,7 +514,7 @@ namespace Lumina
     T* FEditorUI::CreateDrawerTool(const char* Icon, const char* Label, ImGuiKeyChord Shortcut, Args&&... args)
     {
         T* Tool = CreateTool<T>(std::forward<Args>(args)...);
-        FooterDrawers.Emplace(Tool, Icon, Label, Shortcut);
+        RegisterFooterDrawer(Tool, Icon, Label, Shortcut);
         return Tool;
     }
 

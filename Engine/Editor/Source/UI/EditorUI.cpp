@@ -705,6 +705,7 @@ namespace Lumina
         TStrongObjectPtr<CWorld> World = NewObject<CWorld>(nullptr, "Transient World", FGuid::New(), OF_Transient);
 
         WorldEditorTool = CreateTool<FWorldEditorTool>(this, World.Get());
+        RegisterDockedDrawerSettings();
         // They start undocked, living in the bottom status bar instead of a dock split.
         ContentBrowser = CreateDrawerTool<FContentBrowserEditorTool>(LE_ICON_FOLDER, "Content Browser", ImGuiMod_Ctrl | ImGuiKey_Space, this);
         ConsoleLogTool = CreateDrawerTool<FConsoleLogEditorTool>(LE_ICON_CONSOLE_LINE, "Output Log", ImGuiMod_Ctrl | ImGuiKey_J, this);
@@ -753,6 +754,14 @@ namespace Lumina
 
     void FEditorUI::Deinitialize(const FUpdateContext& UpdateContext)
     {
+        // ImGui saves again when its context dies after this, and without the handler that save would drop the docked drawers.
+        if (ImGuiIO& IO = ImGui::GetIO(); IO.IniFilename != nullptr)
+        {
+            ImGui::SaveIniSettingsToDisk(IO.IniFilename);
+            IO.IniFilename = nullptr;
+        }
+        ImGui::RemoveSettingsHandler(DockedDrawersSettingsName);
+
         StandaloneLauncher.Shutdown();
         FCoreEditorDelegates::OnAssetDeleted.Remove(AssetDeletedHandle);
         FObjectReferenceProviders::Unregister(this);
@@ -1037,7 +1046,7 @@ namespace Lumina
         {
             if (FFooterDrawer* Drawer = FindDrawerForTool(ToolToClose); Drawer != nullptr)
             {
-                Drawer->bDocked = false;
+                SetDrawerDocked(*Drawer, false);
                 ToolToClose = nullptr;
             }
         }
@@ -2433,6 +2442,83 @@ namespace Lumina
         }
     }
 
+    void FEditorUI::RegisterFooterDrawer(FEditorTool* Tool, const char* Icon, const char* Label, ImGuiKeyChord Shortcut)
+    {
+        FFooterDrawer& Drawer = FooterDrawers.EmplaceGetRef(Tool, Icon, Label, Shortcut);
+        Drawer.bDocked = SavedDockedDrawers.Contains(FString(Label));
+    }
+
+    void FEditorUI::SetDrawerDocked(FFooterDrawer& Drawer, bool bDocked)
+    {
+        if (Drawer.bDocked != bDocked)
+        {
+            Drawer.bDocked = bDocked;
+            ImGui::MarkIniSettingsDirty();
+        }
+    }
+
+    void FEditorUI::RegisterDockedDrawerSettings()
+    {
+        ImGuiSettingsHandler Handler;
+        Handler.TypeName   = DockedDrawersSettingsName;
+        Handler.TypeHash   = ImHashStr(Handler.TypeName);
+        Handler.ReadOpenFn = &FEditorUI::ReadDockedDrawersOpen;
+        Handler.ReadLineFn = &FEditorUI::ReadDockedDrawersLine;
+        Handler.WriteAllFn = &FEditorUI::WriteDockedDrawers;
+        Handler.UserData   = this;
+        ImGui::AddSettingsHandler(&Handler);
+    }
+
+    void* FEditorUI::ReadDockedDrawersOpen(ImGuiContext*, ImGuiSettingsHandler* Handler, const char*)
+    {
+        return Handler->UserData;
+    }
+
+    void FEditorUI::ReadDockedDrawersLine(ImGuiContext*, ImGuiSettingsHandler* Handler, void*, const char* Line)
+    {
+        constexpr FStringView Prefix = "Docked=";
+        const FStringView Text(Line);
+        if (!Text.StartsWith(Prefix))
+        {
+            return;
+        }
+
+        FEditorUI* EditorUI = static_cast<FEditorUI*>(Handler->UserData);
+        const FStringView NameView = Text.Mid(Prefix.Len());
+        const FString Name(NameView.GetData(), NameView.Len());
+        if (!EditorUI->SavedDockedDrawers.Contains(Name))
+        {
+            EditorUI->SavedDockedDrawers.Add(Name);
+        }
+        for (FFooterDrawer& Drawer : EditorUI->FooterDrawers)
+        {
+            Drawer.bDocked |= Name == Drawer.Label;
+        }
+    }
+
+    void FEditorUI::WriteDockedDrawers(ImGuiContext*, ImGuiSettingsHandler* Handler, ImGuiTextBuffer* Buffer)
+    {
+        const FEditorUI* EditorUI = static_cast<const FEditorUI*>(Handler->UserData);
+        Buffer->appendf("[%s][State]\n", Handler->TypeName);
+        for (const FFooterDrawer& Drawer : EditorUI->FooterDrawers)
+        {
+            if (Drawer.bDocked)
+            {
+                Buffer->appendf("Docked=%s\n", Drawer.Label);
+            }
+        }
+        // A plugin drawer missing this run keeps its docked state for the run that has it again.
+        for (const FString& Name : EditorUI->SavedDockedDrawers)
+        {
+            const bool bRegistered = Algo::AnyOf(EditorUI->FooterDrawers, [&](const FFooterDrawer& Drawer) { return Name == Drawer.Label; });
+            if (!bRegistered)
+            {
+                Buffer->appendf("Docked=%s\n", *Name);
+            }
+        }
+        Buffer->append("\n");
+    }
+
     FEditorUI::FFooterDrawer* FEditorUI::FindDrawerForTool(const FEditorTool* Tool)
     {
         for (FFooterDrawer& Drawer : FooterDrawers)
@@ -2765,7 +2851,7 @@ namespace Lumina
 
             if (ImGui::Button(DockLabel) && Drawer != nullptr)
             {
-                Drawer->bDocked = true;
+                SetDrawerDocked(*Drawer, true);
 
                 // Queued because the bottom node may not exist yet and can only be split before DockSpace() runs.
                 PendingBottomDockTool       = Drawer->Tool;
@@ -2964,7 +3050,7 @@ namespace Lumina
         // A docked drawer tool goes back to its footer drawer, same as when its own X is pressed.
         if (FFooterDrawer* Drawer = FindDrawerForTool(Tool); Drawer != nullptr)
         {
-            Drawer->bDocked = false;
+            SetDrawerDocked(*Drawer, false);
             return;
         }
 
