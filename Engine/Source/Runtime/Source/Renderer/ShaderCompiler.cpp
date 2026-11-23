@@ -339,16 +339,15 @@ namespace Lumina
             Session = nullptr;
         }
 
-        void ReleaseAll()
+        // Leaked on purpose, since freeing the last session unloads slang-glslang and that unload faults when the main thread runs it at exit.
+        void AbandonAll()
         {
-            TVector<Slang::ComPtr<slang::IGlobalSession>> Dead;
+            FScopeLock Lock(Mutex);
+            for (Slang::ComPtr<slang::IGlobalSession>& Session : Free)
             {
-                FScopeLock Lock(Mutex);
-                Dead = Move(Free);
+                Session.detach();
             }
-
-            FScopeLock Lock(CreateMutex);
-            Dead.Reset();
+            Free.Reset();
         }
 
     private:
@@ -925,7 +924,7 @@ namespace Lumina
     {
         Flush();
 
-        GSlangSessionPool.ReleaseAll();
+        GSlangSessionPool.AbandonAll();
     }
 
     bool FSpirVShaderCompiler::CompileShaderRawEntries(FString ShaderString, const FShaderCompileOptions& CompileOptions, TVector<FRawShaderEntry> Entries)
