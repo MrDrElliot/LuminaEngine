@@ -8,6 +8,7 @@
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/EditorUI.h"
+#include "UI/Properties/PropertyTable.h"
 #include "UI/Properties/Customizations/AssetPickerFilter.h"
 #include <Assets/AssetRegistry/AssetData.h>
 #include <Assets/AssetRegistry/AssetRegistry.h>
@@ -67,8 +68,7 @@ namespace Lumina
             {
                 if (CObject* Dropped = DragDrop::AcceptAssetOfClass(ObjectProperty->GetPropertyClass()))
                 {
-                    Object = Dropped;
-                    bWasChanged = true;
+                    bWasChanged |= TryAssign(*Property, Dropped);
                 }
                 ImGui::EndDragDropTarget();
             }
@@ -176,9 +176,8 @@ namespace Lumina
 
                             if (bSelected)
                             {
-                                Object = LoadObject<CObject>(Asset->AssetGUID);
+                                bWasChanged |= TryAssign(*Property, LoadObject<CObject>(Asset->AssetGUID));
                                 ImGui::CloseCurrentPopup();
-                                bWasChanged = true;
                             }
                         
                             ImGui::PopID();
@@ -199,8 +198,7 @@ namespace Lumina
             {
                 if (CObject* Loaded = LoadObject<CObject>(BrowserSelection->AssetGUID))
                 {
-                    Object = Loaded;
-                    bWasChanged = true;
+                    bWasChanged |= TryAssign(*Property, Loaded);
                 }
             }
 
@@ -223,6 +221,7 @@ namespace Lumina
             if (AssetPickerFilter::DrawClearButton("Clear the reference."))
             {
                 Object.Reset();
+                RefusedMessage.Empty();
                 bWasChanged = true;
             }
 
@@ -230,6 +229,11 @@ namespace Lumina
             ImGui::EndGroup();
         }
         ImGui::EndGroup();
+
+        if (!RefusedMessage.IsEmpty())
+        {
+            DrawPropertyError(FStringView(*RefusedMessage, RefusedMessage.Len()));
+        }
 
         ImGui::PopID();
 
@@ -254,6 +258,20 @@ namespace Lumina
         }
 
         return EPropertyChangeOp::None;
+    }
+
+    bool FCObjectPropertyCustomization::TryAssign(const FPropertyHandle& Property, CObject* Candidate)
+    {
+        const TStrongObjectPtr<CObject> Value(Candidate);
+        const FString Reason = Property.CheckValue(&Value);
+        if (!Reason.IsEmpty())
+        {
+            RefusedMessage = FString(*Candidate->GetName()) + " cannot be used here. " + Reason;
+            return false;
+        }
+        RefusedMessage.Empty();
+        Object = Candidate;
+        return true;
     }
 
     void FCObjectPropertyCustomization::UpdatePropertyValue(const TSharedPtr<FPropertyHandle>& Property)

@@ -6,6 +6,7 @@
 #include "Core/Engine/Engine.h"
 #include "Core/Math/Hash/Hash.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Reflection/PropertyValidation.h"
 #include "FileSystem/FileSystem.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/ShaderLibrary.h"
@@ -71,6 +72,21 @@ namespace Lumina
         }
         CObject::Serialize(Ar);
         ComputeShaderBinaries = Move(EditorBinaries);
+    }
+
+    bool CParticleEmitter::IsSimulated() const
+    {
+        return bEnabled && PropertyValidation::CollectErrors(GetClass(), this).IsEmpty();
+    }
+
+    FString CParticleEmitter::ValidateMaterial(CMaterialInterface* Candidate)
+    {
+        if (Candidate == nullptr || Candidate->GetMaterialType() == EMaterialType::Particle)
+        {
+            return FString();
+        }
+        return Lumina::Format("It is a {} material, and emitters draw only Particle materials. Set Material Type to Particle in the material editor.",
+                              MaterialDomain::ToString(Candidate->GetMaterialType()));
     }
 
     void CParticleEmitter::PostLoad()
@@ -328,7 +344,7 @@ namespace Lumina
         float Length = 0.0f;
         for (const TStrongObjectPtr<CParticleEmitter>& Emitter : Emitters)
         {
-            if (Emitter == nullptr || !Emitter->bEnabled)
+            if (Emitter == nullptr || !Emitter->IsSimulated())
             {
                 continue;
             }

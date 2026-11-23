@@ -7,6 +7,7 @@
 #include "Core/Object/ObjectArray.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Reflection/PropertyChangedEvent.h"
+#include "Core/Reflection/PropertyValidation.h"
 #include "Particles/ParticleEmitterStack.h"
 #include "Particles/ParticleGridModules.h"
 #include "Particles/ParticleGraphModules.h"
@@ -399,6 +400,17 @@ namespace Lumina
         GetPropertyTable()->SetObject(Target, Target->GetClass());
     }
 
+    // One line per setting the emitter holds that its EditValidate rule refuses, empty when it has none.
+    static FString DescribeEmitterProblems(const CParticleEmitter* Emitter)
+    {
+        FString Text;
+        for (const PropertyValidation::FPropertyError& Error : PropertyValidation::CollectErrors(Emitter->GetClass(), Emitter))
+        {
+            Text += Lumina::Format("{}{}: {}", Text.IsEmpty() ? "" : "\n", Error.Property->GetPropertyDisplayName(), Error.Reason);
+        }
+        return Text;
+    }
+
     void FParticleSystemEditorTool::DrawStack()
     {
         CParticleSystem* PS = GetSystem();
@@ -422,6 +434,22 @@ namespace Lumina
             ImGui::TextWrapped(LE_ICON_ALERT_CIRCLE_OUTLINE " %s", *CompilationResult.CompilationLog);
             ImGui::PopStyleColor();
             ImGui::Spacing();
+        }
+
+        for (const TStrongObjectPtr<CParticleEmitter>& Emitter : PS->Emitters)
+        {
+            if (Emitter == nullptr)
+            {
+                continue;
+            }
+            const FString Problems = DescribeEmitterProblems(Emitter.Get());
+            if (!Problems.IsEmpty())
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::Danger());
+                ImGui::TextWrapped(LE_ICON_ALERT_CIRCLE " %s is not simulated until this is fixed. %s", *Emitter->EmitterName, *Problems);
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+            }
         }
 
         // System header selects the asset so its user parameters show in Details.
@@ -706,6 +734,15 @@ namespace Lumina
         }
         ImGui::TextColored(bEnabled ? EditorColors::TextPrimary() : EditorColors::TextMuted(), "%s", *Emitter->EmitterName);
 
+        const FString Problems = DescribeEmitterProblems(Emitter);
+        const bool bHasProblems = !Problems.IsEmpty();
+        if (bHasProblems)
+        {
+            ImGui::SameLine(0.0f, 6.0f);
+            ImGui::TextColored(EditorColors::Danger(), LE_ICON_ALERT_CIRCLE);
+            ImGuiX::TextTooltip("{}{}Not simulated until this is fixed. Select the emitter to fix it in Details.", Problems, "\n\n");
+        }
+
         ImGui::SameLine();
         ImGui::SetCursorScreenPos(ImVec2(CardMin.x + CardWidth - ImGui::GetFrameHeight() - 6.0f, RowY));
         if (StackIcon(LE_ICON_DOTS_VERTICAL, "##options", EditorColors::TextDim(), EditorColors::TextPrimary(), "Move, save or remove this emitter."))
@@ -737,8 +774,10 @@ namespace Lumina
         DrawList->AddRectFilled(CardMin, CardMax, EditorColors::U32(EditorColors::PanelBg()), 6.0f);
         DrawList->AddRectFilled(CardMin, HeaderMax, EditorColors::U32(HeaderColor), 6.0f, bOpen ? ImDrawFlags_RoundCornersTop : ImDrawFlags_RoundCornersAll);
         DrawList->AddRectFilled(ImVec2(CardMin.x, CardMin.y + 6.0f), ImVec2(CardMin.x + 3.0f, HeaderMax.y - (bOpen ? 0.0f : 6.0f)),
-            EditorColors::U32(bEnabled ? EditorColors::Accent() : EditorColors::TextMuted()));
-        DrawList->AddRect(CardMin, CardMax, EditorColors::U32(bSelected ? EditorColors::WithAlpha(EditorColors::Accent(), 0.6f) : EditorColors::Border()), 6.0f);
+            EditorColors::U32(bHasProblems ? EditorColors::Danger() : bEnabled ? EditorColors::Accent() : EditorColors::TextMuted()));
+        const ImVec4 BorderColor = bHasProblems ? EditorColors::WithAlpha(EditorColors::Danger(), 0.7f)
+                                 : bSelected ? EditorColors::WithAlpha(EditorColors::Accent(), 0.6f) : EditorColors::Border();
+        DrawList->AddRect(CardMin, CardMax, EditorColors::U32(BorderColor), 6.0f);
         DrawList->ChannelsMerge();
     }
 

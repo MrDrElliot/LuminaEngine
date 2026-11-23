@@ -190,7 +190,7 @@ namespace Lumina
         for (int32 Child = 0; Child < EmitterCount; ++Child)
         {
             const CParticleEmitter* ChildEmitter = PS->Emitters[Child].Get();
-            if (ChildEmitter == nullptr || !ChildEmitter->bEnabled || ChildEmitter->SpawnFromEmitter.IsEmpty())
+            if (ChildEmitter == nullptr || !ChildEmitter->IsSimulated() || ChildEmitter->SpawnFromEmitter.IsEmpty())
             {
                 continue;
             }
@@ -218,7 +218,7 @@ namespace Lumina
         for (int32 EmitterIdx = 0; EmitterIdx < EmitterCount; ++EmitterIdx)
         {
             CParticleEmitter* Emitter = PS->Emitters[EmitterIdx].Get();
-            if (Emitter == nullptr || !Emitter->bEnabled)
+            if (Emitter == nullptr || !Emitter->IsSimulated())
             {
                 continue;
             }

@@ -80,8 +80,10 @@ namespace Lumina::Reflection
     X(NoReorder,            Flag,   Editor,    "Removes the drag handles from an array property.") \
     X(NoResize,             Flag,   Editor,    "Removes the add and remove buttons from an array property.") \
     X(DefaultCollapsed,     Flag,   Editor,    "Draws a struct or instanced struct property collapsed on first open.") \
-    X(EditCondition,        Value,  Editor,    "Disables the property while the expression is false. Terms are Prop, !Prop, Prop == Value or Prop != Value, joined by && or ||.") \
+    X(EditCondition,        Value,  Editor,    "Disables the property while the expression is false. Terms are Prop or Prop compared with ==, !=, <, <=, > or >= to a value, combined with !, &&, || and parentheses.") \
     X(EditConditionHides,   Flag,   Editor,    "Hides the property instead of disabling it while its EditCondition is false.") \
+    X(EditConditionReason,  Value,  Editor,    "Tooltip shown on the property while its EditCondition disables it, saying how to enable it.") \
+    X(EditValidate,         Value,  Editor,    "Names a FUNCTION on the owning type that takes one value of the property's type and returns why it is not allowed, or an empty FString when it is.") \
     X(RequiresRecook,       Flag,   Editor,    "Editing the property triggers a recook of the owning asset.") \
     X(ScriptReadOnly,       Flag,   Script,    "The generated C# wrapper emits a getter only, whatever the editor flags say.") \
     X(ScriptWritable,       Flag,   Script,    "The generated C# wrapper emits a setter, whatever the editor flags say.") \

@@ -2,6 +2,7 @@
 
 #include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentEntityToken.h"
+#include "Core/Reflection/PropertyValidation.h"
 #include "Agent/AgentObjectEdit.h"
 #include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
@@ -721,6 +722,10 @@ namespace Lumina::MCP
                         Info.bCompiled   = Emitter->HasCustomComputeShader();
                         Info.SharedAsset = Emitter->GetPackage() != System->GetPackage() ? FString(*Emitter->GetPackage()->GetPackagePath()) : FString();
                         Info.Settings    = EditableValues(Emitter->GetClass(), Emitter);
+                        for (const PropertyValidation::FPropertyError& Error : PropertyValidation::CollectErrors(Emitter->GetClass(), Emitter))
+                        {
+                            Info.Problems.Add(Lumina::Format("{}: {}", Error.Property->GetPropertyDisplayName(), Error.Reason));
+                        }
                         CollectModules(System, Index, EParticleModuleStage::Spawn, Info.SpawnModules);
                         CollectModules(System, Index, EParticleModuleStage::Update, Info.UpdateModules);
                         CollectModules(System, Index, EParticleModuleStage::Grid, Info.GridModules);

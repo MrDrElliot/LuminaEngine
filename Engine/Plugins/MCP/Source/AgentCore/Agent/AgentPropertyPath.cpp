@@ -144,6 +144,7 @@ namespace Lumina::Agent
 
         FProperty* Property = nullptr;
         void* ValuePtr = nullptr;
+        void* Container = nullptr;
 
         // Names the value reached so far, such as "Values[0]", since an index segment has no name of its own.
         FString Label;
@@ -167,8 +168,9 @@ namespace Lumina::Agent
                     return false;
                 }
 
-                ValuePtr = Property->GetValuePtr<uint8>(Data);
-                Label    = Segment.Name;
+                ValuePtr  = Property->GetValuePtr<uint8>(Data);
+                Container = Data;
+                Label     = Segment.Name;
             }
             else
             {
@@ -188,8 +190,9 @@ namespace Lumina::Agent
                     return false;
                 }
 
-                ValuePtr = Array->GetAt(ValuePtr, Segment.Index);
-                Property = Array->GetInternalProperty();
+                ValuePtr  = Array->GetAt(ValuePtr, Segment.Index);
+                Property  = Array->GetInternalProperty();
+                Container = nullptr;
                 Label    = Lumina::Format("{}[{}]", Label, Segment.Index);
 
                 if (Property == nullptr)
@@ -236,6 +239,7 @@ namespace Lumina::Agent
 
         Out.Property = Property;
         Out.ValuePtr = ValuePtr;
+        Out.Container = Container;
 
         return Out.IsValid();
     }

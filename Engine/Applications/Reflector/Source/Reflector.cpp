@@ -10,6 +10,7 @@
 #include "Reflector/CodeGeneration/GeneratorRunner.h"
 #include "Reflector/ReflectionCore/ReflectedProject.h"
 #include "Reflector/ReflectionCore/ReflectionModelBuilder.h"
+#include "Reflector/Types/Functions/ReflectedFunction.h"
 #include "Reflector/Utils/Timing.h"
 #include <algorithm>
 #include <cctype>
@@ -33,40 +34,78 @@ using namespace Lumina::Reflection;
 
 namespace
 {
-    std::string_view TrimSpaces(std::string_view Text)
-    {
-        while (!Text.empty() && std::isspace((unsigned char)Text.front())) { Text.remove_prefix(1); }
-        while (!Text.empty() && std::isspace((unsigned char)Text.back()))  { Text.remove_suffix(1); }
-        return Text;
-    }
-
-    // The property names an EditCondition reads, in the grammar the editor parses of A, !A, A == B and A != B joined by && or ||.
+    // Every property the expression names, which is every identifier except the value after a comparison.
     std::vector<std::string> EditConditionNames(std::string_view Expression)
     {
         std::vector<std::string> Names;
-        while (!Expression.empty())
+        bool bAfterComparison = false;
+        size_t Pos = 0;
+        while (Pos < Expression.size())
         {
-            const size_t And = Expression.find("&&");
-            const size_t Or = Expression.find("||");
-            const size_t Split = std::min(And, Or);
-
-            std::string_view Term = TrimSpaces(Expression.substr(0, Split));
-            Expression = Split == std::string_view::npos ? std::string_view() : Expression.substr(Split + 2);
-
-            if (!Term.empty() && Term.front() == '!' && (Term.size() < 2 || Term[1] != '='))
+            const char Char = Expression[Pos];
+            if (std::isalpha((unsigned char)Char) || Char == '_')
             {
-                Term.remove_prefix(1);
+                const size_t Start = Pos;
+                while (Pos < Expression.size() && (std::isalnum((unsigned char)Expression[Pos]) || Expression[Pos] == '_'))
+                {
+                    ++Pos;
+                }
+                if (!bAfterComparison)
+                {
+                    Names.emplace_back(Expression.substr(Start, Pos - Start));
+                }
+                bAfterComparison = false;
+                continue;
             }
-            const size_t Compare = std::min(Term.find("=="), Term.find("!="));
-            Names.emplace_back(TrimSpaces(Term.substr(0, Compare)));
+            if (Char == '=' || Char == '<' || Char == '>' || (Char == '!' && Pos + 1 < Expression.size() && Expression[Pos + 1] == '='))
+            {
+                bAfterComparison = true;
+            }
+            else if (Char == '&' || Char == '|' || Char == '(' || Char == ')')
+            {
+                bAfterComparison = false;
+            }
+            ++Pos;
         }
         return Names;
     }
 
-    // Walks the reflected parents, and an unreflected one carries no properties to find.
+    // The reflected parent of Current, or null at the root or past an unreflected one.
+    const FReflectedStruct* ReflectedParent(const FReflectionDatabase& Db, const FReflectedStruct& Current)
+    {
+        const std::string& Parent = Current.Parent;
+        if (Parent.empty())
+        {
+            return nullptr;
+        }
+        const bool bQualified = Parent.find("::") != std::string::npos;
+        const std::string Qualified = (bQualified || Current.Namespace.empty()) ? Parent : (Current.Namespace + "::" + Parent);
+        const FReflectedType* Found = Db.GetReflectedType<FReflectedType>(Lumina::FStringHash(Qualified));
+        if (Found == nullptr || Found->Type == FReflectedType::EType::Enum || Found == &Current)
+        {
+            return nullptr;
+        }
+        return static_cast<const FReflectedStruct*>(Found);
+    }
+
+    const Lumina::FReflectedFunction* FindReflectedFunction(const FReflectionDatabase& Db, const FReflectedStruct& Struct, const std::string& Name)
+    {
+        for (const FReflectedStruct* Current = &Struct; Current != nullptr; Current = ReflectedParent(Db, *Current))
+        {
+            for (const auto& Function : Current->Functions)
+            {
+                if (Function->Name == Name)
+                {
+                    return Function.get();
+                }
+            }
+        }
+        return nullptr;
+    }
+
     bool HasReflectedProperty(const FReflectionDatabase& Db, const FReflectedStruct& Struct, const std::string& Name)
     {
-        for (const FReflectedStruct* Current = &Struct; Current != nullptr;)
+        for (const FReflectedStruct* Current = &Struct; Current != nullptr; Current = ReflectedParent(Db, *Current))
         {
             for (const auto& Property : Current->Props)
             {
@@ -75,20 +114,6 @@ namespace
                     return true;
                 }
             }
-
-            const std::string& Parent = Current->Parent;
-            if (Parent.empty())
-            {
-                return false;
-            }
-            const bool bQualified = Parent.find("::") != std::string::npos;
-            const std::string Qualified = (bQualified || Current->Namespace.empty()) ? Parent : (Current->Namespace + "::" + Parent);
-            const FReflectedType* Found = Db.GetReflectedType<FReflectedType>(Lumina::FStringHash(Qualified));
-            if (Found == nullptr || Found->Type == FReflectedType::EType::Enum || Found == Current)
-            {
-                return false;
-            }
-            Current = static_cast<const FReflectedStruct*>(Found);
         }
         return false;
     }
@@ -455,6 +480,23 @@ int main(int argc, char* argv[])
                                     Property->Name.c_str(), Type->DisplayName.c_str(), Condition->Value.c_str(), Name.c_str(),
                                     Type->DisplayName.c_str());
                             }
+                        }
+                    }
+
+                    if (const auto Validate = std::find_if(Property->Metadata.begin(), Property->Metadata.end(),
+                            [](const FMetadataPair& Pair) { return Pair.Key == "EditValidate"; });
+                        Validate != Property->Metadata.end())
+                    {
+                        const Lumina::FReflectedFunction* Function = FindReflectedFunction(Parser.ParsingContext.ReflectionDatabase, *Struct, Validate->Value);
+                        if (Function == nullptr || Function->Arguments.size() != 1 || !Function->Return.has_value() || !Function->bReflectNatively)
+                        {
+                            FDiagLocation Loc;
+                            Loc.File = Header->HeaderPath;
+                            Loc.Line = Type->LineNumber;
+                            FDiagnostics::Get().Errorf(Loc, EDiagId::ValidateFunctionInvalid,
+                                "Property '%s' on '%s' has EditValidate \"%s\", which must name a FUNCTION on '%s' taking one value of the "
+                                "property's type and returning an FString.",
+                                Property->Name.c_str(), Type->DisplayName.c_str(), Validate->Value.c_str(), Type->DisplayName.c_str());
                         }
                     }
 

@@ -24,6 +24,11 @@ namespace Lumina::Agent
     };
 
     /// Sets one field by dotted path on data owned by Owner, transacted through its open editor when there is one.
+    struct FResolvedProperty;
+
+    // Why the property's Validate function refuses Value, read into a scratch copy so nothing is written. Empty when allowed.
+    NODISCARD AGENTCORE_API FString CheckPropertyValidator(const FResolvedProperty& Target, const FJsonValue& Value, FStringView Path);
+
     NODISCARD AGENTCORE_API FObjectEditResult SetObjectProperty(CStruct* Root, void* RootData, CObject* Owner,
         FStringView Path, const FJsonValue& Value, FName Label);
 

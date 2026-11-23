@@ -3,12 +3,23 @@
 
 #include "imgui.h"
 #include "Core/Assertions/Assert.h"
+#include "Core/Reflection/PropertyValidation.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/MapProperty.h"
 
 namespace Lumina
 {
+    FString FPropertyHandle::CheckValue(const void* Candidate) const
+    {
+        return OwnerArray == nullptr && OwnerMap == nullptr ? PropertyValidation::Check(Property, ContainerPtr, Candidate) : FString();
+    }
+
+    FString FPropertyHandle::CheckCurrentValue() const
+    {
+        return OwnerArray == nullptr && OwnerMap == nullptr ? PropertyValidation::CheckCurrent(Property, ContainerPtr) : FString();
+    }
+
     FPropertyHandle::FPropertyHandle(void* InContainerPtr, FProperty* InProperty, int32 InIndex)
         : ContainerPtr(InContainerPtr)
         , Property(InProperty)

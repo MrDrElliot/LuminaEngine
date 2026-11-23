@@ -22,6 +22,12 @@ namespace Lumina
     class FProperty;
     struct FInstancedStruct;
 
+    // Whether Property's EditCondition holds for the struct or object at Container, true when it has none or it does not parse.
+    EDITOR_API bool IsPropertyEditConditionMet(FProperty* Property, void* Container);
+
+    // The red line drawn under a value that its property's EditValidate function refuses.
+    EDITOR_API void DrawPropertyError(FStringView Message);
+
     using FPropertyChangedEventFn = TFunction<void(const FPropertyChangedEvent&)>;
     using FPropertyMultiValueFn = TFunction<bool(FProperty*)>;
     using FPropertyTrailingControlFn = TFunction<void(FProperty*)>;

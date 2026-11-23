@@ -395,6 +395,9 @@ namespace Lumina
         bool HasCustomComputeShader() const { return ComputeShader != nullptr; }
         bool UsesCustomShader() const { return ShaderMode == EParticleShaderMode::Custom && HasCustomComputeShader(); }
 
+        // Enabled and holding no setting its EditValidate rules refuse, since a half-working emitter reads as the finished effect.
+        bool IsSimulated() const;
+
         bool IsReadyForSimulation() const
         {
             if (MaxParticles <= 0)
@@ -496,14 +499,14 @@ namespace Lumina
         float FixedFPS = 0.0f;
 
         // Draws a fixed-rate emitter where its particles would be now, so a low FixedFPS still moves smoothly.
-        PROPERTY(Editable, Category = "Simulation", EditCondition = "FixedFPS")
+        PROPERTY(Editable, Category = "Simulation", EditCondition = "FixedFPS", EditConditionReason = "Only a fixed simulation rate needs interpolating.")
         bool bInterpolate = true;
 
         // Restarts the random sequence from Seed on every activation, so the effect plays the same each time.
         PROPERTY(Editable, Category = "Simulation")
         bool bUseFixedSeed = false;
 
-        PROPERTY(Editable, Category = "Simulation", EditCondition = "bUseFixedSeed")
+        PROPERTY(Editable, Category = "Simulation", EditCondition = "bUseFixedSeed", EditConditionReason = "Turn on Use Fixed Seed to pick one.")
         int32 Seed = 0;
 
         // Surface a Shape Location module set to Mesh spawns on.
@@ -522,22 +525,22 @@ namespace Lumina
         PROPERTY(Editable, Category = "Sub-Emitter")
         FString SpawnFromEmitter;
 
-        PROPERTY(Editable, Category = "Sub-Emitter")
+        PROPERTY(Editable, Category = "Sub-Emitter", EditCondition = "SpawnFromEmitter", EditConditionReason = "Name a parent emitter in Spawn From Emitter first.")
         EParticleEventType SpawnEvent = EParticleEventType::Death;
 
-        PROPERTY(Editable, Category = "Sub-Emitter", ClampMin = 1)
+        PROPERTY(Editable, Category = "Sub-Emitter", ClampMin = 1, EditCondition = "SpawnFromEmitter", EditConditionReason = "Name a parent emitter in Spawn From Emitter first.")
         int32 ParticlesPerEvent = 1;
 
         // Events per second from each parent particle when SpawnEvent is Continuous.
-        PROPERTY(Editable, Category = "Sub-Emitter", ClampMin = 0.0f, EditCondition = "SpawnEvent == Continuous")
+        PROPERTY(Editable, Category = "Sub-Emitter", ClampMin = 0.0f, EditCondition = "SpawnFromEmitter && SpawnEvent == Continuous", EditConditionReason = "Applies to a Continuous spawn event from a named parent emitter.")
         float EventRate = 10.0f;
 
         // Fraction of the parent particle's velocity each spawned particle starts with.
-        PROPERTY(Editable, Category = "Sub-Emitter", ClampMin = 0.0f, ClampMax = 1.0f)
+        PROPERTY(Editable, Category = "Sub-Emitter", ClampMin = 0.0f, ClampMax = 1.0f, EditCondition = "SpawnFromEmitter", EditConditionReason = "Name a parent emitter in Spawn From Emitter first.")
         float InheritParentVelocity = 0.0f;
 
         // Points each spawned particle along the surface normal its parent hit, which SurfaceAligned facing lies flat across.
-        PROPERTY(Editable, Category = "Sub-Emitter", EditCondition = "SpawnEvent == Collision")
+        PROPERTY(Editable, Category = "Sub-Emitter", EditCondition = "SpawnFromEmitter && SpawnEvent == Collision", EditConditionReason = "Applies to a Collision spawn event from a named parent emitter.")
         bool bSpawnAlongSurfaceNormal = false;
 
         // Hands where this emitter's particles hit to scripts through CSpawnSubsystem::GetParticleCollisions, a few frames late.
@@ -609,90 +612,90 @@ namespace Lumina
         PROPERTY(Hidden)
         float NoiseSpeed = 1.0f;
 
-        // Superseded by Material, which carries the blend its graph was authored against.
-        PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
-        EParticleBlendMode BlendMode = EParticleBlendMode::Additive;
-
-        // Null, or any domain but Particle, leaves this emitter on the texture path.
         PROPERTY(Editable, Category = "Render")
+        EParticleRenderMode RenderMode = EParticleRenderMode::Sprite;
+
+        // A Particle-domain material shades sprites itself, while meshes and ribbons keep the built-in shading.
+        PROPERTY(Editable, Category = "Render", EditCondition = "RenderMode == Sprite && !Texture", EditConditionReason = "To use a material, unassign the texture. Materials shade sprites only.", EditValidate = "ValidateMaterial")
         TStrongObjectPtr<CMaterialInterface> Material;
 
-        // Sampled only on the texture path, since a Particle material samples whatever its graph binds.
-        PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
+        FUNCTION()
+        static FString ValidateMaterial(CMaterialInterface* Candidate);
+
+        // Draws the particles into the sun's virtual shadow, faded by their alpha.
+        PROPERTY(Editable, Category = "Render", EditCondition = "RenderMode != None")
+        bool bCastShadows = false;
+
+        PROPERTY(Editable, Category = "Render", EditCondition = "RenderMode != None")
+        EParticleSortMode SortMode = EParticleSortMode::ByDistance;
+
+        // Meters over which a sprite fades out as it nears the surface behind it, hiding the seam. Zero disables it.
+        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, EditCondition = "RenderMode != None && ((RenderMode == Sprite && Material) || !bWriteDepth)", EditConditionReason = "Write Depth makes the sprite solid, so there is no seam to fade.")
+        float SoftFadeDistance = 0.3f;
+
+        // Meters from the camera inside which a sprite fades away, so a burst at the lens never fills the screen. Zero disables it.
+        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, Units = "m", EditCondition = "RenderMode != None")
+        float CameraFadeDistance = 0.0f;
+
+        PROPERTY(Editable, Category = "Render|Built-in Shading", EditCondition = "RenderMode != None && (RenderMode != Sprite || !Material)", EditConditionReason = "The material decides this. To use the built-in shading, unassign the material.")
+        EParticleBlendMode BlendMode = EParticleBlendMode::Additive;
+
+        PROPERTY(Editable, Category = "Render|Built-in Shading", EditCondition = "RenderMode != None && (RenderMode != Sprite || !Material)", EditConditionReason = "The material decides this. To use the built-in shading, unassign the material.")
         TStrongObjectPtr<CTexture> Texture;
 
-        PROPERTY(Editable, Category = "Render")
+        // Shades the sprite with the sun and sky like a surface, for smoke and dust. Additive sprites are light and stay unlit.
+        PROPERTY(Editable, Category = "Render|Built-in Shading", EditCondition = "RenderMode != None && (RenderMode != Sprite || !Material)", EditConditionReason = "The material decides this. To use the built-in shading, unassign the material.")
+        bool bLit = false;
+
+        PROPERTY(Editable, Category = "Render|Built-in Shading", EditCondition = "RenderMode != None && (RenderMode != Sprite || !Material)", EditConditionReason = "The material decides this. To use the built-in shading, unassign the material.")
+        bool bWriteDepth = false;
+
+        PROPERTY(Editable, Category = "Render|Sprite", EditCondition = "RenderMode == Sprite", EditConditionHides)
         EParticleFacingMode FacingMode = EParticleFacingMode::CameraFacing;
 
-        // Seconds of travel the quad stretches along its velocity with VelocityAligned facing, where zero leaves it square.
-        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f)
+        // Seconds of travel the quad stretches along its velocity, where zero leaves it square.
+        PROPERTY(Editable, Category = "Render|Sprite", ClampMin = 0.0f, EditCondition = "RenderMode == Sprite && FacingMode == VelocityAligned", EditConditionReason = "Only Velocity Aligned facing stretches.")
         float VelocityStretch = 0.0f;
 
-        // Sprite-sheet cells played as a flipbook over the particle's life, where 1x1 uses the whole texture.
-        PROPERTY(Editable, Category = "Render", ClampMin = 1)
+        PROPERTY(Editable, Category = "Render|Mesh", EditCondition = "RenderMode == Mesh", EditConditionHides)
+        TStrongObjectPtr<CStaticMesh> Mesh;
+
+        // Points each mesh's up axis along its velocity instead of tumbling it by the particle's rotation.
+        PROPERTY(Editable, Category = "Render|Mesh", EditCondition = "RenderMode == Mesh", EditConditionHides)
+        bool bAlignMeshToVelocity = false;
+
+        // Samples kept per ribbon, so more segments curve more smoothly over the same length.
+        PROPERTY(Editable, Category = "Render|Ribbon", ClampMin = 2, ClampMax = 64, EditCondition = "RenderMode == Ribbon", EditConditionHides)
+        int32 RibbonSegments = 12;
+
+        // Seconds of travel the ribbon trails behind its particle.
+        PROPERTY(Editable, Category = "Render|Ribbon", ClampMin = 0.01f, EditCondition = "RenderMode == Ribbon", EditConditionHides)
+        float RibbonLength = 0.4f;
+
+        // Ribbon width at the tail as a fraction of the head, which is the particle's size.
+        PROPERTY(Editable, Category = "Render|Ribbon", ClampMin = 0.0f, EditCondition = "RenderMode == Ribbon", EditConditionHides)
+        float RibbonTailWidth = 0.0f;
+
+        // Sprite-sheet cells played as a flipbook, where 1x1 uses the whole texture.
+        PROPERTY(Editable, Category = "Render|Flipbook", ClampMin = 1, EditCondition = "RenderMode == Sprite || RenderMode == Ribbon")
         int32 SubUVColumns = 1;
 
-        PROPERTY(Editable, Category = "Render", ClampMin = 1)
+        PROPERTY(Editable, Category = "Render|Flipbook", ClampMin = 1, EditCondition = "RenderMode == Sprite || RenderMode == Ribbon")
         int32 SubUVRows = 1;
+
+        PROPERTY(Editable, Category = "Render|Flipbook", EditCondition = "(RenderMode == Sprite || RenderMode == Ribbon) && (SubUVColumns > 1 || SubUVRows > 1)", EditConditionReason = "A 1x1 sheet has no frames to play.")
+        EParticleFlipbookMode FlipbookMode = EParticleFlipbookMode::OverLife;
+
+        PROPERTY(Editable, Category = "Render|Flipbook", ClampMin = 0.0f, EditCondition = "(RenderMode == Sprite || RenderMode == Ribbon) && FlipbookMode == Loop", EditConditionReason = "Only a looping flipbook plays at a set rate.")
+        float FlipbookFPS = 15.0f;
+
+        // Starts each particle on a random cell, so a sheet of variants reads as a mix.
+        PROPERTY(Editable, Category = "Render|Flipbook", EditCondition = "RenderMode == Sprite || RenderMode == Ribbon")
+        bool bRandomStartFrame = false;
 
         // Kept so assets authored before FacingMode still load.
         PROPERTY(Hidden)
         bool bBillboardToCamera = true;
-
-        // Superseded by Material, which declares its own depth write.
-        PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
-        bool bWriteDepth = false;
-
-        // Meters over which a sprite fades out as it nears the surface behind it, hiding the seam. Zero disables it.
-        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, EditCondition = "!bWriteDepth")
-        float SoftFadeDistance = 0.3f;
-
-        // Meters from the camera inside which a sprite fades away, so a burst at the lens never fills the screen. Zero disables it.
-        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, Units = "m")
-        float CameraFadeDistance = 0.0f;
-
-        // Shades the sprite with the sun and sky like a surface, for smoke and dust. Additive sprites are light and stay unlit.
-        PROPERTY(Editable, Category = "Render", EditCondition = "!Material")
-        bool bLit = false;
-
-        PROPERTY(Editable, Category = "Render")
-        EParticleRenderMode RenderMode = EParticleRenderMode::Sprite;
-
-        PROPERTY(Editable, Category = "Render", EditCondition = "RenderMode == Mesh")
-        TStrongObjectPtr<CStaticMesh> Mesh;
-
-        // Points each mesh's up axis along its velocity instead of tumbling it by the particle's rotation.
-        PROPERTY(Editable, Category = "Render", EditCondition = "RenderMode == Mesh")
-        bool bAlignMeshToVelocity = false;
-
-        // Samples kept per ribbon, so more segments curve more smoothly over the same length.
-        PROPERTY(Editable, Category = "Render", ClampMin = 2, ClampMax = 64, EditCondition = "RenderMode == Ribbon")
-        int32 RibbonSegments = 12;
-
-        // Seconds of travel the ribbon trails behind its particle.
-        PROPERTY(Editable, Category = "Render", ClampMin = 0.01f, EditCondition = "RenderMode == Ribbon")
-        float RibbonLength = 0.4f;
-
-        // Ribbon width at the tail as a fraction of the head, which is the particle's size.
-        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, EditCondition = "RenderMode == Ribbon")
-        float RibbonTailWidth = 0.0f;
-
-        // Draws the particles into the sun's virtual shadow, faded by their alpha.
-        PROPERTY(Editable, Category = "Render")
-        bool bCastShadows = false;
-
-        PROPERTY(Editable, Category = "Render")
-        EParticleSortMode SortMode = EParticleSortMode::ByDistance;
-
-        PROPERTY(Editable, Category = "Render")
-        EParticleFlipbookMode FlipbookMode = EParticleFlipbookMode::OverLife;
-
-        PROPERTY(Editable, Category = "Render", ClampMin = 0.0f, EditCondition = "FlipbookMode == Loop")
-        float FlipbookFPS = 15.0f;
-
-        // Starts each particle on a random cell, so a sheet of variants reads as a mix.
-        PROPERTY(Editable, Category = "Render")
-        bool bRandomStartFrame = false;
 
         // Cells across the grid, along the emitter's right axis. The grid exists once a module declares a channel.
         PROPERTY(Editable, Category = "Grid", ClampMin = 1, ClampMax = 1024)

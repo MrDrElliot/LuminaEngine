@@ -71,6 +71,12 @@ namespace Lumina
 
         bool HasDefault() const { return DefaultContainerPtr != nullptr; }
 
+        // Why Candidate, a value of the property's type, is refused here by the property's EditValidate function. Empty when allowed, and for array and map entries.
+        FString CheckValue(const void* Candidate) const;
+
+        // The same for the value held now.
+        FString CheckCurrentValue() const;
+
         void* ContainerPtr;
         void* DefaultContainerPtr = nullptr;
         FProperty* Property;

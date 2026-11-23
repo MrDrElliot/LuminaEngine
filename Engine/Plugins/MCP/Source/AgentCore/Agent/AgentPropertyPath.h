@@ -10,8 +10,11 @@ namespace Lumina::Agent
     // Where a dotted path landed, which is one property and the instance it belongs to.
     struct FResolvedProperty
     {
-        FProperty* Property = nullptr;
-        void*      ValuePtr = nullptr;
+        FProperty* Property  = nullptr;
+        void*      ValuePtr  = nullptr;
+
+        // The struct or object holding the property, or null when the path ends on an array element.
+        void*      Container = nullptr;
 
         NODISCARD bool IsValid() const { return Property != nullptr && ValuePtr != nullptr; }
     };

@@ -24,6 +24,7 @@ namespace Lumina::Reflection
         SpecifierForm           = 1011, // a specifier written with a value it does not take, or without one it needs.
         EditConditionUnknown    = 1012, // an EditCondition names a property its struct does not have.
         RpcSignature            = 1013, // a FUNCTION(Rpc = ...) is not virtual, returns a value, or drops an argument, so no override can route it.
+        ValidateFunctionInvalid = 1014, // a PROPERTY(Validate = ...) names no reflected FUNCTION taking one value and returning an FString.
 
         MissingGeneratedHeader = 2000,  // header has REFLECT/GENERATED_BODY/PROPERTY/FUNCTION but doesn't #include its <stem>.generated.h
         GeneratedHeaderNotLast = 2001,  // <stem>.generated.h is included but other includes follow it.

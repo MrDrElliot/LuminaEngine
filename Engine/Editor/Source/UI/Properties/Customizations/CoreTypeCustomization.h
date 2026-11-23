@@ -307,7 +307,12 @@ namespace Lumina
 
     private:
 
+        bool TryAssign(const FPropertyHandle& Property, CObject* Candidate);
+
         TWeakObjectPtr<CObject> Object;
+
+        // Why the last pick was refused, kept until a pick is accepted so the user sees what went wrong.
+        FString RefusedMessage;
         ImGuiTextFilter SearchFilter;
         AssetPickerFilter::FAssetsOfClassCache AssetsOfClass;
 

@@ -3,6 +3,7 @@
 
 #include "Agent/AgentAssetResolve.h"
 #include "Agent/AgentEntityToken.h"
+#include "Agent/AgentObjectEdit.h"
 #include "Agent/AgentPropertyPath.h"
 #include "Agent/AgentToolMarshal.h"
 #include "Agent/AgentToolRegistry.h"
@@ -929,6 +930,11 @@ namespace Lumina::MCP
                 !Check.IsValid())
             {
                 return Agent::FToolResult::Error(Check.Error);
+            }
+
+            if (const FString Refused = Agent::CheckPropertyValidator(Target, Value, FStringView(In.Path)); !Refused.IsEmpty())
+            {
+                return Agent::FToolResult::Error(Lumina::Format("'{}' refuses that value. {}", In.Path, Refused));
             }
 
             FJsonValue Before;

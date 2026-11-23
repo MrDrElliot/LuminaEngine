@@ -130,6 +130,10 @@ namespace Lumina
         PROPERTY()
         FString Settings;
 
+        // Settings the emitter holds but cannot use, each as the setting's name and why, such as a material outside the Particle domain.
+        PROPERTY()
+        TVector<FString> Problems;
+
         PROPERTY()
         TVector<SParticleModuleInfo> SpawnModules;
 

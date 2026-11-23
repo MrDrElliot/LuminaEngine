@@ -6,7 +6,9 @@
 #include "Agent/AgentToolMarshal.h"
 #include "Containers/StringFormat.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Reflection/PropertyValidation.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
+#include "Memory/Memory.h"
 #include "Core/Reflection/Type/Properties/ArrayProperty.h"
 #include "Core/Reflection/Type/Properties/StructProperty.h"
 #include "Session/SessionOps.h"
@@ -68,6 +70,28 @@ namespace Lumina::Agent
 
     using namespace AgentObjectEditInternal;
 
+    FString CheckPropertyValidator(const FResolvedProperty& Target, const FJsonValue& Value, FStringView Path)
+    {
+        if (Target.Container == nullptr || Target.Property->GetMetadata("EditValidate").IsEmpty())
+        {
+            return FString();
+        }
+
+        void* Candidate = Memory::Malloc(Target.Property->GetElementSize(), 16);
+        Memory::Memzero(Candidate, Target.Property->GetElementSize());
+        Target.Property->ConstructValue(Candidate);
+
+        FString Reason;
+        if (ReadProperty(Value, Target.Property, Candidate, Path).IsValid())
+        {
+            Reason = PropertyValidation::Check(Target.Property, Target.Container, Candidate);
+        }
+
+        Target.Property->DestructValue(Candidate);
+        Memory::Free(Candidate);
+        return Reason;
+    }
+
     FObjectEditResult SetObjectProperty(CStruct* Root, void* RootData, CObject* Owner, FStringView Path,
         const FJsonValue& Value, FName Label)
     {
@@ -90,6 +114,12 @@ namespace Lumina::Agent
         if (const FMarshalResult Checked = ValidatePropertyValue(Value, Target.Property, Path); !Checked.IsValid())
         {
             Result.Error = Checked.Error;
+            return Result;
+        }
+
+        if (FString Refused = CheckPropertyValidator(Target, Value, Path); !Refused.IsEmpty())
+        {
+            Result.Error = Lumina::Format("'{}' refuses that value. {}", Path, Refused);
             return Result;
         }
 
