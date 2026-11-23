@@ -1488,6 +1488,10 @@ namespace Lumina
             {
                 Flags &= ~(EInstanceFlags::HasDistanceField | EInstanceFlags::Impostor);
             }
+            if (!Prim.bAffectDistanceField)
+            {
+                Flags &= ~EInstanceFlags::HasDistanceField;
+            }
 
             FInstanceCullEntry NewCull = {};
             NewCull.SphereBounds     = Sphere;

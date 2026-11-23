@@ -557,7 +557,7 @@ internal static class ScriptPropertyRewriter
             SyntaxNode Declarator = Member.At;
             string Type = Member.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
             string AnnotatedType = Member.Type.ToDisplayString(NullableQualifiedFormat);
-            string Offset = $"__lazyoff_{Name}.Get(typeof({TypeName}), \"{Name}\")";
+            string Offset = $"(__off_{Name} >= 0 ? __off_{Name} : __lazyoff_{Name}.Get(typeof({TypeName}), \"{Name}\"))";
             string Token = $"__lazyprop_{Name}.Get(typeof({TypeName}), \"{Name}\")";
             bool bWritable = !Classification.IsView && !Member.bReadOnly;
 
@@ -659,12 +659,12 @@ internal static class ScriptPropertyRewriter
             // A ref to a cached handle on a class owner, since a setter called on a handle returned by value is a compile error.
             if (Classification.Access == EScriptAccess.NativeStruct && !bStructOwner)
             {
-                return BuildStructViewProperty(Member, Type, Offset);
+                return BuildStructViewProperty(Member, Type, Offset, TypeName);
             }
             // A component's value field reads as a ref into its storage, so ref, out and compound writes behave as the field the author declared.
             if (bComponentOwner && Classification.Access is EScriptAccess.Blittable or EScriptAccess.Enum)
             {
-                return BuildComponentFieldRef(Member, Type, Offset);
+                return BuildComponentFieldRef(Member, Type, Offset, TypeName);
             }
             AppendCarriedAttributes(Body, Member);
             string DeclaredType = Classification.Access is EScriptAccess.Object or EScriptAccess.AssetPath or EScriptAccess.String
@@ -711,6 +711,7 @@ internal static class ScriptPropertyRewriter
             if (BodyText.Contains("__lazyoff_" + Name))
             {
                 Builder.Append("private static global::LuminaSharp.LazyPropertyOffset __lazyoff_").Append(Name).AppendLine(";");
+                AppendResolvedOffset(Builder, Name, TypeName);
             }
             if (BodyText.Contains("__lazyprop_" + Name))
             {
@@ -753,11 +754,19 @@ internal static class ScriptPropertyRewriter
             return Members;
         }
 
-        private IEnumerable<MemberDeclarationSyntax> BuildComponentFieldRef(FStoredMember Member, string Type, string Offset)
+        // The offset read once at type init, so an accessor costs a constant add and the lazy lookup only covers a type read before its layout existed.
+        private static void AppendResolvedOffset(StringBuilder Builder, string Name, string TypeName)
+        {
+            Builder.Append("private static readonly nint __off_").Append(Name).Append(" = global::LuminaSharp.LazyPropertyOffset.Resolve(typeof(")
+                   .Append(TypeName).Append("), \"").Append(Name).AppendLine("\");");
+        }
+
+        private IEnumerable<MemberDeclarationSyntax> BuildComponentFieldRef(FStoredMember Member, string Type, string Offset, string TypeName)
         {
             string Name = Member.Symbol.Name;
             var Builder = new StringBuilder();
             Builder.Append("private static global::LuminaSharp.LazyPropertyOffset __lazyoff_").Append(Name).AppendLine(";");
+            AppendResolvedOffset(Builder, Name, TypeName);
             AppendCarriedAttributes(Builder, Member);
             Builder.Append(MemberModifiers(Member.Declaration.Modifiers)).Append(Member.bReadOnly ? " ref readonly " : " ref ").Append(Type).Append(' ').Append(Name)
                    .Append(" => ref global::System.Runtime.CompilerServices.Unsafe.AsRef<").Append(Type).Append(">((void*)((nint)").Append(SelfHandle)
@@ -765,11 +774,12 @@ internal static class ScriptPropertyRewriter
             return MapToAuthoredLines(Builder.ToString(), Member);
         }
 
-        private IEnumerable<MemberDeclarationSyntax> BuildStructViewProperty(FStoredMember Member, string Type, string Offset)
+        private IEnumerable<MemberDeclarationSyntax> BuildStructViewProperty(FStoredMember Member, string Type, string Offset, string TypeName)
         {
             string Name = Member.Symbol.Name;
             var Builder = new StringBuilder();
             Builder.Append("private static global::LuminaSharp.LazyPropertyOffset __lazyoff_").Append(Name).AppendLine(";");
+            AppendResolvedOffset(Builder, Name, TypeName);
             Builder.Append("private ").Append(Type).Append(" __view_").Append(Name).AppendLine(";");
             foreach (AttributeListSyntax List in Member.Declaration.AttributeLists)
             {

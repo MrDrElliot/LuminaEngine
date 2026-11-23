@@ -351,6 +351,7 @@ namespace Lumina
                           || Frame.SceneGlobalData.CullData.DebugMode == (uint32)ERenderSceneDebugFlags::WorldDistanceField;
         Out.bActive  = false;
         Out.bRelease = false;
+        ScenePrimitives.SetStreamDistanceFieldSpheres(bWanted);
         if (!bWanted)
         {
             if (WorldDFIdleFrames < kIdleReleaseFrames && ++WorldDFIdleFrames == kIdleReleaseFrames)
@@ -537,8 +538,7 @@ namespace Lumina
             Placement.CellSize  = FWorldDistanceField::BrickWorldSize(Level);
             Placement.Dimension = FWorldDistanceField::kBricksPerAxis;
             Placement.SpherePad = FWorldDistanceField::Band(Level) + FWorldDistanceField::VoxelSize(Level);
-            // A caster far under a voxel only blurs the distances around it.
-            Placement.MinRadius = FWorldDistanceField::VoxelSize(Level) * 0.25f;
+            Placement.MinRadius = FWorldDistanceField::MinCasterRadius(Level);
 
             GatherTerrainHeightfields(RenderFrame->Extracts.TerrainExtracts, TerrainGPUStates, Args.Terrains, Args.NumTerrains);
 

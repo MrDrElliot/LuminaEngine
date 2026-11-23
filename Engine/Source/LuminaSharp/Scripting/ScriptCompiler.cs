@@ -73,8 +73,11 @@ internal static class ScriptCompiler
         }
     }
 
-    /// Set only for the packaging compile, whose output ships; every editor compile stays unoptimized so the debugger can read locals.
-    public static bool bOptimize { get; set; }
+    // Set for the packaging compile, whose output ships optimized whatever is attached.
+    public static bool bForceOptimize { get; set; }
+
+    // Optimized unless a .NET debugger is attached, since unoptimized script code runs several times slower and editor profiling would measure that. Attach, then reload scripts, to read every local.
+    public static bool bOptimize => bForceOptimize || !System.Diagnostics.Debugger.IsAttached;
 
     // Null for a reference built from an image (a sibling unit), which can never shadow a framework assembly.
     private static string? SimpleName(MetadataReference Reference)

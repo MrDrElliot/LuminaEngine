@@ -161,6 +161,7 @@ namespace Lumina
     {
         Record.StreamGeneration = StreamCacheGeneration;
         Record.StreamSlot       = kNoStreamSlot;
+        Record.bStreamDFCaster  = false;
 
         uint32 Index = Constants::kIndexNoneU32;
         for (const uint32 Link : Record.Links)
@@ -193,6 +194,8 @@ namespace Lumina
         Record.StreamSlot   = Slot;
         Record.StreamCenter = Prim.LocalCenter;
         Record.StreamRadius = Prim.LocalRadius * Math::Max(Prim.BoundsScale, 1.0f);
+        const EInstanceFlags Flags = (EInstanceFlags)((RetainedCullEntries[Slot].DrawIDAndFlags >> 16u) & 0xFFFFu);
+        Record.bStreamDFCaster = bStreamDistanceFieldSpheres && EnumHasAnyFlags(Flags, EInstanceFlags::HasDistanceField);
     }
 
     FScenePrimitiveSet::FEntityRecord* FScenePrimitiveSet::FindStreamRecord(ECS::FEntity Entity)
@@ -216,6 +219,10 @@ namespace Lumina
         const FTransformStreamRecord Out = MakeStreamRecord(Matrix, Stamp.StreamCenter, Stamp.StreamRadius);
         StreamRecord(StreamTarget.Records[Record], Out);
         StreamTarget.Slots[Record] = Stamp.StreamSlot;
+        if (Stamp.bStreamDFCaster)
+        {
+            RetainedCullEntries[Stamp.StreamSlot].SphereBounds = Out.SphereBounds;
+        }
 
         // A streamed entity owns one primitive, and only a skeletal one is read back on the CPU, by the skinned gather.
         const uint32 Skeletal = Stamp.Links[(uint32)EPrimitiveSource::SkeletalMesh];
@@ -435,6 +442,15 @@ namespace Lumina
         if (FEntityRecord* Record = EntityRecords.Find(Entity))
         {
             Record->StreamGeneration = 0u;
+        }
+    }
+
+    void FScenePrimitiveSet::SetStreamDistanceFieldSpheres(bool bEnabled)
+    {
+        if (bStreamDistanceFieldSpheres != bEnabled)
+        {
+            bStreamDistanceFieldSpheres = bEnabled;
+            InvalidateAllStreamCache();
         }
     }
 

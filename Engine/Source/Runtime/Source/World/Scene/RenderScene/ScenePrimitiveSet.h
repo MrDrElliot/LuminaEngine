@@ -159,6 +159,7 @@ namespace Lumina
         EInstanceFlags                      BaseFlags = EInstanceFlags::None;
         EPrimitiveSource                    Source = EPrimitiveSource::StaticMesh;
         bool                                bCastShadow = true;
+        bool                                bAffectDistanceField = true;
                 bool                                bShadowWPO = true;
         float                               WPODisableDistance = 0.0f;
         // Whether ForegroundKeys holds this primitive, so tracking it is one test rather than a search.
@@ -249,6 +250,9 @@ namespace Lumina
 
         // Blocks of slots holding an instance streamed this frame, sorted, whose CPU spheres trail the GPU.
         const TVector<uint32>& GetStreamedBlocks() const { return StreamedBlocks; }
+
+        // While the world distance field is in use, a streamed caster also keeps its CPU sphere current, which costs a write per move.
+        void SetStreamDistanceFieldSpheres(bool bEnabled);
 
         uint32                              Num() const { return (uint32)Primitives.Num(); }
         const FScenePrimitive*              GetPrimitives() const { return Primitives.GetData(); }
@@ -610,6 +614,8 @@ namespace Lumina
             uint32      StreamSlot = kNoStreamSlot;
             float       StreamRadius = 0.0f;
             FVector3    StreamCenter = FVector3(0.0f);
+            // The slot feeds the world distance field, which reads a mover's sphere from its CPU entry, so the stream keeps that one current.
+            bool        bStreamDFCaster = false;
         };
         static_assert(sizeof(FEntityRecord) == 64, "One entity per cache line, so movers on different threads never share one.");
         static_assert(kLinkedSources == 3, "FEntityRecord::Links initializer must match kLinkedSources.");
@@ -938,6 +944,7 @@ namespace Lumina
         // Everything at once, for a rescan, a reset or a foreground toggle.
         void InvalidateAllStreamCache();
         uint32                      StreamCacheGeneration = 1;
+        bool                        bStreamDistanceFieldSpheres = false;
 
         FTransformStreamTarget      StreamTarget;
         uint32                      StreamCount = 0;

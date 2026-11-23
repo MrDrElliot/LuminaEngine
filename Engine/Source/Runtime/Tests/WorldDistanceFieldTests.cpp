@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "Containers/HashTable.h"
 #include "World/Scene/RenderScene/Default/WorldDistanceField.h"
 
 #include <cmath>
@@ -148,4 +149,92 @@ TEST(WorldDistanceField, AResetRequestStartsOverWithAFreshUpdate)
     Field.Update(FVector3(0.0f), {}, {}, Frame);
     EXPECT_TRUE(Frame.bFresh);
     EXPECT_EQ(Frame.Bricks.Num(), (int32)(FClipmap::kLevels * FClipmap::kBricksPerLevel));
+}
+
+// A caster under half a voxel of a level only blurs it, so moving one leaves that level and every coarser one untouched.
+TEST(WorldDistanceField, ASmallCasterLeavesCoarserLevelsAlone)
+{
+    FClipmap Field;
+    const FVector3 Camera(0.0f);
+    TVector<FInstanceCullEntry> Entries = { MakeCaster(FVector4(5.0f, 0.0f, 5.0f, 0.2f)) };
+    ASSERT_NE(Settle(Field, Camera, Entries), ~0u);
+    ASSERT_GT(FClipmap::MinCasterRadius(1u), 0.2f);
+
+    Entries[0].SphereBounds = FVector4(-6.0f, 1.0f, 2.0f, 0.2f);
+    const uint32 Dirty[] = { 0u };
+    FSunShadowCache::FSlotChanges Changes;
+    Changes.Dirty = TSpan<const uint32>(Dirty, 1);
+    FClipmap::FFrame Frame;
+    Field.Update(Camera, Changes, Entries, Frame);
+
+    EXPECT_EQ(Frame.CompositeLevel, 0u);
+    for (uint32 Level = 1; Level < FClipmap::kLevels; ++Level)
+    {
+        EXPECT_EQ(Field.GetPendingCount(Level), 0u) << "level " << Level;
+    }
+}
+
+// A streamed mover is marked once it drifts past the tolerance from where it was merged, not on every small step.
+TEST(WorldDistanceField, AStreamedMoverWaitsForItsToleranceBeforeRewriting)
+{
+    FClipmap Field;
+    const FVector3 Camera(0.0f);
+    TVector<FInstanceCullEntry> Entries = { MakeCaster(FVector4(5.0f, 0.0f, 5.0f, 1.0f)) };
+    ASSERT_NE(Settle(Field, Camera, Entries), ~0u);
+
+    const uint32 Blocks[] = { 0u };
+    FSunShadowCache::FSlotChanges Changes;
+    Changes.StreamedBlocks = TSpan<const uint32>(Blocks, 1);
+    const float Tolerance = FClipmap::kMoveToleranceVoxels * FClipmap::VoxelSize(0u);
+
+    FClipmap::FFrame Frame;
+    Entries[0].SphereBounds.x += Tolerance * 0.5f;
+    Field.Update(Camera, Changes, Entries, Frame);
+    EXPECT_TRUE(Frame.Bricks.IsEmpty()) << "a step under the tolerance changes nothing";
+
+    Entries[0].SphereBounds.x += Tolerance;
+    Field.Update(Camera, Changes, Entries, Frame);
+    EXPECT_FALSE(Frame.Bricks.IsEmpty()) << "the drift since the merge passed the tolerance";
+}
+
+// Enough movers that the marking splits across tasks, every one of them must still leave its new brick to be rewritten.
+TEST(WorldDistanceField, ManyMoversMarkEveryBrickTheyReach)
+{
+    FClipmap Field;
+    const FVector3 Camera(0.0f);
+    constexpr uint32 Count = 3000u;
+    TVector<FInstanceCullEntry> Entries;
+    TVector<uint32> Dirty;
+    for (uint32 Index = 0; Index < Count; ++Index)
+    {
+        const float X = -14.0f + (float)(Index % 60u) * 0.47f;
+        const float Z = -14.0f + (float)(Index / 60u) * 0.56f;
+        Entries.Add(MakeCaster(FVector4(X, -4.0f, Z, 0.5f)));
+        Dirty.Add(Index);
+    }
+    ASSERT_NE(Settle(Field, Camera, Entries), ~0u);
+
+    for (FInstanceCullEntry& Entry : Entries)
+    {
+        Entry.SphereBounds.y = 6.0f;
+    }
+    FSunShadowCache::FSlotChanges Changes;
+    Changes.Dirty = TSpan<const uint32>(Dirty.GetData(), Dirty.Num());
+    FClipmap::FFrame Frame;
+    Field.Update(Camera, Changes, Entries, Frame);
+
+    THashSet<uint64> Written;
+    for (const FWorldDFBrickGPU& Brick : Frame.Bricks)
+    {
+        if ((Brick.LevelAndMode & 0xFFu) == 0u)
+        {
+            Written.Add(((uint64)(uint16)Brick.X << 32u) | ((uint64)(uint16)Brick.Y << 16u) | (uint64)(uint16)Brick.Z);
+        }
+    }
+    for (const FInstanceCullEntry& Entry : Entries)
+    {
+        const FIntVector3 Brick = BrickOf(FVector3(Entry.SphereBounds.x, Entry.SphereBounds.y, Entry.SphereBounds.z), 0u);
+        const uint64 Key = ((uint64)(uint16)Brick.x << 32u) | ((uint64)(uint16)Brick.y << 16u) | (uint64)(uint16)Brick.z;
+        EXPECT_TRUE(!Field.IsBrickValid(0u, Brick) || Written.Contains(Key)) << "a mover's new brick kept its old distances";
+    }
 }

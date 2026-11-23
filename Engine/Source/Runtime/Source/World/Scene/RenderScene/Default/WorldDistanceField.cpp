@@ -3,6 +3,8 @@
 
 #include "Containers/Algorithm.h"
 #include "Memory/Memcpy.h"
+#include "Memory/Memory.h"
+#include "TaskSystem/TaskSystem.h"
 
 #include <cmath>
 
@@ -14,6 +16,8 @@ namespace Lumina
         constexpr int32 kRecenterBricks = 2;
         // A sphere this large is a broken transform rather than a caster, and its brick range would cover every level whole.
         constexpr float kMaxCasterRadius = 1.0e5f;
+        // Spheres per marking task, enough that a chunk's masks cost less than its spheres.
+        constexpr uint32 kTouchChunk = 512u;
 
         int32 PositiveMod(int32 Value, int32 Divisor)
         {
@@ -122,65 +126,119 @@ namespace Lumina
         }
     }
 
-    void FWorldDistanceField::Touch(const FVector4& Sphere)
-    {
-        const FVector3 Center(Sphere.x, Sphere.y, Sphere.z);
-        TouchBox(Center - FVector3(Sphere.w), Center + FVector3(Sphere.w));
-    }
-
-    void FWorldDistanceField::TouchBox(const FVector3& Min, const FVector3& Max)
+    void FWorldDistanceField::MaskBox(uint32 Level, const FVector3& Min, const FVector3& Max, uint64* Mask) const
     {
         using namespace WorldDistanceFieldInternal;
 
-        for (uint32 Level = 0; Level < kLevels; ++Level)
+        const FLevel& Lv = Levels[Level];
+        // A voxel within the band of a surface stored its distance, and trilinear reads reach one voxel further.
+        const float Reach = Band(Level) + VoxelSize(Level);
+        const float BrickWorld = BrickWorldSize(Level);
+        const FIntVector3 Last = Lv.OriginBrick + FIntVector3((int32)kBricksPerAxis - 1);
+        const FIntVector3 Lo = Math::Max(BrickAt(Min - FVector3(Reach), BrickWorld), Lv.OriginBrick);
+        const FIntVector3 Hi = Math::Min(BrickAt(Max + FVector3(Reach), BrickWorld), Last);
+        // Clamped to the window, where every brick owns its slot, so a slot needs no check that it holds this brick.
+        for (int32 Z = Lo.z; Z <= Hi.z; ++Z)
         {
-            FLevel& Lv = Levels[Level];
-            if (!Lv.bPlaced)
+            for (int32 Y = Lo.y; Y <= Hi.y; ++Y)
             {
-                continue;
-            }
-            // A voxel within the band of a surface stored its distance, and trilinear reads reach one voxel further.
-            const float Reach = Band(Level) + VoxelSize(Level);
-            const float BrickWorld = BrickWorldSize(Level);
-            const FIntVector3 Last = Lv.OriginBrick + FIntVector3((int32)kBricksPerAxis - 1);
-            const FIntVector3 Lo = Math::Max(BrickAt(Min - FVector3(Reach), BrickWorld), Lv.OriginBrick);
-            const FIntVector3 Hi = Math::Min(BrickAt(Max + FVector3(Reach), BrickWorld), Last);
-            for (int32 Z = Lo.z; Z <= Hi.z; ++Z)
-            {
-                for (int32 Y = Lo.y; Y <= Hi.y; ++Y)
+                for (int32 X = Lo.x; X <= Hi.x; ++X)
                 {
-                    for (int32 X = Lo.x; X <= Hi.x; ++X)
-                    {
-                        const FIntVector3 Brick(X, Y, Z);
-                        const uint32 Slot = SlotOf(Brick);
-                        if (Lv.SlotBrick[Slot] == Brick && Lv.State[Slot] == EBrickState::Valid)
-                        {
-                            Lv.State[Slot] = EBrickState::Stale;
-                            ++Lv.Pending;
-                        }
-                    }
+                    const uint32 Slot = SlotOf(FIntVector3(X, Y, Z));
+                    Mask[Slot >> 6u] |= 1ull << (Slot & 63u);
                 }
             }
         }
     }
 
-    void FWorldDistanceField::Retrack(uint32 Slot, TSpan<const FInstanceCullEntry> Entries)
+    void FWorldDistanceField::TouchBox(const FVector3& Min, const FVector3& Max)
+    {
+        Touches.Add(FVector4((Min + Max) * 0.5f, Math::Length(Max - Min) * 0.5f));
+    }
+
+    void FWorldDistanceField::Retrack(uint32 Slot, TSpan<const FInstanceCullEntry> Entries, bool bMoveOnly)
     {
         if (Slot >= (uint32)MergedSpheres.Num())
         {
             MergedSpheres.SetNum(Math::Max((uint32)Entries.Num(), Slot + 1u), FVector4(0.0f));
         }
         FVector4& Merged = MergedSpheres[Slot];
+        const bool bCaster = Slot < (uint32)Entries.Num() && IsCaster(Entries[Slot]);
+        const FVector4 Current = bCaster ? Entries[Slot].SphereBounds : FVector4(0.0f);
+        if (bMoveOnly && bCaster && Merged.w > 0.0f)
+        {
+            const float Drift = Math::Length(FVector3(Current) - FVector3(Merged)) + Math::Abs(Current.w - Merged.w);
+            if (Drift < kMoveToleranceVoxels * VoxelSize(0))
+            {
+                return;
+            }
+        }
         if (Merged.w > 0.0f)
         {
-            Touch(Merged);
+            Touches.Add(Merged);
         }
-        const bool bCaster = Slot < (uint32)Entries.Num() && IsCaster(Entries[Slot]);
-        Merged = bCaster ? Entries[Slot].SphereBounds : FVector4(0.0f);
+        Merged = Current;
         if (bCaster)
         {
-            Touch(Merged);
+            Touches.Add(Current);
         }
+    }
+
+    void FWorldDistanceField::ApplyTouches()
+    {
+        LUMINA_PROFILE_SCOPE();
+        using namespace WorldDistanceFieldInternal;
+
+        const uint32 NumTouches = (uint32)Touches.Num();
+        if (NumTouches == 0u || !Levels[0].bPlaced)
+        {
+            Touches.Reset();
+            return;
+        }
+
+        const uint32 NumChunks = (NumTouches + kTouchChunk - 1u) / kTouchChunk;
+        const uint32 ChunkWords = kLevels * kMaskWords;
+        TouchMasks.SetNum(NumChunks * ChunkWords);
+        Jobs::ParallelForOrSerial(NumChunks, 2u, [this, NumTouches, ChunkWords](uint32 Chunk)
+        {
+            uint64* Masks = TouchMasks.GetData() + (size_t)Chunk * ChunkWords;
+            Memory::Memzero(Masks, ChunkWords * sizeof(uint64));
+            const uint32 End = Math::Min(NumTouches, (Chunk + 1u) * kTouchChunk);
+            for (uint32 Index = Chunk * kTouchChunk; Index < End; ++Index)
+            {
+                const FVector4& Sphere = Touches[Index];
+                const FVector3 Center(Sphere.x, Sphere.y, Sphere.z);
+                for (uint32 Level = 0; Level < kLevels && Sphere.w >= MinCasterRadius(Level); ++Level)
+                {
+                    MaskBox(Level, Center - FVector3(Sphere.w), Center + FVector3(Sphere.w), Masks + Level * kMaskWords);
+                }
+            }
+        });
+
+        // Merged per level in parallel, each level owning its own states and count.
+        Jobs::ParallelFor(kLevels, [this, NumChunks, ChunkWords](uint32 Level)
+        {
+            FLevel& Lv = Levels[Level];
+            for (uint32 Word = 0; Word < kMaskWords; ++Word)
+            {
+                uint64 Bits = 0u;
+                for (uint32 Chunk = 0; Chunk < NumChunks; ++Chunk)
+                {
+                    Bits |= TouchMasks[(size_t)Chunk * ChunkWords + Level * kMaskWords + Word];
+                }
+                while (Bits != 0u)
+                {
+                    const uint32 Slot = Word * 64u + (uint32)Math::CountTrailingZeros64(Bits);
+                    Bits &= Bits - 1u;
+                    if (Lv.State[Slot] == EBrickState::Valid)
+                    {
+                        Lv.State[Slot] = EBrickState::Stale;
+                        ++Lv.Pending;
+                    }
+                }
+            }
+        });
+        Touches.Reset();
     }
 
     uint32 FWorldDistanceField::PickCompositeLevel()
@@ -249,7 +307,7 @@ namespace Lumina
             {
                 for (uint32 Slot : List)
                 {
-                    Retrack(Slot, Entries);
+                    Retrack(Slot, Entries, false);
                 }
             }
             // A streamed mover's CPU sphere trails the GPU's by a frame, which the next frame's touch covers while it keeps moving.
@@ -261,11 +319,12 @@ namespace Lumina
                 {
                     if ((Slot < (uint32)MergedSpheres.Num() && MergedSpheres[Slot].w > 0.0f) || IsCaster(Entries[Slot]))
                     {
-                        Retrack(Slot, Entries);
+                        Retrack(Slot, Entries, true);
                     }
                 }
             }
         }
+        ApplyTouches();
 
         Out.Bricks.Reset();
         for (uint32 Level = 0; Level < kLevels; ++Level)

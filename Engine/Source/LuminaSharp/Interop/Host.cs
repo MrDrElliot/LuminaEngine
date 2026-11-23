@@ -186,12 +186,12 @@ public static unsafe partial class Host
         return Scripts?.Generation ?? 0;
     }
 
-    /// Takes effect on the next LoadScripts. The packager sets it so shipped assemblies are optimized, and clears it so editor reloads stay debuggable.
+    // Takes effect on the next LoadScripts. The packager sets it so shipped assemblies are optimized even under a debugger, then clears it.
     [ManagedExport]
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     public static void SetScriptCompileOptimization(int bOptimize)
     {
-        ScriptCompiler.bOptimize = bOptimize != 0;
+        ScriptCompiler.bForceOptimize = bOptimize != 0;
     }
 
     /// Fills the editor's C# Diagnostics snapshot (heap, GC, ALC health). Returns 1 on success. ForceCollect != 0 runs a blocking GC first.

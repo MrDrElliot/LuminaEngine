@@ -6,6 +6,9 @@ public struct LazyPropertyOffset
     private nint Value;
     private bool bResolved;
 
+    // Read once into a static readonly, which tiered code folds to a constant, and -1 when the class has no such property yet.
+    public static nint Resolve(System.Type Owner, string Property) => NativeBindings.TryPropertyOffset(NativeTypeName.Of(Owner), Property);
+
     // A miss is not cached, since the class may still be gaining properties, and throws rather than reaching field 0.
     public nint Get(System.Type Owner, string Property)
     {

@@ -132,17 +132,17 @@ public sealed class ScriptStructGenerator : IIncrementalGenerator
         Source.AppendLine("}");
     }
 
-    // The same storage seen through ref readonly values and getters only, which Read<T> hands out; views with no read-only form are left out.
+    // A component's storage seen through ref readonly values, which Read<T> hands out per row, so it holds the bare address rather than a tracked handle.
     private static void EmitReadOnlyView(StringBuilder Source, INamedTypeSymbol Symbol)
     {
         string Name = Symbol.Name;
         Source.AppendLine("    public readonly struct ReadOnly");
         Source.AppendLine("    {");
-        Source.AppendLine("        private readonly global::LuminaSharp.NativeRef __Ref;");
-        Source.AppendLine("        public ReadOnly(global::LuminaSharp.NativeRef Ref) { __Ref = Ref; }");
-        Source.AppendLine("        public ReadOnly(nint Address) { __Ref = new global::LuminaSharp.NativeRef(Address); }");
+        Source.AppendLine("        private readonly nint __Address;");
+        Source.AppendLine("        public ReadOnly(global::LuminaSharp.NativeRef Ref) { __Address = Ref.Address; }");
+        Source.AppendLine("        public ReadOnly(nint Address) { __Address = Address; }");
+        Source.Append("        private ref ").Append(Name).Append(" Owner => ref global::System.Runtime.CompilerServices.Unsafe.AsRef<").Append(Name).AppendLine(">((void*)__Address);");
         Source.Append("        public static implicit operator ReadOnly(in ").Append(Name).AppendLine(" Value) => new(Value.Handle);");
-        Source.Append("        private ref ").Append(Name).Append(" Owner => ref global::System.Runtime.CompilerServices.Unsafe.AsRef<").Append(Name).AppendLine(">((void*)__Ref.Address);");
         // A stored member is a field in the authored source and a property once the script compiler has rewritten it.
         foreach (ISymbol Stored in Symbol.GetMembers())
         {

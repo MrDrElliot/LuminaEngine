@@ -48,6 +48,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Shadows")
         bool bCastShadow = true;
 
+        // Merges the mesh's distance field into the world distance field for DF AO and far shadows. Off for many small or fast movers, whose re-merging costs more than they add.
+        PROPERTY(Editable, Category = "Shadows")
+        bool bAffectDistanceField = true;
+
         // Shadows follow the material's world position offset. Off casts from the still mesh, which is cheaper and keeps the shadow cacheable.
         PROPERTY(Editable, Category = "Shadows")
         bool bShadowWorldPositionOffset = true;

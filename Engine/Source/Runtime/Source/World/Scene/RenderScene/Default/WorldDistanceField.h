@@ -35,8 +35,13 @@ namespace Lumina
         static constexpr float  kBandVoxels     = 4.0f;
         static constexpr uint32 kCompositeBudget = 768u;
         static constexpr uint32 kWorldDFComposite = 1u << 8u;
+        // A caster under half a voxel of a level only blurs it, so neither the merge nor the stale marking counts it there.
+        static constexpr float  kMinCasterVoxels = 0.5f;
+        // A mover is marked again once it drifts this share of the finest voxel from where it was merged, which bounds the field's error.
+        static constexpr float  kMoveToleranceVoxels = 0.25f;
 
         static float VoxelSize(uint32 Level) { return kFirstVoxelSize * (float)(1u << Level); }
+        static float MinCasterRadius(uint32 Level) { return VoxelSize(Level) * kMinCasterVoxels; }
         static float Band(uint32 Level) { return VoxelSize(Level) * kBandVoxels; }
         static float BrickWorldSize(uint32 Level) { return VoxelSize(Level) * (float)kBrickSize; }
 
@@ -91,12 +96,18 @@ namespace Lumina
             bool                 bPlaced = false;
         };
 
+        static constexpr uint32 kMaskWords = kBricksPerLevel / 64u;
+
         static bool IsCaster(const FInstanceCullEntry& Entry);
         static uint32 SlotOf(const FIntVector3& Brick);
 
         void Place(uint32 Level, const FVector3& Camera);
-        void Touch(const FVector4& Sphere);
-        void Retrack(uint32 Slot, TSpan<const FInstanceCullEntry> Entries);
+        // Sets the bit of every slot of Level within reach of the box, Mask being that level's kMaskWords words.
+        void MaskBox(uint32 Level, const FVector3& Min, const FVector3& Max, uint64* Mask) const;
+        // Queues the spheres a slot's change uncovers, its old one and its new one, and records the new one as merged.
+        void Retrack(uint32 Slot, TSpan<const FInstanceCullEntry> Entries, bool bMoveOnly);
+        // Marks the queued spheres' bricks stale, chunks of them in parallel into masks that are then merged.
+        void ApplyTouches();
         uint32 PickCompositeLevel();
 
         TArray<FLevel, kLevels> Levels;
@@ -104,6 +115,9 @@ namespace Lumina
         TVector<FVector4>       MergedSpheres;
         // Bricks waiting to sample their casters, keyed by distance to the camera.
         TVector<uint64>         Candidates;
+        // This update's spheres whose bricks go stale, and each chunk's per-level slot masks while they are marked.
+        TVector<FVector4>       Touches;
+        TVector<uint64>         TouchMasks;
         // Set until the first update records where every caster is.
         bool                    bTrackAll = true;
         std::atomic<bool>       bResetRequested{ false };

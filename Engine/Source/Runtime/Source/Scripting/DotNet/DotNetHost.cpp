@@ -1018,7 +1018,7 @@ namespace Lumina::DotNet
             Out.Add(Move(Packaged));
         }
 
-        // The live generation is the optimized one until this puts a debuggable build back in the editor.
+        // Lifts the force again, so the editor's next reload is optimized unless a debugger is attached.
         if (GManaged.SetScriptCompileOptimization != nullptr)
         {
             GManaged.SetScriptCompileOptimization(0);

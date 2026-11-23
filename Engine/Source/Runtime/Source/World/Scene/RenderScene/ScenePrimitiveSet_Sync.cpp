@@ -18,6 +18,7 @@ namespace Lumina
             Prim.CustomData         = Component.CustomPrimitiveData.Data.Packed;
             Prim.BoundsScale        = Component.BoundsScale;
             Prim.bCastShadow        = Component.bCastShadow;
+            Prim.bAffectDistanceField = Component.bAffectDistanceField;
             Prim.bShadowWPO         = Component.bShadowWorldPositionOffset;
             Prim.WPODisableDistance = Component.WorldPositionOffsetDisableDistance;
             Prim.RenderLayers       = Component.RenderLayers.Bits;
