@@ -8,8 +8,8 @@
 
 namespace Lumina
 {
-    enum class EUpscaler : uint8;
-    enum class EUpscalerMode : uint8;
+    enum class EAntiAliasingMethod : uint8;
+    enum class ERenderResolution : uint8;
 
     // One frame of a view for an upscaler. Everything is at render resolution except Output.
     struct FUpscaleInputs
@@ -35,8 +35,8 @@ namespace Lumina
         FUIntVector2 RenderSize  = FUIntVector2(0);
         FUIntVector2 DisplaySize = FUIntVector2(0);
 
-        // The quality mode the settings chose, which an upscaler with modes of its own keys its setup on.
-        EUpscalerMode Mode{};
+        // The render resolution the settings chose, which an upscaler with quality modes of its own keys its setup on.
+        ERenderResolution Resolution{};
 
         // This frame's projection offset in render pixels, in the [-0.5, 0.5] range with +Y down.
         FVector2 JitterPixels = FVector2(0.0f);
@@ -50,23 +50,20 @@ namespace Lumina
         bool bReset = false;
     };
 
-    // A temporal or spatial upscaler such as DLSS, chosen by CRendererSettings::Upscaler.
+    // A temporal anti-aliasing method that also restores a lower render resolution, such as TAA or DLSS. It gets a jittered projection and motion vectors.
     class IUpscaler
     {
     public:
 
         virtual ~IUpscaler() = default;
 
-        virtual EUpscaler GetType() const = 0;
+        virtual EAntiAliasingMethod GetMethod() const = 0;
 
-        // False lets the renderer fall back to its spatial upscale, such as on a GPU the SDK does not support.
+        // False lets the renderer fall back to TAA, such as on a GPU the SDK does not support.
         virtual bool IsSupported() const = 0;
 
-        // A temporal upscaler gets a jittered projection and motion vectors, and replaces SMAA.
-        virtual bool IsTemporal() const = 0;
-
-        // The fraction of the display each axis renders at for a mode, where RequestedScale is the engine's standard ratio for it.
-        virtual float GetRenderScale(const FUIntVector2& DisplaySize, EUpscalerMode Mode, float RequestedScale) const { return RequestedScale; }
+        // The fraction of the display each axis renders at, where RequestedScale is the engine's standard ratio for Resolution.
+        virtual float GetRenderScale(const FUIntVector2& DisplaySize, ERenderResolution Resolution, float RequestedScale) const { return RequestedScale; }
 
         // How many jitter positions one cycle visits, which DLSS wants to grow with the upscale ratio.
         RUNTIME_API virtual uint32 GetJitterPhaseCount(const FUIntVector2& RenderSize, const FUIntVector2& DisplaySize) const;
@@ -83,27 +80,30 @@ namespace Lumina
         static void Register(IUpscaler* Upscaler);
         static void Unregister(IUpscaler* Upscaler);
 
-        static IUpscaler* Find(EUpscaler Type);
-
-        // The one CRendererSettings::Upscaler names, or null for the built-in spatial upscale.
-        static IUpscaler* GetActive();
+        static IUpscaler* Find(EAntiAliasingMethod Method);
 
         static void GetRegistered(TVector<IUpscaler*>& Out);
     };
 
     namespace Upscaling
     {
+        // The project's method, unless r.AntiAliasing overrides it.
+        RUNTIME_API EAntiAliasingMethod GetMethod();
+
+        // TAA and DLSS, which resolve many jittered frames and restore the render resolution themselves.
+        RUNTIME_API bool IsTemporal(EAntiAliasingMethod Method);
+
         struct FUpscaleRequest
         {
-            EUpscalerMode Mode{};
-            float         Scale = 1.0f;
+            ERenderResolution Resolution{};
+            float             Scale = 1.0f;
         };
 
         // What the settings ask for, where r.ScreenPercentage above zero forces a custom percentage.
         RUNTIME_API FUpscaleRequest GetRequest();
 
-        // The engine's per-axis ratio for a mode, CustomScale being the one Custom uses.
-        RUNTIME_API float GetModeScale(EUpscalerMode Mode, float CustomScale);
+        // The engine's per-axis ratio for a resolution, CustomScale being the one Custom uses.
+        RUNTIME_API float GetResolutionScale(ERenderResolution Resolution, float CustomScale);
 
         // The Halton (2, 3) point for Index, centered on the pixel, which is the sequence DLSS and FSR document.
         RUNTIME_API FVector2 HaltonJitter(uint32 Index, uint32 PhaseCount);

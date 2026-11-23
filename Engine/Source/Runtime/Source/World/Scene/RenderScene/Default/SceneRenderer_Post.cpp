@@ -438,7 +438,7 @@ namespace Lumina
             return;
         }
 
-        const bool bSMAAEnabled = GetViewSMAAMode(*CurrentView) != ESMAAMode::Off;
+        const bool bSMAAEnabled = IsSMAAEnabledFor(*CurrentView);
         const bool bPPMaterials = !ActivePostProcessMaterials.IsEmpty();
         const FSceneImage& Output = (bSMAAEnabled || bPPMaterials) ? GetNamedImage(ENamedImage::LDR) : CurrentView->Output;
 
@@ -653,7 +653,7 @@ namespace Lumina
         const bool         bCustomDepth     = Frame.Views.CustomDepthCullView != Constants::kIndexNoneU32
                                            && CustomDepthTex.IsValid() && CustomStencilTex.IsValid();
 
-        const bool bSMAAEnabled = GetViewSMAAMode(*CurrentView) != ESMAAMode::Off;
+        const bool bSMAAEnabled = IsSMAAEnabledFor(*CurrentView);
 
         const FSceneImage* Source = &GetNamedImage(ENamedImage::LDR);
         const FSceneImage* Dest   = &GetNamedImage(ENamedImage::PostProcessScratch);
@@ -1029,7 +1029,7 @@ namespace Lumina
     void FDefaultSceneRenderer::SnapshotMotionState(RHI::FCmdListH CL)
     {
         // A temporal upscaler reprojects moving objects too, so it needs their past as much as temporal AA does.
-        const bool bWantsObjectMotion = IsTemporalAAEnabledFor(SceneViews[0]) || IsTemporalUpscalerFor(SceneViews[0]);
+        const bool bWantsObjectMotion = IsSMAAT2xEnabledFor(SceneViews[0]) || IsTemporalUpscalerFor(SceneViews[0]);
         if (!bWantsObjectMotion || !RetainedTransformBuffer || RetainedTransformBuffer.Size == 0)
         {
             if (PrevRetainedTransformBuffer) { DeferFree(PrevRetainedTransformBuffer); PrevRetainedTransformBuffer = {}; }
@@ -1140,9 +1140,9 @@ namespace Lumina
         Barriers::TransferToCompute(CL);
     }
 
-    EUpscaler FBuiltInTemporalAA::GetType() const
+    EAntiAliasingMethod FBuiltInTemporalAA::GetMethod() const
     {
-        return EUpscaler::TAA;
+        return EAntiAliasingMethod::TAA;
     }
 
     void FBuiltInTemporalAA::Evaluate(RHI::FCmdListH CL, const FUpscaleInputs& Inputs)
@@ -1199,33 +1199,47 @@ namespace Lumina
         PC.DisplaySize      = Inputs.DisplaySize;
         PC.JitterUV         = Inputs.JitterPixels / FVector2(Math::Max(Inputs.RenderSize, FUIntVector2(1)));
         PC.bReset           = Inputs.bReset ? 1u : 0u;
-        PC.ClipGamma        = Settings != nullptr ? Settings->TemporalAAClipGamma : 1.25f;
-        PC.MinCurrentWeight = Settings != nullptr ? Settings->TemporalAACurrentWeight : 0.04f;
+        PC.ClipGamma        = Settings != nullptr ? Settings->TAAClipGamma : 1.25f;
+        PC.MinCurrentWeight = Settings != nullptr ? Settings->TAACurrentWeight : 0.04f;
 
         DispatchCompute(CL, Shader, PC,
             RenderUtils::GetGroupCount(Inputs.DisplaySize.x, 8u),
             RenderUtils::GetGroupCount(Inputs.DisplaySize.y, 8u), 1u);
     }
 
-    ESMAAMode FDefaultSceneRenderer::GetViewSMAAMode(const FSceneView& View)
+    EAntiAliasingMethod FDefaultSceneRenderer::GetViewAntiAliasing(const FSceneView& View)
     {
         if (IsTemporalUpscalerFor(View))
         {
-            return ESMAAMode::Off;
+            return View.Upscaler->GetMethod();
         }
-        const ESMAAMode Mode = GetSMAAMode();
-        return (Mode == ESMAAMode::SMAAT2x && View.Size != View.DisplaySize) ? ESMAAMode::SMAA1x : Mode;
+        const EAntiAliasingMethod Method = Upscaling::GetMethod();
+        if (Upscaling::IsTemporal(Method))
+        {
+            return EAntiAliasingMethod::SMAA;
+        }
+        // The T2x subsample pair is a native-resolution pattern, and a capture has no jitter sequence to resolve.
+        if (Method == EAntiAliasingMethod::SMAAT2x && (!View.bIsPrimary || View.Size != View.DisplaySize))
+        {
+            return EAntiAliasingMethod::SMAA;
+        }
+        return Method;
     }
 
-    bool FDefaultSceneRenderer::IsTemporalAAEnabledFor(const FSceneView& View)
+    bool FDefaultSceneRenderer::IsSMAAEnabledFor(const FSceneView& View)
     {
-        // Captures and probe bakes carry no jitter sequence, so they would resolve against another view's frame.
-        return GetViewSMAAMode(View) == ESMAAMode::SMAAT2x && View.bIsPrimary;
+        const EAntiAliasingMethod Method = GetViewAntiAliasing(View);
+        return Method == EAntiAliasingMethod::SMAA || Method == EAntiAliasingMethod::SMAAT2x;
+    }
+
+    bool FDefaultSceneRenderer::IsSMAAT2xEnabledFor(const FSceneView& View)
+    {
+        return GetViewAntiAliasing(View) == EAntiAliasingMethod::SMAAT2x;
     }
 
     bool FDefaultSceneRenderer::IsTemporalUpscalerFor(const FSceneView& View)
     {
-        return View.bIsPrimary && View.Upscaler != nullptr && View.Upscaler->IsTemporal();
+        return View.bIsPrimary && View.Upscaler != nullptr;
     }
 
     bool FDefaultSceneRenderer::IsUpscalingView(const FSceneView& View)
@@ -1287,7 +1301,7 @@ namespace Lumina
         Inputs.ViewKey            = this;
         Inputs.RenderSize         = CurrentView->Size;
         Inputs.DisplaySize        = CurrentView->DisplaySize;
-        Inputs.Mode               = Upscaling::GetRequest().Mode;
+        Inputs.Resolution         = Upscaling::GetRequest().Resolution;
         Inputs.JitterPixels       = FVector2(Global.TemporalJitterU * (float)CurrentView->Size.x,
                                              Global.TemporalJitterV * (float)CurrentView->Size.y);
         Inputs.NearPlane          = Global.NearPlane;
@@ -1355,22 +1369,22 @@ namespace Lumina
         PC.SourceIndex  = (uint32)Source.GetResourceID();
         PC.SourceWidth  = Source.GetSizeX();
         PC.SourceHeight = Source.GetSizeY();
-        PC.Sharpness    = Settings != nullptr ? Math::Clamp(Settings->UpscaleSharpness, 0.0f, 1.0f) : 0.0f;
+        PC.Sharpness    = Settings != nullptr ? Math::Clamp(Settings->SpatialUpscaleSharpness, 0.0f, 1.0f) : 0.0f;
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
     }
 
-    bool FDefaultSceneRenderer::IsTemporalAAEnabled() const
+    bool FDefaultSceneRenderer::IsSMAAT2xEnabled() const
     {
-        return CurrentView != nullptr && IsTemporalAAEnabledFor(*CurrentView);
+        return CurrentView != nullptr && IsSMAAT2xEnabledFor(*CurrentView);
     }
 
     // One predicate for both the blend redirect and the resolve, or a half-allocated set strands the output.
     bool FDefaultSceneRenderer::IsTemporalResolveReady() const
     {
-        return IsTemporalAAEnabled()
+        return IsSMAAT2xEnabled()
             && GetNamedImage(ENamedImage::Velocity).IsValid()
             && GetNamedImage(ENamedImage::TemporalHistoryA).IsValid()
             && GetNamedImage(ENamedImage::TemporalHistoryB).IsValid();
@@ -1389,7 +1403,7 @@ namespace Lumina
     // The debug view is the only way to see whether motion vectors are sane, so it must not need T2x on.
     bool FDefaultSceneRenderer::IsVelocityWanted() const
     {
-        return IsTemporalAAEnabled() || (CurrentView != nullptr && IsTemporalUpscalerFor(*CurrentView))
+        return IsSMAAT2xEnabled() || (CurrentView != nullptr && IsTemporalUpscalerFor(*CurrentView))
             || (CurrentView != nullptr && CurrentView->bIsPrimary && IsVelocityDebugActive());
     }
 
@@ -1517,13 +1531,13 @@ namespace Lumina
         PC.VelocityIndex = (uint32)Velocity.GetResourceID();
 
         // The first frame after a resize, a toggle or a camera cut has nothing behind it, so it resolves to itself.
-        const float Weight = Settings != nullptr ? Math::Clamp(Settings->TemporalHistoryWeight, 0.0f, 0.5f) : 0.5f;
+        const float Weight = Settings != nullptr ? Math::Clamp(Settings->SMAAT2xHistoryWeight, 0.0f, 0.5f) : 0.5f;
         const bool bHasHistory = CurrentView->bTemporalHistoryValid && !IsCameraCutFrame(CameraCutFramesLeft);
         PC.HistoryWeight  = bHasHistory ? Weight : 0.0f;
 
-        PC.ClampGamma         = Settings != nullptr ? Math::Max(Settings->TemporalClampGamma, 0.25f) : 1.0f;
-        PC.MaxReprojection    = Settings != nullptr ? Math::Max(Settings->TemporalMaxReprojection, 0.01f) : 0.25f;
-        PC.bNeighborhoodClamp = (Settings == nullptr || Settings->bTemporalNeighborhoodClamp) ? 1u : 0u;
+        PC.ClampGamma         = Settings != nullptr ? Math::Max(Settings->SMAAT2xClampGamma, 0.25f) : 1.0f;
+        PC.MaxReprojection    = Settings != nullptr ? Math::Max(Settings->SMAAT2xMaxReprojection, 0.01f) : 0.25f;
+        PC.bNeighborhoodClamp = (Settings == nullptr || Settings->bSMAAT2xNeighborhoodClamp) ? 1u : 0u;
         PC._Pad0              = 0u;
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);

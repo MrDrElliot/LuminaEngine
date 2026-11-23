@@ -44,10 +44,10 @@ namespace Lumina::Scalability
                 "Ultra":  { "TextureStreamingSettings.ResolutionBias": 1.0,  "TextureStreamingSettings.PoolSizeMB": 2048, "RendererSettings.MaxAnisotropy": 16 }
             },
             "AntiAliasing": {
-                "Low":    { "RendererSettings.SMAAMode": "Off",    "RendererSettings.SMAAQuality": "Low" },
-                "Medium": { "RendererSettings.SMAAMode": "SMAA1x", "RendererSettings.SMAAQuality": "Medium" },
-                "High":   { "RendererSettings.SMAAMode": "SMAA1x", "RendererSettings.SMAAQuality": "High" },
-                "Ultra":  { "RendererSettings.SMAAMode": "SMAA1x", "RendererSettings.SMAAQuality": "Ultra" }
+                "Low":    { "RendererSettings.SMAAQuality": "Low" },
+                "Medium": { "RendererSettings.SMAAQuality": "Medium" },
+                "High":   { "RendererSettings.SMAAQuality": "High" },
+                "Ultra":  { "RendererSettings.SMAAQuality": "Ultra" }
             }
         })json";
 

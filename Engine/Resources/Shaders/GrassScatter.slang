@@ -56,14 +56,6 @@ struct FGrassScatterPushConstants
     uint   Resolution;          // heightmap samples per side
     float  FullDensityDistance; // blades thin past this with the square of distance; 0 keeps full density
     float  RootDarkening;
-    // Candidates fade in across [FadeInStart, FadeInEnd] and out from FadeOutStart to Radius, by hash, so blades and patches blend at their seam.
-    float  FadeInStart;
-    float  FadeInEnd;
-    float  FadeOutStart;
-    float  KeepScale;
-    // A patch tiles its lattice cell, so it takes no jitter and only quarter turns.
-    uint   bTiled;
-    uint   _Pad0;
 };
 
 FGrassScatterPushConstants* Pass() { return GetPassArgs<FGrassScatterPushConstants>(); }
@@ -110,8 +102,8 @@ void main(uint3 Tid : SV_DispatchThreadID)
     const uint LatticeY = (uint)(LatticeOrigin.y + (int)Tid.y);
     const uint CellHash = HashUint(LatticeX * 73856093u ^ LatticeY * 19349663u ^ P->Seed);
 
-    const float JitterX = P->bTiled != 0u ? 0.0 : Hash01(CellHash * 3u + 0u) - 0.5;
-    const float JitterZ = P->bTiled != 0u ? 0.0 : Hash01(CellHash * 3u + 1u) - 0.5;
+    const float JitterX = Hash01(CellHash * 3u + 0u) - 0.5;
+    const float JitterZ = Hash01(CellHash * 3u + 1u) - 0.5;
 
     float2 WorldXZ;
     WorldXZ.x = GridOrigin.x + (float(Tid.x) + 0.5 + JitterX) * P->CellSize;
@@ -124,25 +116,7 @@ void main(uint3 Tid : SV_DispatchThreadID)
         return;
     }
 
-    // Complementary ramps over one band, so a blade's chance of staying is a patch's chance of not appearing.
-    float Blend = P->KeepScale;
-    if (P->FadeInEnd > P->FadeInStart)
-    {
-        Blend *= smoothstep(P->FadeInStart, P->FadeInEnd, CameraDistance);
-    }
-    if (P->FadeOutStart > 0.0)
-    {
-        Blend *= 1.0 - smoothstep(P->FadeOutStart, P->Radius, CameraDistance);
-    }
-    const float BlendHash = Hash01(CellHash ^ 0x165667B1u);
-    if (BlendHash >= Blend)
-    {
-        return;
-    }
-    // Grown in across the band rather than appearing whole, so a moving camera sweeps no visible pop line.
-    const float BlendFade = ThinningFade(Blend, BlendHash);
-
-    // Keeping (F/d)^2 of the blades holds their density on screen roughly constant, since a patch's projected area falls the same way.
+    // Keeping (F/d)^2 of the blades holds their density on screen roughly constant, since a blade's projected area falls the same way.
     float Keep = 1.0;
     float KeepFade = 1.0;
     if (P->FullDensityDistance > 0.0 && CameraDistance > P->FullDensityDistance)
@@ -181,13 +155,13 @@ void main(uint3 Tid : SV_DispatchThreadID)
         return;
     }
 
-    // Stochastic thinning by weight, so coverage fades with the paint instead of ending on a hard edge. A patch is a whole square of blades, so thinning it would punch square holes.
-    const float WeightHash = P->bTiled == 0u ? Hash01(CellHash * 3u + 2u) : 0.0;
+    // Stochastic thinning by weight, so coverage fades with the paint instead of ending on a hard edge.
+    const float WeightHash = Hash01(CellHash * 3u + 2u);
     if (WeightHash > Weight)
     {
         return;
     }
-    const float WeightFade = P->bTiled == 0u ? ThinningFade(saturate(Weight), WeightHash) : 1.0;
+    const float WeightFade = ThinningFade(saturate(Weight), WeightHash);
 
     // Packed as world X and Z like the terrain vertex shader reads it, with Y rebuilt from unit length.
     const float2 PackedXZ = P->NormalMap.SampleLevel(Samplers::LinearClamp, HeightUV, 0).rg * 2.0 - 1.0;
@@ -205,8 +179,8 @@ void main(uint3 Tid : SV_DispatchThreadID)
 
     // Survivors grow to cover for the thinned ones, and everything shrinks away over the last stretch so the edge never pops.
     const float Coverage = min(rsqrt(Keep), kMaxThinnedScale);
-    const float EdgeFade = P->FadeOutStart > 0.0 ? 1.0 : 1.0 - smoothstep(P->Radius * kEdgeFadeStart, P->Radius, CameraDistance);
-    const float Scale = lerp(P->ScaleMin, P->ScaleMax, Hash01(CellHash ^ 0x9E3779B9u)) * Coverage * EdgeFade * KeepFade * BlendFade * WeightFade;
+    const float EdgeFade = 1.0 - smoothstep(P->Radius * kEdgeFadeStart, P->Radius, CameraDistance);
+    const float Scale = lerp(P->ScaleMin, P->ScaleMax, Hash01(CellHash ^ 0x9E3779B9u)) * Coverage * EdgeFade * KeepFade * WeightFade;
     if (Scale <= 0.001)
     {
         return;
@@ -214,7 +188,7 @@ void main(uint3 Tid : SV_DispatchThreadID)
 
     // Yaw about world up, then tilted toward the surface normal by AlignToNormal.
     const float YawTurn = Hash01(CellHash ^ 0x85EBCA6Bu);
-    const float Yaw = P->bRandomYaw == 0u ? 0.0 : (P->bTiled != 0u ? floor(YawTurn * 4.0) * (TWO_PI * 0.25) : YawTurn * TWO_PI);
+    const float Yaw = P->bRandomYaw == 0u ? 0.0 : YawTurn * TWO_PI;
     const float4 YawQuat = float4(0.0, sin(Yaw * 0.5), 0.0, cos(Yaw * 0.5));
 
     const float3 Up = float3(0.0, 1.0, 0.0);

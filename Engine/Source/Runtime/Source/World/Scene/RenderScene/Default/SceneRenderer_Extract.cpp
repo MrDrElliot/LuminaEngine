@@ -215,7 +215,7 @@ namespace Lumina
             SceneGlobalData.TemporalJitterV = 0.0f;
 
             const uint32 SharpenFlag = RenderSettings != nullptr && RenderSettings->bSharpenedAlphaTest ? ALPHA_TEST_SHARPEN_BIT : 0u;
-            if ((IsTemporalAAEnabledFor(PrimaryView) || IsTemporalUpscalerFor(PrimaryView)) && !FrameSettings.bExactCapture)
+            if ((IsSMAAT2xEnabledFor(PrimaryView) || IsTemporalUpscalerFor(PrimaryView)) && !FrameSettings.bExactCapture)
             {
                 // A bailed extract must not flip parity, or the resolve blends a slot against itself.
                 PrimaryView.PendingTemporalFrameIndex = PrimaryView.TemporalFrameIndex + 1;

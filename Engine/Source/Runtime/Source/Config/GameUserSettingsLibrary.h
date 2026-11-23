@@ -89,38 +89,38 @@ namespace Lumina
         FUNCTION()
         static void SetOverallQuality(EQualityLevel Level);
 
-        // Off hands upscaling back to the project's renderer settings; every upscaling setter below turns it on.
+        // Off hands anti-aliasing and render resolution back to the project's renderer settings; every setter below turns it on.
         FUNCTION()
-        static bool GetOverrideUpscaling();
+        static bool GetOverrideAntiAliasing();
 
         FUNCTION()
-        static void SetOverrideUpscaling(bool bOverride);
+        static void SetOverrideAntiAliasing(bool bOverride);
 
         FUNCTION()
-        static EUpscaler GetUpscaler();
+        static EAntiAliasingMethod GetAntiAliasing();
 
         FUNCTION()
-        static void SetUpscaler(EUpscaler Upscaler);
+        static void SetAntiAliasing(EAntiAliasingMethod Method);
 
         FUNCTION()
-        static EUpscalerMode GetUpscalerMode();
+        static ERenderResolution GetRenderResolution();
 
         FUNCTION()
-        static void SetUpscalerMode(EUpscalerMode Mode);
+        static void SetRenderResolution(ERenderResolution Resolution);
 
-        // Read while the mode is Custom, from 25 to 100.
+        // Read while the render resolution is Custom, from 25 to 100.
         FUNCTION()
         static float GetScreenPercentage();
 
         FUNCTION()
         static void SetScreenPercentage(float Percent);
 
-        // The registered upscalers this machine can run, for a menu to offer beside the built-in one.
+        // The methods this machine can run, for a menu to offer, with DLSS listed only where its plugin supports the GPU.
         FUNCTION()
-        static int32 GetAvailableUpscalerCount();
+        static int32 GetAvailableAntiAliasingCount();
 
         FUNCTION()
-        static EUpscaler GetAvailableUpscaler(int32 Index);
+        static EAntiAliasingMethod GetAvailableAntiAliasing(int32 Index);
 
         //~ Input, laid over the project's authored actions. Rebinding lives on CInputLibrary since it captures a key.
 

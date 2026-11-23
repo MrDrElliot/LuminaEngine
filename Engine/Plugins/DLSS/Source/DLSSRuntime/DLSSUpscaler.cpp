@@ -65,16 +65,16 @@ namespace Lumina
             return NVSDK_NGX_PerfQuality_Value_UltraPerformance;
         }
 
-        NVSDK_NGX_PerfQuality_Value QualityForMode(EUpscalerMode Mode, float Scale)
+        NVSDK_NGX_PerfQuality_Value QualityForResolution(ERenderResolution Resolution, float Scale)
         {
-            switch (Mode)
+            switch (Resolution)
             {
-            case EUpscalerMode::NativeAA:         return NVSDK_NGX_PerfQuality_Value_DLAA;
-            case EUpscalerMode::Quality:          return NVSDK_NGX_PerfQuality_Value_MaxQuality;
-            case EUpscalerMode::Balanced:         return NVSDK_NGX_PerfQuality_Value_Balanced;
-            case EUpscalerMode::Performance:      return NVSDK_NGX_PerfQuality_Value_MaxPerf;
-            case EUpscalerMode::UltraPerformance: return NVSDK_NGX_PerfQuality_Value_UltraPerformance;
-            case EUpscalerMode::Custom:           break;
+            case ERenderResolution::Native:           return NVSDK_NGX_PerfQuality_Value_DLAA;
+            case ERenderResolution::Quality:          return NVSDK_NGX_PerfQuality_Value_MaxQuality;
+            case ERenderResolution::Balanced:         return NVSDK_NGX_PerfQuality_Value_Balanced;
+            case ERenderResolution::Performance:      return NVSDK_NGX_PerfQuality_Value_MaxPerf;
+            case ERenderResolution::UltraPerformance: return NVSDK_NGX_PerfQuality_Value_UltraPerformance;
+            case ERenderResolution::Custom:           break;
             }
             return QualityForScale(Scale);
         }
@@ -170,7 +170,7 @@ namespace Lumina
         return EnsureInitialized();
     }
 
-    float FDLSSUpscaler::GetRenderScale(const FUIntVector2& DisplaySize, EUpscalerMode Mode, float RequestedScale) const
+    float FDLSSUpscaler::GetRenderScale(const FUIntVector2& DisplaySize, ERenderResolution Resolution, float RequestedScale) const
     {
         FScopeLock Lock(Mutex);
         if (!EnsureInitialized() || DisplaySize.x == 0 || DisplaySize.y == 0)
@@ -181,7 +181,7 @@ namespace Lumina
         const TSpan<FRenderScaleCacheEntry> LiveEntries(RenderScaleCache.GetData(), RenderScaleCacheNum);
         const auto MatchesRequest = [&](const FRenderScaleCacheEntry& Entry)
         {
-            return Entry.DisplaySize == DisplaySize && Entry.Mode == Mode && Entry.RequestedScale == RequestedScale;
+            return Entry.DisplaySize == DisplaySize && Entry.Resolution == Resolution && Entry.RequestedScale == RequestedScale;
         };
         if (auto Found = Algo::FindIf(LiveEntries, MatchesRequest); Found != LiveEntries.end())
         {
@@ -193,7 +193,7 @@ namespace Lumina
         uint32 MaxWidth = 0, MaxHeight = 0, MinWidth = 0, MinHeight = 0;
         float  Sharpness = 0.0f;
         const NVSDK_NGX_Result Result = NGX_DLSS_GET_OPTIMAL_SETTINGS(Parameters, DisplaySize.x, DisplaySize.y,
-            QualityForMode(Mode, RequestedScale), &OptimalWidth, &OptimalHeight, &MaxWidth, &MaxHeight, &MinWidth, &MinHeight, &Sharpness);
+            QualityForResolution(Resolution, RequestedScale), &OptimalWidth, &OptimalHeight, &MaxWidth, &MaxHeight, &MinWidth, &MinHeight, &Sharpness);
         if (NVSDK_NGX_FAILED(Result) || OptimalWidth == 0)
         {
             return RequestedScale;
@@ -201,7 +201,7 @@ namespace Lumina
 
         // A custom percentage keeps its own size inside the range the nearest mode accepts.
         float RenderScale = (float)OptimalWidth / (float)DisplaySize.x;
-        if (Mode == EUpscalerMode::Custom && MinWidth > 0 && MaxWidth >= MinWidth)
+        if (Resolution == ERenderResolution::Custom && MinWidth > 0 && MaxWidth >= MinWidth)
         {
             const float Wanted = Math::Clamp(RequestedScale * (float)DisplaySize.x, (float)MinWidth, (float)MaxWidth);
             RenderScale = Wanted / (float)DisplaySize.x;
@@ -211,7 +211,7 @@ namespace Lumina
         {
             RenderScaleCacheNum = 0;
         }
-        RenderScaleCache[RenderScaleCacheNum++] = FRenderScaleCacheEntry{ DisplaySize, Mode, RequestedScale, RenderScale };
+        RenderScaleCache[RenderScaleCacheNum++] = FRenderScaleCacheEntry{ DisplaySize, Resolution, RequestedScale, RenderScale };
         return RenderScale;
     }
 
@@ -230,7 +230,7 @@ namespace Lumina
         }
 
         const float Scale = (float)Inputs.RenderSize.x / (float)Math::Max(Inputs.DisplaySize.x, 1u);
-        const NVSDK_NGX_PerfQuality_Value Quality = QualityForMode(Inputs.Mode, Scale);
+        const NVSDK_NGX_PerfQuality_Value Quality = QualityForResolution(Inputs.Resolution, Scale);
 
         FFeature& Feature = Features.FindOrAdd(Inputs.ViewKey);
         if (Feature.Render != Inputs.RenderSize || Feature.Display != Inputs.DisplaySize || Feature.Quality != (int32)Quality)

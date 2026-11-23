@@ -204,38 +204,38 @@ namespace Lumina
         CGameUserSettings::Get().Save();
     }
 
-    bool CGameUserSettingsLibrary::GetOverrideUpscaling()
+    bool CGameUserSettingsLibrary::GetOverrideAntiAliasing()
     {
-        return CGameUserSettings::Get().bOverrideUpscaling;
+        return CGameUserSettings::Get().bOverrideAntiAliasing;
     }
 
-    void CGameUserSettingsLibrary::SetOverrideUpscaling(bool bOverride)
+    void CGameUserSettingsLibrary::SetOverrideAntiAliasing(bool bOverride)
     {
-        CGameUserSettings::Get().bOverrideUpscaling = bOverride;
+        CGameUserSettings::Get().bOverrideAntiAliasing = bOverride;
     }
 
-    EUpscaler CGameUserSettingsLibrary::GetUpscaler()
+    EAntiAliasingMethod CGameUserSettingsLibrary::GetAntiAliasing()
     {
-        return CGameUserSettings::Get().Upscaler;
+        return CGameUserSettings::Get().AntiAliasing;
     }
 
-    void CGameUserSettingsLibrary::SetUpscaler(EUpscaler Upscaler)
+    void CGameUserSettingsLibrary::SetAntiAliasing(EAntiAliasingMethod Method)
     {
         CGameUserSettings& Settings = CGameUserSettings::Get();
-        Settings.Upscaler = Upscaler;
-        Settings.bOverrideUpscaling = true;
+        Settings.AntiAliasing = Method;
+        Settings.bOverrideAntiAliasing = true;
     }
 
-    EUpscalerMode CGameUserSettingsLibrary::GetUpscalerMode()
+    ERenderResolution CGameUserSettingsLibrary::GetRenderResolution()
     {
-        return CGameUserSettings::Get().UpscalerMode;
+        return CGameUserSettings::Get().RenderResolution;
     }
 
-    void CGameUserSettingsLibrary::SetUpscalerMode(EUpscalerMode Mode)
+    void CGameUserSettingsLibrary::SetRenderResolution(ERenderResolution Resolution)
     {
         CGameUserSettings& Settings = CGameUserSettings::Get();
-        Settings.UpscalerMode = Mode;
-        Settings.bOverrideUpscaling = true;
+        Settings.RenderResolution = Resolution;
+        Settings.bOverrideAntiAliasing = true;
     }
 
     float CGameUserSettingsLibrary::GetScreenPercentage()
@@ -247,38 +247,38 @@ namespace Lumina
     {
         CGameUserSettings& Settings = CGameUserSettings::Get();
         Settings.ScreenPercentage = Math::Clamp(Percent, 25.0f, 100.0f);
-        Settings.bOverrideUpscaling = true;
+        Settings.bOverrideAntiAliasing = true;
     }
 
     namespace
     {
-        TVector<EUpscaler> AvailableUpscalers()
+        TVector<EAntiAliasingMethod> AvailableAntiAliasing()
         {
             TVector<IUpscaler*> Registered;
             FUpscalerRegistry::GetRegistered(Registered);
 
-            // Built into every renderer rather than registered, so it is always on offer.
-            TVector<EUpscaler> Types = { EUpscaler::TAA };
+            // Built into every renderer rather than registered, so these are always on offer.
+            TVector<EAntiAliasingMethod> Methods = { EAntiAliasingMethod::None, EAntiAliasingMethod::SMAA, EAntiAliasingMethod::SMAAT2x, EAntiAliasingMethod::TAA };
             for (IUpscaler* Upscaler : Registered)
             {
                 if (Upscaler != nullptr && Upscaler->IsSupported())
                 {
-                    Types.Add(Upscaler->GetType());
+                    Methods.AddUnique(Upscaler->GetMethod());
                 }
             }
-            return Types;
+            return Methods;
         }
     }
 
-    int32 CGameUserSettingsLibrary::GetAvailableUpscalerCount()
+    int32 CGameUserSettingsLibrary::GetAvailableAntiAliasingCount()
     {
-        return AvailableUpscalers().Num();
+        return AvailableAntiAliasing().Num();
     }
 
-    EUpscaler CGameUserSettingsLibrary::GetAvailableUpscaler(int32 Index)
+    EAntiAliasingMethod CGameUserSettingsLibrary::GetAvailableAntiAliasing(int32 Index)
     {
-        const TVector<EUpscaler> Types = AvailableUpscalers();
-        return Index >= 0 && Index < Types.Num() ? Types[Index] : EUpscaler::None;
+        const TVector<EAntiAliasingMethod> Methods = AvailableAntiAliasing();
+        return Index >= 0 && Index < Methods.Num() ? Methods[Index] : EAntiAliasingMethod::None;
     }
 
     void CGameUserSettingsLibrary::RevertSettings()

@@ -175,21 +175,10 @@ namespace Lumina
     }
 
     // Read live from the project settings CDO, like SSR and the froxel grid; there is no per-world copy.
-    inline ESMAAMode GetSMAAMode()
-    {
-        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
-        return Settings != nullptr ? Settings->SMAAMode : ESMAAMode::Off;
-    }
-
-    // Quality is only the edge-detection preset now, so a legacy Off here means the default, not disabled.
     inline ESMAAQuality GetSMAAQuality()
     {
         const CRendererSettings* Settings = GetDefault<CRendererSettings>();
-        if (Settings == nullptr || Settings->SMAAQuality == ESMAAQuality::Off)
-        {
-            return ESMAAQuality::High;
-        }
-        return Settings->SMAAQuality;
+        return Settings != nullptr ? Settings->SMAAQuality : ESMAAQuality::High;
     }
 
     inline bool IsSMAADepthEdgesEnabled()

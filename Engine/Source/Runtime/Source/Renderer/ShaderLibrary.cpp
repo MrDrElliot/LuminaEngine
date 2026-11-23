@@ -66,6 +66,31 @@ namespace Lumina
         return Library->Entries.TryGet(Handle);
     }
 
+    FShaderH FShaderLibrary::FindByContent(uint64 ContentHash)
+    {
+        FShaderLibrary* Library = Global::GShaderLibrary;
+        if (Library == nullptr)
+        {
+            return FShaderH();
+        }
+
+        FScopeLock Lock(Library->Mutex);
+        const FShaderH* Handle = Library->HandlesByContent.Find(ContentHash);
+        const FShaderEntry* Entry = Handle != nullptr ? Library->Entries.TryGet(*Handle) : nullptr;
+        return Entry != nullptr && Entry->IsValid() && Entry->ContentHash == ContentHash ? *Handle : FShaderH();
+    }
+
+    void FShaderLibrary::IndexContent(FShaderH Handle, FShaderEntry& Entry, uint64 ContentHash)
+    {
+        if (const FShaderH* Old = HandlesByContent.Find(Entry.ContentHash); Old != nullptr && *Old == Handle)
+        {
+            HandlesByContent.Remove(Entry.ContentHash);
+        }
+        Entry.ContentHash = ContentHash;
+        // The first entry to ship this bytecode keeps it, since two defines can compile to identical code.
+        HandlesByContent.TryAdd(ContentHash, Handle);
+    }
+
     void FShaderLibrary::AddRef(FShaderH Handle)
     {
         FShaderLibrary* Library = Global::GShaderLibrary;
@@ -123,6 +148,7 @@ namespace Lumina
         for (FShaderH Handle : Ready)
         {
             uint64 MapHash = 0;
+            uint64 ContentHash = 0;
             {
                 FScopeLock Lock(Library->Mutex);
                 FShaderEntry* Entry = Library->Entries.TryGet(Handle);
@@ -133,6 +159,7 @@ namespace Lumina
                     continue;
                 }
                 MapHash = Entry->MapHash;
+                ContentHash = Entry->ContentHash;
             }
 
             {
@@ -141,6 +168,11 @@ namespace Lumina
                 if (It != nullptr && It->Handle == Handle.Handle)
                 {
                     Library->HandlesByHash.Remove(MapHash);
+                }
+                auto ContentIt = Library->HandlesByContent.Find(ContentHash);
+                if (ContentIt != nullptr && ContentIt->Handle == Handle.Handle)
+                {
+                    Library->HandlesByContent.Remove(ContentHash);
                 }
             }
 
@@ -432,6 +464,7 @@ namespace Lumina
         Entry.Spirv.Reset();
         Entry.Spirv.Append(Spirv.begin(), Spirv.end());
         Entry.Generation++;
+        Library->IndexContent(Handle, Entry, ContentHash);
         ++Entry.RefCount;
 #if USING(WITH_EDITOR)
         Entry.GPUStats.Pipeline.Reset();
@@ -456,6 +489,7 @@ namespace Lumina
         Entry.Generation++;
 
         Library->IndexShaderName(Path);
+        Library->IndexContent(Handle, Entry, SpirvContentHash(Entry.Type, TSpan<const uint32>(Entry.Spirv.GetData(), Entry.Spirv.Num())));
 #if USING(WITH_EDITOR)
         Entry.GPUStats.Pipeline.Reset();
         ScanSpirvLocalArrays(TSpan<const uint32>(Entry.Spirv.GetData(), Entry.Spirv.Num()),

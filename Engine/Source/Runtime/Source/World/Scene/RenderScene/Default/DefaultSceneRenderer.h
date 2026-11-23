@@ -41,7 +41,7 @@
 namespace Lumina
 {
     class CMesh;
-    enum class ESMAAMode : uint8;
+    enum class EAntiAliasingMethod : uint8;
     struct FLineBatcherComponent;
     struct FTriangleBatcherComponent;
     struct SDirectionalLightComponent;
@@ -89,9 +89,8 @@ namespace Lumina
     public:
         explicit FBuiltInTemporalAA(FDefaultSceneRenderer& InRenderer) : Renderer(InRenderer) {}
 
-        EUpscaler GetType() const override;
+        EAntiAliasingMethod GetMethod() const override;
         bool IsSupported() const override { return true; }
-        bool IsTemporal() const override { return true; }
         void Evaluate(RHI::FCmdListH CL, const FUpscaleInputs& Inputs) override;
 
     private:
@@ -255,14 +254,6 @@ namespace Lumina
                 float   FullDensityDistance = 0.0f;
                 float   TerrainNormalDistance = 0.0f;
                 float   RootDarkening  = 0.0f;
-                // Scatters the type's patch mesh on an unjittered lattice instead of single blades.
-                bool    bPatch         = false;
-                // Candidates fade in across [FadeInStart, FadeInEnd] and out from FadeOutStart to the cull distance, by hash rather than size.
-                float   FadeInStart    = 0.0f;
-                float   FadeInEnd      = 0.0f;
-                float   FadeOutStart   = 0.0f;
-                // A patch holds the type's own density, so a smaller density scale keeps only this share of patches.
-                float   KeepScale      = 1.0f;
             };
 
             struct FTerrainExtract
@@ -1267,16 +1258,17 @@ namespace Lumina
         #endif
         //~ End Render Passes
 
-        // SMAA steps aside for a temporal upscaler, and T2x drops to 1x under a spatial one, whose jitter it was not built for.
-        static ESMAAMode GetViewSMAAMode(const FSceneView& View);
-        static bool IsTemporalAAEnabledFor(const FSceneView& View);
+        // What smooths this view's edges, where captures and probe bakes keep no history and take SMAA, as does T2x below native resolution.
+        static EAntiAliasingMethod GetViewAntiAliasing(const FSceneView& View);
+        static bool IsSMAAEnabledFor(const FSceneView& View);
+        static bool IsSMAAT2xEnabledFor(const FSceneView& View);
         static bool IsTemporalUpscalerFor(const FSceneView& View);
         static bool IsUpscalingView(const FSceneView& View);
         // Only a temporal upscaler averages enough frames to hide rotating noise, and T2x's two-frame blend makes it crawl.
         static uint32 GetScreenSpaceNoiseIndex(const FSceneView& View);
         // What tonemapping and post-process materials read, the upscaled image when the view has one.
         const FSceneImage& GetPostInputImage() const;
-        bool IsTemporalAAEnabled() const;
+        bool IsSMAAT2xEnabled() const;
         bool IsTemporalResolveReady() const;
         bool IsVelocityDebugActive() const;
         bool IsVelocityWanted() const;
@@ -1499,6 +1491,14 @@ namespace Lumina
         // Starts a background build on a miss and returns null until it lands, for pipelines a frame can draw without.
         RHI::FPipelineH      FindPipeline(const FGraphicsPipelineKey& Key);
         static uint64        HashGraphicsKey(const FGraphicsPipelineKey& Key);
+        static uint64        PackRasterState(const FGraphicsPipelineKey& Key);
+
+        // A miss is recorded by shader content, so the next run can build it before the frame that needs it.
+        static void          RecordPrewarm(const FGraphicsPipelineKey& Key);
+        static void          RecordPrewarm(FShaderH CS, TSpan<const RHI::FSpecializationConstant> Constants);
+
+        // Requests a few of the pipelines earlier runs recorded, each once its shaders have loaded.
+        static void          PrewarmRecordedPipelines();
 
         // The default material's stage, which stands in for a material whose pipeline is still compiling.
         static FShaderH      DefaultMaterialStage(EMaterialShaderStage Stage);
@@ -2192,6 +2192,16 @@ namespace Lumina
         // Kept by the extract, which decides each frame's bricks.
         FWorldDistanceField                                 WorldDistanceField;
         uint32                                              WorldDFIdleFrames = 0u;
+        // Where each terrain sat when the field last saw it, so a move or removal marks the old place too.
+        struct FWorldDFTerrainBox
+        {
+            FVector3 Min = FVector3(0.0f);
+            FVector3 Max = FVector3(0.0f);
+            uint32   SeenUpdate = 0u;
+        };
+        THashMap<ECS::FEntity, FWorldDFTerrainBox>          WorldDFTerrainBoxes;
+        uint32                                              WorldDFUpdateCount = 0u;
+        void TouchWorldDFTerrains(const FFrameData& Frame);
         // Kept by the render, which owns the textures.
         TArray<FSceneImage, FWorldDistanceField::kLevels>   WorldDFLevels;
         // Set while the textures may hold what no brick list cleared, until a fresh update lands.

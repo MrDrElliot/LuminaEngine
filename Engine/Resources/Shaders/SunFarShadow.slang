@@ -2,23 +2,9 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
 #include "Includes/WorldDistanceField.slang"
+#include "Includes/TerrainHeightfield.slang"
 
 // Sun occlusion the virtual shadow levels cannot hold, marched per pixel from the depth buffer and read back by the lighting.
-
-// Covers a 4x4 open-world terrain tiling with shadow casting enabled on every tile.
-static const uint kMaxTerrainShadowRecords = 16u;
-
-// Mirror of Lumina::FTerrainShadowRecord.
-struct FTerrainShadowRecord
-{
-    float2     OriginXZ;
-    float      Stride;
-    float      OriginY;
-    float      MaxHeight;
-    float      Resolution;
-    FTexture2D Heightmap;
-    float      _Pad;
-};
 
 // Mirror of Lumina::FSunFarShadowArgs.
 struct FPushConstants
@@ -37,7 +23,7 @@ struct FPushConstants
     float                DFFar;
     float                DFMaxTrace;
     uint                 bDistanceField;
-    FTerrainShadowRecord Terrains[kMaxTerrainShadowRecords];
+    FTerrainHeightfield Terrains[kMaxTerrainHeightfields];
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -75,14 +61,8 @@ float TraceSunField(FWorldDistanceField* Field, float3 P, float3 ToSun, float Ta
     return Visibility;
 }
 
-float TerrainHeightAt(FTerrainShadowRecord T, float2 XZ)
-{
-    const float2 UV = ((XZ - T.OriginXZ) / T.Stride + 0.5) / T.Resolution;
-    return T.OriginY + T.Heightmap.SampleLevel(Samplers::LinearClamp, UV, 0.0).r * T.MaxHeight;
-}
-
 // Entry and exit distances of a ray through the terrain's square footprint, empty when it misses.
-float2 TerrainFootprintRange(FTerrainShadowRecord T, float3 Origin, float3 Dir)
+float2 TerrainFootprintRange(FTerrainHeightfield T, float3 Origin, float3 Dir)
 {
     const float  Extent = T.Stride * (T.Resolution - 1.0);
     const float2 D  = float2(abs(Dir.x) < 1e-6 ? 1e-6 : Dir.x, abs(Dir.z) < 1e-6 ? 1e-6 : Dir.z);
@@ -94,7 +74,7 @@ float2 TerrainFootprintRange(FTerrainShadowRecord T, float3 Origin, float3 Dir)
 }
 
 // Unreal's distance-field penumbra applied to a height field, the closest the ray passes over the ground relative to its cone.
-float TraceTerrainShadow(FTerrainShadowRecord T, float3 P, float ViewDistance)
+float TraceTerrainShadow(FTerrainHeightfield T, float3 P, float ViewDistance)
 {
     const float3 Dir = Pass().ToSun;
     const float  TopY = T.OriginY + T.MaxHeight;
@@ -125,7 +105,7 @@ float TraceTerrainShadow(FTerrainShadowRecord T, float3 P, float ViewDistance)
     {
         const float  t  = TStart * pow(Ratio, (float(i) + 0.5) / float(Steps));
         const float3 Q  = P + Dir * t;
-        const float  Clearance = Q.y + HeightBias - TerrainHeightAt(T, Q.xz);
+        const float  Clearance = Q.y + HeightBias - T.HeightAt(Q.xz);
         Visibility = min(Visibility, saturate(Clearance / (t * Pass().TanHalfAngle + HeightBias)));
         if (Visibility <= 0.0)
         {
@@ -155,7 +135,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         const float  ViewDistance = length(P - GetCameraPosition());
 
         [loop]
-        for (uint i = 0; i < min(Pass().NumTerrains, kMaxTerrainShadowRecords) && Visibility > 0.0; ++i)
+        for (uint i = 0; i < min(Pass().NumTerrains, kMaxTerrainHeightfields) && Visibility > 0.0; ++i)
         {
             Visibility = min(Visibility, TraceTerrainShadow(Pass().Terrains[i], P, ViewDistance));
         }

@@ -124,6 +124,12 @@ namespace Lumina
 
     void FWorldDistanceField::Touch(const FVector4& Sphere)
     {
+        const FVector3 Center(Sphere.x, Sphere.y, Sphere.z);
+        TouchBox(Center - FVector3(Sphere.w), Center + FVector3(Sphere.w));
+    }
+
+    void FWorldDistanceField::TouchBox(const FVector3& Min, const FVector3& Max)
+    {
         using namespace WorldDistanceFieldInternal;
 
         for (uint32 Level = 0; Level < kLevels; ++Level)
@@ -133,13 +139,12 @@ namespace Lumina
             {
                 continue;
             }
-            // A voxel within the band of the caster stored its distance, and trilinear reads reach one voxel further.
-            const float Reach = Sphere.w + Band(Level) + VoxelSize(Level);
+            // A voxel within the band of a surface stored its distance, and trilinear reads reach one voxel further.
+            const float Reach = Band(Level) + VoxelSize(Level);
             const float BrickWorld = BrickWorldSize(Level);
             const FIntVector3 Last = Lv.OriginBrick + FIntVector3((int32)kBricksPerAxis - 1);
-            const FVector3 Center(Sphere.x, Sphere.y, Sphere.z);
-            const FIntVector3 Lo = Math::Max(BrickAt(Center - FVector3(Reach), BrickWorld), Lv.OriginBrick);
-            const FIntVector3 Hi = Math::Min(BrickAt(Center + FVector3(Reach), BrickWorld), Last);
+            const FIntVector3 Lo = Math::Max(BrickAt(Min - FVector3(Reach), BrickWorld), Lv.OriginBrick);
+            const FIntVector3 Hi = Math::Min(BrickAt(Max + FVector3(Reach), BrickWorld), Last);
             for (int32 Z = Lo.z; Z <= Hi.z; ++Z)
             {
                 for (int32 Y = Lo.y; Y <= Hi.y; ++Y)

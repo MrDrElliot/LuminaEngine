@@ -3,8 +3,9 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/DistanceFieldGrid.slang"
 #include "Includes/WorldDistanceField.slang"
+#include "Includes/TerrainHeightfield.slang"
 
-// Writes bricks of the world distance field, either merged from the casters binned over the brick's column or cleared to empty space.
+// Writes bricks of the world distance field, either merged from the casters binned over the brick's column and the terrains under it, or cleared to empty space.
 
 static const uint kWorldDFComposite = 1u << 8u;
 // More casters than this within one brick's reach keep only the first, which a 4 m brick at the finest level never comes near.
@@ -26,6 +27,11 @@ struct FPushConstants
     uint                   _Pad;
     // Binned over the composite level's bricks, one cell per column of bricks.
     FDFObjectGrid          Grid;
+    uint                   NumTerrains;
+    uint                   _Pad1;
+    uint                   _Pad2;
+    uint                   _Pad3;
+    FTerrainHeightfield    Terrains[kMaxTerrainHeightfields];
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -105,6 +111,19 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID, u
         for (uint Index = 0u; Index < Count; ++Index)
         {
             Distance = min(Distance, CasterDistance(Grid.Objects.Get(gsCasters[Index]), P));
+        }
+
+        [loop]
+        for (uint TerrainIndex = 0u; TerrainIndex < min(Pass().NumTerrains, kMaxTerrainHeightfields); ++TerrainIndex)
+        {
+            const FTerrainHeightfield Terrain = Pass().Terrains[TerrainIndex];
+            if (Terrain.Covers(P.xz))
+            {
+                // Taken over at least a voxel, since a finer slope would read heightmap noise the level cannot hold.
+                const float Step = max(Terrain.Stride, Voxel);
+                // Sunk half a step below the triangulated ground it was sampled from, so a pixel on that ground never reads as inside it.
+                Distance = min(Distance, Terrain.Distance(P, Step) + 0.5 * Step);
+            }
         }
     }
 

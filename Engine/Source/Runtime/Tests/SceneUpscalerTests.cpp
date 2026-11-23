@@ -12,10 +12,9 @@ namespace
     {
     public:
 
-        EUpscaler GetType() const override { return EUpscaler::FSR; }
+        EAntiAliasingMethod GetMethod() const override { return EAntiAliasingMethod::DLSS; }
         bool  IsSupported() const override { return bSupported; }
-        bool  IsTemporal() const override { return true; }
-        float GetRenderScale(const FUIntVector2&, EUpscalerMode, float) const override { return 0.5f; }
+        float GetRenderScale(const FUIntVector2&, ERenderResolution, float) const override { return 0.5f; }
         void  Evaluate(RHI::FCmdListH, const FUpscaleInputs&) override {}
 
         bool bSupported = true;
@@ -27,38 +26,38 @@ namespace
         FResolutionSettingScope()
         {
             Settings = GetMutableDefault<CRendererSettings>();
-            Mode     = Settings->UpscalerMode;
-            Percent  = Settings->ScreenPercentage;
+            Resolution = Settings->RenderResolution;
+            Percent    = Settings->ScreenPercentage;
         }
 
         ~FResolutionSettingScope()
         {
-            Settings->UpscalerMode     = Mode;
+            Settings->RenderResolution = Resolution;
             Settings->ScreenPercentage = Percent;
         }
 
-        CRendererSettings* Settings = nullptr;
-        EUpscalerMode      Mode     = EUpscalerMode::Custom;
-        float              Percent  = 100.0f;
+        CRendererSettings* Settings   = nullptr;
+        ERenderResolution  Resolution = ERenderResolution::Native;
+        float              Percent    = 100.0f;
     };
 
     // Restores the project's choice, since the settings object is shared by every test in the run.
-    struct FUpscalerSettingScope
+    struct FAntiAliasingSettingScope
     {
-        explicit FUpscalerSettingScope(EUpscaler Type)
+        explicit FAntiAliasingSettingScope(EAntiAliasingMethod Method)
         {
             Settings = GetMutableDefault<CRendererSettings>();
-            Previous = Settings->Upscaler;
-            Settings->Upscaler = Type;
+            Previous = Settings->AntiAliasing;
+            Settings->AntiAliasing = Method;
         }
 
-        ~FUpscalerSettingScope()
+        ~FAntiAliasingSettingScope()
         {
-            Settings->Upscaler = Previous;
+            Settings->AntiAliasing = Previous;
         }
 
-        CRendererSettings* Settings = nullptr;
-        EUpscaler Previous = EUpscaler::None;
+        CRendererSettings*  Settings = nullptr;
+        EAntiAliasingMethod Previous = EAntiAliasingMethod::TAA;
     };
 }
 
@@ -97,7 +96,7 @@ TEST(SceneUpscaler, PhaseCountGrowsWithTheUpscaleRatio)
     EXPECT_EQ(Upscaler.GetJitterPhaseCount(FUIntVector2(960, 540), FUIntVector2(1920, 1080)), 32u);
 }
 
-TEST(SceneUpscaler, RegistryResolvesTheConfiguredSupportedUpscaler)
+TEST(SceneUpscaler, RegistryFindsAnUpscalerByItsMethod)
 {
     FTestUpscaler Upscaler;
     FUpscalerRegistry::Register(&Upscaler);
@@ -107,50 +106,53 @@ TEST(SceneUpscaler, RegistryResolvesTheConfiguredSupportedUpscaler)
     FUpscalerRegistry::GetRegistered(Registered);
     EXPECT_EQ(std::count(Registered.begin(), Registered.end(), &Upscaler), 1) << "registering twice keeps one entry";
 
-    EXPECT_EQ(FUpscalerRegistry::Find(EUpscaler::FSR), &Upscaler);
-    EXPECT_EQ(FUpscalerRegistry::Find(EUpscaler::DLSS), nullptr);
-    EXPECT_EQ(FUpscalerRegistry::Find(EUpscaler::None), nullptr);
-
-    {
-        FUpscalerSettingScope Scope{EUpscaler::None};
-        EXPECT_EQ(FUpscalerRegistry::GetActive(), nullptr) << "None selects the built-in spatial upscale";
-    }
-    {
-        FUpscalerSettingScope Scope{EUpscaler::FSR};
-        EXPECT_EQ(FUpscalerRegistry::GetActive(), &Upscaler);
-
-        Upscaler.bSupported = false;
-        EXPECT_EQ(FUpscalerRegistry::GetActive(), nullptr) << "an unsupported upscaler falls back to the spatial one";
-        Upscaler.bSupported = true;
-    }
+    EXPECT_EQ(FUpscalerRegistry::Find(EAntiAliasingMethod::DLSS), &Upscaler);
+    EXPECT_EQ(FUpscalerRegistry::Find(EAntiAliasingMethod::TAA), nullptr) << "TAA is built into each renderer, not registered";
 
     FUpscalerRegistry::Unregister(&Upscaler);
-    EXPECT_EQ(FUpscalerRegistry::Find(EUpscaler::FSR), nullptr);
+    EXPECT_EQ(FUpscalerRegistry::Find(EAntiAliasingMethod::DLSS), nullptr);
 }
 
-TEST(SceneUpscaler, ModesUseTheStandardRatios)
+TEST(SceneUpscaler, OnlyTAAAndDLSSAreTemporal)
 {
-    EXPECT_FLOAT_EQ(Upscaling::GetModeScale(EUpscalerMode::NativeAA, 0.3f), 1.0f);
-    EXPECT_NEAR(Upscaling::GetModeScale(EUpscalerMode::Quality, 0.3f), 0.667f, 0.001f);
-    EXPECT_FLOAT_EQ(Upscaling::GetModeScale(EUpscalerMode::Balanced, 0.3f), 0.58f);
-    EXPECT_FLOAT_EQ(Upscaling::GetModeScale(EUpscalerMode::Performance, 0.3f), 0.5f);
-    EXPECT_NEAR(Upscaling::GetModeScale(EUpscalerMode::UltraPerformance, 0.3f), 0.333f, 0.001f);
-    EXPECT_FLOAT_EQ(Upscaling::GetModeScale(EUpscalerMode::Custom, 0.8f), 0.8f);
-    EXPECT_FLOAT_EQ(Upscaling::GetModeScale(EUpscalerMode::Custom, 0.1f), 0.25f) << "a custom percentage stays inside 25 to 100";
+    EXPECT_FALSE(Upscaling::IsTemporal(EAntiAliasingMethod::None));
+    EXPECT_FALSE(Upscaling::IsTemporal(EAntiAliasingMethod::SMAA));
+    EXPECT_FALSE(Upscaling::IsTemporal(EAntiAliasingMethod::SMAAT2x)) << "T2x resolves two frames and leaves upscaling to the spatial pass";
+    EXPECT_TRUE(Upscaling::IsTemporal(EAntiAliasingMethod::TAA));
+    EXPECT_TRUE(Upscaling::IsTemporal(EAntiAliasingMethod::DLSS));
 }
 
-TEST(SceneUpscaler, RequestFollowsTheProjectMode)
+TEST(SceneUpscaler, MethodFollowsTheProjectSetting)
+{
+    FAntiAliasingSettingScope Scope{EAntiAliasingMethod::SMAAT2x};
+    EXPECT_EQ(Upscaling::GetMethod(), EAntiAliasingMethod::SMAAT2x);
+    Scope.Settings->AntiAliasing = EAntiAliasingMethod::DLSS;
+    EXPECT_EQ(Upscaling::GetMethod(), EAntiAliasingMethod::DLSS);
+}
+
+TEST(SceneUpscaler, ResolutionsUseTheStandardRatios)
+{
+    EXPECT_FLOAT_EQ(Upscaling::GetResolutionScale(ERenderResolution::Native, 0.3f), 1.0f);
+    EXPECT_NEAR(Upscaling::GetResolutionScale(ERenderResolution::Quality, 0.3f), 0.667f, 0.001f);
+    EXPECT_FLOAT_EQ(Upscaling::GetResolutionScale(ERenderResolution::Balanced, 0.3f), 0.58f);
+    EXPECT_FLOAT_EQ(Upscaling::GetResolutionScale(ERenderResolution::Performance, 0.3f), 0.5f);
+    EXPECT_NEAR(Upscaling::GetResolutionScale(ERenderResolution::UltraPerformance, 0.3f), 0.333f, 0.001f);
+    EXPECT_FLOAT_EQ(Upscaling::GetResolutionScale(ERenderResolution::Custom, 0.8f), 0.8f);
+    EXPECT_FLOAT_EQ(Upscaling::GetResolutionScale(ERenderResolution::Custom, 0.1f), 0.25f) << "a custom percentage stays inside 25 to 100";
+}
+
+TEST(SceneUpscaler, RequestFollowsTheProjectResolution)
 {
     FResolutionSettingScope Scope;
 
-    Scope.Settings->UpscalerMode     = EUpscalerMode::Performance;
+    Scope.Settings->RenderResolution = ERenderResolution::Performance;
     Scope.Settings->ScreenPercentage = 80.0f;
     Upscaling::FUpscaleRequest Request = Upscaling::GetRequest();
-    EXPECT_EQ(Request.Mode, EUpscalerMode::Performance);
-    EXPECT_FLOAT_EQ(Request.Scale, 0.5f) << "a named mode ignores the custom percentage";
+    EXPECT_EQ(Request.Resolution, ERenderResolution::Performance);
+    EXPECT_FLOAT_EQ(Request.Scale, 0.5f) << "a named resolution ignores the custom percentage";
 
-    Scope.Settings->UpscalerMode = EUpscalerMode::Custom;
+    Scope.Settings->RenderResolution = ERenderResolution::Custom;
     Request = Upscaling::GetRequest();
-    EXPECT_EQ(Request.Mode, EUpscalerMode::Custom);
+    EXPECT_EQ(Request.Resolution, ERenderResolution::Custom);
     EXPECT_FLOAT_EQ(Request.Scale, 0.8f);
 }

@@ -17,10 +17,9 @@ namespace Lumina
 
         ~FDLSSUpscaler() override;
 
-        EUpscaler GetType() const override { return EUpscaler::DLSS; }
+        EAntiAliasingMethod GetMethod() const override { return EAntiAliasingMethod::DLSS; }
         bool  IsSupported() const override;
-        bool  IsTemporal() const override { return true; }
-        float GetRenderScale(const FUIntVector2& DisplaySize, EUpscalerMode Mode, float RequestedScale) const override;
+        float GetRenderScale(const FUIntVector2& DisplaySize, ERenderResolution Resolution, float RequestedScale) const override;
         void  Evaluate(RHI::FCmdListH CL, const FUpscaleInputs& Inputs) override;
         void  ReleaseViewResources(const void* ViewKey) override;
 
@@ -44,10 +43,10 @@ namespace Lumina
 
         struct FRenderScaleCacheEntry
         {
-            FUIntVector2  DisplaySize    = FUIntVector2(0);
-            EUpscalerMode Mode           = EUpscalerMode::Custom;
-            float         RequestedScale = 0.0f;
-            float         Result         = 1.0f;
+            FUIntVector2      DisplaySize    = FUIntVector2(0);
+            ERenderResolution Resolution     = ERenderResolution::Native;
+            float             RequestedScale = 0.0f;
+            float             Result         = 1.0f;
         };
 
         // Several views can call with their own DisplaySize at once, so one cache slot would thrash between them.

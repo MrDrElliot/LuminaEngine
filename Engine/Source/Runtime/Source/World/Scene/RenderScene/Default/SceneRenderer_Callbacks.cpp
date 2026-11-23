@@ -114,7 +114,7 @@ namespace Lumina
         const FSceneImage* Color = &HDR;
         if (Stage == ERenderStage::AfterPostProcess)
         {
-            Color = GetViewSMAAMode(View) != ESMAAMode::Off ? &View.Images[(int)ENamedImage::LDR] : &View.Output;
+            Color = IsSMAAEnabledFor(View) ? &View.Images[(int)ENamedImage::LDR] : &View.Output;
         }
         else if (Stage == ERenderStage::Overlay)
         {

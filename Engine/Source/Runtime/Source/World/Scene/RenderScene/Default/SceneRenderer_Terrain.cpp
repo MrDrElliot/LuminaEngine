@@ -530,14 +530,8 @@ namespace Lumina
         uint32  Resolution      = 0;
         float   FullDensityDistance = 0.0f;
         float   RootDarkening = 0.0f;
-        float   FadeInStart   = 0.0f;
-        float   FadeInEnd     = 0.0f;
-        float   FadeOutStart  = 0.0f;
-        float   KeepScale     = 1.0f;
-        uint32  bTiled        = 0;
-        uint32  _Pad0         = 0;
     };
-    static_assert(sizeof(FGrassScatterPushConstants) == 224,
+    static_assert(sizeof(FGrassScatterPushConstants) == 200,
         "FGrassScatterPushConstants must match GrassScatter.slang.");
 
     void FDefaultSceneRenderer::GrassScatterPass(RHI::FCmdListH CL)
@@ -624,7 +618,7 @@ namespace Lumina
                 }
 
                 // A new or grown block can reallocate the retained arrays, which the staged fills still read through raw pointers.
-                const FScenePrimitiveSet::FGrassSpeciesKey Key{ TerrainItem.Entity, Species.Type, Species.LayerIndex, Species.Occurrence, Species.bPatch };
+                const FScenePrimitiveSet::FGrassSpeciesKey Key{ TerrainItem.Entity, Species.Type, Species.LayerIndex, Species.Occurrence };
                 if (!ScenePrimitives.GrassSpeciesFits(Key, Species.Mesh, State.WantedCapacity))
                 {
                     WaitDeferredStageFills();
@@ -750,11 +744,6 @@ namespace Lumina
                 Push.FullDensityDistance = Species.FullDensityDistance;
                 Push.TerrainNormalDistance = Species.TerrainNormalDistance;
                 Push.RootDarkening      = Species.RootDarkening;
-                Push.FadeInStart        = Species.FadeInStart;
-                Push.FadeInEnd          = Species.FadeInEnd;
-                Push.FadeOutStart       = Species.FadeOutStart;
-                Push.KeepScale          = Species.KeepScale;
-                Push.bTiled             = Species.bPatch ? 1u : 0u;
 
                 const uint32 Groups = RenderUtils::GetGroupCount(GridSide, 8u);
                 RHI::CmdDispatch(CL, MakeArgs(Push), Groups, Groups, 1u);
@@ -771,7 +760,7 @@ namespace Lumina
         }
 
         RetireGrassBlades(CL);
-        if (bAnyDispatched && (IsTemporalAAEnabledFor(*CurrentView) || IsTemporalUpscalerFor(*CurrentView)))
+        if (bAnyDispatched && (IsSMAAT2xEnabledFor(*CurrentView) || IsTemporalUpscalerFor(*CurrentView)))
         {
             SnapshotGrassMotionState(CL);
         }

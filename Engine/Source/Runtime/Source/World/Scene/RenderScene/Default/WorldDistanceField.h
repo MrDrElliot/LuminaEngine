@@ -58,6 +58,9 @@ namespace Lumina
         // Forgets everything written, for a field whose textures were just freed.
         void Reset();
 
+        // Marks the bricks near a world box stale, for a surface outside the retained slots such as a terrain whose heights changed.
+        void TouchBox(const FVector3& Min, const FVector3& Max);
+
         // From the render thread, when it made new textures or could not write a frame's bricks, so the next update starts over.
         void RequestReset() { bResetRequested.store(true, std::memory_order_relaxed); }
 

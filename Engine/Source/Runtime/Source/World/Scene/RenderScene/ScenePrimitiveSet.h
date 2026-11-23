@@ -286,14 +286,13 @@ namespace Lumina
             const CGrassType* Type       = nullptr;
             uint32            LayerIndex = 0;
             uint32            Occurrence = 0;
-            bool              bPatch     = false;
 
             bool operator==(const FGrassSpeciesKey&) const = default;
 
             friend uint64 GetTypeHash(const FGrassSpeciesKey& Key)
             {
                 const uint64 TypeBits = (uint64)(uintptr_t)Key.Type * 0x9E3779B97F4A7C15ull;
-                return ECS::GetTypeHash(Key.Terrain) ^ TypeBits ^ ((uint64)Key.LayerIndex << 48) ^ ((uint64)Key.Occurrence << 40) ^ ((uint64)Key.bPatch << 39);
+                return ECS::GetTypeHash(Key.Terrain) ^ TypeBits ^ ((uint64)Key.LayerIndex << 48) ^ ((uint64)Key.Occurrence << 40);
             }
         };
 

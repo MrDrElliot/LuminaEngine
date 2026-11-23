@@ -22,6 +22,7 @@ namespace Lumina
         TVector<uint32>  Spirv;
         uint32           ID = 0;          // process-unique, never reused
         uint64           MapHash = 0;     // key into HandlesByHash, so a release can unmap itself
+        uint64           ContentHash = 0; // of the bytecode, the same in every run, so a recorded pipeline finds its shader again
         uint32           Generation = 0;  // 0 = not compiled yet; bumps on every (re)commit
 
         // One per owning CMaterial stage; caches hold weak handles and re-resolve when one goes stale.
@@ -76,6 +77,9 @@ namespace Lumina
 
         static bool IsLive(FShaderH Handle) { return Resolve(Handle) != nullptr; }
 
+        // A compiled entry whose bytecode hashes to ContentHash, or null while none has loaded.
+        static FShaderH FindByContent(uint64 ContentHash);
+
         static void AddRef(FShaderH Handle);
 
         // At zero the entry is queued rather than freed, because readers deref handles lock-free.
@@ -104,11 +108,13 @@ namespace Lumina
 
         // Caller holds Mutex.
         void IndexShaderName(const FName& Path);
+        void IndexContent(FShaderH Handle, FShaderEntry& Entry, uint64 ContentHash);
 
         FMutex                      Mutex;
         // A segment map owns the generation bump on release, which is what keeps weak handles safe.
         TSegmentMap<FShaderEntry>   Entries;
         THashMap<uint64, FShaderH>  HandlesByHash;
+        THashMap<uint64, FShaderH>  HandlesByContent;
         // Bare file name -> full virtual path, filled as shaders commit. First root to ship a name wins.
         THashMap<FName, FName>      PathsByName;
         TVector<FShaderH>           PendingRelease;

@@ -1,14 +1,10 @@
 ﻿#include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
-#include "Assets/AssetTypes/Foliage/GrassPatch.h"
 
 namespace Lumina
 {
     namespace SceneRendererExtractTerrainInternal
     {
-        // The share of PatchDistance over which blades hand over to patches.
-        constexpr float kPatchBlendShare = 0.3f;
-
         using FTerrainExtract       = FDefaultSceneRenderer::FFrameData::FTerrainExtract;
         using FGrassSpeciesExtract  = FDefaultSceneRenderer::FFrameData::FGrassSpeciesExtract;
 
@@ -166,38 +162,6 @@ namespace Lumina
                 Species.TerrainNormalDistance = Type->TerrainNormalDistance;
                 Species.RootDarkening = Type->RootDarkening;
                 Species.bRandomYaw    = Type->bRandomYaw;
-
-                // Patches take over past PatchDistance, blades thinning out as patches thin in across one band, so the seam is a blend.
-                if (Type->PatchDistance <= 0.0f || Type->PatchDistance >= Type->CullDistance)
-                {
-                    continue;
-                }
-                // Blades stop at the band even while the patch mesh builds, since blades to the full distance grow millions of slots for those frames.
-                const float BandHalf = Type->PatchDistance * kPatchBlendShare * 0.5f;
-                Species.CullDistance = Type->PatchDistance + BandHalf;
-                Species.FadeOutStart = Type->PatchDistance - BandHalf;
-
-                CStaticMesh* PatchMesh = Type->GetPatchMesh();
-                if (PatchMesh == nullptr || !PatchMesh->IsReadyForRender())
-                {
-                    continue;
-                }
-
-                FGrassSpeciesExtract Patch = Species;
-                Patch.bPatch        = true;
-                Patch.Mesh          = PatchMesh;
-                Patch.ResolveHandle = FMeshResolveCache::Get().Resolve(PatchMesh, {});
-                Patch.CellSize      = GrassPatch::GetPatchSize(Type->Density);
-                Patch.ScaleMin      = 1.0f;
-                Patch.ScaleMax      = 1.0f;
-                // A patch is meters wide, so it lies along a slope rather than poking out of it.
-                Patch.AlignToNormal = 1.0f;
-                Patch.CullDistance  = Type->CullDistance;
-                Patch.FadeInStart   = Species.FadeOutStart;
-                Patch.FadeInEnd     = Species.CullDistance;
-                Patch.FadeOutStart  = 0.0f;
-                Patch.KeepScale     = Math::Min(Output.DensityScale, 1.0f);
-                Out.Grass.Add(Patch);
             }
         }
 

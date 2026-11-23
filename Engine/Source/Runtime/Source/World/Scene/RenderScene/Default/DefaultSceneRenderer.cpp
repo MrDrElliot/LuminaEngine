@@ -2,6 +2,7 @@
 #include "SceneRendererInternal.h"
 #include "Renderer/SMAA/AreaTex.h"
 #include "Renderer/SMAA/SearchTex.h"
+#include <bit>
 
 namespace Lumina
 {
@@ -517,6 +518,8 @@ namespace Lumina
             return;
         }
 
+        PrewarmRecordedPipelines();
+
         CurrentFrameSlot = Slot;
 
         // Advanced before the first PointAtView so every view this frame stamps the same tick.
@@ -917,7 +920,7 @@ namespace Lumina
 
                 RunRenderCallbacks(CL, ERenderStage::AfterPostProcess);
 
-                if (GetViewSMAAMode(*CurrentView) != ESMAAMode::Off)
+                if (IsSMAAEnabledFor(*CurrentView))
                 {
                     SCENE_GPU_SCOPE(CL, "SMAA");
                     SMAAEdgeDetectionPass(CL);
@@ -926,7 +929,7 @@ namespace Lumina
                 }
 
                 // Before the outline and the widgets, which own the resolved output and must not be blended.
-                if (IsTemporalAAEnabled())
+                if (IsSMAAT2xEnabled())
                 {
                     SCENE_GPU_SCOPE(CL, "Temporal Resolve");
                     TemporalResolvePass(CL);
@@ -1070,7 +1073,7 @@ namespace Lumina
         PostProcessMaterialPass(CL);
 
         // No T2x on a capture; it has no jitter sequence of its own and would resolve against another view.
-        if (GetViewSMAAMode(*CurrentView) != ESMAAMode::Off)
+        if (IsSMAAEnabledFor(*CurrentView))
         {
             SMAAEdgeDetectionPass(CL);
             SMAABlendWeightPass(CL);
@@ -1171,18 +1174,19 @@ namespace Lumina
     FUIntVector2 FDefaultSceneRenderer::ComputeRenderSize(const FUIntVector2& DisplaySize, const IUpscaler* Upscaler)
     {
         const Upscaling::FUpscaleRequest Request = Upscaling::GetRequest();
-        const float Scale = Upscaler != nullptr ? Upscaler->GetRenderScale(DisplaySize, Request.Mode, Request.Scale) : Request.Scale;
+        const float Scale = Upscaler != nullptr ? Upscaler->GetRenderScale(DisplaySize, Request.Resolution, Request.Scale) : Request.Scale;
         return Upscaling::ScaleExtent(DisplaySize, Scale);
     }
 
     IUpscaler* FDefaultSceneRenderer::SelectUpscaler()
     {
-        if (IUpscaler* Registered = FUpscalerRegistry::GetActive())
+        const EAntiAliasingMethod Method = Upscaling::GetMethod();
+        if (!Upscaling::IsTemporal(Method))
         {
-            return Registered;
+            return nullptr;
         }
-        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
-        return Settings != nullptr && Settings->Upscaler == EUpscaler::TAA ? &BuiltInTemporalAA : nullptr;
+        IUpscaler* Registered = Method != EAntiAliasingMethod::TAA ? FUpscalerRegistry::Find(Method) : nullptr;
+        return Registered != nullptr && Registered->IsSupported() ? Registered : &BuiltInTemporalAA;
     }
 
     void FDefaultSceneRenderer::RefreshPrimaryRenderSize()
@@ -1318,7 +1322,7 @@ namespace Lumina
         const FVector2 kSubsamples[2] = { FVector2(-0.25f, -0.25f), FVector2(0.25f, 0.25f) };
 
         const CRendererSettings* Settings = GetDefault<CRendererSettings>();
-        const float Scale = Settings != nullptr ? Math::Clamp(Settings->TemporalJitterScale, 0.0f, 1.0f) : 1.0f;
+        const float Scale = Settings != nullptr ? Math::Clamp(Settings->SMAAT2xJitterScale, 0.0f, 1.0f) : 1.0f;
 
         const FVector2 Offset = kSubsamples[FrameIndex & 1u] * Scale;
         return FVector2((Offset.x * 2.0f) / (float)View.Size.x,
@@ -1801,7 +1805,7 @@ namespace Lumina
         Want(ENamedImage::DBufferC,        bDecals);
         Want(ENamedImage::DBufferD,        bDecals);
 
-        const bool bTemporal = IsTemporalAAEnabledFor(View);
+        const bool bTemporal = IsSMAAT2xEnabledFor(View);
         const bool bHadTemporalTargets = View.Images[(int)ENamedImage::TemporalHistoryA].IsValid()
                                       && View.Images[(int)ENamedImage::TemporalHistoryB].IsValid();
         Want(ENamedImage::Velocity,         bTemporal || IsTemporalUpscalerFor(View) || (View.bIsPrimary && IsVelocityDebugActive()));
@@ -2518,20 +2522,9 @@ namespace Lumina
         #endif
     }
 
-    uint64 FDefaultSceneRenderer::HashGraphicsKey(const FGraphicsPipelineKey& Key)
+    namespace
     {
-        size_t Seed = 0;
-        Hash::HashCombine(Seed, Key.VS.Handle);
-        Hash::HashCombine(Seed, Key.PS.Handle);
-        Hash::HashCombine(Seed, Key.MS.Handle);
-        Hash::HashCombine(Seed, ((uint64)Key.Topology) | ((uint64)Key.bWireframe << 8) |
-                                ((uint64)Key.bAlphaToCoverage << 9) | ((uint64)Key.SampleCount << 16) |
-                                ((uint64)Key.DepthFormat << 24) |
-                                ((uint64)Key.bVisBufferMasked << 56) |
-                                ((uint64)Key.SkinnedMode << 57) | ((uint64)Key.TriCullMode << 59) |
-                                ((uint64)Key.SkyMode << 61) |
-                                0ull);
-        for (const RHI::FColorTarget& Target : Key.ColorTargets)
+        uint64 PackColorTarget(const RHI::FColorTarget& Target)
         {
             const RHI::FBlendDesc& B = Target.Blend;
             uint64 Bits = (uint64)Target.Format;
@@ -2543,9 +2536,205 @@ namespace Lumina
             Bits = (Bits << 4)  | (uint64)B.SrcAlphaFactor;
             Bits = (Bits << 4)  | (uint64)B.DstAlphaFactor;
             Bits = (Bits << 4)  | (uint64)B.ColorWriteMask;
-            Hash::HashCombine(Seed, Bits);
+            return Bits;
+        }
+
+        RHI::FColorTarget UnpackColorTarget(uint64 Bits)
+        {
+            RHI::FColorTarget Target{};
+            RHI::FBlendDesc& B = Target.Blend;
+            B.ColorWriteMask = (uint8)(Bits & 0xF);           Bits >>= 4;
+            B.DstAlphaFactor = (RHI::EFactor)(Bits & 0xF);    Bits >>= 4;
+            B.SrcAlphaFactor = (RHI::EFactor)(Bits & 0xF);    Bits >>= 4;
+            B.AlphaOp        = (RHI::EBlend)(Bits & 0x7);     Bits >>= 3;
+            B.DstColorFactor = (RHI::EFactor)(Bits & 0xF);    Bits >>= 4;
+            B.SrcColorFactor = (RHI::EFactor)(Bits & 0xF);    Bits >>= 4;
+            B.ColorOp        = (RHI::EBlend)(Bits & 0x7);     Bits >>= 3;
+            B.bBlendEnable   = (Bits & 0x1) != 0;             Bits >>= 1;
+            Target.Format    = (EFormat)Bits;
+            return Target;
+        }
+
+        enum EPrewarmKind : uint32
+        {
+            PrewarmGraphics = 0,
+            PrewarmCompute  = 1,
+        };
+
+        // A float or bool only fills part of the union, so the rest is left out rather than recorded as noise.
+        uint64 SpecializationBits(const RHI::FSpecializationConstant& Constant)
+        {
+            switch (Constant.Type)
+            {
+            case RHI::ESpecializationConstantType::Float32: return (uint64)std::bit_cast<uint32>(Constant.AsFloat);
+            case RHI::ESpecializationConstantType::Boolean: return Constant.AsBool ? 1ull : 0ull;
+            default:                                        return Constant.AsInt;
+            }
+        }
+
+        RHI::FSpecializationConstant MakeSpecialization(uint32 Id, RHI::ESpecializationConstantType Type, uint64 Bits)
+        {
+            RHI::FSpecializationConstant Constant{ .ConstantID = Id, .AsInt = 0, .Type = Type };
+            switch (Type)
+            {
+            case RHI::ESpecializationConstantType::Float32: Constant.AsFloat = std::bit_cast<float>((uint32)Bits); break;
+            case RHI::ESpecializationConstantType::Boolean: Constant.AsBool = Bits != 0; break;
+            default:                                        Constant.AsInt = Bits; break;
+            }
+            return Constant;
+        }
+
+        // Zero for a missing stage, and false when a stage has no content hash to be found by next run.
+        bool RecordShaders(const FShaderH* Stages, uint32 Num, FPipelinePrewarmRecord& Out)
+        {
+            for (uint32 i = 0; i < Num; ++i)
+            {
+                if (Stages[i] == nullptr)
+                {
+                    continue;
+                }
+                const FShaderEntry* Entry = FShaderLibrary::Resolve(Stages[i]);
+                if (Entry == nullptr || Entry->ContentHash == 0)
+                {
+                    return false;
+                }
+                Out.Shaders[i] = Entry->ContentHash;
+            }
+            return true;
+        }
+
+        bool FindRecordedShaders(const FPipelinePrewarmRecord& Record, FShaderH (&Out)[3])
+        {
+            for (uint32 i = 0; i < 3; ++i)
+            {
+                if (Record.Shaders[i] == 0)
+                {
+                    continue;
+                }
+                Out[i] = FShaderLibrary::FindByContent(Record.Shaders[i]);
+                if (Out[i] == nullptr)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        constexpr uint32 kPrewarmTriesPerFrame = 32;
+    }
+
+    uint64 FDefaultSceneRenderer::PackRasterState(const FGraphicsPipelineKey& Key)
+    {
+        return ((uint64)Key.Topology) | ((uint64)Key.bWireframe << 8) |
+               ((uint64)Key.bAlphaToCoverage << 9) | ((uint64)Key.SampleCount << 16) |
+               ((uint64)Key.DepthFormat << 24) |
+               ((uint64)Key.bVisBufferMasked << 56) |
+               ((uint64)Key.SkinnedMode << 57) | ((uint64)Key.TriCullMode << 59) |
+               ((uint64)Key.SkyMode << 61);
+    }
+
+    uint64 FDefaultSceneRenderer::HashGraphicsKey(const FGraphicsPipelineKey& Key)
+    {
+        size_t Seed = 0;
+        Hash::HashCombine(Seed, Key.VS.Handle);
+        Hash::HashCombine(Seed, Key.PS.Handle);
+        Hash::HashCombine(Seed, Key.MS.Handle);
+        Hash::HashCombine(Seed, PackRasterState(Key));
+        for (const RHI::FColorTarget& Target : Key.ColorTargets)
+        {
+            Hash::HashCombine(Seed, PackColorTarget(Target));
         }
         return Seed;
+    }
+
+    void FDefaultSceneRenderer::RecordPrewarm(const FGraphicsPipelineKey& Key)
+    {
+        FPipelinePrewarmRecord Record;
+        const FShaderH Stages[3] = { Key.VS, Key.PS, Key.MS };
+        if (Key.ColorTargets.Num() > (int32)FPipelinePrewarmRecord::kMaxWords || !RecordShaders(Stages, 3, Record))
+        {
+            return;
+        }
+        Record.Kind  = PrewarmGraphics;
+        Record.State = PackRasterState(Key);
+        Record.Count = (uint32)Key.ColorTargets.Num();
+        for (uint32 i = 0; i < Record.Count; ++i)
+        {
+            Record.Words[i] = PackColorTarget(Key.ColorTargets[i]);
+        }
+        ScenePipelines().RecordPrewarm(Record);
+    }
+
+    void FDefaultSceneRenderer::RecordPrewarm(FShaderH CS, TSpan<const RHI::FSpecializationConstant> Constants)
+    {
+        FPipelinePrewarmRecord Record;
+        if ((uint32)Constants.Num() > FPipelinePrewarmRecord::kMaxWords || !RecordShaders(&CS, 1, Record))
+        {
+            return;
+        }
+        Record.Kind  = PrewarmCompute;
+        Record.Count = (uint32)Constants.Num();
+        for (uint32 i = 0; i < Record.Count; ++i)
+        {
+            Record.Words[i] = SpecializationBits(Constants[i]);
+            Record.Ids[i]   = (Constants[i].ConstantID & 0x00FFFFFFu) | ((uint32)Constants[i].Type << 24);
+        }
+        ScenePipelines().RecordPrewarm(Record);
+    }
+
+    void FDefaultSceneRenderer::PrewarmRecordedPipelines()
+    {
+        FScenePipelineCache& Cache = ScenePipelines();
+        Cache.PrewarmRecorded(kPrewarmTriesPerFrame, [&Cache](const FPipelinePrewarmRecord& Record)
+        {
+            FShaderH Stages[3];
+            if (!FindRecordedShaders(Record, Stages))
+            {
+                return false;
+            }
+
+            if (Record.Kind == PrewarmCompute)
+            {
+                TInlineVector<RHI::FSpecializationConstant, FPipelinePrewarmRecord::kMaxWords> Constants;
+                for (uint32 i = 0; i < Math::Min(Record.Count, FPipelinePrewarmRecord::kMaxWords); ++i)
+                {
+                    Constants.Add(MakeSpecialization(Record.Ids[i] & 0x00FFFFFFu, (RHI::ESpecializationConstantType)(Record.Ids[i] >> 24), Record.Words[i]));
+                }
+                const TSpan<const RHI::FSpecializationConstant> Span(Constants.GetData(), Constants.Num());
+                const uint64 CacheKey = HashComputeKey(Stages[0], Span);
+                if (!Cache.Find(CacheKey) && !Cache.IsPending(CacheKey))
+                {
+                    Cache.Request(CacheKey, Stages, MakeComputeBuild(Stages[0], Span), true);
+                }
+                return true;
+            }
+
+            FGraphicsPipelineKey Key;
+            Key.VS               = Stages[0];
+            Key.PS               = Stages[1];
+            Key.MS               = Stages[2];
+            Key.Topology         = (RHI::ETopology)(Record.State & 0xFF);
+            Key.bWireframe       = ((Record.State >> 8) & 0x1) != 0;
+            Key.bAlphaToCoverage = ((Record.State >> 9) & 0x1) != 0;
+            Key.SampleCount      = (uint8)((Record.State >> 16) & 0xFF);
+            Key.DepthFormat      = (EFormat)((Record.State >> 24) & 0xFFFFFFFFull);
+            Key.bVisBufferMasked = ((Record.State >> 56) & 0x1) != 0;
+            Key.SkinnedMode      = (uint8)((Record.State >> 57) & 0x3);
+            Key.TriCullMode      = (uint8)((Record.State >> 59) & 0x3);
+            Key.SkyMode          = (uint8)((Record.State >> 61) & 0x7);
+            for (uint32 i = 0; i < Math::Min(Record.Count, FPipelinePrewarmRecord::kMaxWords); ++i)
+            {
+                Key.ColorTargets.Add(UnpackColorTarget(Record.Words[i]));
+            }
+
+            const uint64 CacheKey = HashGraphicsKey(Key);
+            if (!Cache.Find(CacheKey) && !Cache.IsPending(CacheKey))
+            {
+                const FShaderH Shaders[3] = { Key.VS, Key.PS, Key.MS };
+                Cache.Request(CacheKey, Shaders, MakeGraphicsBuild(Key), true);
+            }
+            return true;
+        });
     }
 
     FPipelineBuild FDefaultSceneRenderer::MakeGraphicsBuild(const FGraphicsPipelineKey& Key)
@@ -2642,6 +2831,7 @@ namespace Lumina
         }
 
         const FShaderH Shaders[3] = { Key.VS, Key.PS, Key.MS };
+        RecordPrewarm(Key);
         return Cache.BuildNow(CacheKey, Shaders, Cache.IsPending(CacheKey) ? FPipelineBuild{} : MakeGraphicsBuild(Key));
     }
 
@@ -2664,6 +2854,7 @@ namespace Lumina
         }
 
         const FShaderH Shaders[3] = { Key.VS, Key.PS, Key.MS };
+        RecordPrewarm(Key);
         return Cache.Request(CacheKey, Shaders, MakeGraphicsBuild(Key));
     }
 
@@ -2678,6 +2869,7 @@ namespace Lumina
         }
 
         const FShaderH Shaders[3] = { CS, FShaderH{}, FShaderH{} };
+        RecordPrewarm(CS, Constants);
         return Cache.BuildNow(CacheKey, Shaders, Cache.IsPending(CacheKey) ? FPipelineBuild{} : MakeComputeBuild(CS, Constants));
     }
 
@@ -2701,6 +2893,7 @@ namespace Lumina
         }
 
         const FShaderH Shaders[3] = { CS, FShaderH{}, FShaderH{} };
+        RecordPrewarm(CS, Constants);
         return Cache.Request(CacheKey, Shaders, MakeComputeBuild(CS, Constants));
     }
 

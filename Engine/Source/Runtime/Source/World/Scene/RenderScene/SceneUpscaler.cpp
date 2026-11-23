@@ -13,10 +13,10 @@ namespace Lumina
     {
         FMutex GUpscalerMutex;
 
-        TConsoleVar<bool> CVarDisableUpscaler(
-            "r.Upscaler.Disable",
-            false,
-            "Renders without the project's upscaler, so its anti-aliasing setting takes over, without touching the saved settings.");
+        TConsoleVar<int32> CVarAntiAliasing(
+            "r.AntiAliasing",
+            -1,
+            "Overrides the project's anti-aliasing method without touching the saved settings. 0 None, 1 SMAA, 2 SMAA T2x, 3 TAA, 4 DLSS, below 0 follows the project.");
 
         TConsoleVar<float> CVarScreenPercentage(
             "r.ScreenPercentage",
@@ -71,32 +71,17 @@ namespace Lumina
         Upscalers.Remove(Upscaler);
     }
 
-    IUpscaler* FUpscalerRegistry::Find(EUpscaler Type)
+    IUpscaler* FUpscalerRegistry::Find(EAntiAliasingMethod Method)
     {
-        if (Type == EUpscaler::None)
-        {
-            return nullptr;
-        }
         FScopeLock Lock(GUpscalerMutex);
         for (IUpscaler* Upscaler : GetUpscalers())
         {
-            if (Upscaler->GetType() == Type)
+            if (Upscaler->GetMethod() == Method)
             {
                 return Upscaler;
             }
         }
         return nullptr;
-    }
-
-    IUpscaler* FUpscalerRegistry::GetActive()
-    {
-        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
-        if (Settings == nullptr || CVarDisableUpscaler.GetValue())
-        {
-            return nullptr;
-        }
-        IUpscaler* Upscaler = Find(Settings->Upscaler);
-        return Upscaler != nullptr && Upscaler->IsSupported() ? Upscaler : nullptr;
     }
 
     void FUpscalerRegistry::GetRegistered(TVector<IUpscaler*>& Out)
@@ -107,16 +92,32 @@ namespace Lumina
 
     namespace Upscaling
     {
-        float GetModeScale(EUpscalerMode Mode, float CustomScale)
+        EAntiAliasingMethod GetMethod()
         {
-            switch (Mode)
+            const int32 Override = CVarAntiAliasing.GetValue();
+            if (Override >= 0 && Override <= (int32)EAntiAliasingMethod::DLSS)
             {
-            case EUpscalerMode::NativeAA:         return 1.0f;
-            case EUpscalerMode::Quality:          return 2.0f / 3.0f;
-            case EUpscalerMode::Balanced:         return 0.58f;
-            case EUpscalerMode::Performance:      return 0.5f;
-            case EUpscalerMode::UltraPerformance: return 1.0f / 3.0f;
-            case EUpscalerMode::Custom:           break;
+                return (EAntiAliasingMethod)Override;
+            }
+            const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+            return Settings != nullptr ? Settings->AntiAliasing : EAntiAliasingMethod::TAA;
+        }
+
+        bool IsTemporal(EAntiAliasingMethod Method)
+        {
+            return Method == EAntiAliasingMethod::TAA || Method == EAntiAliasingMethod::DLSS;
+        }
+
+        float GetResolutionScale(ERenderResolution Resolution, float CustomScale)
+        {
+            switch (Resolution)
+            {
+            case ERenderResolution::Native:           return 1.0f;
+            case ERenderResolution::Quality:          return 2.0f / 3.0f;
+            case ERenderResolution::Balanced:         return 0.58f;
+            case ERenderResolution::Performance:      return 0.5f;
+            case ERenderResolution::UltraPerformance: return 1.0f / 3.0f;
+            case ERenderResolution::Custom:           break;
             }
             return Math::Clamp(CustomScale, 0.25f, 1.0f);
         }
@@ -129,13 +130,13 @@ namespace Lumina
             const float Override = CVarScreenPercentage.GetValue();
             if (Override > 0.0f)
             {
-                Request.Mode  = EUpscalerMode::Custom;
-                Request.Scale = GetModeScale(EUpscalerMode::Custom, Override / 100.0f);
+                Request.Resolution = ERenderResolution::Custom;
+                Request.Scale      = GetResolutionScale(ERenderResolution::Custom, Override / 100.0f);
                 return Request;
             }
 
-            Request.Mode  = Settings != nullptr ? Settings->UpscalerMode : EUpscalerMode::Custom;
-            Request.Scale = GetModeScale(Request.Mode, Settings != nullptr ? Settings->ScreenPercentage / 100.0f : 1.0f);
+            Request.Resolution = Settings != nullptr ? Settings->RenderResolution : ERenderResolution::Native;
+            Request.Scale      = GetResolutionScale(Request.Resolution, Settings != nullptr ? Settings->ScreenPercentage / 100.0f : 1.0f);
             return Request;
         }
 

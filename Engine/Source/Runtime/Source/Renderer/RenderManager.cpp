@@ -16,6 +16,8 @@
 #include "Config/GameUserSettings.h"
 #include "Paths/Paths.h"
 #include "Platform/Process/PlatformProcess.h"
+#include "Platform/Filesystem/FileHelper.h"
+#include "Containers/HashPrimitives.h"
 #include <thread>
 #include "TaskSystem/TaskSystem.h"
 #include "Core/Engine/Engine.h"
@@ -123,6 +125,39 @@ namespace Lumina
         // Saved after a burst rather than per pipeline, since the whole cache is rewritten each time.
         constexpr uint32 kBuildsPerCacheSave = 16;
 
+        // Prewarm builds never take more than this share of the workers, so a pipeline a frame is waiting on still finds one.
+        uint32 MaxConcurrentPrewarmBuilds(uint32 MaxInFlight)
+        {
+            return Math::Max(1u, MaxInFlight / 2u);
+        }
+
+        // Runs a record has stayed unbuildable before it is dropped, since its material may be gone for good.
+        constexpr uint32 kPrewarmMaxAge = 8;
+
+        constexpr uint32 kPrewarmMagic   = 0x4D525750u;
+        constexpr uint32 kPrewarmVersion = 1u;
+
+        struct FPrewarmFileHeader
+        {
+            uint32 Magic   = kPrewarmMagic;
+            uint32 Version = kPrewarmVersion;
+            uint32 Count   = 0;
+            uint32 RecordSize = sizeof(FPipelinePrewarmRecord);
+        };
+
+        struct FPrewarmFileEntry
+        {
+            FPipelinePrewarmRecord Record;
+            uint32                 Age  = 0;
+            uint32                 _Pad = 0;
+        };
+        static_assert(sizeof(FPrewarmFileEntry) == sizeof(FPipelinePrewarmRecord) + 8, "Written as raw bytes, so it must hold no padding.");
+
+        uint64 HashPrewarmRecord(const FPipelinePrewarmRecord& Record)
+        {
+            return Containers::HashBytes(&Record, sizeof(Record));
+        }
+
         enum EPendingState : uint8
         {
             PendingQueued  = 0,
@@ -189,7 +224,7 @@ namespace Lumina
         return Pipeline;
     }
 
-    RHI::FPipelineH FScenePipelineCache::Request(uint64 Hash, const FShaderH (&Shaders)[3], FPipelineBuild&& Build)
+    RHI::FPipelineH FScenePipelineCache::Request(uint64 Hash, const FShaderH (&Shaders)[3], FPipelineBuild&& Build, bool bPrewarm)
     {
         {
             FWriteScopeLock Lock(Mutex);
@@ -204,7 +239,7 @@ namespace Lumina
 
             TSharedPtr<FPendingBuild> Pending = AddPending(Hash, Shaders, Move(Build), true);
             FScopeLock QueueLock(QueueMutex);
-            Queue.Add(Move(Pending));
+            (bPrewarm ? PrewarmQueue : Queue).Add(Move(Pending));
         }
 
         Pump();
@@ -271,13 +306,14 @@ namespace Lumina
         {
             FScopeLock Lock(QueueMutex);
             --InFlight;
-            bDrained = InFlight == 0 && Queue.IsEmpty();
+            bDrained = InFlight == 0 && Queue.IsEmpty() && PrewarmQueue.IsEmpty();
         }
 
         if (bDrained && BuiltSinceSave.load(std::memory_order_relaxed) >= kBuildsPerCacheSave)
         {
             BuiltSinceSave.store(0, std::memory_order_relaxed);
             RHI::SavePipelineCache();
+            SavePrewarm();
         }
         Pump();
     }
@@ -291,12 +327,23 @@ namespace Lumina
             TSharedPtr<FPendingBuild> Next;
             {
                 FScopeLock Lock(QueueMutex);
-                if (InFlight >= MaxInFlight || Queue.IsEmpty())
+                if (InFlight >= MaxInFlight)
                 {
                     return;
                 }
-                Next = Move(Queue[0]);
-                Queue.RemoveAt(0);
+                if (!Queue.IsEmpty())
+                {
+                    Next = Move(Queue[0]);
+                    Queue.RemoveAt(0);
+                }
+                else if (!PrewarmQueue.IsEmpty() && InFlight < MaxConcurrentPrewarmBuilds(MaxInFlight))
+                {
+                    Next = PrewarmQueue.Pop();
+                }
+                else
+                {
+                    return;
+                }
                 ++InFlight;
             }
 
@@ -309,15 +356,18 @@ namespace Lumina
     {
         {
             FScopeLock Lock(QueueMutex);
-            for (TSharedPtr<FPendingBuild>& Pending : Queue)
+            for (TVector<TSharedPtr<FPendingBuild>>* Waiting : { &Queue, &PrewarmQueue })
             {
-                uint8 Expected = PendingQueued;
-                if (Pending->State.compare_exchange_strong(Expected, PendingDone, std::memory_order_acq_rel))
+                for (TSharedPtr<FPendingBuild>& Pending : *Waiting)
                 {
-                    Pending->Done.Signal();
+                    uint8 Expected = PendingQueued;
+                    if (Pending->State.compare_exchange_strong(Expected, PendingDone, std::memory_order_acq_rel))
+                    {
+                        Pending->Done.Signal();
+                    }
                 }
+                Waiting->Reset();
             }
-            Queue.Reset();
         }
 
         // A worker still compiling writes into Entries and needs the device alive until it returns.
@@ -363,12 +413,154 @@ namespace Lumina
     void FScenePipelineCache::ReleaseAll()
     {
         WaitForBuilds();
+        SavePrewarm();
         FWriteScopeLock Lock(Mutex);
         for (auto& [Hash, Entry] : Entries)
         {
             RHI::Retire(Entry.Pipeline);
         }
         Entries.Reset();
+    }
+
+    void FScenePipelineCache::LoadPrewarm(const FString& Path)
+    {
+        FScopeLock Lock(PrewarmMutex);
+        PrewarmPath = Path;
+        PrewarmRecords.Reset();
+        PrewarmPending.Reset();
+        PrewarmCursor = 0;
+
+        const FStringView PathView(*Path, Path.Len());
+        TVector<uint8> Data;
+        if (Path.IsEmpty() || !Paths::Exists(PathView) || !FileHelper::LoadFileToArray(Data, PathView) || Data.Num() < (int32)sizeof(FPrewarmFileHeader))
+        {
+            return;
+        }
+
+        FPrewarmFileHeader Header;
+        Memory::Memcpy(&Header, Data.GetData(), sizeof(Header));
+        const size_t Expected = sizeof(FPrewarmFileHeader) + (size_t)Header.Count * sizeof(FPrewarmFileEntry);
+        if (Header.Magic != kPrewarmMagic || Header.Version != kPrewarmVersion || Header.RecordSize != sizeof(FPipelinePrewarmRecord) || (size_t)Data.Num() != Expected)
+        {
+            LOG_WARN("Pipeline prewarm list at {} is from another version and was ignored.", Path);
+            return;
+        }
+
+        const uint8* Cursor = Data.GetData() + sizeof(FPrewarmFileHeader);
+        for (uint32 i = 0; i < Header.Count; ++i, Cursor += sizeof(FPrewarmFileEntry))
+        {
+            FPrewarmFileEntry Entry;
+            Memory::Memcpy(&Entry, Cursor, sizeof(Entry));
+            if (Entry.Age + 1u > kPrewarmMaxAge)
+            {
+                continue;
+            }
+            const uint64 Hash = HashPrewarmRecord(Entry.Record);
+            if (PrewarmRecords.TryAdd(Hash, FPrewarmEntry{ Entry.Record, Entry.Age + 1u }))
+            {
+                PrewarmPending.Add(Hash);
+            }
+        }
+        LOG_INFO("Pipeline prewarm list holds {} pipelines.", PrewarmPending.Num());
+    }
+
+    void FScenePipelineCache::SavePrewarm()
+    {
+        FScopeLock Lock(PrewarmMutex);
+        if (PrewarmPath.IsEmpty())
+        {
+            return;
+        }
+
+        FPrewarmFileHeader Header;
+        Header.Count = (uint32)PrewarmRecords.Num();
+        TVector<uint8> Data;
+        Data.SetNum((int32)(sizeof(Header) + Header.Count * sizeof(FPrewarmFileEntry)));
+        Memory::Memcpy(Data.GetData(), &Header, sizeof(Header));
+        uint8* Cursor = Data.GetData() + sizeof(Header);
+        for (const auto& [Hash, Recorded] : PrewarmRecords)
+        {
+            FPrewarmFileEntry Entry;
+            Entry.Record = Recorded.Record;
+            Entry.Age    = Recorded.Age;
+            Memory::Memcpy(Cursor, &Entry, sizeof(Entry));
+            Cursor += sizeof(Entry);
+        }
+
+        const FString Parent = Paths::Parent(FStringView(*PrewarmPath, PrewarmPath.Len()), true);
+        if (!Parent.IsEmpty())
+        {
+            Paths::CreateDirectories(FStringView(*Parent, Parent.Len()));
+        }
+        if (!FileHelper::SaveArrayToFile(Data, FStringView(*PrewarmPath, PrewarmPath.Len())))
+        {
+            LOG_WARN("Could not write the pipeline prewarm list to {}.", PrewarmPath);
+        }
+    }
+
+    void FScenePipelineCache::RecordPrewarm(const FPipelinePrewarmRecord& Record)
+    {
+        const uint64 Hash = HashPrewarmRecord(Record);
+        FScopeLock Lock(PrewarmMutex);
+        if (PrewarmPath.IsEmpty())
+        {
+            return;
+        }
+        if (FPrewarmEntry* Existing = PrewarmRecords.Find(Hash))
+        {
+            Existing->Age = 0;
+            return;
+        }
+        PrewarmRecords.TryAdd(Hash, FPrewarmEntry{ Record, 0u });
+    }
+
+    void FScenePipelineCache::PrewarmRecorded(uint32 Max, TFunctionRef<bool(const FPipelinePrewarmRecord&)> Try)
+    {
+        TInlineVector<uint64, 32> Hashes;
+        TInlineVector<FPipelinePrewarmRecord, 32> Batch;
+        {
+            FScopeLock Lock(PrewarmMutex);
+            const uint32 Pending = (uint32)PrewarmPending.Num();
+            const uint32 Take = Math::Min(Max, Pending);
+            for (uint32 i = 0; i < Take; ++i)
+            {
+                const uint64 Hash = PrewarmPending[(PrewarmCursor + i) % Pending];
+                if (const FPrewarmEntry* Entry = PrewarmRecords.Find(Hash))
+                {
+                    Hashes.Add(Hash);
+                    Batch.Add(Entry->Record);
+                }
+            }
+            PrewarmCursor = Pending > 0 ? (PrewarmCursor + Take) % Pending : 0;
+        }
+
+        TInlineVector<uint64, 32> Requested;
+        for (int32 i = 0; i < Batch.Num(); ++i)
+        {
+            if (Try(Batch[i]))
+            {
+                Requested.Add(Hashes[i]);
+            }
+        }
+        if (Requested.IsEmpty())
+        {
+            return;
+        }
+
+        FScopeLock Lock(PrewarmMutex);
+        for (uint64 Hash : Requested)
+        {
+            PrewarmPending.RemoveSwap(Hash);
+            if (FPrewarmEntry* Entry = PrewarmRecords.Find(Hash))
+            {
+                Entry->Age = 0;
+            }
+        }
+        PrewarmCursor = PrewarmPending.IsEmpty() ? 0 : PrewarmCursor % (uint32)PrewarmPending.Num();
+        if (PrewarmPending.IsEmpty())
+        {
+            LOG_INFO("Pipeline prewarm requested every recorded pipeline.");
+        }
     }
 
     FRenderManager::FRenderManager()
@@ -489,6 +681,7 @@ namespace Lumina
             RenderBootLast = Now;
         };
 
+        const FString CachePath = PipelineCachePath();
         RHI::CreateDevice(RHI::FDeviceDesc
         {
             .bValidation = bValidation,
@@ -497,9 +690,12 @@ namespace Lumina
             // Meshlets draw through the vertex path without mesh shading, and -nomeshshaders forces that path.
             .DisabledFeatures = Global::GCommandLine != nullptr && Global::GCommandLine->Has("nomeshshaders") ? RHI::EDeviceFeature::MeshShading : RHI::EDeviceFeature::None,
             .MinDeviceLocalMemoryMiB = MinVRAMMiB,
-            .PipelineCachePath = PipelineCachePath(),
+            .PipelineCachePath = CachePath,
         });
         RenderBootMark("RHI::CreateDevice");
+
+        // Kept beside the driver's cache, so -nopipelinecache turns both off.
+        ScenePipelineCache.LoadPrewarm(CachePath.IsEmpty() ? FString() : Paths::Parent(FStringView(*CachePath, CachePath.Len()), true) + "/PipelinePrewarm.bin");
 
         WarnIfBelowRecommendedVRAM();
 

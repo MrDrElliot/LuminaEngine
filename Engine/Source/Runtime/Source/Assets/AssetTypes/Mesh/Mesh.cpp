@@ -448,6 +448,92 @@ namespace Lumina
             return Algo::AnyOf(Resource.MeshletData.MeshletLODBounds, [](const FMeshletLODBounds& Bounds) { return Bounds.Flags != 0u; });
         }
 
+        // Reads Source's finest baked level back into build streams on Resource, false when Source kept no CPU meshlets.
+        bool RestoreSourceStreamsFromMeshlets(const FMeshResource& Source, FMeshResource& Resource)
+        {
+            const FMeshletData& MD = Source.MeshletData;
+            if (MD.IsEmpty() || (Source.bSkinnedMesh ? MD.MeshletSkinnedVertices.IsEmpty() : MD.VertexPositions.IsEmpty()))
+            {
+                return false;
+            }
+
+            // Surfaces and the field carry over, and the build inputs the importer set keep steering the rebuild.
+            Resource.Name                = Source.Name;
+            Resource.GeometrySurfaces    = Source.GeometrySurfaces;
+            Resource.DistanceField       = Source.DistanceField;
+            Resource.bSkinnedMesh        = Source.bSkinnedMesh;
+            Resource.bLODHierarchy       = Source.bLODHierarchy;
+            Resource.bMeshletConeCulling = Source.bMeshletConeCulling;
+            Resource.bOptimizeMeshlets   = Source.bOptimizeMeshlets;
+            Resource.bFastMeshletBuild   = Source.bFastMeshletBuild;
+
+            if (Source.bSkinnedMesh)
+            {
+                return RestoreSkinnedSourceStreams(Source, Resource);
+            }
+
+            const int32 NumVertices = MD.VertexPositions.Num();
+            if (MD.VertexAttributes.Num() != NumVertices)
+            {
+                return false;
+            }
+
+            // Only the finest slot's vertices come back, since coarser levels hold vertices the source never had.
+            constexpr uint32 kUnused = ~0u;
+            TVector<uint32>  Compact(NumVertices, kUnused);
+            TVector<uint32>  Indices;
+            uint32           Used = 0;
+            auto Remap = [&](uint32 Vertex)
+            {
+                uint32& Slot = Compact[Vertex];
+                if (Slot == kUnused)
+                {
+                    Slot = Used++;
+                }
+                Indices.Add(Slot);
+            };
+
+            for (FGeometrySurface& Surface : Resource.GeometrySurfaces)
+            {
+                Surface.StartIndex = (uint32)Indices.Num();
+                const uint32 Begin = Surface.LODMeshletOffset[0];
+                const uint32 End   = Math::Min(Begin + Surface.FinestMeshletCount(MD), (uint32)MD.Meshlets.Num());
+                for (uint32 m = Begin; m < End; ++m)
+                {
+                    const FMeshlet& M = MD.Meshlets[m];
+                    for (uint32 t = 0; t < M.TriangleCount; ++t)
+                    {
+                        const uint32 Packed = MD.MeshletTriangles[M.TriangleOffset + t];
+                        Remap(GetStaticVertexIndex(MD, M, Packed & 0xFFu));
+                        Remap(GetStaticVertexIndex(MD, M, (Packed >> 8) & 0xFFu));
+                        Remap(GetStaticVertexIndex(MD, M, (Packed >> 16) & 0xFFu));
+                    }
+                }
+                Surface.IndexCount = (uint32)Indices.Num() - Surface.StartIndex;
+            }
+
+            Resource.ResizeVertices(Used);
+            Resource.Indices = Move(Indices);
+
+            const bool bHasUV1   = MD.VertexUV1s.Num()   == NumVertices;
+            const bool bHasColor = MD.VertexColors.Num() == NumVertices;
+            for (int32 v = 0; v < NumVertices; ++v)
+            {
+                const uint32 Slot = Compact[v];
+                if (Slot == kUnused)
+                {
+                    continue;
+                }
+                Resource.Positions[Slot] = DecodeMeshPosition(MD.PositionGrid, MD.VertexPositions[v]);
+                Resource.Normals[Slot]   = MD.VertexAttributes[v].Normal;
+                Resource.Tangents[Slot]  = MD.VertexAttributes[v].Tangent;
+                Resource.UVs[Slot]       = MD.VertexAttributes[v].UV;
+                Resource.UVs1[Slot]      = bHasUV1 ? MD.VertexUV1s[v] : MD.VertexAttributes[v].UV;
+                Resource.Colors[Slot]    = bHasColor ? MD.VertexColors[v] : 0xFFFFFFFFu;
+            }
+            return !Resource.Indices.IsEmpty();
+        }
+
         // The finest baked level is all a cooked or old mesh keeps of its source, so every rebuild starts there.
         TUniquePtr<FMeshResource> BuildHierarchyFromFinest(const FMeshResource& Source)
         {
@@ -656,91 +742,6 @@ namespace Lumina
 
         // Rewritten into the same slot, and the replaced textures retire a frame late so the old indices still resolve.
         MeshletHeaderSlab::Write(Resource.MeshBuffers.MeshletHeaderSlot, MakeMeshletHeader(Resource));
-    }
-
-    bool RestoreSourceStreamsFromMeshlets(const FMeshResource& Source, FMeshResource& Resource)
-    {
-        const FMeshletData& MD = Source.MeshletData;
-        if (MD.IsEmpty() || (Source.bSkinnedMesh ? MD.MeshletSkinnedVertices.IsEmpty() : MD.VertexPositions.IsEmpty()))
-        {
-            return false;
-        }
-
-        // Surfaces and the field carry over, and the build inputs the importer set keep steering the rebuild.
-        Resource.Name                = Source.Name;
-        Resource.GeometrySurfaces    = Source.GeometrySurfaces;
-        Resource.DistanceField       = Source.DistanceField;
-        Resource.bSkinnedMesh        = Source.bSkinnedMesh;
-        Resource.bLODHierarchy       = Source.bLODHierarchy;
-        Resource.bMeshletConeCulling = Source.bMeshletConeCulling;
-        Resource.bOptimizeMeshlets   = Source.bOptimizeMeshlets;
-        Resource.bFastMeshletBuild   = Source.bFastMeshletBuild;
-
-        if (Source.bSkinnedMesh)
-        {
-            return RestoreSkinnedSourceStreams(Source, Resource);
-        }
-
-        const int32 NumVertices = MD.VertexPositions.Num();
-        if (MD.VertexAttributes.Num() != NumVertices)
-        {
-            return false;
-        }
-
-        // Only the finest slot's vertices come back, since coarser levels hold vertices the source never had.
-        constexpr uint32 kUnused = ~0u;
-        TVector<uint32>  Compact(NumVertices, kUnused);
-        TVector<uint32>  Indices;
-        uint32           Used = 0;
-        auto Remap = [&](uint32 Vertex)
-        {
-            uint32& Slot = Compact[Vertex];
-            if (Slot == kUnused)
-            {
-                Slot = Used++;
-            }
-            Indices.Add(Slot);
-        };
-
-        for (FGeometrySurface& Surface : Resource.GeometrySurfaces)
-        {
-            Surface.StartIndex = (uint32)Indices.Num();
-            const uint32 Begin = Surface.LODMeshletOffset[0];
-            const uint32 End   = Math::Min(Begin + Surface.FinestMeshletCount(MD), (uint32)MD.Meshlets.Num());
-            for (uint32 m = Begin; m < End; ++m)
-            {
-                const FMeshlet& M = MD.Meshlets[m];
-                for (uint32 t = 0; t < M.TriangleCount; ++t)
-                {
-                    const uint32 Packed = MD.MeshletTriangles[M.TriangleOffset + t];
-                    Remap(GetStaticVertexIndex(MD, M, Packed & 0xFFu));
-                    Remap(GetStaticVertexIndex(MD, M, (Packed >> 8) & 0xFFu));
-                    Remap(GetStaticVertexIndex(MD, M, (Packed >> 16) & 0xFFu));
-                }
-            }
-            Surface.IndexCount = (uint32)Indices.Num() - Surface.StartIndex;
-        }
-
-        Resource.ResizeVertices(Used);
-        Resource.Indices = Move(Indices);
-
-        const bool bHasUV1   = MD.VertexUV1s.Num()   == NumVertices;
-        const bool bHasColor = MD.VertexColors.Num() == NumVertices;
-        for (int32 v = 0; v < NumVertices; ++v)
-        {
-            const uint32 Slot = Compact[v];
-            if (Slot == kUnused)
-            {
-                continue;
-            }
-            Resource.Positions[Slot] = DecodeMeshPosition(MD.PositionGrid, MD.VertexPositions[v]);
-            Resource.Normals[Slot]   = MD.VertexAttributes[v].Normal;
-            Resource.Tangents[Slot]  = MD.VertexAttributes[v].Tangent;
-            Resource.UVs[Slot]       = MD.VertexAttributes[v].UV;
-            Resource.UVs1[Slot]      = bHasUV1 ? MD.VertexUV1s[v] : MD.VertexAttributes[v].UV;
-            Resource.Colors[Slot]    = bHasColor ? MD.VertexColors[v] : 0xFFFFFFFFu;
-        }
-        return !Resource.Indices.IsEmpty();
     }
 
     void CMesh::Serialize(FArchive& Ar)

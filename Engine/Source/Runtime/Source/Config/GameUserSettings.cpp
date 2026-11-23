@@ -4,6 +4,7 @@
 #include "EngineSettings.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Class.h"
+#include "Core/Reflection/ReflectedTypeAccessors.h"
 #include "Core/Serialization/Structured/JsonStructuredArchive.h"
 #include "Core/Windows/Window.h"
 #include "Input/InputActionMap.h"
@@ -30,34 +31,17 @@ namespace Lumina
             return Project != EPresentMode::FIFO ? Project : EPresentMode::Immediate;
         }
 
-        const char* UpscalerName(EUpscaler Upscaler)
+        // The enumerator's own name as a JSON string, which is how the settings files spell an enum.
+        template<typename TEnum>
+        FString EnumJson(TEnum Value)
         {
-            switch (Upscaler)
-            {
-            case EUpscaler::DLSS: return "DLSS";
-            case EUpscaler::FSR:  return "FSR";
-            case EUpscaler::TAA:  return "TAA";
-            case EUpscaler::None: break;
-            }
-            return "None";
+            const FString Qualified = StaticEnum<TEnum>()->GetNameAtValue((uint64)Value).ToString();
+            const int32 Separator = Qualified.FindLast("::");
+            return Lumina::Format("\"{}\"", Separator == Constants::kIndexNone ? Qualified : Qualified.Mid(Separator + 2));
         }
 
-        const char* UpscalerModeName(EUpscalerMode Mode)
-        {
-            switch (Mode)
-            {
-            case EUpscalerMode::NativeAA:         return "NativeAA";
-            case EUpscalerMode::Quality:          return "Quality";
-            case EUpscalerMode::Balanced:         return "Balanced";
-            case EUpscalerMode::Performance:      return "Performance";
-            case EUpscalerMode::UltraPerformance: return "UltraPerformance";
-            case EUpscalerMode::Custom:           break;
-            }
-            return "Custom";
-        }
-
-        constexpr const char* kUpscalerKey          = "RendererSettings.Upscaler";
-        constexpr const char* kUpscalerModeKey      = "RendererSettings.UpscalerMode";
+        constexpr const char* kAntiAliasingKey      = "RendererSettings.AntiAliasing";
+        constexpr const char* kRenderResolutionKey  = "RendererSettings.RenderResolution";
         constexpr const char* kScreenPercentageKey  = "RendererSettings.ScreenPercentage";
     }
 
@@ -167,21 +151,21 @@ namespace Lumina
             const EScalabilityGroup Group = static_cast<EScalabilityGroup>(Index);
             Scalability::ApplyGroup(Group, GetQuality(Group));
         }
-        ApplyUpscaling();
+        ApplyAntiAliasing();
     }
 
-    void CGameUserSettings::ApplyUpscaling()
+    void CGameUserSettings::ApplyAntiAliasing()
     {
-        if (!bOverrideUpscaling)
+        if (!bOverrideAntiAliasing)
         {
-            Scalability::RestoreSetting(kUpscalerKey);
-            Scalability::RestoreSetting(kUpscalerModeKey);
+            Scalability::RestoreSetting(kAntiAliasingKey);
+            Scalability::RestoreSetting(kRenderResolutionKey);
             Scalability::RestoreSetting(kScreenPercentageKey);
             return;
         }
 
-        Scalability::OverrideSetting(kUpscalerKey, Lumina::Format("\"{}\"", UpscalerName(Upscaler)));
-        Scalability::OverrideSetting(kUpscalerModeKey, Lumina::Format("\"{}\"", UpscalerModeName(UpscalerMode)));
+        Scalability::OverrideSetting(kAntiAliasingKey, EnumJson(AntiAliasing));
+        Scalability::OverrideSetting(kRenderResolutionKey, EnumJson(RenderResolution));
         Scalability::OverrideSetting(kScreenPercentageKey, Lumina::Format("{}", Math::Clamp(ScreenPercentage, 25.0f, 100.0f)));
     }
 
@@ -245,9 +229,9 @@ namespace Lumina
         HDROutput = GetDefault<CRendererSettings>()->HDROutput;
         HDRPaperWhiteNits = 0.0f;
         SetOverallQuality(EQualityLevel::Default);
-        bOverrideUpscaling = false;
-        Upscaler = EUpscaler::TAA;
-        UpscalerMode = EUpscalerMode::Custom;
+        bOverrideAntiAliasing = false;
+        AntiAliasing = EAntiAliasingMethod::TAA;
+        RenderResolution = ERenderResolution::Native;
         ScreenPercentage = 100.0f;
         Input = SPlayerInputSettings();
     }
