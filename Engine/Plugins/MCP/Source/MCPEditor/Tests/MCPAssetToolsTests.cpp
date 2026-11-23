@@ -132,7 +132,7 @@ TEST_F(MCPAssetToolsTest, SetPropertyAppliesTheValueAndReportsPreviousAndCurrent
     const FJsonValue Result = SetProperty(Guid, "Friction", "0.9");
     EXPECT_FLOAT_EQ(ParseFloat(Result["Previous"]), 0.4f);
     EXPECT_FLOAT_EQ(ParseFloat(Result["Current"]), 0.9f);
-    EXPECT_FALSE(Result["bUndoable"].AsBool(true));
+    EXPECT_FALSE(Result["bUndoable"].AsBool());
 
     CPhysicsMaterial* Material = Resolve<CPhysicsMaterial>(Guid);
     ASSERT_NE(Material, nullptr);
@@ -153,8 +153,8 @@ TEST_F(MCPAssetToolsTest, DescribeReportsPropertiesAndReferencers)
     EXPECT_EQ(FString(Described["ClassName"].AsString()), FString("CPhysicsMaterial"));
     EXPECT_EQ(FString(Described["Guid"].AsString()), Guid);
 
-    FJsonValue Properties;
-    ASSERT_TRUE(FJsonValue::Parse(FStringView(FString(Described["Properties"].AsString())), Properties));
+    const FJsonValue& Properties = Described["Properties"];
+    ASSERT_TRUE(Properties.IsObject());
     EXPECT_FLOAT_EQ(Properties["Restitution"].AsFloat(), 0.75f);
     EXPECT_EQ(FString(Properties["FrictionCombine"].AsString()), FString("Average"));
 
@@ -170,7 +170,7 @@ TEST_F(MCPAssetToolsTest, DeleteRefusesWhileReferencedUnlessForced)
 
     const FJsonValue Refused = ExpectSucceeded("assets.delete", FStringView(Format(R"({{"Asset":"{}"}})", Guid)));
     EXPECT_NE(FString(Refused["content"][0]["text"].AsString()).Find("Pass bForce"), Constants::kIndexNone);
-    EXPECT_FALSE(Refused["structuredContent"]["bDeleted"].AsBool(true));
+    EXPECT_FALSE(Refused["structuredContent"]["bDeleted"].AsBool());
     EXPECT_EQ(Refused["structuredContent"]["Referencers"].Num(), 1);
     EXPECT_TRUE(VFS::Exists(FStringView(Path)));
 

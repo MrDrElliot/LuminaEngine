@@ -1,7 +1,7 @@
 #pragma once
 #include "SceneGlobals.slang"
 
-// Hashed alpha testing (Wyman and McGuire, I3D 2017), anchored in world space so it is stable under camera motion.
+// Hashed alpha testing (Wyman and McGuire, I3D 2017), anchored in world space so it is stable under camera motion, used only while a resolve averages many frames.
 
 // Grain of the noise. Larger = finer cells.
 static const float kHashScale = 1.0;
@@ -32,7 +32,7 @@ float HashedAlphaThreshold(float3 Anchor, float ViewDistance, float Cutoff)
     const float MaxDeriv = max(length(ddx(Anchor)), length(ddy(Anchor)));
 
     const float Fade = saturate((ViewDistance - kHashFadeStart) / max(kHashFadeEnd - kHashFadeStart, 1e-4));
-    if (Fade <= 0.0)
+    if (Fade <= 0.0 || (Scene().AlphaTestFlags & ALPHA_TEST_HASHED_BIT) == 0u)
     {
         return Cutoff;
     }
@@ -59,12 +59,12 @@ float HashedAlphaThreshold(float3 Anchor, float ViewDistance, float Cutoff)
 }
 
 // Whether a masked texel survives the alpha test. Pixel lanes only, since it needs a quad.
-bool MaskedAlphaKeep(float3 Anchor, float ViewDistance, float Opacity, float Cutoff, bool bAllowSharpen)
+bool MaskedAlphaKeep(float3 Anchor, float ViewDistance, float Opacity, float Cutoff)
 {
-    // Opacity sharpened by its screen-space slope, so a resolved cutoff edge is about one pixel wide and the hash dithers only that band.
+    // Opacity sharpened by its screen-space slope, so a resolved cutoff edge is about one pixel wide.
     const float Slope     = fwidth(Opacity);
     const float Sharpened = saturate((Opacity - Cutoff) / max(Slope, 1e-4) + Cutoff);
-    // A flat fractional opacity is a mip average of leaves too small to resolve, which only the plain hash keeps at its density.
-    const float Resolved  = (bAllowSharpen && Scene().bSharpenedAlphaTest != 0u) ? saturate(Slope * kSharpenSlopeScale) : 0.0;
+    // A flat fractional opacity is a mip average of leaves too small to resolve, which stays as it is.
+    const float Resolved  = (Scene().AlphaTestFlags & ALPHA_TEST_SHARPEN_BIT) != 0u ? saturate(Slope * kSharpenSlopeScale) : 0.0;
     return lerp(Opacity, Sharpened, Resolved) >= HashedAlphaThreshold(Anchor, ViewDistance, Cutoff);
 }

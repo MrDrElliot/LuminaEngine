@@ -159,7 +159,7 @@ namespace Lumina::MCP
                     }
 
                     Out.Row   = In.Row;
-                    Out.Value = Value.ToString(2);
+                    Out.Value = Value.ToString();
                     Agent::CollectUnwritableFields(Target.RowType, FStringView(), Out.UnwritableFields);
 
                     return Agent::FToolResult::Ok(Lumina::Format("{}\n{}", In.Row, Out.Value));

@@ -1,59 +1,11 @@
 #pragma once
 
 #include "SceneRenderTypes.h"
-#include "Containers/Span.h"
 
 #include <cmath>
-#include <limits>
 
 namespace Lumina::SunShadow
 {
-
-
-    // A square grid in the plane facing the sun. A ray toward the sun keeps its position in that plane, so one cell holds every caster it can meet.
-    struct FSunGrid
-    {
-        FVector3 Right    = FVector3(1.0f, 0.0f, 0.0f);
-        FVector3 Up       = FVector3(0.0f, 0.0f, 1.0f);
-        FVector2 Origin   = FVector2(0.0f);
-        float    CellSize = 1.0f;
-
-        FVector2 Project(const FVector3& P) const
-        {
-            return FVector2(Math::Dot(P, Right), Math::Dot(P, Up));
-        }
-
-        FIntVector2 CellOf(const FVector3& P) const
-        {
-            const FVector2 Cell = (Project(P) - Origin) / CellSize;
-            return FIntVector2((int32)Math::Floor(Cell.x), (int32)Math::Floor(Cell.y));
-        }
-    };
-
-    // Sized so every point lands inside a Dimension by Dimension grid.
-    inline FSunGrid FitSunGrid(const FVector3& ToSun, TSpan<const FVector3> Points, uint32 Dimension)
-    {
-        FSunGrid Grid;
-        const FVector3 Reference = Math::Abs(ToSun.y) > 0.99f ? FVector3(1.0f, 0.0f, 0.0f) : FVector3(0.0f, 1.0f, 0.0f);
-        Grid.Right = Math::Normalize(Math::Cross(Reference, ToSun));
-        Grid.Up    = Math::Cross(ToSun, Grid.Right);
-
-        FVector2 Min(std::numeric_limits<float>::max());
-        FVector2 Max(-std::numeric_limits<float>::max());
-        for (const FVector3& Point : Points)
-        {
-            const FVector2 XY = Grid.Project(Point);
-            Min = Math::Min(Min, XY);
-            Max = Math::Max(Max, XY);
-        }
-
-        // A sliver of slack keeps the far edge inside the last cell rather than on the boundary past it.
-        const float Extent = Math::Max(Max.x - Min.x, Max.y - Min.y);
-        Grid.CellSize = Math::Max(Extent * 1.001f / (float)Math::Max(Dimension, 1u), 0.01f);
-        Grid.Origin   = Min;
-        return Grid;
-    }
-
     // Half the side of a virtual shadow level, which doubles from the first level's each level.
     inline float VirtualShadowLevelRadius(int32 Level)
     {

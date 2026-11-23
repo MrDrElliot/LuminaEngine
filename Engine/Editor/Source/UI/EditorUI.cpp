@@ -205,6 +205,40 @@ namespace Lumina
             }
         }
 
+        // Leaves every changed package dirty rather than saving, like the impostor bake, so the user decides what to keep.
+        void BuildMeshDistanceFieldsCommand()
+        {
+            const FName StaticMeshClass = CStaticMesh::StaticClass()->GetName();
+            const TVector<FAssetDataPtr> Meshes = FAssetRegistry::Get().FindByPredicate([&StaticMeshClass](const FAssetData& Data)
+            {
+                return Data.AssetClass == StaticMeshClass && FStringView(*Data.Path, Data.Path.Len()).StartsWith("/Game/");
+            });
+
+            int32 Built = 0;
+            int32 Failed = 0;
+            for (const FAssetDataPtr& Data : Meshes)
+            {
+                CStaticMesh* Mesh = LoadObject<CStaticMesh>(Data->AssetGUID);
+                if (Mesh == nullptr || (Mesh->DistanceFieldSettings.bEnabled && Mesh->HasDistanceField()))
+                {
+                    continue;
+                }
+                Mesh->DistanceFieldSettings.bEnabled = true;
+                Mesh->BuildDistanceField();
+                if (!Mesh->HasDistanceField())
+                {
+                    ++Failed;
+                    continue;
+                }
+                if (CPackage* Package = Mesh->GetPackage())
+                {
+                    Package->MarkDirty();
+                }
+                ++Built;
+            }
+            LOG_INFO("Built distance fields for {} of {} static meshes in /Game, {} failed. Save them to keep the fields.", Built, Meshes.Num(), Failed);
+        }
+
         /** A button's three states. Hover lightens and press darkens, unlike ImGuiX::ButtonEx. */
         struct FButtonColors
         {
@@ -523,6 +557,8 @@ namespace Lumina
 
         FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("Impostor.BakeFoliage",
             "Bakes an impostor for every mesh the open world's forests and painted foliage scatter, leaving their packages dirty.", &BakeFoliageImpostorsCommand));
+        FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("Mesh.BuildDistanceFields",
+            "Turns on and builds the distance field of every static mesh in /Game that lacks one, leaving their packages dirty.", &BuildMeshDistanceFieldsCommand));
 
         // Content-browser tiles that draw their own body (curves, etc) instead of a rendered thumbnail.
         AssetTilePainters::RegisterBuiltin();

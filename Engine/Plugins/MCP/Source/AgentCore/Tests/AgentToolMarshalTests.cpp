@@ -647,3 +647,27 @@ TEST(AgentToolMarshal, ADelegateIsRefusedAsNotSettable)
     ASSERT_FALSE(Result.IsValid());
     EXPECT_NE(Result.Error.Find("delegate"), Constants::kIndexNone);
 }
+
+// A model reads every byte of a result, so what it could assume is left out and floats print as the float they are.
+TEST(AgentToolMarshal, CompactResultDropsEmptyValuesAndFloatNoise)
+{
+    FJsonValue Result;
+    ASSERT_TRUE(FJsonValue::Parse(R"({"Name":"Sun","Parent":"","bRoot":false,"bLit":true,"Tags":[],"Count":0,
+                                     "Inner":{"Note":"","Value":1},"Rows":[{"Id":"a","Prefab":""},{"Id":""}]})", Result));
+    Result.Set("Intensity", FJsonValue(static_cast<double>(0.96f)));
+
+    Agent::CompactResult(nullptr, Result);
+
+    EXPECT_EQ(FString(Result["Name"].AsString()), FString("Sun"));
+    EXPECT_TRUE(Result["bLit"].AsBool());
+    EXPECT_EQ(Result["Count"].AsInt32(-1), 0) << "zero is a real value, not an empty one";
+    for (const char* Gone : { "Parent", "bRoot", "Tags" })
+    {
+        EXPECT_FALSE(Result.Contains(FStringView(Gone))) << Gone;
+    }
+    EXPECT_FALSE(Result["Inner"].Contains("Note"));
+    ASSERT_EQ(Result["Rows"].Num(), 2) << "array elements keep their positions";
+    EXPECT_FALSE(Result["Rows"][0].Contains("Prefab"));
+    EXPECT_TRUE(Result["Rows"][1].IsObject());
+    EXPECT_NE(Result.ToString().Find("\"Intensity\":0.96"), Constants::kIndexNone) << Result.ToString();
+}

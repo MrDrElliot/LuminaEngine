@@ -261,7 +261,7 @@ namespace Lumina
         FString Guid;
 
         // Every reflected field as JSON, in the shape assets.set_property takes.
-        PROPERTY()
+        PROPERTY(RawJson)
         FString Properties;
 
         // Field paths that cannot be written.

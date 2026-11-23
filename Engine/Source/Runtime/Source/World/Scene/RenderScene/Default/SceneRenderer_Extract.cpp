@@ -214,6 +214,7 @@ namespace Lumina
             SceneGlobalData.TemporalJitterU = 0.0f;
             SceneGlobalData.TemporalJitterV = 0.0f;
 
+            const uint32 SharpenFlag = RenderSettings != nullptr && RenderSettings->bSharpenedAlphaTest ? ALPHA_TEST_SHARPEN_BIT : 0u;
             if ((IsTemporalAAEnabledFor(PrimaryView) || IsTemporalUpscalerFor(PrimaryView)) && !FrameSettings.bExactCapture)
             {
                 // A bailed extract must not flip parity, or the resolve blends a slot against itself.
@@ -231,13 +232,14 @@ namespace Lumina
 
                 // Same period as the jitter, or the samples the resolve averages never repeat and never settle.
                 SceneGlobalData.TemporalPhase = PrimaryView.PendingTemporalFrameIndex % GetTemporalPhaseCount(PrimaryView);
-                SceneGlobalData.bSharpenedAlphaTest = 0u;
+                // Only a resolve that keeps many frames averages the hash, so T2x tests edges hard like a view with no resolve.
+                SceneGlobalData.AlphaTestFlags = IsTemporalUpscalerFor(PrimaryView) ? ALPHA_TEST_HASHED_BIT : SharpenFlag;
             }
             else
             {
                 PrimaryView.bTemporalHistoryValid = false;
                 SceneGlobalData.TemporalPhase    = 0u;
-                SceneGlobalData.bSharpenedAlphaTest = RenderSettings != nullptr && RenderSettings->bSharpenedAlphaTest;
+                SceneGlobalData.AlphaTestFlags   = SharpenFlag;
             }
 
             SceneGlobalData.CameraData.PrevViewProjection = PrimaryView.PrevViewProjection;
@@ -454,6 +456,7 @@ namespace Lumina
         }
 
         UpdateSunShadowCache(Frame);
+        UpdateWorldDistanceField(Frame);
         BuildCullViews(Frame.ViewVolume);
 
         // Last extract write, and on this thread, because Extract snapshots ImmediateLines a few lines later.

@@ -127,7 +127,8 @@ namespace Lumina
         ShadowRaster        = 33,
         BentNormal          = 34,
         DistanceFieldAO     = 35,
-        Num                 = 36,
+        WorldDistanceField  = 36,
+        Num                 = 37,
     };
 
     constexpr FStringView RenderFlagsAsString(ERenderSceneDebugFlags Flags)
@@ -169,6 +170,7 @@ namespace Lumina
             case ERenderSceneDebugFlags::ShadowRaster:      return "Shadow Raster";
             case ERenderSceneDebugFlags::BentNormal:        return "Bent Normal";
             case ERenderSceneDebugFlags::DistanceFieldAO:   return "Distance Field AO";
+            case ERenderSceneDebugFlags::WorldDistanceField: return "World Distance Field";
             default:                                        return "Lit";
         }
     }
@@ -210,7 +212,7 @@ namespace Lumina
         NoDecals                = BIT(11),  // decals pass over it, for things that move through them
         NoContactShadows        = BIT(12),  // thin geometry whose screen-space contact march only returns noise
         Impostor                = BIT(13),  // the mesh has a baked impostor, which every surface of the instance swaps to at once
-        HasDistanceField        = BIT(14),  // the mesh carries a distance field the sun's far shadows can trace
+        HasDistanceField        = BIT(14),  // the mesh carries a distance field, which the world distance field merges
         Foliage                 = BIT(15),  // scattered grass and painted foliage, which rain splashes pass through
     };
 
@@ -1799,8 +1801,8 @@ namespace Lumina
         // Geometric specular antialiasing, off while the variance scale is zero.
         float           SpecularAAVariance  = 0.0f;
         float           SpecularAAThreshold = 0.0f;
-        // Masked materials sharpen resolved alpha edges ahead of the hash, only while no temporal resolve runs.
-        uint32          bSharpenedAlphaTest      = 0;
+        // ALPHA_TEST_HASHED_BIT and ALPHA_TEST_SHARPEN_BIT, how masked materials test their opacity this frame.
+        uint32          AlphaTestFlags           = 0;
 
         // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
         FExponentialHeightFogParams FogParams = {};
@@ -1826,7 +1828,7 @@ namespace Lumina
     static_assert(offsetof(FSceneGlobalData, Weather) % 16 == 0, "Weather must follow DBufferDIndex with no C++ padding.");
     // alignas(16) here but 4-byte aligned in scalar layout, so C++ must not pad in front of it, which the 16 check alone cannot see.
     static_assert(offsetof(FSceneGlobalData, FogParams) % 16 == 0 &&
-                  offsetof(FSceneGlobalData, FogParams) == offsetof(FSceneGlobalData, bSharpenedAlphaTest) + sizeof(FSceneGlobalData::bSharpenedAlphaTest),
+                  offsetof(FSceneGlobalData, FogParams) == offsetof(FSceneGlobalData, AlphaTestFlags) + sizeof(FSceneGlobalData::AlphaTestFlags),
                   "FogParams must follow the field before it with no C++ padding, since the shader's scalar layout has none.");
 
     struct FMeshPass

@@ -28,6 +28,7 @@
 #endif
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 #include "World/Scene/RenderScene/Default/SunShadowCache.h"
+#include "World/Scene/RenderScene/Default/WorldDistanceField.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
 #include "World/Scene/RenderScene/TexturePaintTypes.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
@@ -505,8 +506,6 @@ namespace Lumina
                     bool                         bDistanceField = false;
                     float                        DFNear = 0.0f;
                     float                        DFFar = 0.0f;
-                    // The grid the casters are binned into, square in the plane facing the sun.
-                    FDistanceFieldGridPlacement  DFGrid;
 
                     // Zero steps leaves the contact march off.
                     uint32                       ContactSteps = 0u;
@@ -654,6 +653,15 @@ namespace Lumina
                 uint32                           ObstacleCullView         = Constants::kIndexNoneU32;
                 FMatrix4                         ObstacleViewProjection   = FMatrix4(1.0f);
             } GroundFog;
+
+            // The bricks of the world distance field this frame writes, while DF AO or far sun shadows read it.
+            struct FWorldDF
+            {
+                bool                             bActive  = false;
+                // Idle long enough that its textures go back to the pool.
+                bool                             bRelease = false;
+                FWorldDistanceField::FFrame      Update;
+            } WorldDF;
 
             // World space throughout: SSplineComponent authors in entity-local space and the extract bakes the transform in.
             struct FSplines
@@ -1185,10 +1193,12 @@ namespace Lumina
         bool WantsSunFarShadowTrace() const;
         bool SunFarShadowPass(RHI::FCmdListH CL);
         void SunContactShadowPass(RHI::FCmdListH CL);
-        bool SunDFShadowCullPass(RHI::FCmdListH CL);
+        // Writes this frame's world distance field bricks, ahead of every pass that traces it.
+        void WorldDistanceFieldPass(RHI::FCmdListH CL);
+        FWorldDistanceFieldGPU MakeWorldDistanceFieldArgs() const;
         // Culls this frame's distance-field casters overlapping Placement's grid and bins them, leaving Grid.bReady on success.
         bool BuildDistanceFieldGrid(RHI::FCmdListH CL, FDistanceFieldGrid& Grid, const FDistanceFieldGridPlacement& Placement);
-        // Large scale sky visibility from the mesh distance fields around each pixel, primary view only.
+        // Large scale sky visibility from the world distance field around each pixel, primary view only.
         bool WantsDistanceFieldAO(const FSceneView& View) const;
         bool IsDistanceFieldAOTraced() const;
         void DistanceFieldAOPass(RHI::FCmdListH CL);
@@ -1443,6 +1453,7 @@ namespace Lumina
         void BuildCullViews(const FViewVolume& ViewVolume);
         // Folds this frame's retained changes into the sun's shadow cache and picks the virtual shadow pages it redraws.
         void UpdateSunShadowCache(FFrameData& Frame);
+        void UpdateWorldDistanceField(FFrameData& Frame);
         bool HasCustomDepthPrimitives() const { return ScenePrimitives.GetCustomDepthPrimitiveCount() > 0u; }
         
         uint32 PrepareBatchedLines(FLineBatcherComponent& Batcher);
@@ -1913,20 +1924,13 @@ namespace Lumina
         FSceneBuffer RetainedCullEntryBuffer { "Retained.CullEntries", 1.5f, EBufferInit::Zeroed };
         FSceneBuffer InstanceBlockBoundsBuffer { "Retained.InstanceBlockBounds", 1.5f, EBufferInit::Zeroed };
 
-        // The sun's distance-field casters, binned in the plane facing it, and the sky's, binned looking down around the camera.
-        FDistanceFieldGrid SunDFGrid {
-            { "SunDF.Objects", kSceneBufferGrowth, EBufferInit::Undefined, false }, { "SunDF.CellCounts", 1.0f, EBufferInit::Zeroed, false },
-            { "SunDF.CellItems", kSceneBufferGrowth, EBufferInit::Undefined, false }, { "SunDF.Counters", 1.0f, EBufferInit::Zeroed, false },
-            { "SunDF.LargeObjects", 1.0f, EBufferInit::Undefined, false }, MakeSceneRing<RHI::kFramesInFlight>("Readback.SunDFDemand", 1.0f) };
-        FDistanceFieldGrid SkyDFGrid {
-            { "SkyDF.Objects", kSceneBufferGrowth, EBufferInit::Undefined, false }, { "SkyDF.CellCounts", 1.0f, EBufferInit::Zeroed, false },
-            { "SkyDF.CellItems", kSceneBufferGrowth, EBufferInit::Undefined, false }, { "SkyDF.Counters", 1.0f, EBufferInit::Zeroed, false },
-            { "SkyDF.LargeObjects", 1.0f, EBufferInit::Undefined, false }, MakeSceneRing<RHI::kFramesInFlight>("Readback.SkyDFDemand", 1.0f) };
+        // The casters over the world distance field level that merges this frame, one cell per column of its bricks.
+        FDistanceFieldGrid WorldDFGrid {
+            { "WorldDF.Objects", kSceneBufferGrowth, EBufferInit::Undefined, false }, { "WorldDF.CellCounts", 1.0f, EBufferInit::Zeroed, false },
+            { "WorldDF.CellItems", kSceneBufferGrowth, EBufferInit::Undefined, false }, { "WorldDF.Counters", 1.0f, EBufferInit::Zeroed, false },
+            { "WorldDF.LargeObjects", 1.0f, EBufferInit::Undefined, false }, MakeSceneRing<RHI::kFramesInFlight>("Readback.WorldDFDemand", 1.0f) };
         // The blocks of retained slots holding a distance-field caster, which every grid's cull walks.
         FSceneBuffer DistanceFieldBlockListBuffer { "DistanceField.Blocks", 1.5f, EBufferInit::Undefined };
-        static constexpr uint32 kSunDFGridDimension = 128u;
-        // Cells this wide hold every caster within the sky reach of their receivers without binning each caster into hundreds.
-        static constexpr uint32 kSkyDFGridDimension = 64u;
         static constexpr uint32 kDFGridCellCapacity = 32u;
         static constexpr uint32 kDFGridMinObjects   = 16384u;
         static constexpr uint32 kTransformStreamGroupSize = 64u;
@@ -2184,6 +2188,14 @@ namespace Lumina
         float                                               ShadowMinTexels = 0.0f;
 
         FSunShadowCache                                     SunShadowCache;
+
+        // Kept by the extract, which decides each frame's bricks.
+        FWorldDistanceField                                 WorldDistanceField;
+        uint32                                              WorldDFIdleFrames = 0u;
+        // Kept by the render, which owns the textures.
+        TArray<FSceneImage, FWorldDistanceField::kLevels>   WorldDFLevels;
+        // Set while the textures may hold what no brick list cleared, until a fresh update lands.
+        bool                                                bWorldDFAwaitingFresh = true;
 
         static constexpr uint32                             kTotalsSlots = 10;
         // The readback carries the totals, then how many meshlets the camera's compute raster could have taken.

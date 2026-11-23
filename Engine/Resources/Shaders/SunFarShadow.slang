@@ -1,7 +1,7 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
-#include "Includes/DistanceFieldGrid.slang"
+#include "Includes/WorldDistanceField.slang"
 
 // Sun occlusion the virtual shadow levels cannot hold, marched per pixel from the depth buffer and read back by the lighting.
 
@@ -32,7 +32,7 @@ struct FPushConstants
     uint                 TerrainSteps;
     uint                 NumTerrains;
     float                _Pad;
-    FDFObjectGrid        DFGrid;
+    FWorldDistanceField  Field;
     float                DFNear;
     float                DFFar;
     float                DFMaxTrace;
@@ -41,34 +41,36 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-// Every caster binned into the receiver's cell, which is the only cell a ray toward the sun can cross.
-float TraceSunDFShadows(FDFObjectGrid* Grid, float3 P, float3 ToSun, float TanHalfAngle, float MaxTrace)
+// Steps toward the sun through the world field, at least half a voxel at a time so a grazing ray still leaves.
+static const uint kSunFieldSteps = 64u;
+
+// Starts a voxel and a half toward the sun, past the receiver's own surface in the field, since a depth normal on distant foliage is only noise.
+float TraceSunField(FWorldDistanceField* Field, float3 P, float3 ToSun, float TanHalfAngle, float MaxTrace)
 {
-    const int2 Cell = Grid.CellAt(P);
-    if (any(Cell < 0) || any(Cell >= int(Grid.Dimension)))
+    const uint ReceiverLevel = Field.LevelAt(P);
+    if (ReceiverLevel >= kWorldDFLevels)
     {
         return 1.0;
     }
 
-    const uint CellIndex = uint(Cell.y) * Grid.Dimension + uint(Cell.x);
-    const uint First     = Grid.CellCounts.Get(CellIndex);
-    const uint End       = min(Grid.CellCounts.Get(CellIndex + 1u), Grid.CellItems.Count);
-
     float Visibility = 1.0;
+    float t = 1.5 * Field.VoxelSize(ReceiverLevel);
     [loop]
-    for (uint i = First; i < End && Visibility > 0.0; ++i)
+    for (uint Step = 0u; Step < kSunFieldSteps && t < MaxTrace; ++Step)
     {
-        const FDFObject Object = Grid.Objects.Get(Grid.CellItems.Get(i));
-
-        // Rejects casters the ray passes beside or that sit behind the receiver.
-        const float3 ToCenter = Object.Sphere.xyz - P;
-        const float  Along    = dot(ToCenter, ToSun);
-        const float  MissSq   = dot(ToCenter, ToCenter) - Along * Along;
-        if (Along < -Object.Sphere.w || Along - Object.Sphere.w > MaxTrace || MissSq > Object.Sphere.w * Object.Sphere.w)
+        uint Level;
+        const float Distance = Field.Sample(P + ToSun * t, Level);
+        if (Level >= kWorldDFLevels)
         {
-            continue;
+            break;
         }
-        Visibility = min(Visibility, TraceDFObjectCone(Object, P, ToSun, TanHalfAngle, MaxTrace));
+        const float Voxel = Field.VoxelSize(Level);
+        Visibility = min(Visibility, saturate(Distance / max(t * TanHalfAngle, 0.5 * Voxel)));
+        if (Visibility <= 0.0)
+        {
+            break;
+        }
+        t += max(Distance, 0.5 * Voxel);
     }
     return Visibility;
 }
@@ -161,7 +163,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         // Meshes take over from the virtual shadow levels here and dissolve over the last tenth of their range.
         if (Pass().bDistanceField != 0u && Visibility > 0.0 && ViewDistance >= Pass().DFNear && ViewDistance <= Pass().DFFar)
         {
-            const float Traced = TraceSunDFShadows(&Pass().DFGrid, P, Pass().ToSun, Pass().TanHalfAngle, Pass().DFMaxTrace);
+            const float  Traced  = TraceSunField(&Pass().Field, P, Pass().ToSun, Pass().TanHalfAngle, Pass().DFMaxTrace);
             const float Fade   = saturate((ViewDistance - Pass().DFFar * 0.9) / (Pass().DFFar * 0.1));
             Visibility = min(Visibility, lerp(Traced, 1.0, Fade));
         }

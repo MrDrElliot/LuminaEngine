@@ -80,7 +80,7 @@ namespace Lumina
         FString Row;
 
         // Every field as JSON, in the shape datatable.set_row_property takes back.
-        PROPERTY()
+        PROPERTY(RawJson)
         FString Value;
 
         // Field paths that cannot be written.

@@ -1,10 +1,10 @@
 #pragma once
 #include "Includes/SceneGlobals.slang"
 #include "Includes/GlobalRHI.slang"
-#include "Includes/DistanceFieldGrid.slang"
+#include "Includes/WorldDistanceField.slang"
 #include "Includes/GBuffer.slang"
 
-// Sky visibility from cones traced through the mesh distance fields near each pixel, at half resolution, with the bent normal's lean.
+// Sky visibility from cones traced through the world distance field, at half resolution, with the bent normal's lean.
 
 // Mirror of Lumina::FDistanceFieldAOArgs.
 struct FPushConstants
@@ -17,7 +17,7 @@ struct FPushConstants
     FRWTexture2D   Output;
     float         MaxDistance;
     float         ViewDistance;
-    FDFObjectGrid Grid;
+    FWorldDistanceField Field;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -48,31 +48,23 @@ float3 ConeDirection(uint Cone, float3 N, float3 T, float3 B)
 // Fixed sample distances rather than sphere tracing, so the nearest approach a cone finds moves smoothly with the receiver.
 static const uint kSkyConeSteps = 10u;
 
-// A wide cone needs distances out to its own radius, so outside the object's volume the distance to the volume stands in.
-float TraceSkyCone(FDFObject Object, float3 P, float3 Dir, float MaxDistance, float FadeStart)
+float TraceSkyCone(FWorldDistanceField* Field, float3 Origin, float3 Dir, float Start, float MaxDistance, float FadeStart)
 {
-    const float3 LocalOrigin   = DFObjectLocalPoint(Object, P);
-    const float3 LocalDir      = DFObjectLocalVector(Object, Dir);
-    const float  LocalPerWorld = max(length(LocalDir), 1e-8);
-    const float3 BoxMax        = Object.VolumeMin + Object.VolumeSize;
-    const bool   bTwoSided     = (Object.Flags & kDistanceFieldTwoSided) != 0u;
-    const float  InvFade       = 1.0 / max(MaxDistance - FadeStart, 1e-4);
-    const float  Start         = min(max(2.0 * Object.VoxelSize / LocalPerWorld, 0.05), MaxDistance * 0.5);
-    const float  Ratio         = MaxDistance / Start;
+    const float InvFade = 1.0 / max(MaxDistance - FadeStart, 1e-4);
+    const float Ratio   = MaxDistance / Start;
 
     float Visibility = 1.0;
     [loop]
     for (uint Step = 0; Step < kSkyConeSteps && Visibility > 0.0; ++Step)
     {
-        const float  t       = Start * pow(Ratio, float(Step) / float(kSkyConeSteps - 1u));
-        const float3 Q       = LocalOrigin + LocalDir * t;
-        const float3 Clamped = clamp(Q, Object.VolumeMin, BoxMax);
-        float Local = SampleDFObject(Object, Clamped) + length(Q - Clamped);
-        if (bTwoSided)
+        const float t = Start * pow(Ratio, float(Step) / float(kSkyConeSteps - 1u));
+        uint Level;
+        const float Distance = Field.Sample(Origin + Dir * t, Level);
+        if (Level >= kWorldDFLevels)
         {
-            Local -= Object.VoxelSize * 0.5;
+            break;
         }
-        const float Cone = saturate(Local * Object.MinScale / (t * kConeTanHalf));
+        const float Cone = saturate(Distance / (t * kConeTanHalf));
         Visibility = min(Visibility, lerp(Cone, 1.0, saturate((t - FadeStart) * InvFade)));
     }
     return Visibility;
@@ -108,9 +100,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float3 P         = mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz;
     const float  Distance  = length(P - GetCameraPosition());
 
-    FDFObjectGrid* Grid = &Pass().Grid;
-    const int2 Cell = Grid.CellAt(P);
-    if (Distance >= Pass().ViewDistance || any(Cell < 0) || any(Cell >= int(Grid.Dimension)))
+    FWorldDistanceField* Field = &Pass().Field;
+    const uint ReceiverLevel = Field.LevelAt(P);
+    if (Distance >= Pass().ViewDistance || ReceiverLevel >= kWorldDFLevels)
     {
         StoreOpen(Pixel);
         return;
@@ -124,49 +116,17 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float3 T   = normalize(cross(Ref, N));
     const float3 B   = cross(N, T);
 
-    // Lifted off the surface so depth's own error cannot put the origin under the field it sits on.
+    // Trilinear reads of a flat receiver's own distance are exact, so its cones clear it from half a voxel out without leaving the surface.
     const float3 Origin      = P + N * (0.02 + Distance * 0.001);
     const float  MaxDistance = Pass().MaxDistance;
     const float  FadeStart   = MaxDistance * kFadeStartFraction;
-    // A cone samples out to MaxDistance and widens on the way, so an object can occlude only within these.
-    const float  ConeReach   = MaxDistance * kConeTanHalf;
-    const float  ObjectReach = MaxDistance + ConeReach;
+    const float  Start       = min(0.5 * Field.VoxelSize(ReceiverLevel), MaxDistance * 0.5);
 
     float ConeVisibility[kNumCones];
     [unroll]
     for (uint Cone = 0u; Cone < kNumCones; ++Cone)
     {
-        ConeVisibility[Cone] = 1.0;
-    }
-
-    const uint CellIndex = uint(Cell.y) * Grid.Dimension + uint(Cell.x);
-    const uint First     = Grid.CellCounts.Get(CellIndex);
-    const uint End       = min(Grid.CellCounts.Get(CellIndex + 1u), Grid.CellItems.Count);
-
-    [loop]
-    for (uint i = First; i < End; ++i)
-    {
-        const FDFObject Object   = Grid.Objects.Get(Grid.CellItems.Get(i));
-        const float3    ToCenter = Object.Sphere.xyz - Origin;
-        const float     Radius   = Object.Sphere.w;
-        const float     CenterSq = dot(ToCenter, ToCenter);
-        if (CenterSq > (Radius + ObjectReach) * (Radius + ObjectReach))
-        {
-            continue;
-        }
-
-        [unroll]
-        for (uint Cone = 0u; Cone < kNumCones; ++Cone)
-        {
-            const float3 Dir   = ConeDirection(Cone, N, T, B);
-            const float  Along = dot(ToCenter, Dir);
-            const float  Reach = Radius + ConeReach;
-            if (ConeVisibility[Cone] <= 0.0 || Along < -Radius || CenterSq - Along * Along > Reach * Reach)
-            {
-                continue;
-            }
-            ConeVisibility[Cone] = min(ConeVisibility[Cone], TraceSkyCone(Object, Origin, Dir, MaxDistance, FadeStart));
-        }
+        ConeVisibility[Cone] = TraceSkyCone(Field, Origin, ConeDirection(Cone, N, T, B), Start, MaxDistance, FadeStart);
     }
 
     float  Visibility = 0.0;

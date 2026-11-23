@@ -63,7 +63,7 @@ namespace Lumina::MCP
         }
 
         // Values come back as text because a free-form component tree has no fixed reflected shape.
-        FString DescribeEntityComponentValues(ECS::FRegistry& Registry, ECS::FEntity Entity)
+        FJsonValue DescribeEntityComponentValues(ECS::FRegistry& Registry, ECS::FEntity Entity)
         {
             FJsonValue Components = FJsonValue::MakeObject();
 
@@ -108,7 +108,7 @@ namespace Lumina::MCP
                 }
             }
 
-            return Components.ToString(2);
+            return Components;
         }
 
         // Entity fields store a raw handle, so the ids every other tool hands out are swapped in for it here.
@@ -614,16 +614,9 @@ namespace Lumina::MCP
             ECS::FRegistry& Registry = *ScenePtr;
             Out.Name = SceneEntityName(Registry, Entity);
 
-            ForEachComponentStruct([&](CStruct* Reflected)
-            {
-                if (ECS::Utils::HasComponent(Registry, Entity, Reflected))
-                {
-                    Out.Components.Emplace(*Reflected->GetName().ToString());
-                }
-            });
-
-            return Agent::FToolResult::Ok(Lumina::Format("{} has {} component(s).\n{}",
-                Out.Name, Out.Components.Num(), DescribeEntityComponentValues(Registry, Entity)));
+            const FJsonValue Components = DescribeEntityComponentValues(Registry, Entity);
+            Out.Components = Components.ToString();
+            return Agent::FToolResult::Ok(Lumina::Format("{} has {} component(s).", Out.Name, Components.Num()));
         }
 
         void RegisterEntityDescribe(FStringView Owner)

@@ -30,4 +30,7 @@ namespace Lumina::Agent
         FStringView Path);
 
     AGENTCORE_API FMarshalResult WriteProperty(FProperty* Property, void* ValuePtr, FJsonValue& Out);
+
+    // Shrinks a written result for a model, dropping empty values, embedding RawJson strings as JSON and trimming float noise.
+    AGENTCORE_API void CompactResult(CStruct* Type, FJsonValue& Out);
 }

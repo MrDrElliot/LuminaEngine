@@ -33,7 +33,7 @@ bool MaskedVisKeep(FMaskedVertexOutput Input)
     $MATERIAL_INPUTS
 
     // Anchored in world space so the dithered edge holds still as the camera moves.
-    const bool bKeep = MaskedAlphaKeep(WorldPosition, length(ViewPosition), Material.Opacity, GetMaterialOpacityClip(MaterialIndex), true);
+    const bool bKeep = MaskedAlphaKeep(WorldPosition, length(ViewPosition), Material.Opacity, GetMaterialOpacityClip(MaterialIndex));
 
     // A discarded texel never reaches shading, so a mask too blurry to pass its cutoff asks for sharper mips here or never would.
     const uint2 Pixel = uint2(Input.Position.xy);

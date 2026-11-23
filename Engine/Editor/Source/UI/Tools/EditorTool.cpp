@@ -1341,6 +1341,7 @@ namespace Lumina
                     { ERenderSceneDebugFlags::GTAO,            "GTAO"             },
                     { ERenderSceneDebugFlags::BentNormal,      "Bent Normal"      },
                     { ERenderSceneDebugFlags::DistanceFieldAO, "Distance Field AO" },
+                    { ERenderSceneDebugFlags::WorldDistanceField, "World Distance Field" },
                     { ERenderSceneDebugFlags::ScreenSpaceGI,   "Screen Space GI"  },
                     // The two failure modes look identical in a lit view, hence two separate inspectors.
                     { ERenderSceneDebugFlags::ProbeInfluence,  "Probe Influence"  },

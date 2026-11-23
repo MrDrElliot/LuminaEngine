@@ -221,6 +221,10 @@
 #define RENDER_LAYER_FOREGROUND_MASK    0x80000000u
 
 // Set in an instance's FlagsAndThinning when its layers are anything but Default, so only those instances load their mask.
+// FSceneGlobalData::AlphaTestFlags. Hashed only while a resolve accumulates many frames, since two cannot average the grain away.
+#define ALPHA_TEST_HASHED_BIT           0x1u
+#define ALPHA_TEST_SHARPEN_BIT          0x2u
+
 #define INSTANCE_CUSTOM_LAYERS_BIT      0x10u
 // Set in an instance's FlagsAndThinning when its shadow falls from the undisplaced mesh, so shadow passes skip the vertex graph.
 #define INSTANCE_NO_SHADOW_WPO_BIT      0x20u

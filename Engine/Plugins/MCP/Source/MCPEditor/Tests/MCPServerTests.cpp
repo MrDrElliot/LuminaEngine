@@ -109,8 +109,9 @@ TEST_F(MCPServerTest, ASuccessfulToolWithAResultTypeReturnsStructuredContent)
 
     const FJsonValue Result = Call("test.echo", R"({"Value":"7"})");
     EXPECT_FALSE(Result["isError"].AsBool(true));
-    EXPECT_EQ(Result["content"][0]["text"].AsString(), "echoed");
     EXPECT_EQ(Result["structuredContent"]["Current"].AsString(), "7");
+    // Text-only clients get the summary and the same JSON, since a client reading structuredContent drops this text.
+    EXPECT_EQ(Result["content"][0]["text"].AsString(), FString("echoed") + "\n" + Result["structuredContent"].ToString());
 }
 
 TEST_F(MCPServerTest, RawJsonArgumentsAreEncodedAsJsonText)

@@ -129,7 +129,7 @@ TEST_F(MCPStateTreeToolsTest, CompileReportsEveryErrorOfAnInvalidTree)
     Edit("statetree.add_transition", R"("State":"Idle","Transition":{"Target":"State","TargetState":"Nowhere"})");
 
     const FJsonValue Report = Compile();
-    EXPECT_FALSE(Report["bCompiled"].AsBool(true));
+    EXPECT_FALSE(Report["bCompiled"].AsBool());
     ASSERT_EQ(Report["Errors"].Num(), 2);
 
     const FString TransitionError(Report["Errors"][0].AsString());

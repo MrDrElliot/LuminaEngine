@@ -732,7 +732,7 @@ namespace Lumina::MCP
                     Out.Name       = FString(*Asset->GetName().ToString());
                     Out.ClassName  = FString(*Asset->GetClass()->GetName().ToString());
                     Out.Guid       = FString(*Asset->GetGUID().ToString());
-                    Out.Properties = Properties.ToString(2);
+                    Out.Properties = Properties.ToString();
 
                     if (CPackage* Package = Asset->GetPackage())
                     {

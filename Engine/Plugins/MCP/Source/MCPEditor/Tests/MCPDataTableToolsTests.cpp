@@ -122,8 +122,8 @@ TEST_F(MCPDataTableToolsTest, SetRowPropertyWritesAndGetRowReadsItBack)
     EXPECT_EQ(Row("Sword")->BaseValue, 12);
 
     const FJsonValue Got = ExpectSucceeded("datatable.get_row", FStringView(Format(R"({{"Asset":"{}","Row":"Sword"}})", Guid)));
-    FJsonValue Value;
-    ASSERT_TRUE(FJsonValue::Parse(FStringView(FString(Got["structuredContent"]["Value"].AsString())), Value));
+    const FJsonValue& Value = Got["structuredContent"]["Value"];
+    ASSERT_TRUE(Value.IsObject());
     EXPECT_EQ(Value["BaseValue"].AsInt64(), 12);
 }
 

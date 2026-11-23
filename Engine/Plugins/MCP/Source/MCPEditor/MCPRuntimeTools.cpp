@@ -284,7 +284,7 @@ namespace Lumina::MCP
             }
 
             SSettingsClassInfo& Info = Out.Classes.EmplaceGetRef(DescribeEngineSettingsClass(Class));
-            Info.Values = Values.ToString(2);
+            Info.Values = Values.ToString();
             return Agent::FToolResult::Ok(Lumina::Format("{} {}", Info.Name, Info.Values));
         }
 

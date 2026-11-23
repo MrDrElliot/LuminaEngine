@@ -69,9 +69,10 @@ TEST_F(MCPRuntimeToolsTest, StatsReportsFrameWindowMemoryAndWorlds)
     EXPECT_GE(Stats["Frames"].AsInt32(-1), 0);
     EXPECT_GT(Stats["ProcessMemoryMB"].AsInt32(), 0);
     EXPECT_GT(Stats["LiveObjects"].AsInt32(), 0);
-    EXPECT_TRUE(Stats["Worst"].IsArray());
+    // An empty list is left out of a result, so it reads as null.
+    EXPECT_TRUE(Stats["Worst"].IsArray() || Stats["Worst"].IsNull());
     EXPECT_LE(Stats["Worst"].Num(), 3);
-    EXPECT_TRUE(Stats["Worlds"].IsArray());
+    EXPECT_TRUE(Stats["Worlds"].IsArray() || Stats["Worlds"].IsNull());
 }
 
 TEST_F(MCPRuntimeToolsTest, MemoryReportsProcessLedgerAndCategories)
@@ -81,10 +82,10 @@ TEST_F(MCPRuntimeToolsTest, MemoryReportsProcessLedgerAndCategories)
     EXPECT_GT(Report["PrivateCommittedMB"].AsFloat(), 0.0f);
     EXPECT_GE(Report["TrackedNativeMB"].AsFloat(-1.0f), 0.0f);
     EXPECT_GE(Report["TrackedAllocations"].AsInt32(-1), 0);
-    EXPECT_TRUE(Report["bCallstacks"].IsBool());
+    EXPECT_TRUE(Report["bCallstacks"].IsBool() || Report["bCallstacks"].IsNull());
     EXPECT_TRUE(Report["Categories"].IsArray());
     EXPECT_LE(Report["Categories"].Num(), 4);
-    EXPECT_TRUE(Report["GpuHeaps"].IsArray());
+    EXPECT_TRUE(Report["GpuHeaps"].IsArray() || Report["GpuHeaps"].IsNull());
 }
 
 TEST_F(MCPRuntimeToolsTest, SettingsGetListsClassesAndReadsOneByDisplayName)
@@ -103,8 +104,8 @@ TEST_F(MCPRuntimeToolsTest, SettingsGetListsClassesAndReadsOneByDisplayName)
     EXPECT_EQ(FString(One[0]["Name"].AsString()), "CProjectSettings");
     EXPECT_EQ(FString(One[0]["ConfigFile"].AsString()), "/Config/GameSettings.json");
 
-    FJsonValue Values;
-    ASSERT_TRUE(FJsonValue::Parse(One[0]["Values"].AsString(), Values));
+    const FJsonValue& Values = One[0]["Values"];
+    ASSERT_TRUE(Values.IsObject());
     EXPECT_EQ(Values["HeadlessTickRate"].AsInt32(-1), ProjectSettings()->HeadlessTickRate);
 }
 

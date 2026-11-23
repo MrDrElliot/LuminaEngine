@@ -1,11 +1,10 @@
 #pragma once
 #include "Includes/DistanceField.slang"
 
-// Mesh distance fields culled for one frame and binned into a 2D grid on a plane, shared by the sun's far shadows and the sky's occlusion.
+// Mesh distance fields culled and binned into a 2D grid on a plane, which the world distance field merges a column of bricks at a time.
 
 static const uint kDFGridObjectCounter = 0u;
 static const uint kDFGridLargeCounter  = 1u;
-static const uint kDFMaxStepsPerObject = 32u;
 
 // Past this many cells an object is binned by a whole group, since one lane walking them in turn stalls the pass.
 static const uint kDFGridLargeObjectCells = 64u;
@@ -82,52 +81,4 @@ float SampleDFObject(FDFObject Object, float3 LocalPosition)
 float3 DFObjectLocalPoint(FDFObject Object, float3 P)
 {
     return float3(dot(Object.WorldToLocal.Row0, float4(P, 1.0)), dot(Object.WorldToLocal.Row1, float4(P, 1.0)), dot(Object.WorldToLocal.Row2, float4(P, 1.0)));
-}
-
-float3 DFObjectLocalVector(FDFObject Object, float3 V)
-{
-    return float3(dot(Object.WorldToLocal.Row0.xyz, V), dot(Object.WorldToLocal.Row1.xyz, V), dot(Object.WorldToLocal.Row2.xyz, V));
-}
-
-// Sphere traces a cone through one object in its own space, parametrized by world distance so the cone stays in world units.
-float TraceDFObjectCone(FDFObject Object, float3 P, float3 Dir, float TanHalfAngle, float MaxTrace)
-{
-    const float3 LocalOrigin = DFObjectLocalPoint(Object, P);
-    const float3 LocalDir    = DFObjectLocalVector(Object, Dir);
-
-    const float3 SafeDir = float3(abs(LocalDir.x) < 1e-8 ? 1e-8 : LocalDir.x,
-                                  abs(LocalDir.y) < 1e-8 ? 1e-8 : LocalDir.y,
-                                  abs(LocalDir.z) < 1e-8 ? 1e-8 : LocalDir.z);
-    const float3 T0 = (Object.VolumeMin - LocalOrigin) / SafeDir;
-    const float3 T1 = (Object.VolumeMin + Object.VolumeSize - LocalOrigin) / SafeDir;
-    const float3 Near = min(T0, T1);
-    const float3 Far  = max(T0, T1);
-
-    // A voxel's worth of world travel along this ray, which keeps the receiver from occluding itself.
-    const float LocalPerWorld = max(length(LocalDir), 1e-8);
-    const float VoxelLocal    = Object.VoxelSize;
-    const float VoxelWorld    = VoxelLocal / LocalPerWorld;
-
-    float       t    = max(max(Near.x, max(Near.y, Near.z)), 2.0 * VoxelWorld);
-    const float TEnd = min(min(Far.x, min(Far.y, Far.z)), MaxTrace);
-
-    const bool  bTwoSided  = (Object.Flags & kDistanceFieldTwoSided) != 0u;
-    float       Visibility = 1.0;
-    [loop]
-    for (uint Step = 0; Step < kDFMaxStepsPerObject && t < TEnd; ++Step)
-    {
-        float Local = SampleDFObject(Object, LocalOrigin + LocalDir * t);
-        if (bTwoSided)
-        {
-            Local -= VoxelLocal * 0.5;
-        }
-        const float World = Local * Object.MinScale;
-        Visibility = min(Visibility, saturate(World / max(t * TanHalfAngle, 0.25 * VoxelWorld)));
-        if (Visibility <= 0.0)
-        {
-            break;
-        }
-        t += max(Local / LocalPerWorld, 0.5 * VoxelWorld);
-    }
-    return Visibility;
 }

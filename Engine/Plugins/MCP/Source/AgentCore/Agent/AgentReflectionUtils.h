@@ -5,6 +5,7 @@
 #include "Containers/StringView.h"
 #include "Containers/Vector.h"
 #include "Core/Object/Class.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
 
 namespace Lumina::Agent::Detail
 {
@@ -19,5 +20,23 @@ namespace Lumina::Agent::Detail
 
         Algo::Reverse(Chain);
         return Chain;
+    }
+
+    // The struct's field names, inherited ones first, so an error about a wrong name can say what the right ones are.
+    inline FString ListFieldNames(CStruct* Struct)
+    {
+        FString Names;
+        for (CStruct* Current : CollectStructChain(Struct))
+        {
+            Current->ForEachProperty<FProperty>([&Names](FProperty* Property)
+            {
+                if (Property != nullptr)
+                {
+                    Names += Names.IsEmpty() ? "" : ", ";
+                    Names += Property->GetPropertyName().ToString();
+                }
+            });
+        }
+        return Names.IsEmpty() ? FString("none") : Names;
     }
 }

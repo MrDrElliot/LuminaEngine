@@ -507,7 +507,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Anti-Aliasing")
         bool bSMAADepthEdges = true;
 
-        // With no temporal resolve, sharpens resolved masked edges to about one pixel so hashed alpha dithers only that band, and keeps the plain hash where leaves are too small to resolve.
+        // Without TAA or a temporal upscaler, sharpens resolved masked edges to about one pixel. Foliage textures keep their density at range with Preserve Alpha Coverage.
         PROPERTY(Editable, Category = "Anti-Aliasing")
         bool bSharpenedAlphaTest = true;
 

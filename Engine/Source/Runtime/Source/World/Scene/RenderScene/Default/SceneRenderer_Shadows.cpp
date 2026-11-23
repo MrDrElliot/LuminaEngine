@@ -70,8 +70,16 @@ namespace Lumina
             RHI::TGPUSpan<uint32> CellCounts;
         };
 
-        // Matches kConeTanHalf in DistanceFieldAO.slang, whose cones widen by this much past the reach.
-        constexpr float kDistanceFieldAOConeTanHalf = 0.55f;
+        // Mirror of FPushConstants in WorldDistanceFieldUpdate.slang.
+        struct FWorldDFUpdateArgs
+        {
+            RHI::TGPUSpan<FWorldDFBrickGPU> Bricks;
+            float                           LevelBoxes[FWorldDistanceField::kLevels][4];
+            uint32                          Levels[FWorldDistanceField::kLevels];
+            uint32                          _Pad;
+            FDFObjectGrid                   Grid;
+        };
+        static_assert(offsetof(FWorldDFUpdateArgs, Grid) == 160);
 
         // Mirror of FPushConstants in DistanceFieldAO.slang.
         struct FDistanceFieldAOArgs
@@ -84,10 +92,10 @@ namespace Lumina
             uint32        OutputUAV;
             float         MaxDistance;
             float         ViewDistance;
-            FDFObjectGrid Grid;
+            FWorldDistanceFieldGPU Field;
         };
 
-        // The trace reads a built grid's spans, and a grid of no cells, which every receiver falls outside, when there is none.
+        // The field update reads a built grid's spans, and a grid of no cells, which no brick column falls inside, when there is none.
         FDFObjectGrid MakeGridArgs(const FDistanceFieldGrid& Grid, const FDistanceFieldGridPlacement& Placement)
         {
             FDFObjectGrid Args = {};
@@ -134,7 +142,7 @@ namespace Lumina
             uint32   TerrainSteps;
             uint32   NumTerrains;
             float    _Pad;
-            FDFObjectGrid    DFGrid;
+            FWorldDistanceFieldGPU Field;
             float    DFNear;
             float    DFFar;
             float    DFMaxTrace;
@@ -233,8 +241,8 @@ namespace Lumina
         Args.DFNear             = Settings.DFNear;
         Args.DFFar              = Settings.DFFar;
         Args.DFMaxTrace         = kSunDFMaxTrace;
-        Args.bDistanceField     = (Settings.bDistanceField && SunDFGrid.bReady) ? 1u : 0u;
-        Args.DFGrid             = MakeGridArgs(SunDFGrid, Settings.DFGrid);
+        Args.Field              = MakeWorldDistanceFieldArgs();
+        Args.bDistanceField     = (Settings.bDistanceField && Args.Field.NumLevels > 0u) ? 1u : 0u;
 
         // Every casting terrain, not only those in view, since a ridge behind the camera still shades what is in front.
         uint32 NumCastingTerrains = 0u;
@@ -323,17 +331,176 @@ namespace Lumina
             RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader, RHI::EAccessFlags::ShaderRead);
     }
 
-    bool FDefaultSceneRenderer::SunDFShadowCullPass(RHI::FCmdListH CL)
+    void FDefaultSceneRenderer::UpdateWorldDistanceField(FFrameData& Frame)
     {
-        SunDFGrid.bReady = false;
-        const auto& Settings = RenderFrame->Lighting.SunFarShadow;
-        if (!WantsSunFarShadowTrace() || !Settings.bDistanceField)
+        // The idle frames after which the field's 28 MB go back to the pool.
+        constexpr uint32 kIdleReleaseFrames = 600u;
+
+        FFrameData::FWorldDF& Out = Frame.WorldDF;
+        const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+        const bool bWanted = (Settings != nullptr && Settings->bDistanceFieldAO)
+                          || (Frame.Lighting.LightData.bHasSun && Frame.Lighting.SunFarShadow.bDistanceField)
+                          || Frame.SceneGlobalData.CullData.DebugMode == (uint32)ERenderSceneDebugFlags::WorldDistanceField;
+        Out.bActive  = false;
+        Out.bRelease = false;
+        if (!bWanted)
         {
-            return false;
+            if (WorldDFIdleFrames < kIdleReleaseFrames && ++WorldDFIdleFrames == kIdleReleaseFrames)
+            {
+                Out.bRelease = true;
+                WorldDistanceField.Reset();
+            }
+            return;
+        }
+        WorldDFIdleFrames = 0u;
+
+        const FFrameData::FGeometry::FRetainedUpload& Upload = Frame.Geometry.RetainedUpload;
+        const TVector<uint32>& StreamedBlocks = ScenePrimitives.GetStreamedBlocks();
+        FSunShadowCache::FSlotChanges Changes;
+        Changes.Dirty          = TSpan<const uint32>(Upload.DirtySlots.GetData(), Upload.DirtySlots.Num());
+        Changes.DirtyStatic    = TSpan<const uint32>(Upload.DirtyStaticSlots.GetData(), Upload.DirtyStaticSlots.Num());
+        Changes.Deactivated    = TSpan<const uint32>(Upload.DeactivatedSlots.GetData(), Upload.DeactivatedSlots.Num());
+        Changes.StreamedBlocks = TSpan<const uint32>(StreamedBlocks.GetData(), StreamedBlocks.Num());
+        Changes.bFull          = Upload.bFull || Upload.bFullStatic;
+
+        const TSpan<const FInstanceCullEntry> Entries(ScenePrimitives.GetRetainedCullEntries(), Upload.SlotCount);
+        WorldDistanceField.Update(Frame.ViewVolume.GetViewPosition(), Changes, Entries, Out.Update);
+        Out.bActive = true;
+    }
+
+    FWorldDistanceFieldGPU FDefaultSceneRenderer::MakeWorldDistanceFieldArgs() const
+    {
+        FWorldDistanceFieldGPU Args = {};
+        // Zero levels, which every trace reads as open space, until a fresh update has covered the whole field.
+        if (RenderFrame == nullptr || !RenderFrame->WorldDF.bActive || bWorldDFAwaitingFresh)
+        {
+            return Args;
+        }
+        for (uint32 Level = 0; Level < FWorldDistanceField::kLevels; ++Level)
+        {
+            const int32 Index = WorldDFLevels[Level].GetResourceID();
+            if (Index < 0)
+            {
+                return {};
+            }
+            Args.Levels[Level] = (uint32)Index;
+        }
+        Memory::Memcpy(Args.LevelBoxes, RenderFrame->WorldDF.Update.LevelBoxes, sizeof(Args.LevelBoxes));
+        Args.NumLevels = FWorldDistanceField::kLevels;
+        return Args;
+    }
+
+    void FDefaultSceneRenderer::WorldDistanceFieldPass(RHI::FCmdListH CL)
+    {
+        const FFrameData::FWorldDF& WorldDF = RenderFrame->WorldDF;
+        if (WorldDF.bRelease)
+        {
+            for (FSceneImage& Level : WorldDFLevels)
+            {
+                RetireSceneImage(Level);
+            }
+            WorldDFGrid.Release();
+            bWorldDFAwaitingFresh = true;
+        }
+        // Once per frame, since every view of it shares the one camera-centered field.
+        if (!WorldDF.bActive || CurrentView == nullptr || !CurrentView->bIsPrimary)
+        {
+            return;
         }
 
-        SCENE_GPU_SCOPE(CL, "Sun DF Shadow Cull");
-        return BuildDistanceFieldGrid(CL, SunDFGrid, Settings.DFGrid);
+        static const FShaderH UpdateCS = FShaderLibrary::Get("WorldDistanceFieldUpdate.slang");
+        if (!UpdateCS)
+        {
+            WorldDistanceField.RequestReset();
+            bWorldDFAwaitingFresh = true;
+            return;
+        }
+
+        bool bCreated = false;
+        for (uint32 Level = 0; Level < FWorldDistanceField::kLevels; ++Level)
+        {
+            FSceneImage& Image = WorldDFLevels[Level];
+            if (Image.IsValid())
+            {
+                continue;
+            }
+            RHI::FTextureDesc Desc;
+            Desc.Type      = RHI::ETextureType::Tex3D;
+            Desc.Dimension = FUIntVector3(FWorldDistanceField::kResolution);
+            Desc.Format    = EFormat::R16_FLOAT;
+            Desc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            Image = CreateSceneImage(Desc, true, true);
+            RHI::SetDebugName(Image.Texture, "WorldDF.Level");
+            bCreated = true;
+        }
+        // New textures hold nothing a brick list cleared, so the field stays dark to its readers until a fresh update covers every brick.
+        if (bCreated && !WorldDF.Update.bFresh)
+        {
+            WorldDistanceField.RequestReset();
+            bWorldDFAwaitingFresh = true;
+        }
+
+        const FWorldDistanceField::FFrame& Update = WorldDF.Update;
+        if (Update.Bricks.IsEmpty())
+        {
+            return;
+        }
+
+        SCENE_GPU_SCOPE(CL, "World Distance Field");
+
+        FWorldDFUpdateArgs Args = {};
+        for (uint32 Level = 0; Level < FWorldDistanceField::kLevels; ++Level)
+        {
+            const int32 UAV = WorldDFLevels[Level].GetMipUAVIndex(0);
+            if (UAV < 0)
+            {
+                WorldDistanceField.RequestReset();
+                bWorldDFAwaitingFresh = true;
+                return;
+            }
+            Args.Levels[Level] = (uint32)UAV;
+        }
+        Memory::Memcpy(Args.LevelBoxes, Update.LevelBoxes, sizeof(Args.LevelBoxes));
+
+        if (Update.CompositeLevel < FWorldDistanceField::kLevels)
+        {
+            const uint32 Level = Update.CompositeLevel;
+            const float* Box = Update.LevelBoxes[Level];
+            FDistanceFieldGridPlacement Placement;
+            Placement.Right     = FVector3(1.0f, 0.0f, 0.0f);
+            Placement.Up        = FVector3(0.0f, 0.0f, 1.0f);
+            Placement.Origin    = FVector2(Box[0], Box[2]);
+            Placement.CellSize  = FWorldDistanceField::BrickWorldSize(Level);
+            Placement.Dimension = FWorldDistanceField::kBricksPerAxis;
+            Placement.SpherePad = FWorldDistanceField::Band(Level) + FWorldDistanceField::VoxelSize(Level);
+            // A caster far under a voxel only blurs the distances around it.
+            Placement.MinRadius = FWorldDistanceField::VoxelSize(Level) * 0.25f;
+
+            // An empty scene has no grid to build and no caster to merge, so its bricks rightly come out empty.
+            if (BuildDistanceFieldGrid(CL, WorldDFGrid, Placement))
+            {
+                Args.Grid = MakeGridArgs(WorldDFGrid, Placement);
+                RHI::Barriers::ComputeToCompute(CL);
+            }
+            else if (RenderFrame->Geometry.RetainedUpload.SlotCount > 0u)
+            {
+                WorldDistanceField.RequestReset();
+                bWorldDFAwaitingFresh = true;
+                return;
+            }
+        }
+
+        Args.Bricks = RHI::CopyTransientArray(Update.Bricks.GetData(), Update.Bricks.Num());
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(UpdateCS));
+        // One group per brick, folded the way WorldDistanceFieldUpdate.slang unfolds it with MAX_DISPATCH_AXIS.
+        const FUIntVector2 Groups = RenderUtils::FoldGroupCount((uint32)Update.Bricks.Num());
+        RHI::CmdDispatch(CL, MakeArgs(Args), Groups.x, Groups.y, 1u);
+        RHI::Barriers::ComputeToCompute(CL);
+
+        if (Update.bFresh)
+        {
+            bWorldDFAwaitingFresh = false;
+        }
     }
 
     bool FDefaultSceneRenderer::BuildDistanceFieldGrid(RHI::FCmdListH CL, FDistanceFieldGrid& Grid, const FDistanceFieldGridPlacement& Placement)
@@ -485,7 +652,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::DistanceFieldAOPass(RHI::FCmdListH CL)
     {
-        SkyDFGrid.bReady = false;
         if (!IsDistanceFieldAOTraced())
         {
             return;
@@ -508,18 +674,7 @@ namespace Lumina
         const float MaxDistance  = Math::Max(Settings->DistanceFieldAOMaxDistance, 0.5f);
         const float ViewDistance = Math::Max(Settings->DistanceFieldAOViewDistance, 10.0f);
 
-        // Looking straight down on the camera, every caster binned over its reach so a receiver's own cell holds all that can occlude it.
-        const FVector3 Camera = RenderFrame->ViewVolume.GetViewPosition();
-        FDistanceFieldGridPlacement Placement;
-        Placement.Right     = FVector3(1.0f, 0.0f, 0.0f);
-        Placement.Up        = FVector3(0.0f, 0.0f, 1.0f);
-        Placement.Origin    = FVector2(Camera.x - ViewDistance, Camera.z - ViewDistance);
-        Placement.CellSize  = 2.0f * ViewDistance / (float)kSkyDFGridDimension;
-        Placement.Dimension = kSkyDFGridDimension;
-        Placement.SpherePad = MaxDistance * (1.0f + kDistanceFieldAOConeTanHalf);
-        BuildDistanceFieldGrid(CL, SkyDFGrid, Placement);
-
-        // Traced even without a grid, since the lighting reads whatever this leaves behind.
+        // Traced even without a field, since the lighting reads whatever this leaves behind.
         FDistanceFieldAOArgs Args = {};
         Args.OutputSize[0] = Trace.GetSizeX();
         Args.OutputSize[1] = Trace.GetSizeY();
@@ -531,7 +686,7 @@ namespace Lumina
         Args.OutputUAV      = (uint32)TraceSlot;
         Args.MaxDistance   = MaxDistance;
         Args.ViewDistance  = ViewDistance;
-        Args.Grid          = MakeGridArgs(SkyDFGrid, Placement);
+        Args.Field         = MakeWorldDistanceFieldArgs();
 
         DispatchCompute(CL, TraceCS, Args,
             RenderUtils::GetGroupCount(Args.OutputSize[0], 8u),

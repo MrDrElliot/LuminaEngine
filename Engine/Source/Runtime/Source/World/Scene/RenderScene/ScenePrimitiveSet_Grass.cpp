@@ -177,7 +177,9 @@ namespace Lumina
         }
 
         // Grass is never skinned and always has geometry once its mesh resolved; Active is set per blade by the scatter.
-        const EInstanceFlags Flags = EInstanceFlags::HasGeometry | Surface.MaterialFlags;
+        EInstanceFlags Flags = EInstanceFlags::HasGeometry | Surface.MaterialFlags;
+        // Blades re-scatter every frame and sit far under a field voxel, so millions of them would only crowd the world distance field's casters.
+        Flags &= ~EInstanceFlags::HasDistanceField;
 
         Binding.BatchIndex         = BatchIndex;
         Binding.DrawIDAndFlags     = PackDrawIDAndFlags(BatchIndex, Flags);

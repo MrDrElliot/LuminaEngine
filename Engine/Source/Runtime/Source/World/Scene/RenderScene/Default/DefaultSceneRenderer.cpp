@@ -298,8 +298,12 @@ namespace Lumina
                 Readback = {};
             }
         }
-        SunDFGrid.Release();
-        SkyDFGrid.Release();
+        WorldDFGrid.Release();
+        for (FSceneImage& Level : WorldDFLevels)
+        {
+            RetireSceneImage(Level);
+        }
+        WorldDistanceField.RequestReset();
         DistanceFieldBlockListBuffer.Release();
         SkinnedMeshletBoundsBuffer.Release();
         SkinnedMeshletConeBuffer.Release();
@@ -723,7 +727,7 @@ namespace Lumina
 
                 LightFunctionPass(CL);
 
-                SunDFShadowCullPass(CL);
+                WorldDistanceFieldPass(CL);
                 SunFarShadowPass(CL);
 
                 IrradianceConvolutionPass(CL);

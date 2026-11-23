@@ -163,7 +163,7 @@ namespace Lumina::Agent
                 Property = FindProperty(Struct, Segment.Name);
                 if (Property == nullptr)
                 {
-                    OutError = Lumina::Format("'{}' is not a field of {}.", Segment.Name, Struct->GetName());
+                    OutError = Lumina::Format("'{}' is not a field of {}. Its fields are {}.", Segment.Name, Struct->GetName(), Detail::ListFieldNames(Struct));
                     return false;
                 }
 

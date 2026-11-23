@@ -738,22 +738,6 @@ namespace Lumina
         SunFarShadow.DFFar          = Math::Min(FarClip, DirectionalLight.DistanceFieldShadowDistance);
         SunFarShadow.bDistanceField = DirectionalLight.bCastShadows && DirectionalLight.bDistanceFieldShadows
                                    && SunFarShadow.DFFar > SunFarShadow.DFNear;
-        SunFarShadow.DFGrid.MinRadius = Math::Max(DirectionalLight.CasterMinScreenRadius, 0.0f) * SunFarShadow.DFNear;
-        if (SunFarShadow.bDistanceField)
-        {
-            // A pixel's distance exceeds its view depth toward the screen corners, so the slice starts a little nearer.
-            const FMatrix4 SliceProj = Math::Perspective(Math::Radians(ViewVolume.GetFOV()), ViewVolume.GetAspectRatio(),
-                                                         Math::Max(SunFarShadow.DFNear * 0.8f, NearClip), SunFarShadow.DFFar);
-            FVector3 Corners[8];
-            FFrustum::ComputeFrustumCorners(SliceProj * ViewVolume.GetViewMatrix(), Corners);
-
-            const SunShadow::FSunGrid Grid = SunShadow::FitSunGrid(SunFarShadow.ToSun, Corners, kSunDFGridDimension);
-            SunFarShadow.DFGrid.Right     = Grid.Right;
-            SunFarShadow.DFGrid.Up        = Grid.Up;
-            SunFarShadow.DFGrid.Origin    = Grid.Origin;
-            SunFarShadow.DFGrid.CellSize  = Grid.CellSize;
-            SunFarShadow.DFGrid.Dimension = kSunDFGridDimension;
-        }
 
         ShadowMinTexels       = Math::Max(DirectionalLight.ShadowMinTexels, 0.0f);
 

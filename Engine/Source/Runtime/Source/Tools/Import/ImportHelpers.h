@@ -167,9 +167,7 @@ namespace Lumina::Import
             /** Skip heavy finalization and user transforms; dialog defers them to commit time. */
             bool bSkipFinalization  = false;
 
-            /** Seeds CMesh::DistanceFieldSettings on every mesh the import creates, and drives the
-             *  voxelization pass in FinalizeMeshImportData. Off by default: the build is the single most
-             *  expensive step of a mesh import, and most meshes never need a field. */
+            // Seeds CMesh::DistanceFieldSettings on every mesh the import creates and drives the voxelization in FinalizeMeshImportData.
             SDistanceFieldBuildSettings DistanceField;
         };
 

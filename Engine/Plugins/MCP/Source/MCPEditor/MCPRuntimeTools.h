@@ -361,7 +361,7 @@ namespace Lumina
         FString ConfigFile;
 
         // Every field as JSON, only filled when a single class was asked for.
-        PROPERTY()
+        PROPERTY(RawJson)
         FString Values;
     };
 

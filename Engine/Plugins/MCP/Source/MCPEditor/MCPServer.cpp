@@ -45,12 +45,27 @@ namespace Lumina::MCP
 
         constexpr FStringView GSessionHeader = "Mcp-Session-Id";
 
+        // Read up front by clients that defer tools, so it says where ids come from and how results are shaped.
+        constexpr const char* GServerInstructions =
+            "Tools that inspect and edit the open Lumina editor: scene and entities (scene.*, entity.*), assets (assets.*), "
+            "materials, particles, anim graphs, state trees, sequences, data tables, terrain, prefabs, profiling (engine.*, profiler.*) "
+            "and editor control (editor.*). Entity ids come from scene.find and asset paths or GUIDs from assets.search; never build either by hand. "
+            "Results leave out empty strings, false and empty lists, so a missing field is empty. An unknown argument is refused with the tool's field names.";
+
         // What a model reads. A tool that ran and failed says so here rather than as a transport error.
-        FJsonValue MakeContent(const Agent::FToolResult& Outcome)
+        FJsonValue MakeContent(const Agent::FToolResult& Outcome, const FJsonValue* Structured)
         {
+            // Spec clients that read only text still get the payload; ones that read structuredContent drop this text.
+            FString Text = Outcome.Text;
+            if (Structured != nullptr)
+            {
+                Text += Text.IsEmpty() ? "" : "\n";
+                Text += Structured->ToString();
+            }
+
             FJsonValue Block = FJsonValue::MakeObject();
             Block.Set("type", "text");
-            Block.Set("text", Outcome.Text);
+            Block.Set("text", Text);
 
             FJsonValue Content = FJsonValue::MakeArray();
             Content.Add(Move(Block));
@@ -259,6 +274,7 @@ namespace Lumina::MCP
             // Only tools are offered so far, so no resource or prompt capability is advertised.
             Result.Set("capabilities", FJsonValue::MakeObject({ { "tools", FJsonValue::MakeObject() } }));
             Result.Set("serverInfo", FJsonValue::MakeObject({ { "name", GServerName }, { "version", GServerVersion } }));
+            Result.Set("instructions", GServerInstructions);
 
             return JsonRpc::FResponse::Success(Result);
         });
@@ -292,6 +308,11 @@ namespace Lumina::MCP
                 Entry.Set("name", Tool.Name);
                 Entry.Set("description", Tool.Description);
                 Entry.Set("inputSchema", Input.Schema);
+                if (Tool.Effect == Agent::EToolEffect::ReadOnly)
+                {
+                    // Lets a client run these side by side and retry them after a dropped connection.
+                    Entry.Set("annotations", FJsonValue::MakeObject({ { "readOnlyHint", true } }));
+                }
 
                 if (Tool.ResultType != nullptr)
                 {
@@ -346,7 +367,7 @@ namespace Lumina::MCP
                 !Read.IsValid())
             {
                 return JsonRpc::FResponse::Failure(JsonRpc::EErrorCode::InvalidParams,
-                    FStringView(Read.Error));
+                    FStringView(Lumina::Format("{}: {}", ToolName, Read.Error)));
             }
 
             Agent::FToolResult Outcome;
@@ -379,17 +400,20 @@ namespace Lumina::MCP
                 Invoke();
             }
 
-            FJsonValue Payload = FJsonValue::MakeObject();
-            Payload.Set("content", MakeContent(Outcome));
-            Payload.Set("isError", Outcome.bIsError);
-
-            if (!Outcome.bIsError && Result.IsValid())
+            FJsonValue Structured;
+            const bool bStructured = !Outcome.bIsError && Result.IsValid()
+                                  && Agent::WriteStruct(Result.GetType(), Result.Get(), Structured).IsValid();
+            if (bStructured)
             {
-                FJsonValue Structured;
-                if (Agent::WriteStruct(Result.GetType(), Result.Get(), Structured).IsValid())
-                {
-                    Payload.Set("structuredContent", Move(Structured));
-                }
+                Agent::CompactResult(Result.GetType(), Structured);
+            }
+
+            FJsonValue Payload = FJsonValue::MakeObject();
+            Payload.Set("content", MakeContent(Outcome, bStructured ? &Structured : nullptr));
+            Payload.Set("isError", Outcome.bIsError);
+            if (bStructured)
+            {
+                Payload.Set("structuredContent", Move(Structured));
             }
 
             return JsonRpc::FResponse::Success(Payload);

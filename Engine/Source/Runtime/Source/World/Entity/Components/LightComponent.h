@@ -282,10 +282,6 @@ namespace Lumina
         PROPERTY(Editable, Category = "Shadows|Culling", ClampMin = 0.0f, ClampMax = 16.0f, Delta = 0.1f)
         float ShadowMinTexels = 0.0f;
 
-        // Drops distance field casters whose radius is below this fraction of their distance from the camera (0 is off).
-        PROPERTY(Editable, Category = "Shadows|Culling", ClampMin = 0.0f, ClampMax = 0.1f, Delta = 0.001f)
-        float CasterMinScreenRadius = 0.01f;
-
         // Adds a short screen-space march toward the sun so small props stop floating where a shadow texel is coarser than the gap. Off at Low shadow quality.
         PROPERTY(Editable, Category = "Shadows|Contact")
         bool bContactShadows = true;

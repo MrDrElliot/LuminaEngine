@@ -373,9 +373,9 @@ namespace Lumina
         PROPERTY()
         FString Name;
 
-        // Type names of every component. Their values are in the text reply.
-        PROPERTY()
-        TVector<FString> Components;
+        // Every component's values under its type name, in the shape entity.set_property takes.
+        PROPERTY(RawJson)
+        FString Components;
     };
 
     REFLECT()

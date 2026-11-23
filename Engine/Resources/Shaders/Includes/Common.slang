@@ -1140,6 +1140,8 @@ struct FCullData
 #define DEBUG_MODE_BENT_NORMAL          34u
 // Distance field sky visibility alone, white where it is not traced.
 #define DEBUG_MODE_DISTANCE_FIELD_AO    35u
+// The world distance field ray marched from the camera, each hit tinted by the level that answered.
+#define DEBUG_MODE_WORLD_DISTANCE_FIELD 36u
 
 // Global scale on every material's POM settings. Matches FParallaxSettings in SceneRenderTypes.h.
 struct FParallaxSettings
@@ -1249,8 +1251,8 @@ struct FSceneGlobalData
     // Geometric specular antialiasing, off while the variance scale is zero.
     float      SpecularAAVariance;
     float      SpecularAAThreshold;
-    // Masked materials sharpen resolved alpha edges ahead of the hash, only while no temporal resolve runs.
-    uint       bSharpenedAlphaTest;
+    // ALPHA_TEST_HASHED_BIT and ALPHA_TEST_SHARPEN_BIT, how masked materials test their opacity this frame.
+    uint       AlphaTestFlags;
 
     // The translucent passes fog themselves, since the composite runs first and sees only opaque depth.
     FExponentialHeightFogParams FogParams;

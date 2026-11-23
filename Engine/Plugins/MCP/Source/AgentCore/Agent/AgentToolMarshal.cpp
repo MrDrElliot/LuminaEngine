@@ -25,6 +25,9 @@
 #include "Core/Serialization/Structured/JsonStructuredArchive.h"
 #include "Memory/Memory.h"
 
+#include <charconv>
+#include <cmath>
+
 namespace Lumina::Agent
 {
     namespace AgentToolMarshalInternal
@@ -305,8 +308,8 @@ namespace Lumina::Agent
 
                 if (!bKnown)
                 {
-                    OutError = Lumina::Format("'{}' is not a field of {}.",
-                        JoinPath(Path, Entry.Key.View()), Struct->GetName());
+                    OutError = Lumina::Format("'{}' is not a field of {}. Its fields are {}.",
+                        JoinPath(Path, Entry.Key.View()), Struct->GetName(), Detail::ListFieldNames(Struct));
                     return false;
                 }
             }
@@ -868,6 +871,144 @@ namespace Lumina::Agent
 
             return true;
         }
+        // An empty string, false, or an empty list or object tells a reader nothing it would not assume, so a result leaves it out.
+        bool IsEmptyResultValue(const FJsonValue& Value)
+        {
+            return Value.IsNull() || (Value.IsString() && Value.AsString().IsEmpty()) || (Value.IsBool() && !Value.AsBool())
+                || ((Value.IsArray() || Value.IsObject()) && Value.IsEmpty());
+        }
+
+        void PruneEmptyMembers(FJsonValue& Value)
+        {
+            if (Value.IsArray())
+            {
+                for (FJsonValue& Element : Value.AsArray())
+                {
+                    PruneEmptyMembers(Element);
+                }
+                return;
+            }
+            if (!Value.IsObject())
+            {
+                return;
+            }
+
+            TVector<FString> Empty;
+            for (FJsonMember& Member : Value.Members())
+            {
+                PruneEmptyMembers(Member.Value);
+                if (IsEmptyResultValue(Member.Value))
+                {
+                    Empty.Add(Member.Key.ToString());
+                }
+            }
+            for (const FString& Key : Empty)
+            {
+                Value.Remove(FStringView(Key));
+            }
+        }
+
+        // A float field widened to double prints its binary noise, so a value a float holds exactly takes that float's shortest decimal instead.
+        void CollapseFloatNoise(FJsonValue& Value)
+        {
+            if (Value.IsArray())
+            {
+                for (FJsonValue& Element : Value.AsArray())
+                {
+                    CollapseFloatNoise(Element);
+                }
+                return;
+            }
+            if (Value.IsObject())
+            {
+                for (FJsonMember& Member : Value.Members())
+                {
+                    CollapseFloatNoise(Member.Value);
+                }
+                return;
+            }
+            if (!Value.IsDouble())
+            {
+                return;
+            }
+
+            const double Wide = Value.AsDouble();
+            const float  Narrow = static_cast<float>(Wide);
+            if (!std::isfinite(Wide) || static_cast<double>(Narrow) != Wide)
+            {
+                return;
+            }
+            char Digits[32];
+            const std::to_chars_result Written = std::to_chars(Digits, Digits + sizeof(Digits), Narrow);
+            double Short = Wide;
+            if (Written.ec == std::errc() && std::from_chars(Digits, Written.ptr, Short).ec == std::errc())
+            {
+                Value = FJsonValue(Short);
+            }
+        }
+
+        void EmbedStructRawJson(CStruct* Struct, FJsonValue& Out);
+
+        // A RawJson string is JSON a tool already built, so a result carries it as that value rather than as escaped text.
+        void EmbedPropertyRawJson(FProperty* Property, FJsonValue& Value)
+        {
+            switch (Property->GetType())
+            {
+            case EPropertyTypeFlags::String:
+                {
+                    FJsonValue Parsed;
+                    if (Property->HasEditorFlag(EPropertyEditorFlags::RawJson) && Value.IsString() && FJsonValue::Parse(Value.AsString(), Parsed))
+                    {
+                        Value = Move(Parsed);
+                    }
+                    return;
+                }
+
+            case EPropertyTypeFlags::Struct:
+                EmbedStructRawJson(static_cast<FStructProperty*>(Property)->GetStruct(), Value);
+                return;
+
+            case EPropertyTypeFlags::Vector:
+                {
+                    FProperty* Inner = static_cast<FArrayProperty*>(Property)->GetInternalProperty();
+                    if (Inner != nullptr && Value.IsArray())
+                    {
+                        for (FJsonValue& Element : Value.AsArray())
+                        {
+                            EmbedPropertyRawJson(Inner, Element);
+                        }
+                    }
+                    return;
+                }
+
+            default:
+                return;
+            }
+        }
+
+        void EmbedStructRawJson(CStruct* Struct, FJsonValue& Out)
+        {
+            if (Struct == nullptr || !Out.IsObject())
+            {
+                return;
+            }
+            for (CStruct* Current : Detail::CollectStructChain(Struct))
+            {
+                Current->ForEachProperty<FProperty>([&Out](FProperty* Property)
+                {
+                    if (Property == nullptr)
+                    {
+                        return;
+                    }
+                    const FString Name(*Property->GetPropertyName().ToString());
+                    if (FJsonValue* Found = Out.Find(FStringView(Name)))
+                    {
+                        EmbedPropertyRawJson(Property, *Found);
+                    }
+                });
+            }
+        }
+
         void CaptureStructObjects(CStruct* Struct, void* Data, FJsonValue& Out);
 
         void CapturePropertyObjects(FProperty* Property, void* ValuePtr, FJsonValue& Out)
@@ -1113,5 +1254,13 @@ namespace Lumina::Agent
         CaptureStructObjects(Type, Data, Out);
 
         return Result;
+    }
+
+    void CompactResult(CStruct* Type, FJsonValue& Out)
+    {
+        // Pruned while RawJson fields are still text, so the embedded dumps keep every field a caller might set.
+        PruneEmptyMembers(Out);
+        EmbedStructRawJson(Type, Out);
+        CollapseFloatNoise(Out);
     }
 }

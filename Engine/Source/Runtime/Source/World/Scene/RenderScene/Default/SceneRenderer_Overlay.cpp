@@ -7,14 +7,18 @@ namespace Lumina
     // Kept out of the lighting shader so the production path carries no debug branch.
     void FDefaultSceneRenderer::SceneDebugViewPass(RHI::FCmdListH CL)
     {
-        if (MaterialClassifyLayout.NumSlots == 0u ||
-            RenderFrame->SceneGlobalData.CullData.DebugMode == 0u)
+        const uint32 DebugMode = RenderFrame->SceneGlobalData.CullData.DebugMode;
+        // Marches the field through every pixel, sky included, so it runs even with no deferred surface on screen.
+        const bool bWorldField = DebugMode == (uint32)ERenderSceneDebugFlags::WorldDistanceField;
+        if (DebugMode == 0u || (MaterialClassifyLayout.NumSlots == 0u && !bWorldField))
         {
             return;
         }
 
         static const FShaderH VertexShader = FShaderLibrary::Get("FullscreenQuad.slang");
-        static const FShaderH PixelShader = FShaderLibrary::Get("SceneDebugViewPixel.slang");
+        static const FShaderH SurfacePixelShader = FShaderLibrary::Get("SceneDebugViewPixel.slang");
+        static const FShaderH FieldPixelShader = FShaderLibrary::Get("WorldDistanceFieldDebugPixel.slang");
+        const FShaderH PixelShader = bWorldField ? FieldPixelShader : SurfacePixelShader;
         if (!VertexShader || !PixelShader)
         {
             return;
@@ -23,7 +27,7 @@ namespace Lumina
         SCENE_GPU_SCOPE(CL, "Scene Debug View");
 
         const FSceneImage& ColorImg = GetNamedImage(ENamedImage::HDR);
-        const FUIntVector2 Extent   = FUIntVector2(MaterialClassifyLayout.ScreenW, MaterialClassifyLayout.ScreenH);
+        const FUIntVector2 Extent   = bWorldField ? CurrentView->Size : FUIntVector2(MaterialClassifyLayout.ScreenW, MaterialClassifyLayout.ScreenH);
 
         RHI::FRenderAttachment Color;
         Color.Texture        = ColorImg.Texture;
@@ -44,6 +48,15 @@ namespace Lumina
         Key.PS          = PixelShader;
         Key.ColorTargets.Add({ ColorImg.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
+
+        if (bWorldField)
+        {
+            const FWorldDistanceFieldGPU FieldArgs = MakeWorldDistanceFieldArgs();
+            RHI::CmdDraw(CL, MakeArgs(FieldArgs), 3, 1, 0, 0);
+            RHI::CmdEndRenderPass(CL);
+            Barriers::RasterToRead(CL);
+            return;
+        }
 
         struct FSceneDebugViewPC
         {

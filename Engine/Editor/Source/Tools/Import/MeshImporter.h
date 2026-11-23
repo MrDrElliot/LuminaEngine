@@ -187,12 +187,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Scene|Light Units", ClampMin = "0.0")
         float LightIntensityScale = 1.0f;
 
-        /**
-         * Bakes a signed distance field volume per mesh for the Distance Field material nodes. The single
-         * most expensive step of an import; can be added later from the mesh editor.
-         */
+        // On by default, since DF AO, far sun shadows and the world distance field only see meshes that carry one.
         PROPERTY(Editable, Category = "Distance Field")
-        SDistanceFieldBuildSettings DistanceField;
+        SDistanceFieldBuildSettings DistanceField{ .bEnabled = true };
 
         bool HasSettingsDialogue() const override { return true; }
 
