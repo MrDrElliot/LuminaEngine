@@ -50,6 +50,10 @@ namespace Lumina
         /** Radius of the sphere probe used for collision testing along the arm (meters). */
         PROPERTY(Editable, Category = "Camera|Spring Arm", ClampMin = 0.0f)
         float ProbeSize = 0.2f;
+        
+        /** Collision layers the probe can hit. Uncheck a channel to let the camera pass through it. */
+        PROPERTY(Editable, Category = "Camera|Spring Arm")
+        ECollisionProfiles CollisionMask = ECollisionProfiles::All;
 
         /** Pivot tracking responsiveness (1/seconds). Higher = snappier; 0 = instant. */
         PROPERTY(Editable, Category = "Camera|Spring Arm", ClampMin = 0.0f)
