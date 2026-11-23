@@ -178,6 +178,7 @@ namespace Lumina
                 Settings.Start  = Arm.CurrentPivot + SocketWorld;
                 Settings.End    = DesiredEnd;
                 Settings.Radius = Arm.ProbeSize;
+                Settings.LayerMask = Arm.CollisionMask;
                 Settings.IgnoreEntities.Add(Entity);
                 if (bHasTarget)
                 {
