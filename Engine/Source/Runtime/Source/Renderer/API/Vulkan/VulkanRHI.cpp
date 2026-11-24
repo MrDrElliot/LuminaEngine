@@ -2954,6 +2954,13 @@ namespace Lumina::RHI
         constexpr uint32 kMaxMeshGroupsPerDraw = 1u << 24;
         GDevice->MaxMeshWorkGroupCountX = Math::Min(kMaxMeshGroupsPerDraw,
                                           Math::Min(Chosen.MaxMeshWorkGroupCount, Chosen.MaxMeshWorkGroupTotalCount));
+        
+        if (Chosen.bMeshCapable && DriverProperties.driverID == VK_DRIVER_ID_AMD_PROPRIETARY)
+        {
+            // Indirect mesh draw wraps at 65,536 workgroups despite teh reported limit.
+            constexpr uint32 kMaxAMDIndirectMeshGroupsPerDraw = 65535u;
+            GDevice->MaxMeshWorkGroupCountX = Math::Min(GDevice->MaxMeshWorkGroupCountX,kMaxAMDIndirectMeshGroupsPerDraw);
+        }
     }
 
     // Aliases compute and transfer onto graphics when the device exposes no dedicated family.
