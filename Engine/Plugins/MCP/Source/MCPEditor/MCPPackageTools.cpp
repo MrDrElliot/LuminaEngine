@@ -473,6 +473,7 @@ namespace Lumina::MCP
                     Options.bExtractScriptsAsLooseFiles = In.bExtractScriptsAsLooseFiles;
                     Options.bServer = In.bServer;
                     Options.Platform = Platform.GetValue();
+                    DotNet::GatherScriptUnitsForPackaging(Options.ScriptUnits);
 
                     S.Stage.store(EPackageStage::Building);
                     S.Worker = FThread([&Worker = S, Options, Name, PackageName, PakPath]()

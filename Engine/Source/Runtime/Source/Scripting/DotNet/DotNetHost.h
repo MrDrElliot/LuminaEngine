@@ -77,7 +77,7 @@ namespace Lumina::DotNet
         TVector<FString> References;     // absolute third-party assemblies to stage beside the unit DLL
     };
 
-    // Recompiles optimized and returns the unit graph the packager stages, restoring a debuggable build after. Editor only.
+    // Recompiles optimized and returns the unit graph the packager stages, restoring a debuggable build after. Editor only, main thread only.
     RUNTIME_API void GatherScriptUnitsForPackaging(TVector<FPackagedScriptUnit>& Out);
 
     // Disk paths of every .cs the script units compile, listed without reading them.

@@ -293,6 +293,7 @@ namespace Lumina
         Opts.Platform                       = static_cast<EPackagePlatform>(PlatformIndex);
         Opts.ExtraFiles                     = ExtraFiles;
         Opts.ExtraDirectories               = ExtraDirectories;
+        DotNet::GatherScriptUnitsForPackaging(Opts.ScriptUnits);
         Opts.BuildConfiguration             = (ConfigIndex == 0) ? FString("Shipping")
                                             : (ConfigIndex == 1) ? FString("Development")
                                                                  : FString("Debug");

@@ -3,6 +3,7 @@
 #include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Containers/String.h"
+#include "Scripting/DotNet/DotNetHost.h"
 
 namespace Lumina
 {
@@ -76,6 +77,9 @@ namespace Lumina
         // Embedded under /Extras/ in the PAK.
         TVector<FString> ExtraFiles;
         TVector<FString> ExtraDirectories;
+
+        // Gathered on the main thread with DotNet::GatherScriptUnitsForPackaging, since it reloads the scripts the live worlds run.
+        TVector<DotNet::FPackagedScriptUnit> ScriptUnits;
     };
 
     /** Cook + (optional) build + binary copy for shipping a project.
