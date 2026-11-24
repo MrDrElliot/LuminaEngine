@@ -116,6 +116,15 @@ namespace Lumina
             "It is discovered automatically; read it anywhere via GetDefault<CMySettings>().");
     }
 
+    void FSettingsEditorTool::Select(CClass* SettingsClass, FStringView Search)
+    {
+        SelectedClass = SettingsClass;
+        if (FPropertyTable* Table = GetOrCreateTable(SettingsClass))
+        {
+            Table->SetSearchText(Search);
+        }
+    }
+
     FPropertyTable* FSettingsEditorTool::GetOrCreateTable(CClass* SettingsClass)
     {
         auto It = Tables.Find(SettingsClass);

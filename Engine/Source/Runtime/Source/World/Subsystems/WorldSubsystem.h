@@ -39,7 +39,7 @@ namespace Lumina
         virtual void OnTeardown() {}
 
         // The owning world, valid from OnInitialize onwards.
-        FUNCTION()
+        FUNCTION(ScriptInternal)
         CWorld* GetWorld() const { return OwningWorld; }
 
         // Set by the driver before OnInitialize runs.

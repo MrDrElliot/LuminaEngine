@@ -73,7 +73,7 @@ public static partial class Engine
         return EventWorldCache ??= EventTarget switch
         {
             Lumina.CEntityScript Script => Script.World,
-            Lumina.CWorldSubsystem Subsystem => Subsystem.World,
+            Lumina.CWorldSubsystem Subsystem => Subsystem.GetWorld(),
             Lumina.CExclusiveSystem System => System.GetWorld(),
             _ => null,
         };

@@ -1866,7 +1866,13 @@ namespace Lumina::Reflection
             // A getter that takes nothing reads as a property, so World.Physics stands for World.GetPhysics().
             const std::string Property = ScriptPropertyName(Fn, FB, SigParams);
             const bool bProperty = !Property.empty();
-            Writer.Linef("%s %spartial %s %s(%s);", (bProperty || FunctionHasMetadata(Fn, "ScriptInternal")) ? "internal" : "public",
+            const bool bInternal = bProperty || FunctionHasMetadata(Fn, "ScriptInternal");
+            // The Game assembly sees LuminaSharp's internals, so completion has to be told to skip them.
+            if (bInternal)
+            {
+                Writer.Line("[global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]");
+            }
+            Writer.Linef("%s %spartial %s %s(%s);", bInternal ? "internal" : "public",
                 bStatic ? "static " : "", RetCS.c_str(), Name.c_str(), SigParams.c_str());
 
             if (bProperty)

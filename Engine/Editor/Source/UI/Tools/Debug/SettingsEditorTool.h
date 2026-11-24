@@ -23,7 +23,7 @@ namespace Lumina
 
         void OnInitialize() override;
 
-        void Select(CClass* SettingsClass) { SelectedClass = SettingsClass; }
+        void Select(CClass* SettingsClass, FStringView Search = {});
         
     protected:
          

@@ -3884,14 +3884,14 @@ namespace Lumina
         SavePackages(GatherUnsavedPackages());
     }
 
-    void FEditorUI::OpenSettings(CClass* Page)
+    void FEditorUI::OpenSettings(CClass* Page, FStringView Search)
     {
         FSettingsEditorTool* Settings = FindTool<FSettingsEditorTool>();
         if (Settings == nullptr)
         {
             Settings = CreateTool<FSettingsEditorTool>(this);
         }
-        Settings->Select(Page);
+        Settings->Select(Page, Search);
         FocusTargetWindowName = *Settings->GetToolName();
     }
 
