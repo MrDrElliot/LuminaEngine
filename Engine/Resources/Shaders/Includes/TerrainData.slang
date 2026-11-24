@@ -19,13 +19,17 @@ float TerrainSampleHeight(int2 Sample, FTerrainRenderParams Params)
 }
 
 // The compute pass packs Normal.xz, so Y comes back from unit length; a fixed Y of 1 would flatten slopes.
-float3 TerrainSampleNormal(int2 Sample, FTerrainRenderParams Params)
+float3 TerrainSampleNormalAt(float2 HeightUV)
 {
-    const float2 UV = (float2(Sample) + 0.5) / float(Params.Resolution);
-    const float4 Packed = TerrainArgs().Normal.SampleLevel(Samplers::LinearClamp, UV, 0);
+    const float4 Packed = TerrainArgs().Normal.SampleLevel(Samplers::LinearClamp, HeightUV, 0);
     const float  Nx = Packed.r * 2.0 - 1.0;
     const float  Nz = Packed.g * 2.0 - 1.0;
     return float3(Nx, sqrt(saturate(1.0 - Nx * Nx - Nz * Nz)), Nz);
+}
+
+float3 TerrainSampleNormal(int2 Sample, FTerrainRenderParams Params)
+{
+    return TerrainSampleNormalAt((float2(Sample) + 0.5) / float(Params.Resolution));
 }
 
 uint TerrainChunkLevel(int2 ChunkCoord, int ChunksPerSide)

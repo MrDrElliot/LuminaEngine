@@ -3,6 +3,7 @@
 #include "Includes/GlobalRHI.slang"
 #include "Includes/WorldDistanceField.slang"
 #include "Includes/GBuffer.slang"
+#include "Includes/TerrainHeightfield.slang"
 
 // Sky visibility from cones traced through the world distance field, at half resolution, with the bent normal's lean.
 
@@ -18,6 +19,8 @@ struct FPushConstants
     float         MaxDistance;
     float         ViewDistance;
     FWorldDistanceField Field;
+    uint                NumTerrains;
+    FTerrainHeightfield Terrains[kMaxTerrainHeightfields];
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -97,7 +100,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float2 DepthSize = float2(Pass().DepthSize);
     const float2 UV        = (float2(Texel) + 0.5) / DepthSize;
     const float3 ViewPos   = ReconstructViewPos(UV, Raw, GetInverseCameraProjection());
-    const float3 P         = mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz;
+    const float3 P         = LiftOntoTerrains(mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz, Pass().Terrains, Pass().NumTerrains);
     const float  Distance  = length(P - GetCameraPosition());
 
     FWorldDistanceField* Field = &Pass().Field;

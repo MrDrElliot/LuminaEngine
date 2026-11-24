@@ -283,7 +283,7 @@ namespace Lumina
             Place(Level, Camera);
         }
 
-        if (Changes.bFull || bTrackAll)
+        if (bTrackAll)
         {
             // Every brick samples its casters again, so only where they are now needs remembering.
             bTrackAll = false;
@@ -298,6 +298,20 @@ namespace Lumina
                 {
                     Lv.Pending += State == EBrickState::Valid ? 1u : 0u;
                     State = State == EBrickState::Valid ? EBrickState::Stale : State;
+                }
+            }
+        }
+        else if (Changes.bFull)
+        {
+            // A full upload re-sends unchanged slots too, and restaling every brick for it each frame never lets the far ones catch up.
+            const uint32 NumSlots = Math::Max((uint32)Entries.Num(), (uint32)MergedSpheres.Num());
+            for (uint32 Slot = 0; Slot < NumSlots; ++Slot)
+            {
+                const FVector4 Current = (Slot < (uint32)Entries.Num() && IsCaster(Entries[Slot])) ? Entries[Slot].SphereBounds : FVector4(0.0f);
+                const FVector4 Merged  = Slot < (uint32)MergedSpheres.Num() ? MergedSpheres[Slot] : FVector4(0.0f);
+                if (Current != Merged)
+                {
+                    Retrack(Slot, Entries, false);
                 }
             }
         }

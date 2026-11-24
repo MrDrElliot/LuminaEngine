@@ -38,3 +38,16 @@ struct FTerrainHeightfield
         return (P.y - Height) / sqrt(1.0 + dot(Gradient, Gradient));
     }
 };
+
+// Coarse terrain LODs cut under the height field between vertices, and a receiver left there reads as buried in it.
+float3 LiftOntoTerrains(float3 P, FTerrainHeightfield Terrains[kMaxTerrainHeightfields], uint NumTerrains)
+{
+    for (uint i = 0; i < min(NumTerrains, kMaxTerrainHeightfields); ++i)
+    {
+        if (Terrains[i].Covers(P.xz))
+        {
+            P.y = max(P.y, Terrains[i].HeightAt(P.xz));
+        }
+    }
+    return P;
+}

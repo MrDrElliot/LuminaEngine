@@ -109,6 +109,8 @@ namespace Lumina
             float         MaxDistance;
             float         ViewDistance;
             FWorldDistanceFieldGPU Field;
+            uint32        NumTerrains;
+            FTerrainHeightfieldGPU Terrains[kMaxTerrainHeightfields];
         };
 
         // The field update reads a built grid's spans, and a grid of no cells, which no brick column falls inside, when there is none.
@@ -753,6 +755,7 @@ namespace Lumina
         Args.MaxDistance   = MaxDistance;
         Args.ViewDistance  = ViewDistance;
         Args.Field         = MakeWorldDistanceFieldArgs();
+        GatherTerrainHeightfields(RenderFrame->Extracts.TerrainExtracts, TerrainGPUStates, Args.Terrains, Args.NumTerrains);
 
         DispatchCompute(CL, TraceCS, Args,
             RenderUtils::GetGroupCount(Args.OutputSize[0], 8u),

@@ -776,6 +776,10 @@ namespace Lumina
 
         ImDrawList* Draw = ImGui::GetWindowDrawList();
 
+        const ECS::FEntity TerrainEntity = FindPreferredTerrain(World);
+        const STerrainComponent* Terrain = TerrainEntity != ECS::NullEntity ? World->TryGetComponent<STerrainComponent>(TerrainEntity) : nullptr;
+        const FVector3 TerrainOrigin     = Terrain != nullptr ? World->GetComponent<STransformComponent>(TerrainEntity).GetWorldLocation() : FVector3(0.0f);
+
         auto AddWorldRing = [&](float WorldRadius, ImU32 Color, float Thickness)
         {
             constexpr int Segments = 64;
@@ -784,7 +788,12 @@ namespace Lumina
             for (int i = 0; i < Segments; ++i)
             {
                 const float A = (static_cast<float>(i) / static_cast<float>(Segments)) * Math::TwoPi<float>();
-                const FVector3 P = LastHit + FVector3(std::cos(A) * WorldRadius, 0.0f, std::sin(A) * WorldRadius);
+                FVector3 P = LastHit + FVector3(std::cos(A) * WorldRadius, 0.0f, std::sin(A) * WorldRadius);
+                // Laid on the ground, since a flat ring at the hit height sinks into slopes and floats over hollows.
+                if (Terrain != nullptr)
+                {
+                    FTerrainSculptSystem::SampleHeight(*Terrain, TerrainOrigin, P.x, P.z, P.y);
+                }
                 ImVec2 S;
                 if (ProjectToScreen(P, S))
                 {

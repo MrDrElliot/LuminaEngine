@@ -58,7 +58,8 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         const float2 ScreenSize = float2(Pass().ScreenW, Pass().ScreenH);
         FVisSurface  S          = InterpolateVisSurface(W, FinalWorldPos, VisPixelNdc(Texel, ScreenSize), ScreenSize);
 
-        const float3 NormalWS = normalize(S.NormalWS);
+        // Per pixel, since a coarse LOD triangle interpolating three vertex normals lights whole facets as one.
+        const float3 NormalWS = TerrainSampleNormalAt(S.UV1);
         const float4 ViewPos  = CameraViewPosition(S.WorldPosition);
         const float4 ClipPos  = CameraClipPosition(ViewPos);
         const float  InvW     = 1.0 / max(ClipPos.w, 1e-6);
@@ -67,7 +68,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
         Input.FragColor     = float4(1.0, 1.0, 1.0, 1.0);
         Input.NormalVS      = float4(normalize(NormalWorldToView(NormalWS)), 0.0);
         Input.NormalWS      = float4(NormalWS, 0.0);
-        Input.TangentWS     = S.TangentWS;
+        Input.TangentWS     = float4(TerrainTangent(NormalWS), 1.0);
         Input.FragPos       = ViewPos;
         Input.WorldPosNoWPO = S.WorldPositionNoOffset;
         Input.UV            = S.UV;
