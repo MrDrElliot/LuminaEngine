@@ -28,7 +28,6 @@ public class Runtime : LuminaModuleRules
         PublicDependencyModuleNames.AddRange(new[]
         {
             "StbImage",
-            "RenderDoc",
             "RPMalloc",
             "Miniz",
             "Zstd",

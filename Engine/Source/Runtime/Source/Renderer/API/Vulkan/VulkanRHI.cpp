@@ -25,7 +25,6 @@
 #include "Renderer/API/Vulkan/VulkanMacros.h"
 #include "Renderer/API/Vulkan/VulkanAllocator.h"
 #include "Renderer/RHINative.h"
-#include "Renderer/RenderDocImpl.h"
 #include "Renderer/ErrorHandling/Vulkan/VulkanCrashTracker.h"
 #include "Renderer/ErrorHandling/Vulkan/VulkanBreadcrumbs.h"
 #include "Platform/CrashHandler.h"
@@ -2954,6 +2953,15 @@ namespace Lumina::RHI
         constexpr uint32 kMaxMeshGroupsPerDraw = 1u << 24;
         GDevice->MaxMeshWorkGroupCountX = Math::Min(kMaxMeshGroupsPerDraw,
                                           Math::Min(Chosen.MaxMeshWorkGroupCount, Chosen.MaxMeshWorkGroupTotalCount));
+
+        // AMD reports a higher limit but an indirect mesh draw past 65535 groups wraps to the remainder, dropping meshlets.
+        constexpr uint32 AmdVendorId                  = 0x1002u;
+        constexpr uint32 kAmdMaxIndirectMeshGroups    = 65535u;
+        if (GDevice->Properties.vendorID == AmdVendorId && GDevice->MaxMeshWorkGroupCountX > kAmdMaxIndirectMeshGroups)
+        {
+            GDevice->MaxMeshWorkGroupCountX = kAmdMaxIndirectMeshGroups;
+            LOG_DISPLAY("RHI: mesh draws capped at {} workgroups each, since AMD wraps larger indirect counts.", kAmdMaxIndirectMeshGroups);
+        }
     }
 
     // Aliases compute and transfer onto graphics when the device exposes no dedicated family.
@@ -3295,10 +3303,11 @@ namespace Lumina::RHI
         VkPhysicalDeviceVulkan12Features Features12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
         EnableRequiredFeatures(Features12, kRequiredFeatures12);
 
-        if (Supported12.bufferDeviceAddressCaptureReplay && FRenderDoc::IsAttached())
+        const bool bCaptureReplayRequested = Algo::AnyOf(GPendingDeviceRequests, [](const Native::FDeviceCreationRequest& Request) { return Request.bBufferDeviceAddressCaptureReplay; });
+        if (Supported12.bufferDeviceAddressCaptureReplay && bCaptureReplayRequested)
         {
             Features12.bufferDeviceAddressCaptureReplay = VK_TRUE;
-            LOG_DISPLAY("RenderDoc attached: enabling bufferDeviceAddressCaptureReplay so captures replay.");
+            LOG_DISPLAY("RHI: bufferDeviceAddressCaptureReplay enabled so frame captures replay.");
         }
         Features12.hostQueryReset                               = Supported12.hostQueryReset;
         GDevice->bHostQueryReset                                = Supported12.hostQueryReset == VK_TRUE;

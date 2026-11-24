@@ -105,7 +105,6 @@
 #include "Scripting/EntityScript.h"
 #include "Scripting/DotNet/DotNetHost.h"
 #include "Renderer/CustomPrimitiveData.h"
-#include "Renderer/RenderDocImpl.h"
 #include "Renderer/RenderManager.h"
 #include "Renderer/RHI.h"
 #include "Renderer/ShaderCompiler.h"
@@ -4817,11 +4816,6 @@ namespace Lumina
             LaunchTracyProfiler();
         }
         
-        if (ImGui::MenuItem(LE_ICON_CAMERA " RenderDoc Capture"))
-        {
-            FRenderDoc::Get().TriggerCapture();
-        }
-
         if (ImGui::BeginMenu(LE_ICON_CAMERA " Screenshot"))
         {
             if (ImGui::MenuItem("Save PNG (Tonemapped)", "F9"))

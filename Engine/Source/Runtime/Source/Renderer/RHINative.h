@@ -42,6 +42,8 @@ namespace Lumina::RHI::Native
         TVector<const char*> InstanceExtensions;
         TVector<const char*> DeviceExtensions;
         void*                DeviceCreatePNext = nullptr;
+        // For a capture tool whose recorded buffer addresses must come back the same at replay.
+        bool                 bBufferDeviceAddressCaptureReplay = false;
     };
     
     RUNTIME_API void RegisterDeviceCreationRequest(const FDeviceCreationRequest& Request);
