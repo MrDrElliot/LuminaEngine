@@ -203,6 +203,7 @@ namespace Lumina
 
         // Queues an impostor bake for every mesh the open world's forests and painted foliage scatter.
         void BakeFoliageImpostors();
+        void ResaveAllAssets();
 
         FImpostorBaker& GetImpostorBaker() { return ImpostorBaker; }
 

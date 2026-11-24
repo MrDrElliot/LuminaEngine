@@ -17,6 +17,12 @@ namespace Lumina
         }
     }
 
+    bool FMaterialCompileQueue::HasRecompiles() const
+    {
+        FScopeLock Lock(Mutex);
+        return !Recompiles.IsEmpty() || !FunctionRecompiles.IsEmpty();
+    }
+
     void FMaterialCompileQueue::QueueFunctionRecompile(const FGuid& MaterialGUID)
     {
         FScopeLock Lock(Mutex);

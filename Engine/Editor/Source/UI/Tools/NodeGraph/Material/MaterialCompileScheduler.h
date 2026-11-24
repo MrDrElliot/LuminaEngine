@@ -23,6 +23,9 @@ namespace Lumina
 
         void Tick();
 
+        // A recompile that finishes after a save marks its package dirty again, so a save waits for every queued one first.
+        void FinishPendingRecompiles();
+
     private:
         enum class ERequestKind : uint8
         {

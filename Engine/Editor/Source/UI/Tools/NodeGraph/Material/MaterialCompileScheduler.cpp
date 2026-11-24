@@ -72,6 +72,25 @@ namespace Lumina
         }
     }
 
+    void FMaterialCompileScheduler::FinishPendingRecompiles()
+    {
+        FRenderManager* Renderer = TryRender();
+        if (Renderer == nullptr || Global::GShaderCompiler == nullptr)
+        {
+            return;
+        }
+
+        const FMaterialCompileQueue& Queue = Renderer->GetMaterialCompileQueue();
+        while (!InFlight.IsEmpty() || !Deferred.IsEmpty() || Queue.HasRecompiles())
+        {
+            for (const TUniquePtr<FJob>& Job : InFlight)
+            {
+                Job->Result.StageLog->Stages.Wait();
+            }
+            Tick();
+        }
+    }
+
     void FMaterialCompileScheduler::FinishSettledJobs(FMaterialCompileQueue& Queue)
     {
         for (int32 i = 0; i < InFlight.Num();)

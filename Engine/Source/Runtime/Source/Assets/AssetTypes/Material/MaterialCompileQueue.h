@@ -32,6 +32,8 @@ namespace Lumina
 
         bool IsFunctionRecompileQueued(const FGuid& MaterialGUID) const;
 
+        bool HasRecompiles() const;
+
     private:
         struct FPermutationRequest
         {

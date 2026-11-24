@@ -79,6 +79,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Progress/SlowTask.h"
 #include "Core/Profiler/Profile.h"
 #include "Core/Reflection/PropertyCustomization/PropertyCustomization.h"
 #include "Input/InputViewport.h"
@@ -236,6 +237,14 @@ namespace Lumina
                 ++Built;
             }
             LOG_INFO("Built distance fields for {} of {} static meshes in /Game, {} failed. Save them to keep the fields.", Built, Meshes.Num(), Failed);
+        }
+
+        void ResaveAllAssetsCommand()
+        {
+            if (Global::GEditorEngine != nullptr)
+            {
+                static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI())->ResaveAllAssets();
+            }
         }
 
         /** A button's three states. Hover lightens and press darkens, unlike ImGuiX::ButtonEx. */
@@ -558,6 +567,8 @@ namespace Lumina
             "Bakes an impostor for every mesh the open world's forests and painted foliage scatter, leaving their packages dirty.", &BakeFoliageImpostorsCommand));
         FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("Mesh.BuildDistanceFields",
             "Turns on and builds the distance field of every static mesh in /Game that lacks one, leaving their packages dirty.", &BuildMeshDistanceFieldsCommand));
+        FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("Asset.ResaveAll",
+            "Saves every package an older engine wrote back in the current format, skipping those already current.", &ResaveAllAssetsCommand));
 
         // Content-browser tiles that draw their own body (curves, etc) instead of a rendered thumbnail.
         AssetTilePainters::RegisterBuiltin();
@@ -3850,6 +3861,7 @@ namespace Lumina
     FEditorUI::FSaveAllResult FEditorUI::SaveAllDirtyPackagesSilently()
     {
         FSaveAllResult Result;
+        MaterialCompiles.FinishPendingRecompiles();
 
         // Same routing as Save All, so an open tool still does its type-specific save work.
         for (CPackage* Package : GatherUnsavedPackages())
@@ -3879,8 +3891,58 @@ namespace Lumina
         CreateTool<FPropertyMatrixTool>(this, Move(Assets));
     }
 
+    // Loading migrates an older package only in memory, so each one an older engine wrote is saved back in the current format.
+    void FEditorUI::ResaveAllAssets()
+    {
+        const bool bEngineContentWritable = !Paths::IsInstalledBuild();
+        THashSet<FName> Seen;
+        TVector<FFixedString> PackagePaths;
+        for (const FAssetDataPtr& Data : FAssetRegistry::Get().FindByPredicate([](const FAssetData&) { return true; }))
+        {
+            const bool bEngineContent = FStringView(*Data->Path, Data->Path.Len()).StartsWith("/Engine/");
+            if ((bEngineContentWritable || !bEngineContent) && Seen.TryAdd(FName(Data->Path)))
+            {
+                PackagePaths.Add(Data->Path);
+            }
+        }
+
+        const int32 CurrentVersion = Global::GPackageFileLuminaVersion.FileVersion;
+        int32 Resaved = 0;
+        int32 Failed  = 0;
+        FScopedSlowTask Task((float)PackagePaths.Num(), "Resave All Assets", "Checking package versions...");
+        for (const FFixedString& Path : PackagePaths)
+        {
+            Task.EnterProgressFrame(1.0f, *Path);
+
+            TVector<uint8>  Binary;
+            FPackageHeader  Header{};
+            if (!CPackage::ReadPackageContainer(Path, Binary, Header))
+            {
+                ++Failed;
+                continue;
+            }
+            if (Header.Version >= CurrentVersion)
+            {
+                continue;
+            }
+
+            CPackage* Package = CPackage::LoadPackage(Path);
+            const bool bLoaded = Package != nullptr && Package->FullyLoad();
+            MaterialCompiles.FinishPendingRecompiles();
+            if (!bLoaded || !CPackage::SavePackage(Package, Path))
+            {
+                LOG_ERROR("Resave All Assets could not resave '{}', saved by engine version {}.", *Path, Header.Version);
+                ++Failed;
+                continue;
+            }
+            ++Resaved;
+        }
+        LOG_INFO("Resave All Assets rewrote {} of {} packages in engine version {}, and {} failed.", Resaved, PackagePaths.Num(), CurrentVersion, Failed);
+    }
+
     void FEditorUI::SaveAllDirtyPackages()
     {
+        MaterialCompiles.FinishPendingRecompiles();
         SavePackages(GatherUnsavedPackages());
     }
 
@@ -4650,6 +4712,11 @@ namespace Lumina
         {
             SaveAllDirtyPackages();
         }
+        if (ImGui::MenuItem(LE_ICON_ZIP_DISK " Resave All Assets"))
+        {
+            ResaveAllAssets();
+        }
+        ImGui::SetItemTooltip("Saves every asset an older engine wrote in the current format, so a future engine can still read it.");
 
         ImGui::Separator();
 
