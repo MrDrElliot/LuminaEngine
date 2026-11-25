@@ -5,6 +5,7 @@
 
 #include "Core/Console/ConsoleVariable.h"
 
+#include "Animation/AnimGpuClip.h"
 #include "Animation/AnimationGraphVM.h"
 #include "Animation/BoneLOD.h"
 #include "Platform/Time/PlatformTime.h"
@@ -12,6 +13,7 @@
 #include "Animation/SkeletalMeshUtils.h"
 #include "Animation/TaskSystem/AnimTaskExecutor.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
+#include "Core/Object/ObjectIterator.h"
 #include "Assets/AssetTypes/Mesh/Animation/Animation.h"
 #include "Assets/AssetTypes/Mesh/SkeletalMesh/SkeletalMesh.h"
 #include "Assets/AssetTypes/Mesh/Skeleton/Skeleton.h"
@@ -22,6 +24,7 @@
 #include "World/Entity/Components/EntityTags.h"
 #include "World/Entity/Components/AnimationGraphComponent.h"
 #include "World/Entity/Components/CharacterComponent.h"
+#include "World/Entity/Components/Component.h"
 #include "World/Entity/Components/FollowerPoseComponent.h"
 #include "World/Entity/Components/SimpleAnimationComponent.h"
 #include "World/Entity/Components/SkeletalMeshComponent.h"
@@ -166,6 +169,35 @@ namespace Lumina
 
         // Only the animators, since the mesh, follower and lookup queries match far more than ever animates.
         ExcludeFromHasWork(Meshes, Followers, PoseLinks, LeaderMeshes);
+    }
+
+    void FAnimGraphInputRelinker::OnScriptsReloaded(const Scripting::FScriptReload& Reload)
+    {
+        RelinkAllGraphs();
+    }
+
+    void FAnimGraphInputRelinker::RelinkAllGraphs()
+    {
+        // A graph without inputs reads only its own parameter block, which no script reload reshapes under it.
+        for (TObjectIterator<CAnimationGraph> It; It; ++It)
+        {
+            CAnimationGraph* Graph = *It;
+            if (!Graph->Inputs.IsEmpty() && !Graph->HasAnyFlag(OF_NeedsLoad | OF_Loading | OF_MarkedDestroy))
+            {
+                Graph->LinkParameters();
+            }
+        }
+    }
+
+    void CAnimationSystem::OnStartup(const SExclusiveContext& Context)
+    {
+        FAnimGraphInputRelinker::RelinkAllGraphs();
+        InputRelinker = MakeUnique<FAnimGraphInputRelinker>();
+    }
+
+    void CAnimationSystem::OnTeardown(const SExclusiveContext& Context)
+    {
+        InputRelinker.Reset();
     }
 
     // Diagnostic cross-check of the deferred executor against direct single-clip sampling.
@@ -647,34 +679,62 @@ namespace Lumina
         }
 
         // Reads the graph's parameters straight out of the component's own parameter block.
-        void ApplyParameters(SAnimationGraphComponent& AnimGraph, const CAnimationGraph* Graph)
+        // Each input's component for this entity, on it or an ancestor, found through the system's declared reads.
+        void ResolveGraphInputs(const SSystemContext& Context, ECS::FEntity Entity, const CAnimationGraph& Graph,
+                                FDynamicComponentReads& Reads, const uint8** OutBases)
         {
-            const uint8* Base = static_cast<const uint8*>(AnimGraph.GetParameterMemory());
-            if (Base == nullptr)
+            // An undo can restore Inputs without the structs beside them, so neither list is trusted to cover the other.
+            const int32 NumInputs = Math::Min(Math::Min(Graph.InputStructs.Num(), Graph.Inputs.Num()), kMaxAnimGraphInputs);
+            for (int32 i = 0; i < NumInputs; ++i)
             {
-                return;
-            }
+                OutBases[i] = nullptr;
+                const CStruct* Struct = Graph.InputStructs[i];
+                const FComponentOps* Ops = Struct != nullptr ? Struct->GetComponentOps() : nullptr;
+                if (Ops == nullptr)
+                {
+                    continue;
+                }
 
+                // A type no graph has read yet is declared before the next stage, and reads as its defaults until then.
+                const uint32 TypeId = static_cast<uint32>(Ops->TypeId);
+                if (!Reads.Declares(TypeId))
+                {
+                    Reads.Request(TypeId);
+                    continue;
+                }
+
+                const bool bClimb = Graph.Inputs[i].Lookup == EAnimGraphInputLookup::SelfOrAncestor;
+                for (ECS::FEntity At = Entity; !At.IsNull(); At = bClimb ? Context.GetHierarchy().GetParent(At) : ECS::NullEntity)
+                {
+                    if (const void* Found = Reads.Find(TypeId, At))
+                    {
+                        OutBases[i] = static_cast<const uint8*>(Found);
+                        break;
+                    }
+                }
+            }
+        }
+
+        void ApplyParameters(SAnimationGraphComponent& AnimGraph, const CAnimationGraph* Graph, const uint8* const* InputBases)
+        {
+            const uint8* InstanceBase = static_cast<const uint8*>(AnimGraph.GetParameterMemory());
             FAnimGraphVMState& VMState = AnimGraph.VMState;
 
+            // A source missing from this entity, or a path that stopped resolving, reads as the parameter's default, so a value never goes stale.
             const int32 NumParams = Math::Min(Graph->ParamBindings.Num(), VMState.Parameters.Num());
             for (int32 i = 0; i < NumParams; ++i)
             {
                 const FAnimGraphParamBinding& Binding = Graph->ParamBindings[i];
-                if (Binding.IsResolved())
-                {
-                    VMState.Parameters[i] = ReadAnimParamScalar(Base, Binding);
-                }
+                const uint8* Base = Binding.IsResolved() ? ResolveAnimParamBase(Binding, InstanceBase, InputBases) : nullptr;
+                VMState.Parameters[i] = Base != nullptr ? ReadAnimParamScalar(Base, Binding) : Graph->Parameters[i].DefaultValue;
             }
 
             const int32 NumObjects = Math::Min(Graph->ObjectParamBindings.Num(), VMState.ObjectParameters.Num());
             for (int32 i = 0; i < NumObjects; ++i)
             {
                 const FAnimGraphParamBinding& Binding = Graph->ObjectParamBindings[i];
-                if (Binding.IsResolved())
-                {
-                    VMState.ObjectParameters[i] = ReadAnimParamObject(Base, Binding);
-                }
+                const uint8* Base = Binding.IsResolved() ? ResolveAnimParamBase(Binding, InstanceBase, InputBases) : nullptr;
+                VMState.ObjectParameters[i] = Base != nullptr ? ReadAnimParamObject(Base, Binding) : nullptr;
             }
         }
 
@@ -714,10 +774,67 @@ namespace Lumina
             Montages.Transitions.Reset();
         }
 
+        // Back on the CPU path, the gather must upload the CPU pose again and the executor must not trust its last recipe.
+        void LeaveGpuPose(SSkeletalMeshComponent& Mesh)
+        {
+            if (Mesh.bGpuPose)
+            {
+                Mesh.bGpuPose          = false;
+                Mesh.bRenderBonesDirty = true;
+                Mesh.bLastRecipeValid  = false;
+                Mesh.GpuSamples.Reset();
+            }
+        }
+
+        // A character already on the GPU tier leaves it this much closer than it entered, so one on the boundary does not flip every frame.
+        constexpr float kGpuCrowdLeaveFraction = 0.9f;
+
+        // A leader's followers copy its CPU bones, which the GPU tier stops writing, so a leader stays on the CPU.
+        bool TakesGpuCrowdTier(const SWorldSettingsState& Settings, const CAnimationGraph& Graph, const FSkeletonResource& Skeleton, const SSkeletalMeshComponent& Mesh)
+        {
+            const float MinDistance = Settings.GpuCrowdMinDistanceOverRadius * (Mesh.bGpuPose ? kGpuCrowdLeaveFraction : 1.0f);
+            return Settings.bGpuCrowdAnimation
+                && Graph.bGpuCrowd
+                && !Graph.CrowdPlan.Ops.IsEmpty()
+                && Skeleton.GetNumBones() <= Anim::kMaxGpuPoseBones
+                && Mesh.LastDistanceOverRadius >= MinDistance
+                && Mesh.FollowerRenderedTime < 0.0;
+        }
+
+        // The crowd tier's update, which leaves weighted samples for the GPU, or the update's own tasks when its path has no weighted-sum form.
+        void UpdateGpuCrowd(CAnimationSystem& System, const CAnimationGraph& Graph, FSkeletonResource* Skeleton, float StepTime,
+                            SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh, FAnimGraphRootMotion& RootMotion,
+                            const FAnimGraphSceneContext& SceneContext)
+        {
+            FAnimCrowdScratch& Scratch = System.CrowdScratch();
+            FAnimationGraphVM::BuildRecord(&Graph, Graph.CrowdPlan, Skeleton, StepTime, AnimGraph.VMState, Scratch.Record, &Scratch.Tasks,
+                                           RootMotion, &AnimGraph.NotifyEvents, &AnimGraph.Montages, &SceneContext);
+
+            const FAnimTopologyEntry* Entry = &System.CrowdTopology(Graph, Scratch, AnimGraph.VMState);
+
+            if (!Entry->Program.bExpressible)
+            {
+                LeaveGpuPose(Mesh);
+                std::swap(Mesh.AnimTasks, Scratch.Tasks);
+                ApplyBoneLOD(Mesh, Skeleton, Mesh.AnimTasks);
+                return;
+            }
+
+            Anim::EvaluateSampleProgram(Entry->Program, Scratch.Record, Mesh.GpuSamples);
+            Mesh.GpuRootLockBone = Scratch.Tasks.bLockRoot ? Scratch.Tasks.RootBoneIndex : Constants::kIndexNone;
+            Mesh.GpuSkeleton     = Skeleton;
+            Mesh.bGpuPose        = true;
+            Mesh.AnimTasks.Reset();
+
+            // Sockets and bone queries evaluate a GPU pose from these samples, and the serial tells them it moved.
+            ++Mesh.PoseSerial;
+        }
+
         // One entity's graph update, parallel-safe; pose math happens in the execute phase.
         void UpdateGraph(const SSystemContext& SystemContext, ECS::FEntity Entity,
                          SAnimationGraphComponent& AnimGraph, SSkeletalMeshComponent& Mesh,
-                         float DeltaTime, double Now, const FKinematicsState& KinematicsState)
+                         float DeltaTime, double Now, const FKinematicsState& KinematicsState,
+                         CAnimationSystem& System, const SWorldSettingsState& Settings)
         {
             AnimGraph.NotifyEvents.Reset();
             AnimGraph.PendingRootMotion = FRootMotionDelta();
@@ -750,7 +867,9 @@ namespace Lumina
 
             // Init VM state first so BuildTasks won't re-init and wipe the written values.
             AnimGraph.EnsureStateInitialized();
-            ApplyParameters(AnimGraph, Graph);
+            const uint8* InputBases[kMaxAnimGraphInputs] = {};
+            ResolveGraphInputs(SystemContext, Entity, *Graph, System.GetGraphInputs(), InputBases);
+            ApplyParameters(AnimGraph, Graph, InputBases);
 
             FAnimGraphRootMotion GraphRootMotion;
             GraphRootMotion.Mode          = AnimGraph.RootMotionLock;
@@ -782,6 +901,14 @@ namespace Lumina
                 SceneContext.Velocity = KinematicsState.GetVelocity(Entity);
             }
 
+            if (TakesGpuCrowdTier(Settings, *Graph, *Skeleton, Mesh))
+            {
+                UpdateGpuCrowd(System, *Graph, Skeleton, StepTime, AnimGraph, Mesh, GraphRootMotion, SceneContext);
+                AnimGraph.PendingRootMotion = GraphRootMotion.Delta;
+                return;
+            }
+
+            LeaveGpuPose(Mesh);
             FAnimationGraphVM::BuildTasks(Graph, Skeleton, StepTime, AnimGraph.VMState, Mesh.AnimTasks,
                                           GraphRootMotion, &AnimGraph.NotifyEvents, &AnimGraph.Montages,
                                           &SceneContext);
@@ -957,6 +1084,65 @@ namespace Lumina
         }
     }
 
+    FAnimTopologyCache& CAnimationSystem::CrowdTopologiesFor(const CAnimationGraph& Graph)
+    {
+        const auto IsCurrent = [&Graph](const FAnimCrowdGraphCache& Cache)
+        {
+            return Cache.PlanOps == Graph.CrowdPlan.Ops.GetData() && Cache.PlanCount == Graph.CrowdPlan.Ops.Num();
+        };
+        {
+            const auto Read = CrowdCaches.Read();
+            if (const TUniquePtr<FAnimCrowdGraphCache>* Found = Read->ByGraph.Find(&Graph); Found != nullptr && IsCurrent(**Found))
+            {
+                return (*Found)->Topologies;
+            }
+        }
+
+        auto Write = CrowdCaches.Write();
+        TUniquePtr<FAnimCrowdGraphCache>& Slot = Write->ByGraph.FindOrAdd(&Graph);
+        if (!Slot.IsValid() || !IsCurrent(*Slot))
+        {
+            if (Slot.IsValid())
+            {
+                Write->Retired.Add(Move(Slot));
+            }
+            Slot = MakeUnique<FAnimCrowdGraphCache>();
+            Slot->PlanOps   = Graph.CrowdPlan.Ops.GetData();
+            Slot->PlanCount = Graph.CrowdPlan.Ops.Num();
+        }
+        return Slot->Topologies;
+    }
+
+    const FAnimTopologyEntry& CAnimationSystem::CrowdTopology(const CAnimationGraph& Graph, FAnimCrowdScratch& Scratch, const FAnimGraphVMState& State)
+    {
+        const FAnimPlanOp* PlanOps = Graph.CrowdPlan.Ops.GetData();
+        const int32 PlanCount = Graph.CrowdPlan.Ops.Num();
+        if (Scratch.SeenGraph != &Graph || Scratch.SeenPlanOps != PlanOps || Scratch.SeenPlanCount != PlanCount)
+        {
+            Scratch.SeenTopologies = &CrowdTopologiesFor(Graph);
+            Scratch.SeenGraph      = &Graph;
+            Scratch.SeenPlanOps    = PlanOps;
+            Scratch.SeenPlanCount  = PlanCount;
+        }
+
+        // Keyed by cache as well, so a worker moving between graphs keeps both graphs' entries.
+        const uint64 Key = Scratch.Record.TopologyKey;
+        const uint64 SeenKey = Key ^ Containers::MixHash64((uint64)(uintptr_t)Scratch.SeenTopologies);
+        if (const FAnimTopologyEntry* const* Seen = Scratch.SeenEntries.Find(SeenKey))
+        {
+            return **Seen;
+        }
+
+        FAnimTopologyCache& Topologies = *Scratch.SeenTopologies;
+        const FAnimTopologyEntry* Entry = Topologies.Find(Key);
+        if (Entry == nullptr)
+        {
+            Entry = &Topologies.FindOrAdd(Key, Scratch.Tasks, State);
+        }
+        Scratch.SeenEntries.FindOrAdd(SeenKey) = Entry;
+        return *Entry;
+    }
+
     void CAnimationSystem::OnUpdate(const SSystemContext& Context)
     {
         using namespace AnimationSystemInternal;
@@ -991,6 +1177,24 @@ namespace Lumina
 
         NotifyQueue.Prepare();
         const bool bNotifyReaders = NotifyFired.HasReaders();
+
+        // No worker holds a cache between updates, so caches a recompile replaced go here, along with every worker's view into them.
+        {
+            auto Caches = CrowdCaches.Write();
+            if (!Caches->Retired.IsEmpty())
+            {
+                for (FAnimCrowdScratch& Worker : CrowdScratchBySlot)
+                {
+                    Worker.SeenGraph = nullptr;
+                    Worker.SeenEntries.Reset();
+                }
+                Caches->Retired.Reset();
+            }
+        }
+        if (CrowdScratchBySlot.Num() < (int32)Jobs::GetNumThreadSlots())
+        {
+            CrowdScratchBySlot.SetNum((int32)Jobs::GetNumThreadSlots());
+        }
 
         const bool bFuseExecute = CVarFuseAnimExecute.GetValue();
 
@@ -1030,7 +1234,7 @@ namespace Lumina
             {
                 SSkeletalMeshComponent& Mesh = MeshMut.GetMut();
                 SAnimationGraphComponent& AnimGraph = AnimGraphMut.GetMut();
-                UpdateGraph(Context, Entity, AnimGraph, Mesh, DeltaTime, Now, SharedKinematics);
+                UpdateGraph(Context, Entity, AnimGraph, Mesh, DeltaTime, Now, SharedKinematics, *this, *WorldSettings);
                 SendMontageEvents(MontageStarted, MontageBlendingOut, MontageEnded, Entity, AnimGraph.Montages);
 
                 // Run while this mesh is hot, instead of after a barrier that waits for every graph.

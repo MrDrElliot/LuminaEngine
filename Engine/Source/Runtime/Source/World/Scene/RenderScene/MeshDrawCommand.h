@@ -101,16 +101,21 @@ namespace Lumina
 	};
 
 	// SPEC_SKINNED is 0 static-only, 1 skinned-only, 2 runtime branch, and anything unproven takes 2 to avoid a wrong vertex stride.
-	FORCEINLINE uint8 SelectSkinnedMode(const FMeshDrawCommand& Batch)
+	FORCEINLINE uint8 SelectSkinnedMode(bool bAnySkinned, bool bAnyStatic)
 	{
-		if (Batch.bAnySkinned && Batch.bAnyStatic)
+		if (bAnySkinned && bAnyStatic)
 		{
 			return 2u;
 		}
-		if (Batch.bAnySkinned)
+		if (bAnySkinned)
 		{
 			return 1u;
 		}
-		return Batch.bAnyStatic ? 0u : 2u;
+		return bAnyStatic ? 0u : 2u;
+	}
+
+	FORCEINLINE uint8 SelectSkinnedMode(const FMeshDrawCommand& Batch)
+	{
+		return SelectSkinnedMode(Batch.bAnySkinned != 0, Batch.bAnyStatic != 0);
 	}
 }

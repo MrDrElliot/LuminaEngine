@@ -1,6 +1,8 @@
 ﻿#include "RuntimePCH.h"
 #include "Core/Object/Cast.h"
 #include "AnimationGraphVM.h"
+#include "AnimGraphPlan.h"
+#include "Animation/TaskSystem/AnimTaskRecord.h"
 
 #include "Animation/AnimMontage.h"
 #include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
@@ -91,25 +93,27 @@ namespace Lumina
 
     namespace Detail
     {
-        // Operand widths are fixed per opcode, so the compiler and VM must agree on the layout.
-        struct FByteReader
+        // Hands a decoded op's operands back in the order the bytecode stored them, integers from the op and floats from the plan.
+        struct FPlanOperands
         {
-            const uint8* Data = nullptr;
-            SIZE_T Size = 0;
-            SIZE_T Cursor = 0;
-
-            FORCEINLINE bool AtEnd() const { return Cursor >= Size; }
+            const FAnimPlanOp* Op = nullptr;
+            const float* Immediates = nullptr;
+            int32 NextOperand = 0;
 
             template <typename T>
             FORCEINLINE T Read()
             {
-                T Value{};
-                if (Cursor + sizeof(T) <= Size)
+                if constexpr (std::is_same_v<T, float> || std::is_same_v<T, FVector3> || std::is_same_v<T, FQuat>)
                 {
-                    Memory::Memcpy(&Value, Data + Cursor, sizeof(T));
+                    T Value;
+                    Memory::Memcpy(&Value, Immediates, sizeof(T));
+                    Immediates += sizeof(T) / sizeof(float);
+                    return Value;
                 }
-                Cursor += sizeof(T);
-                return Value;
+                else
+                {
+                    return (T)Op->U[NextOperand++];
+                }
             }
         };
 
@@ -265,7 +269,11 @@ namespace Lumina
             return;
         }
 
-        State.ScalarRegisters.Init(0.0f, Graph->NumScalarRegisters);
+        State.ScalarRegisters.Reset();
+        if (State.bPersistentRegisters)
+        {
+            State.ScalarRegisters.Init(0.0f, Graph->NumScalarRegisters);
+        }
         State.StateSlots.Init(0.0f, Graph->NumStateSlots);
 
         State.Parameters.SetNum(Graph->Parameters.Num());
@@ -350,7 +358,85 @@ namespace Lumina
         };
     }
 
-    void FAnimationGraphVM::BuildTasks(const CAnimationGraph* Graph, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, FAnimTaskList& OutTasks, FAnimGraphRootMotion& RootMotionInOut, TVector<FAnimNotifyEvent>* OutEvents, const FAnimMontagePlayer* Montages, const FAnimGraphSceneContext* SceneContext)
+    namespace
+    {
+        // Stands in for a task list in the crowd tier, keeping only the per-frame payload and keying the topology by the path that emitted it.
+        struct FRecordSink
+        {
+            FAnimTaskRecord&   Record;
+            FAnimTaskList*     Captured      = nullptr;
+            FSkeletonResource* Skeleton      = nullptr;
+            int16              OutputTask    = FAnimTask::NoTask;
+            bool               bLockRoot     = false;
+            int32              RootBoneIndex = Constants::kIndexNone;
+
+            // The op being run, which fixes every topology field a task takes from operands and immediates.
+            uint32 CurrentOp = 0;
+            int16  Count     = 0;
+            uint64 Key       = 0x84222325CBF29CE4ull;
+
+            FRecordSink(FAnimTaskRecord& InRecord, FAnimTaskList* InCaptured) : Record(InRecord), Captured(InCaptured) {}
+
+            FORCEINLINE void Mix(uint64 Word)
+            {
+                Key = (Key ^ Word) * 0x9E3779B97F4A7C15ull;
+                Key ^= Key >> 29;
+            }
+
+            void Reset()
+            {
+                Record.Payload.Reset();
+                if (Captured != nullptr)
+                {
+                    Captured->Reset();
+                }
+                Skeleton      = nullptr;
+                OutputTask    = FAnimTask::NoTask;
+                bLockRoot     = false;
+                RootBoneIndex = Constants::kIndexNone;
+                Count         = 0;
+                Key           = 0x84222325CBF29CE4ull;
+            }
+
+            // Type, inputs, clip and bone space are the topology fields that can differ between two runs of one op, since a machine picks its source register by state.
+            FORCEINLINE int16 Add(const FAnimTask& Task)
+            {
+                Mix((uint64)(uint16)CurrentOp | ((uint64)Task.Type << 16) | ((uint64)(Task.Space & 0xF) << 24) | ((uint64)(Task.Mode & 0xF) << 28)
+                    | ((uint64)(uint16)Task.DepA << 32) | ((uint64)(uint16)Task.DepB << 48));
+                if (Task.Type == EAnimTaskType::SampleClip)
+                {
+                    Mix((uint64)(uintptr_t)Task.Clip);
+                }
+                Anim::AppendTaskPayload(Task, Record.Payload);
+                if (Captured != nullptr)
+                {
+                    Captured->Add(Task);
+                }
+                return Count++;
+            }
+
+            void Finish()
+            {
+                Mix((uint64)(uint16)OutputTask | ((uint64)bLockRoot << 16) | ((uint64)(uint32)RootBoneIndex << 32));
+                Mix((uint64)(uintptr_t)Skeleton);
+                Record.TopologyKey = Key;
+                if (Captured != nullptr)
+                {
+                    Captured->Skeleton      = Skeleton;
+                    Captured->OutputTask    = OutputTask;
+                    Captured->bLockRoot     = bLockRoot;
+                    Captured->RootBoneIndex = RootBoneIndex;
+                }
+            }
+        };
+    }
+
+    // Registers a graph's update keeps on the stack before spilling to the heap, sized above the largest shipped graph.
+    constexpr size_t kStackScalarRegisters = 1024;
+
+    // One update, recording tasks into whichever sink the tier wants, so the hero and crowd tiers run the same code.
+    template <typename TSink>
+    static void RunGraph(const CAnimationGraph* Graph, const FAnimGraphPlan& Plan, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, TSink& OutTasks, FAnimGraphRootMotion& RootMotionInOut, TVector<FAnimNotifyEvent>* OutEvents, const FAnimMontagePlayer* Montages, const FAnimGraphSceneContext* SceneContext)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -384,13 +470,13 @@ namespace Lumina
         // Re-initialize when the state is stale or sized for a different graph asset.
         if (!State.bInitialized ||
             State.SourceGraph != Graph ||
-            State.ScalarRegisters.Num() != Graph->NumScalarRegisters ||
+            (State.bPersistentRegisters && State.ScalarRegisters.Num() != Graph->NumScalarRegisters) ||
             State.StateSlots.Num() != Graph->NumStateSlots ||
             State.SyncGroups.Num() != Graph->NumSyncGroups ||
             State.CurveValues.Num() != Graph->CurveNames.Num() ||
             State.Parameters.Num() != Graph->Parameters.Num())
         {
-            InitState(Graph, State);
+            FAnimationGraphVM::InitState(Graph, State);
         }
 
         ++State.UpdateSerial;
@@ -408,13 +494,20 @@ namespace Lumina
 
         OutTasks.Skeleton = Skeleton;
 
-        const int32 NumScalar = State.ScalarRegisters.Num();
+        const int32 NumScalar = Graph->NumScalarRegisters;
         const int32 NumState  = State.StateSlots.Num();
         const int32 NumClips  = Graph->Clips.Num();
         const int32 NumParams = State.Parameters.Num();
         const int32 NumPose   = Graph->NumPoseRegisters;
 
+        // A crowd instance starts every update from zeroed registers, which the record twin benchmark shows matches persistent ones.
+        TVector<float, kStackScalarRegisters> StackScalars;
         float* Scalars = State.ScalarRegisters.GetData();
+        if (!State.bPersistentRegisters)
+        {
+            StackScalars.Init(0.0f, NumScalar);
+            Scalars = StackScalars.GetData();
+        }
 
         // Object registers are pure dataflow within one call, so they are scratch, not per-instance state.
         const SIZE_T NumObjectRegs = Graph->NumObjectRegisters;
@@ -422,6 +515,36 @@ namespace Lumina
 
         thread_local TVector<CObject*> ObjectRegs;
         ObjectRegs.Init(nullptr, IntCastChecked<int32>(NumObjectRegs));
+
+        // Loads whose registers have no other writer were lifted out of the stream, so they run once here.
+        for (const FAnimPlanConstant& Constant : Plan.Constants)
+        {
+            if (Constant.Register < NumScalar)
+            {
+                Scalars[Constant.Register] = Constant.Value;
+            }
+        }
+        for (const FAnimPlanLoad& Load : Plan.ParameterLoads)
+        {
+            if (Load.Register < NumScalar)
+            {
+                Scalars[Load.Register] = Load.Source < NumParams ? State.Parameters[Load.Source] : 0.0f;
+            }
+        }
+        for (const FAnimPlanLoad& Load : Plan.ObjectParameterLoads)
+        {
+            if (Load.Register < NumObjectRegs)
+            {
+                ObjectRegs[Load.Register] = Load.Source < NumObjectParams ? State.ObjectParameters[Load.Source].Get() : nullptr;
+            }
+        }
+        for (const FAnimPlanLoad& Load : Plan.ObjectConstantLoads)
+        {
+            if (Load.Register < NumObjectRegs)
+            {
+                ObjectRegs[Load.Register] = Load.Source < (uint16)Graph->ObjectConstants.Num() ? Graph->ObjectConstants[Load.Source].Get() : nullptr;
+            }
+        }
 
         const auto ReadObjectReg = [&](uint16 Reg) -> CObject*
         {
@@ -909,9 +1032,9 @@ namespace Lumina
             return Out;
         };
 
-        Detail::FByteReader Reader;
-        Reader.Data = Graph->Bytecode.GetData();
-        Reader.Size = Graph->Bytecode.Num();
+        const FAnimPlanOp* Ops = Plan.Ops.GetData();
+        const uint32 NumOps = (uint32)Plan.Ops.Num();
+        uint32 Pc = 0;
 
         // A machine whose states carry their bytecode ranges runs only the one it is in, then returns here.
         struct FMachineFrame
@@ -928,14 +1051,12 @@ namespace Lumina
 
         const auto StateCodeOffset = [&](SIZE_T Table, int32 StateIndex, bool bEnd) -> SIZE_T
         {
-            uint32 Offset = 0;
-            Memory::Memcpy(&Offset, Reader.Data + Table + ((SIZE_T)StateIndex * 2 + (bEnd ? 1 : 0)) * sizeof(uint32), sizeof(uint32));
-            return Offset;
+            return (SIZE_T)Plan.Jumps[(int32)Table + 1 + StateIndex * 2 + (bEnd ? 1 : 0)];
         };
 
-        while (!Reader.AtEnd())
+        while (Pc < NumOps)
         {
-            if (!MachineFrames.IsEmpty() && Reader.Cursor == MachineFrames.Last().ReturnAt)
+            if (!MachineFrames.IsEmpty() && Pc == MachineFrames.Last().ReturnAt)
             {
                 FMachineFrame& Frame = MachineFrames.Last();
                 if (!Frame.bRanTarget)
@@ -948,23 +1069,29 @@ namespace Lumina
                     {
                         Frame.bRanTarget = true;
                         Frame.ReturnAt   = StateCodeOffset(Frame.Table, Decision.Current, true);
-                        Reader.Cursor    = StateCodeOffset(Frame.Table, Decision.Current, false);
+                        Pc               = (uint32)StateCodeOffset(Frame.Table, Decision.Current, false);
                         continue;
                     }
                 }
 
-                Reader.Cursor = Frame.StatesEnd;
+                Pc = (uint32)Frame.StatesEnd;
                 MachineFrames.Pop();
                 continue;
             }
 
-            const EAnimOp Op = (EAnimOp)Reader.Read<uint8>();
+            const FAnimPlanOp& Instruction = Ops[Pc++];
+            if constexpr (requires { OutTasks.CurrentOp; })
+            {
+                OutTasks.CurrentOp = Pc;
+            }
+            const EAnimOp Op = (EAnimOp)Instruction.Op;
+            Detail::FPlanOperands Reader{ &Instruction, Plan.Immediates.GetData() + Instruction.Extra };
 
             switch (Op)
             {
             case EAnimOp::Halt:
             {
-                Reader.Cursor = Reader.Size;
+                Pc = NumOps;
                 break;
             }
 
@@ -2054,14 +2181,13 @@ namespace Lumina
             {
                 const uint16 SmIdx     = Reader.Read<uint16>();
                 const uint16 NumRanges = Reader.Read<uint16>();
-                const SIZE_T StatesEnd = Reader.Read<uint32>();
-                const SIZE_T Table     = Reader.Cursor;
-                Reader.Cursor += (SIZE_T)NumRanges * 2 * sizeof(uint32);
+                const SIZE_T Table     = Instruction.Extra;
+                const SIZE_T StatesEnd = Plan.Jumps[(int32)Table];
 
                 // Anything that does not line up falls through and runs every state in order, which is always correct.
                 if (NumRanges == 0 || !MachineIsValid(SmIdx) ||
                     NumRanges != Graph->StateMachines[SmIdx].StatePoseRegisters.Num() ||
-                    Reader.Cursor > StatesEnd || StatesEnd > Reader.Size)
+                    Pc > StatesEnd || StatesEnd > NumOps)
                 {
                     break;
                 }
@@ -2071,7 +2197,7 @@ namespace Lumina
                 {
                     const SIZE_T Begin = StateCodeOffset(Table, StateIndex, false);
                     const SIZE_T End   = StateCodeOffset(Table, StateIndex, true);
-                    bRangesValid = Begin >= Reader.Cursor && Begin <= End && End <= StatesEnd;
+                    bRangesValid = Begin >= Pc && Begin <= End && End <= StatesEnd;
                 }
                 if (!bRangesValid)
                 {
@@ -2088,7 +2214,7 @@ namespace Lumina
                 Frame.Table     = Table;
                 MachineFrames.Add(Frame);
 
-                Reader.Cursor = StateCodeOffset(Table, Current, false);
+                Pc = (uint32)StateCodeOffset(Table, Current, false);
                 break;
             }
 
@@ -2335,7 +2461,18 @@ namespace Lumina
                     }
                 }
 
-                Reader.Cursor = Reader.Size;
+                Pc = NumOps;
+                break;
+            }
+
+            case EAnimOp::Forward:
+            {
+                const uint16 Src = Reader.Read<uint16>();
+                const uint16 Dst = Reader.Read<uint16>();
+                SetPoseTask(Dst, PoseTaskFor(Src));
+                SetPoseTags(Dst, DeltaOf(Src), EventsOf(Src));
+                SetPoseSync(Dst, SyncOf(Src));
+                CopyCurves(Dst, Src);
                 break;
             }
 
@@ -2466,7 +2603,7 @@ namespace Lumina
             default:
             {
                 // Unknown opcode, so the stream is corrupt or version-mismatched.
-                Reader.Cursor = Reader.Size;
+                Pc = NumOps;
                 break;
             }
             }
@@ -2480,5 +2617,22 @@ namespace Lumina
             Ref.Type = EAnimTaskType::ReferencePose;
             OutTasks.OutputTask = OutTasks.Add(Ref);
         }
+    }
+
+    void FAnimationGraphVM::BuildTasks(const CAnimationGraph* Graph, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, FAnimTaskList& OutTasks, FAnimGraphRootMotion& RootMotionInOut, TVector<FAnimNotifyEvent>* OutEvents, const FAnimMontagePlayer* Montages, const FAnimGraphSceneContext* SceneContext)
+    {
+        RunGraph(Graph, Graph->Plan, Skeleton, DeltaTime, State, OutTasks, RootMotionInOut, OutEvents, Montages, SceneContext);
+    }
+
+    void FAnimationGraphVM::BuildTasks(const CAnimationGraph* Graph, const FAnimGraphPlan& Plan, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, FAnimTaskList& OutTasks, FAnimGraphRootMotion& RootMotionInOut, TVector<FAnimNotifyEvent>* OutEvents, const FAnimMontagePlayer* Montages, const FAnimGraphSceneContext* SceneContext)
+    {
+        RunGraph(Graph, Plan, Skeleton, DeltaTime, State, OutTasks, RootMotionInOut, OutEvents, Montages, SceneContext);
+    }
+
+    void FAnimationGraphVM::BuildRecord(const CAnimationGraph* Graph, const FAnimGraphPlan& Plan, FSkeletonResource* Skeleton, float DeltaTime, FAnimGraphVMState& State, FAnimTaskRecord& OutRecord, FAnimTaskList* CapturedTasks, FAnimGraphRootMotion& RootMotionInOut, TVector<FAnimNotifyEvent>* OutEvents, const FAnimMontagePlayer* Montages, const FAnimGraphSceneContext* SceneContext)
+    {
+        FRecordSink Sink(OutRecord, CapturedTasks);
+        RunGraph(Graph, Plan, Skeleton, DeltaTime, State, Sink, RootMotionInOut, OutEvents, Montages, SceneContext);
+        Sink.Finish();
     }
 }

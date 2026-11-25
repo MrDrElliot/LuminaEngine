@@ -21,6 +21,7 @@ namespace Lumina
         Triangle,
         Square,
         Hexagon,
+        Execution,
     };
 
     // How a pin answers the wire being pulled right now.
@@ -202,6 +203,7 @@ namespace Lumina
 
         // The pin Alt-clicked this frame, whose wires the user wants gone.
         uint32 GetBreakLinksPin() const { return BreakLinksPin; }
+        uint64 GetBreakLink() const { return BreakLinkID; }
 
         // A left press on empty canvas this frame.
         bool GetBackgroundClick(ImVec2& OutCanvasPos) const { OutCanvasPos = BackgroundClickPos; return bBackgroundClicked; }
@@ -375,6 +377,7 @@ namespace Lumina
         int64                            DoubleClickedNode = 0;
         uint64                           DoubleClickedLink = 0;
         uint32                           BreakLinksPin = 0;
+        uint64                           BreakLinkID = 0;
         bool                             bBackgroundClicked = false;
         ImVec2                           BackgroundClickPos;
         uint8                            Shortcuts = 0;

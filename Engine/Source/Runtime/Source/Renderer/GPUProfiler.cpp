@@ -320,11 +320,22 @@ namespace Lumina
             Out.Queue       = Pending.Queue;
             Out.StartMs     = (double)(Begin - Origin) * ToMs;
             Out.EndMs       = (double)(End - Origin) * ToMs;
+            Out.SelfMs      = Out.DurationMs();
 
             FrameEnd = Math::Max(FrameEnd, End);
             if (Pending.ParentIndex == Constants::kIndexNone)
             {
                 RootIntervals[(uint32)Pending.Queue].Add(FInterval{ Begin, End });
+            }
+        }
+
+        // A child records on its parent's command list, so siblings run in order and their sum never exceeds the parent.
+        for (const FGPUProfileScope& Scope : Latest.Scopes)
+        {
+            if (Scope.ParentIndex != Constants::kIndexNone)
+            {
+                FGPUProfileScope& Parent = Latest.Scopes[Scope.ParentIndex];
+                Parent.SelfMs = Math::Max(0.0, Parent.SelfMs - Scope.DurationMs());
             }
         }
 

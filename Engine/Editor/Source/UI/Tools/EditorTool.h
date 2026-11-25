@@ -202,6 +202,9 @@ namespace Lumina
         virtual void OnSave() {}
         NODISCARD virtual bool IsUnsavedDocument() { return false; }
 
+        // Closing without saving, so the file stays the truth and nothing the tab changed is written by a later save.
+        virtual void DiscardUnsavedEdits() {}
+
         // Names the unsaved items inside the document, for a save prompt to list.
         NODISCARD virtual TVector<FString> GetUnsavedItemLabels() { return {}; }
 

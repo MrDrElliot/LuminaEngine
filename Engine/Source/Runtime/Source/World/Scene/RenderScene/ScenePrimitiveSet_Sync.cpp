@@ -52,7 +52,7 @@ namespace Lumina
             return;
         }
 
-        Jobs::ParallelForOrSerial(Count, ScenePrimitiveSetInternal::kParallelSyncThreshold, [this, &Pools](const Jobs::FParallelRange& Range)
+        Jobs::ParallelForOrSerial(Count, ScenePrimitiveSetInternal::kParallelSyncThreshold, [this, &Pools](const Jobs::FRange& Range)
         {
             for (uint32 Work = Range.Start; Work < Range.End; ++Work)
             {
@@ -344,7 +344,7 @@ namespace Lumina
         }
 
         ResetParallelBuckets();
-        Jobs::ParallelFor(Count, [this, &RefreshOne](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(Count, [this, &RefreshOne](const Jobs::FRange& Range)
         {
             FDirtySlotBucket& Bucket = BucketFor(Range.Thread);
             for (uint32 Work = Range.Start; Work < Range.End; ++Work)
@@ -644,7 +644,7 @@ namespace Lumina
                 Bucket.Reset();
             }
 
-            Jobs::ParallelFor((uint32)Moved.Num(), [this, Moved](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor((uint32)Moved.Num(), [this, Moved](const Jobs::FRange& Range)
             {
                 TVector<ECS::FEntity>& Bucket = ParallelOverlaps[Range.Thread];
                 for (uint32 i = Range.Start; i < Range.End; ++i)
@@ -843,7 +843,7 @@ namespace Lumina
         SyncStats.RefreshInstanceCalls += Count;
 
         ResetParallelBuckets();
-        Jobs::ParallelFor(Count, [this, &Pools](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(Count, [this, &Pools](const Jobs::FRange& Range)
         {
             TVector<uint32>& Bucket = BucketFor(Range.Thread).Slots;
             for (uint32 i = Range.Start; i < Range.End; ++i)

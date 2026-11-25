@@ -7,6 +7,7 @@
 
 #include "algorithm.h"
 #include "math_internal.h"
+#include "qsort.h"
 #include "shape.h"
 #include "simd.h"
 
@@ -154,6 +155,8 @@ typedef struct b3HullBuilder
 	int finalVertexCount;
 	int finalHalfEdgeCount;
 	int finalFaceCount;
+
+	bool failed;
 } b3HullBuilder;
 
 static inline void b3QHList_Init( b3QHListNode* head )
@@ -398,7 +401,8 @@ static void b3FindFarthestPointsAlongCardinalAxes( int* index1Out, int* index2Ou
 	}
 }
 
-static int b3FindFarthestPointFromLine( int index1, int index2, float tolerance, int vertexCount, const b3Vec3* vertexBase )
+static int b3FindFarthestPointFromLine( int index1, int index2, float tolerance, int vertexCount,
+										const b3Vec3* vertexBase )
 {
 	b3Vec3 a = vertexBase[index1];
 	b3Vec3 b = vertexBase[index2];
@@ -526,7 +530,7 @@ static void b3LinkFaces( b3QHFace* face1, int index1, b3QHFace* face2, int index
 	edge2->twin = edge1;
 }
 
-static void b3NewellPlane( b3QHFace* face )
+static bool b3NewellPlane( b3QHFace* face )
 {
 	int count = 0;
 	b3Vec3 centroid = b3Vec3_zero;
@@ -556,20 +560,22 @@ static void b3NewellPlane( b3QHFace* face )
 	}
 	while ( edge != face->edge );
 
-	B3_ASSERT( count > 0 );
+	float length = b3Length( normal );
+	if ( count < 3 || ( length > 0.0f ) == false )
+	{
+		return false;
+	}
+
 	centroid = b3MulSV( 1.0f / (float)count, centroid );
 	centroid = b3Add( centroid, origin );
-
-	float length = b3Length( normal );
-	B3_VALIDATE( length > 0.0f );
 	normal = b3MulSV( 1.0f / length, normal );
 
 	face->centroid = centroid;
 	face->plane = b3MakePlaneFromNormalAndPoint( normal, centroid );
 	face->area = 0.5f * length;
+	return true;
 }
 
-#if B3_DEBUG
 static bool b3CheckConsistency( const b3QHFace* face )
 {
 	if ( face->mark == B3_MARK_DELETE )
@@ -627,7 +633,6 @@ static bool b3CheckConsistency( const b3QHFace* face )
 
 	return true;
 }
-#endif
 
 static void b3HullBuilder_ComputeTolerance( b3HullBuilder* b, int pointCount, const b3Vec3* points )
 {
@@ -764,7 +769,8 @@ static void b3HullBuilder_RecacheConflicts( b3QHFace* face, float minOutside )
 	b3QHVertex* maxVertex = NULL;
 	float maxDistance = minOutside;
 
-	for ( b3QHListNode* node = face->conflictListHead.link.next; node != &face->conflictListHead.link; node = node->next )
+	for ( b3QHListNode* node = face->conflictListHead.link.next; node != &face->conflictListHead.link;
+		  node = node->next )
 	{
 		b3QHVertex* vertex = (b3QHVertex*)node;
 		float distance = b3PlaneSeparation( face->plane, vertex->position );
@@ -784,7 +790,8 @@ static b3QHVertex* b3HullBuilder_NextConflictVertex( const b3HullBuilder* b )
 	b3QHVertex* maxVertex = NULL;
 	float maxDistance = b->minOutside;
 
-	for ( const b3QHListNode* faceNode = b->faceList.link.next; faceNode != &b->faceList.link; faceNode = faceNode->next )
+	for ( const b3QHListNode* faceNode = b->faceList.link.next; faceNode != &b->faceList.link;
+		  faceNode = faceNode->next )
 	{
 		const b3QHFace* face = (const b3QHFace*)faceNode;
 		if ( face->maxConflict != NULL && face->maxConflictDistance > maxDistance )
@@ -817,7 +824,8 @@ static void b3HullBuilder_DrainConflictList( b3HullBuilder* b, b3QHFace* face )
 // `entryEdge` is the half-edge in `face` whose twin lies in the just-deleted parent face, or
 // NULL for the seed. The frame skips `entryEdge` on recursive entries (it would be ignored
 // anyway since the parent's mark is now DELETE, but skipping saves one iteration).
-static void b3HullBuilder_EnterHorizonFace( b3HullBuilder* b, b3QHFace* face, b3QHHalfEdge* entryEdge, b3HorizonFrame* frameOut )
+static void b3HullBuilder_EnterHorizonFace( b3HullBuilder* b, b3QHFace* face, b3QHHalfEdge* entryEdge,
+											b3HorizonFrame* frameOut )
 {
 	face->mark = B3_MARK_DELETE;
 	b3HullBuilder_DrainConflictList( b, face );
@@ -940,6 +948,12 @@ static void b3HullBuilder_ConnectEdges( b3HullBuilder* b, b3QHHalfEdge* prev, b3
 			twin = deadEdge2->twin;
 			B3_ASSERT( twin->face->mark != B3_MARK_DELETE );
 
+			if ( twin->face == prev->face )
+			{
+				b->failed = true;
+				return;
+			}
+
 			b3QHFace* opposingFace = prev->twin->face;
 			opposingFace->mark = B3_MARK_DELETE;
 			B3_ASSERT( b->mergedFacesCount < b->mergedFacesCapacity );
@@ -984,7 +998,12 @@ static void b3HullBuilder_ConnectEdges( b3HullBuilder* b, b3QHHalfEdge* prev, b3
 		}
 
 		// Twin->face changed shape; recompute its plane and refresh its cached max conflict.
-		b3NewellPlane( twin->face );
+		if ( b3NewellPlane( twin->face ) == false )
+		{
+			b->failed = true;
+			return;
+		}
+
 		b3HullBuilder_RecacheConflicts( twin->face, b->minOutside );
 	}
 	else
@@ -1052,6 +1071,12 @@ static void b3HullBuilder_ConnectFaces( b3HullBuilder* b, b3QHHalfEdge* edge )
 
 		edgePrev = edgePrev->prev;
 		twinNext = twinNext->next;
+
+		if ( edgePrev == edge )
+		{
+			b->failed = true;
+			return;
+		}
 	}
 	B3_ASSERT( edgePrev->face != twinNext->face );
 
@@ -1062,6 +1087,12 @@ static void b3HullBuilder_ConnectFaces( b3HullBuilder* b, b3QHHalfEdge* edge )
 
 		edgeNext = edgeNext->next;
 		twinPrev = twinPrev->prev;
+
+		if ( edgeNext == edge )
+		{
+			b->failed = true;
+			return;
+		}
 	}
 	B3_ASSERT( edgeNext->face != twinPrev->face );
 
@@ -1082,10 +1113,25 @@ static void b3HullBuilder_ConnectFaces( b3HullBuilder* b, b3QHHalfEdge* edge )
 	b3HullBuilder_DestroyEdges( b, edgePrev->next, edgeNext );
 	b3HullBuilder_DestroyEdges( b, twinPrev->next, twinNext );
 
-	b3HullBuilder_ConnectEdges( b, edgePrev, twinNext );
-	b3HullBuilder_ConnectEdges( b, twinPrev, edgeNext );
+	if ( twinNext == twinPrev && edgePrev->twin->face == twinNext->twin->face )
+	{
+		b->failed = true;
+		return;
+	}
 
-	b3NewellPlane( face );
+	b3HullBuilder_ConnectEdges( b, edgePrev, twinNext );
+	if ( b->failed )
+	{
+		return;
+	}
+
+	b3HullBuilder_ConnectEdges( b, twinPrev, edgeNext );
+	if ( b->failed || b3NewellPlane( face ) == false )
+	{
+		b->failed = true;
+		return;
+	}
+
 	// Existing conflicts now have stale distances under the new plane; AbsorbFaces will then
 	// add more incrementally and update the cache as it goes.
 	b3HullBuilder_RecacheConflicts( face, b->minOutside );
@@ -1107,7 +1153,7 @@ static bool b3HullBuilder_MergeConcave( b3HullBuilder* b, b3QHFace* face )
 		if ( b3IsEdgeConcave( edge, b->minRadius ) || b3IsEdgeConcave( twin, b->minRadius ) )
 		{
 			b3HullBuilder_ConnectFaces( b, edge );
-			return true;
+			return b->failed == false;
 		}
 
 		edge = edge->next;
@@ -1128,7 +1174,7 @@ static bool b3HullBuilder_MergeCoplanar( b3HullBuilder* b, b3QHFace* face )
 		if ( !b3IsEdgeConvex( edge, b->minRadius ) || !b3IsEdgeConvex( twin, b->minRadius ) )
 		{
 			b3HullBuilder_ConnectFaces( b, edge );
-			return true;
+			return b->failed == false;
 		}
 
 		edge = edge->next;
@@ -1167,6 +1213,10 @@ static void b3HullBuilder_MergeFaces( b3HullBuilder* b )
 
 			B3_ASSERT( bestEdge != NULL );
 			b3HullBuilder_ConnectFaces( b, bestEdge );
+			if ( b->failed )
+			{
+				return;
+			}
 		}
 	}
 
@@ -1178,6 +1228,11 @@ static void b3HullBuilder_MergeFaces( b3HullBuilder* b )
 			while ( b3HullBuilder_MergeConcave( b, face ) )
 			{
 			}
+
+			if ( b->failed )
+			{
+				return;
+			}
 		}
 	}
 
@@ -1188,6 +1243,11 @@ static void b3HullBuilder_MergeFaces( b3HullBuilder* b )
 		{
 			while ( b3HullBuilder_MergeCoplanar( b, face ) )
 			{
+			}
+
+			if ( b->failed )
+			{
+				return;
 			}
 		}
 	}
@@ -1293,6 +1353,11 @@ static void b3HullBuilder_AddVertexToHull( b3HullBuilder* b, b3QHVertex* vertex 
 	B3_ASSERT( b->coneCount >= 3 );
 
 	b3HullBuilder_MergeFaces( b );
+	if ( b->failed )
+	{
+		return;
+	}
+
 	b3HullBuilder_ResolveVertices( b );
 	b3HullBuilder_ResolveFaces( b );
 }
@@ -1345,19 +1410,19 @@ static void b3HullBuilder_CleanHull( b3HullBuilder* b, b3Vec3 origin )
 	b->finalFaceCount = faceCount;
 }
 
-#if B3_DEBUG
 static bool b3HullBuilder_IsConsistent( const b3HullBuilder* b )
 {
 	int v = b->finalVertexCount;
 	int e = b->finalHalfEdgeCount / 2;
 	int f = b->finalFaceCount;
 
-	if ( v - e + f != 2 )
+	if ( v - e + f != 2 || f < 4 )
 	{
 		return false;
 	}
 
-	for ( const b3QHListNode* faceNode = b->faceList.link.next; faceNode != &b->faceList.link; faceNode = faceNode->next )
+	for ( const b3QHListNode* faceNode = b->faceList.link.next; faceNode != &b->faceList.link;
+		  faceNode = faceNode->next )
 	{
 		const b3QHFace* face = (const b3QHFace*)faceNode;
 		if ( face->edge->face != face )
@@ -1416,19 +1481,50 @@ static bool b3HullBuilder_IsConsistent( const b3HullBuilder* b )
 
 	return true;
 }
-#endif
 
-static bool b3HullBuilder_HasHull( const b3HullBuilder* b )
+// todo comment
+static bool b3HullBuilder_IsThin( const b3HullBuilder* b )
 {
-	int v = b->finalVertexCount;
-	int e = b->finalHalfEdgeCount / 2;
-	int f = b->finalFaceCount;
-	return v - e + f == 2 && f >= 4;
+	b3QHVertex* first = (b3QHVertex*)b->vertexList.link.next;
+	b3Vec3 lower = first->position;
+	b3Vec3 upper = first->position;
+	for ( b3QHListNode* node = b->vertexList.link.next; node != &b->vertexList.link; node = node->next )
+	{
+		b3QHVertex* vertex = (b3QHVertex*)node;
+		lower = b3Min( lower, vertex->position );
+		upper = b3Max( upper, vertex->position );
+	}
+
+	b3Vec3 extent = b3Sub( upper, lower );
+	float maxExtent = b3MaxFloat( extent.x, b3MaxFloat( extent.y, extent.z ) );
+	float minWidth = b3MaxFloat( 0.001f * maxExtent, B3_LINEAR_SLOP );
+
+	for ( b3QHListNode* faceNode = b->faceList.link.next; faceNode != &b->faceList.link; faceNode = faceNode->next )
+	{
+		b3QHFace* face = (b3QHFace*)faceNode;
+		float width = 0.0f;
+		for ( b3QHListNode* node = b->vertexList.link.next; node != &b->vertexList.link; node = node->next )
+		{
+			b3QHVertex* vertex = (b3QHVertex*)node;
+			width = b3MaxFloat( width, -b3PlaneSeparation( face->plane, vertex->position ) );
+			if ( width >= minWidth )
+			{
+				break;
+			}
+		}
+
+		if ( width < minWidth )
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
-// Build the entire hull. Returns true iff the result satisfies Euler's identity.
-static bool b3HullBuilder_Construct( b3HullBuilder* b, const b3Vec3* points, int pointCount, int maxVertexCount, b3Vec3 origin,
-									 b3Vec3* shiftedPoints )
+// Returns false if hull creation failed.
+static bool b3HullBuilder_Construct( b3HullBuilder* b, const b3Vec3* points, int pointCount, int maxVertexCount,
+									 b3Vec3 origin, b3Vec3* shiftedPoints )
 {
 	if ( pointCount < 4 )
 	{
@@ -1453,17 +1549,22 @@ static bool b3HullBuilder_Construct( b3HullBuilder* b, const b3Vec3* points, int
 	while ( vertex && budget > 0 )
 	{
 		b3HullBuilder_AddVertexToHull( b, vertex );
+		if ( b->failed )
+		{
+			return false;
+		}
+
 		vertex = b3HullBuilder_NextConflictVertex( b );
 		budget -= 1;
 	}
 
+	if ( b3HullBuilder_IsThin( b ) )
+	{
+		return false;
+	}
+
 	b3HullBuilder_CleanHull( b, origin );
-
-#if B3_DEBUG
-	B3_ASSERT( b3HullBuilder_IsConsistent( b ) );
-#endif
-
-	return b3HullBuilder_HasHull( b );
+	return b3HullBuilder_IsConsistent( b );
 }
 
 typedef struct b3HullWorkSizes
@@ -2195,7 +2296,8 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 	int faceCount = 0;
 	int edgeCount = 0;
 
-	for ( b3QHListNode* faceNode = builder.faceList.link.next; faceNode != &builder.faceList.link; faceNode = faceNode->next )
+	for ( b3QHListNode* faceNode = builder.faceList.link.next; faceNode != &builder.faceList.link;
+		  faceNode = faceNode->next )
 	{
 		B3_ASSERT( faceCount < B3_HULL_MAX_COUNT );
 
@@ -2599,6 +2701,11 @@ b3HullData* b3CloneAndTransformHull( const b3HullData* original, b3Transform tra
 
 void b3DestroyHull( b3HullData* hull )
 {
+	if ( hull == NULL )
+	{
+		return;
+	}
+
 	b3Free( hull, hull->byteCount );
 }
 
@@ -3098,20 +3205,20 @@ int b3SimplifyHull2D( b3Point2D* hull, int count1, int target )
 	return count2;
 }
 
-// Sort comparator: by x, then by y. Insertion since n is typically 20 or less.
-static void b3Sort2D( b3Point2D* pts, int count )
+// Comparator for sorting points for the 2D hull.
+static inline bool b3IsPoint2DLess( const b3Point2D* a, const b3Point2D* b )
 {
-	for ( int i = 1; i < count; ++i )
+	if ( a->p.x != b->p.x )
 	{
-		b3Point2D base = pts[i];
-		int j = i - 1;
-		while ( j >= 0 && ( pts[j].p.x > base.p.x || ( pts[j].p.x == base.p.x && pts[j].p.y > base.p.y ) ) )
-		{
-			pts[j + 1] = pts[j];
-			j -= 1;
-		}
-		pts[j + 1] = base;
+		return a->p.x < b->p.x;
 	}
+
+	if ( a->p.y != b->p.y )
+	{
+		return a->p.y < b->p.y;
+	}
+
+	return a->originalIndex < b->originalIndex;
 }
 
 // Welds points that have been sorted O(n) time
@@ -3148,79 +3255,151 @@ static int b3Weld2D( b3Point2D* pts, int count1 )
 	return count2;
 }
 
+// Only merge points that line up exactly.
+static int b3MergeExact2D( b3Point2D* pts, int count1 )
+{
+	float separationTol = B3_LINEAR_SLOP;
+
+	int count2 = 0;
+	for ( int i = 0; i < count1; i++ )
+	{
+		b3Point2D point = pts[i];
+		if ( count2 > 0 && pts[count2 - 1].p.x == point.p.x && pts[count2 - 1].p.y == point.p.y )
+		{
+			if ( point.separation < pts[count2 - 1].separation - separationTol )
+			{
+				pts[count2 - 1] = point;
+			}
+		}
+		else
+		{
+			pts[count2] = point;
+			count2 += 1;
+		}
+	}
+
+	return count2;
+}
+
 // Andrew's monotone chain convex hull algorithm
 // hull must have space for 2 * count1 points
-int b3Hull2D( b3Point2D* pts, int count, b3Point2D* hull )
+int b3Hull2D( b3Point2D* pts, int count, b3Point2D* hull, int flags )
 {
-	int count1 = count;
-
-	if ( count1 <= 0 )
+	if ( count <= 0 )
 	{
 		return 0;
 	}
 
-	if ( count1 == 1 )
+#define LESS( i, j ) b3IsPoint2DLess( pts + (int)( i ), pts + (int)( j ) )
+#define SWAP( i, j )                                                                                                   \
+	do                                                                                                                 \
+	{                                                                                                                  \
+		b3Point2D swapPoint = pts[(int)( i )];                                                                         \
+		pts[(int)( i )] = pts[(int)( j )];                                                                             \
+		pts[(int)( j )] = swapPoint;                                                                                   \
+	}                                                                                                                  \
+	while ( 0 )
+
+	QSORT( count, LESS, SWAP );
+
+#undef LESS
+#undef SWAP
+
+	int count1;
+	if ( flags & b3_hull2DExactMerge )
 	{
-		hull[0] = pts[0];
-		return 1;
+		count1 = b3MergeExact2D( pts, count );
+	}
+	else
+	{
+		count1 = b3Weld2D( pts, count );
 	}
 
-	b3Sort2D( pts, count1 );
-	count1 = b3Weld2D( pts, count1 );
-
-	if ( count1 == 1 )
-	{
-		hull[0] = pts[0];
-		return 1;
-	}
-
-	if ( count1 == 2 )
-	{
-		hull[0] = pts[0];
-		hull[1] = pts[1];
-		return 2;
-	}
+	bool keepCollinear = ( flags & b3_hull2DKeepCollinear ) != 0;
 
 	int count2 = 0;
-
-	for ( int i = 0; i < count1; i++ )
+	if ( count1 <= 2 )
 	{
-		while ( count2 >= 2 )
+		for ( int i = 0; i < count1; i++ )
 		{
-			float area = b3Cross2D( hull[count2 - 2].p, hull[count2 - 1].p, pts[i].p );
-			if ( area > 0.0f )
-			{
-				break;
-			}
-
-			count2 -= 1;
+			hull[i] = pts[i];
 		}
 
-		B3_VALIDATE( count2 < 2 * count1 );
-		hull[count2] = pts[i];
-		count2 += 1;
+		count2 = count1;
 	}
-
-	int lowerCount = count2 + 1;
-
-	for ( int i = count1 - 2; i >= 0; i-- )
+	else
 	{
-		while ( count2 >= lowerCount )
+		for ( int i = 0; i < count1; i++ )
 		{
-			float area = b3Cross2D( hull[count2 - 2].p, hull[count2 - 1].p, pts[i].p );
-			if ( area > 0.0f )
+			while ( count2 >= 2 )
 			{
-				break;
+				float area = b3Cross2D( hull[count2 - 2].p, hull[count2 - 1].p, pts[i].p );
+				if ( area > 0.0f || ( keepCollinear && area == 0.0f ) )
+				{
+					break;
+				}
+
+				count2 -= 1;
 			}
 
-			count2 -= 1;
+			B3_VALIDATE( count2 < 2 * count1 );
+			hull[count2] = pts[i];
+			count2 += 1;
 		}
 
-		B3_VALIDATE( count2 < 2 * count1 );
-		hull[count2] = pts[i];
-		count2 += 1;
+		int lowerCount = count2 + 1;
+		int lowerIndex = count2 - 2;
+
+		for ( int i = count1 - 2; i >= 0; i-- )
+		{
+			if ( lowerIndex >= 0 && hull[lowerIndex].p.x == pts[i].p.x && hull[lowerIndex].p.y == pts[i].p.y )
+			{
+				lowerIndex -= 1;
+				if ( i > 0 )
+				{
+					continue;
+				}
+			}
+
+			while ( count2 >= lowerCount )
+			{
+				float area = b3Cross2D( hull[count2 - 2].p, hull[count2 - 1].p, pts[i].p );
+				if ( area > 0.0f || ( keepCollinear && area == 0.0f ) )
+				{
+					break;
+				}
+
+				count2 -= 1;
+			}
+
+			B3_VALIDATE( count2 < 2 * count1 );
+			hull[count2] = pts[i];
+			count2 += 1;
+		}
+
+		B3_VALIDATE( hull[0].originalIndex == hull[count2 - 1].originalIndex );
+		count2 -= 1;
 	}
 
-	B3_VALIDATE( hull[0].originalIndex == hull[count2 - 1].originalIndex );
-	return count2 - 1;
+	B3_VALIDATE( count2 <= count1 );
+
+	if ( flags & b3_hull2DIndexOrder )
+	{
+#define LESS( i, j ) ( hull[(int)( i )].originalIndex < hull[(int)( j )].originalIndex )
+#define SWAP( i, j )                                                                                                   \
+	do                                                                                                                 \
+	{                                                                                                                  \
+		b3Point2D swapPoint = hull[(int)( i )];                                                                        \
+		hull[(int)( i )] = hull[(int)( j )];                                                                           \
+		hull[(int)( j )] = swapPoint;                                                                                  \
+	}                                                                                                                  \
+	while ( 0 )
+
+		QSORT( count2, LESS, SWAP );
+
+#undef LESS
+#undef SWAP
+	}
+
+	return count2;
 }

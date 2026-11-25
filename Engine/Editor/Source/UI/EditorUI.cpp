@@ -1952,10 +1952,14 @@ namespace Lumina
             return false;
         }
 
-        if (Tool->IsUnsavedDocument() && !bDiscardUnsaved)
+        if (Tool->IsUnsavedDocument())
         {
-            OutError = Lumina::Format("'{}' has unsaved changes. Save it, or pass bDiscardUnsaved.", Name);
-            return false;
+            if (!bDiscardUnsaved)
+            {
+                OutError = Lumina::Format("'{}' has unsaved changes. Save it, or pass bDiscardUnsaved.", Name);
+                return false;
+            }
+            Tool->DiscardUnsavedEdits();
         }
 
         RequestCloseTool(Tool);
@@ -4241,6 +4245,7 @@ namespace Lumina
                 {
                     if (IsOpen(Tool))
                     {
+                        Tool->DiscardUnsavedEdits();
                         RequestCloseTool(Tool);
                     }
                 }

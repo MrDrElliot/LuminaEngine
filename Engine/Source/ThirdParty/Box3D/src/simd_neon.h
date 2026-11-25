@@ -89,14 +89,6 @@ static inline b3FloatW4 b3MaxW4( b3FloatW4 a, b3FloatW4 b )
 	return vmaxq_f32( a, b );
 }
 
-// clamp a to [-b, b]
-static inline b3FloatW4 b3SymClampW4( b3FloatW4 a, b3FloatW4 b )
-{
-	b3FloatW4 nb = b3NegW4( b );
-	b3FloatW4 c = b3MaxW4( nb, a );
-	return b3MinW4( c, b );
-}
-
 static inline b3FloatW4 b3AndW4( b3FloatW4 a, b3FloatW4 b )
 {
 	return vreinterpretq_f32_u32( vandq_u32( vreinterpretq_u32_f32( a ), vreinterpretq_u32_f32( b ) ) );

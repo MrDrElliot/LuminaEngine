@@ -4887,6 +4887,7 @@ namespace Lumina::RHI
         
         VkPipeline VulkanPipeline;
         VK_CHECK(vkCreateGraphicsPipelines(*GDevice, GDevice->PipelineCache, 1, &CreateInfo, Vulkan::HostAllocator(), &VulkanPipeline));
+        NameObject(VK_OBJECT_TYPE_PIPELINE, (uint64)VulkanPipeline, Desc.DebugName);
 
         vkDestroyShaderModule(*GDevice, VertModule, Vulkan::HostAllocator());
         if (FragModule != VK_NULL_HANDLE)
@@ -5634,6 +5635,7 @@ namespace Lumina::RHI
 
         VkPipeline VulkanPipeline;
         VK_CHECK(vkCreateGraphicsPipelines(*GDevice, GDevice->PipelineCache, 1, &CreateInfo, Vulkan::HostAllocator(), &VulkanPipeline));
+        NameObject(VK_OBJECT_TYPE_PIPELINE, (uint64)VulkanPipeline, Desc.DebugName);
 
         if (TaskModule != VK_NULL_HANDLE)
         {
@@ -8706,16 +8708,17 @@ namespace Lumina::RHI
 
         DEBUG_ASSERT((uint64)MaxDrawCount * Stride <= Arguments.Size, "Mesh task indirect count draw reads past its argument range.");
         DEBUG_ASSERT(sizeof(uint32) <= CountRange.Size, "Mesh task indirect count reads past its count range.");
-        const GPUPtr IndirectBuffer = Arguments.Address;
-        const uint32 Offset = 0;
-        const GPUPtr CountBuffer = CountRange.Address;
-        const uint32 CountOffset = 0;
+        
+        const GPUPtr IndirectBuffer     = Arguments.Address;
+        const GPUPtr CountBuffer        = CountRange.Address;
+        constexpr uint32 Offset         = 0;
+        constexpr uint32 CountOffset    = 0;
+        
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
-
         if (UseAddressCommands())
         {
             PushDrawArgs(VkCmdBuf, DrawArgs);
-
+            
             const VkDrawIndirectCount2InfoKHR Info
             {
                 .sType             = VK_STRUCTURE_TYPE_DRAW_INDIRECT_COUNT_2_INFO_KHR,
@@ -8739,6 +8742,34 @@ namespace Lumina::RHI
         vkCmdDrawMeshTasksIndirectCountEXT(VkCmdBuf, Indirect.Buffer, Indirect.Offset + Offset, Count.Buffer, Count.Offset + CountOffset, MaxDrawCount, Stride);
     }
 
+    void CmdBeginDebugLabel(FCmdListH CL, const char* Name)
+    {
+        #ifdef LUMINA_WITH_GPU_PROFILING
+        if (vkCmdBeginDebugUtilsLabelEXT != nullptr)
+        {
+            VkDebugUtilsLabelEXT Label
+            {
+                .sType      = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
+                .pNext      = nullptr,
+                .pLabelName = Name,
+                .color      = { 0.0f, 0.0f, 0.0f, 0.0f }
+            };
+
+            vkCmdBeginDebugUtilsLabelEXT(GDevice->CommandLists[CL].CommandBuffer, &Label);
+        }
+        #endif
+    }
+
+    void CmdEndDebugLabel(FCmdListH CL)
+    {
+        #ifdef LUMINA_WITH_GPU_PROFILING
+        if (vkCmdEndDebugUtilsLabelEXT != nullptr)
+        {
+            vkCmdEndDebugUtilsLabelEXT(GDevice->CommandLists[CL].CommandBuffer);
+        }
+        #endif
+    }
+
     void CmdBeginMarker(FCmdListH CL, const char* Name)
     {
         FCommandList& List = GDevice->CommandLists[CL];
@@ -8750,20 +8781,9 @@ namespace Lumina::RHI
         }
         ++List.BreadcrumbDepth;
 
-        if (vkCmdBeginDebugUtilsLabelEXT != nullptr)
-        {
-            VkDebugUtilsLabelEXT Label
-            {
-                .sType      = VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT,
-                .pNext      = nullptr,
-                .pLabelName = Name,
-                .color      = { 0.0f, 0.0f, 0.0f, 0.0f }
-            };
+        CmdBeginDebugLabel(CL, Name);
 
-            vkCmdBeginDebugUtilsLabelEXT(List.CommandBuffer, &Label);
-        }
-
-#if defined(LUMINA_WITH_GPU_PROFILING)
+        #ifdef LUMINA_WITH_GPU_PROFILING
         {
             const uint32 Depth  = List.ProfilerDepth;
             const int32  Parent = Depth > 0 && Depth <= kMaxProfilerDepth ? List.ProfilerScopes[Depth - 1] : Constants::kIndexNone;
@@ -8774,7 +8794,7 @@ namespace Lumina::RHI
             }
             ++List.ProfilerDepth;
         }
-#endif
+        #endif
 
 #if defined(TRACY_ENABLE)
         tracy::VkCtx* ZoneContext = GTracyGPUContexts[(uint32)List.Queue];
@@ -8824,10 +8844,7 @@ namespace Lumina::RHI
         }
         #endif
 
-        if (vkCmdEndDebugUtilsLabelEXT != nullptr)
-        {
-            vkCmdEndDebugUtilsLabelEXT(List.CommandBuffer);
-        }
+        CmdEndDebugLabel(CL);
     }
 
 }

@@ -74,6 +74,17 @@ namespace Lumina
                     Count = 4;
                     break;
                 }
+                case EGraphPinShape::Execution:
+                {
+                    const float HalfHeight = Radius * 0.8f;
+                    Points[0] = Center + ImVec2(-Radius, -HalfHeight);
+                    Points[1] = Center + ImVec2(Radius * 0.2f, -HalfHeight);
+                    Points[2] = Center + ImVec2(Radius * 1.2f, 0.0f);
+                    Points[3] = Center + ImVec2(Radius * 0.2f, HalfHeight);
+                    Points[4] = Center + ImVec2(-Radius, HalfHeight);
+                    Count = 5;
+                    break;
+                }
                 default:
                 {
                     const float Reach = Radius * 1.1f;

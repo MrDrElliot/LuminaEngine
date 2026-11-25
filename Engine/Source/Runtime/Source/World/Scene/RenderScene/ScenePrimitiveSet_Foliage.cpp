@@ -376,7 +376,7 @@ namespace Lumina
         const uint32 BindingBase = TakeBindingRange(TotalBindings);
         AllocateFreshFoliageSlots(TotalBindings);
 
-        Jobs::ParallelFor(NewCount, [&](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(NewCount, [&](const Jobs::FRange& Range)
         {
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {
@@ -488,7 +488,7 @@ namespace Lumina
         // A mask holds 16 surfaces, so an instance with more is refreshed in the serial pass instead.
         constexpr uint32 kMaxMaskedSurfaces = 16;
         FoliageRefreshMasks.Init(0u, Count);
-        Jobs::ParallelFor(Count, [&](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(Count, [&](const Jobs::FRange& Range)
         {
             for (uint32 r = Range.Start; r < Range.End; ++r)
             {
@@ -657,7 +657,7 @@ namespace Lumina
         }
 
         // Counted first, so each block knows where its slots land before any are written.
-        Jobs::ParallelFor(NumBlocks, [this](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(NumBlocks, [this](const Jobs::FRange& Range)
         {
             for (uint32 b = Range.Start; b < Range.End; ++b)
             {
@@ -732,7 +732,7 @@ namespace Lumina
         }
 
         FoliageSlotScratch.SetNum(Total);
-        Jobs::ParallelFor(NumBlocks, [this](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(NumBlocks, [this](const Jobs::FRange& Range)
         {
             for (uint32 b = Range.Start; b < Range.End; ++b)
             {
@@ -777,7 +777,7 @@ namespace Lumina
         ResetParallelBuckets();
 
         // The slots scatter across the retained arrays, so the cache misses spread over workers instead of one thread.
-        Jobs::ParallelFor(Count, [this](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(Count, [this](const Jobs::FRange& Range)
         {
             // Triples of base, word count and meshlets, so the serial pass after only appends to the free lists.
             TVector<uint32>& FreedRanges = BucketFor(Range.Thread).Slots;

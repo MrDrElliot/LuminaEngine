@@ -464,6 +464,7 @@ namespace Lumina::RHI
         EFormat     DepthFormat = EFormat::UNKNOWN;
         EFormat     StencilFormat = EFormat::UNKNOWN;
         TSpan<const FColorTarget> ColorTargets;
+        const char* DebugName = nullptr;
     };
     
     struct FRenderAttachment
@@ -933,4 +934,6 @@ namespace Lumina::RHI
 
     RUNTIME_API void        CmdBeginMarker(FCmdListH CL, const char* Name);
     RUNTIME_API void        CmdEndMarker(FCmdListH CL);
+    RUNTIME_API void        CmdBeginDebugLabel(FCmdListH CL, const char* Name);
+    RUNTIME_API void        CmdEndDebugLabel(FCmdListH CL);
 }

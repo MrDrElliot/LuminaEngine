@@ -146,6 +146,9 @@ namespace Lumina::Object::Internal
 
         bool DestroyClaimed(CObjectBase* Object, bool bForced, const char* Site);
 
+        // What a release that left no strong reference does, which spares an export its package still has to save.
+        bool DestroyReleased(CObjectBase* Object);
+
         // Entries outlive every object, so a reference caching one refcounts without touching object memory.
         FCObjectEntry* GetEntry(const CObjectBase* Object) const;
 

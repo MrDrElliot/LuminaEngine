@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
+#include "FileSystem/FileSystem.h"
 #include "Renderer/SMAA/AreaTex.h"
 #include "Renderer/SMAA/SearchTex.h"
 #include <bit>
@@ -308,6 +309,7 @@ namespace Lumina
         DistanceFieldBlockListBuffer.Release();
         SkinnedMeshletBoundsBuffer.Release();
         SkinnedMeshletConeBuffer.Release();
+        GpuPoses.Release();
         SurfaceDescBuffer.Release();
         for (FSceneBuffer& Arena : BoneArenaRing)
         {
@@ -1662,8 +1664,9 @@ namespace Lumina
                                     ? RHI::EImageUsageFlags::TransferDst : RHI::EImageUsageFlags::Storage);
             return true;
 
+        // Red is the mask the lighting reads, green the contact trace the resolve boxes.
         case ENamedImage::SunFarShadowMask:
-            OutDesc.Format = EFormat::R8_UNORM;
+            OutDesc.Format = EFormat::RG8_UNORM;
             OutDesc.Usage  = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             return true;
 
@@ -2762,11 +2765,12 @@ namespace Lumina
         SpecConsts.Add(MakeUInt(7, (uint32)Key.TriCullMode));   // SPEC_TRI_CULL, per-triangle rejects
         SpecConsts.Add(MakeUInt(8, (uint32)Key.SkyMode));       // SPEC_SKY_MODE, GSkyMode_Runtime = branch at runtime
 
-        const FShaderEntry* NamedEntry = PSEntry != nullptr ? PSEntry : (MSEntry != nullptr ? MSEntry : VSEntry);
+        const FShaderEntry* GeometryEntry = MSEntry != nullptr ? MSEntry : VSEntry;
+        const FShaderEntry* NamedEntry    = PSEntry != nullptr ? PSEntry : GeometryEntry;
 
         // A meshlet stage resolves to its vertex-path twin on a device without mesh shading, so it is drawn as a vertex stage.
-        const bool bMeshStage = MSEntry != nullptr && MSEntry->Type == ERHIShaderType::Mesh;
-        const FShaderEntry* VertexEntry = bMeshStage ? nullptr : (MSEntry != nullptr ? MSEntry : VSEntry);
+        const bool          bMeshStage  = MSEntry != nullptr && MSEntry->Type == ERHIShaderType::Mesh;
+        const FShaderEntry* VertexEntry = bMeshStage ? nullptr : GeometryEntry;
 
         return [VS = CopyStage(VertexEntry), MS = CopyStage(bMeshStage ? MSEntry : nullptr), PS = CopyStage(PSEntry),
                 Key, SpecConsts, StatsShader = Key.PS, Name = NamedEntry->Path]() -> RHI::FPipelineH
@@ -2778,6 +2782,14 @@ namespace Lumina
             Desc.SampleCount      = Key.SampleCount;
             Desc.DepthFormat      = Key.DepthFormat;
             Desc.ColorTargets     = TSpan<const RHI::FColorTarget>(Key.ColorTargets.GetData(), Key.ColorTargets.Num());
+            if (Key.bVisBufferMasked)
+            {
+                Desc.DebugName = "VisBuffer Masked";
+            }
+            else if (VFS::FileName(FStringView(*Name)) == "VisBufferPixel.slang")
+            {
+                Desc.DebugName = "VisBuffer Opaque";
+            }
 
             const TSpan<const RHI::FSpecializationConstant> Consts(SpecConsts.GetData(), SpecConsts.Num());
 
@@ -2982,7 +2994,7 @@ namespace Lumina
         else if (Total >= ParallelUploadBytes && static_cast<unsigned int>(NumRuns) > 1u)
         {
             const uint32 MinRunsPerTask = Math::Max(1u, (uint32)(NumRuns * (ParallelUploadBytes / 8u) / Total));
-            Jobs::ParallelFor(NumRuns, [&CopyRuns](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor(NumRuns, [&CopyRuns](const Jobs::FRange& Range)
             {
                 CopyRuns(Range.Start, Range.End);
             }, MinRunsPerTask);
@@ -3045,7 +3057,7 @@ namespace Lumina
         }
         else
         {
-            Jobs::ParallelFor(Count, [StagingBytes, Src, Words, SlotData](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor(Count, [StagingBytes, Src, Words, SlotData](const Jobs::FRange& Range)
             {
                 GatherWords((FUIntVector4*)StagingBytes + (uint64)Range.Start * Words, (const FUIntVector4*)Src, SlotData + Range.Start,
                             Range.End - Range.Start, Words);
@@ -3174,7 +3186,7 @@ namespace Lumina
             if (!bFillBeforeSubmit)
             {
                 const uint32 NumChunks = (uint32)DeferredStageFills.Num() - FirstChunk;
-                Jobs::ParallelFor(NumChunks, [this, FirstChunk](const Jobs::FParallelRange& Range)
+                Jobs::ParallelFor(NumChunks, [this, FirstChunk](const Jobs::FRange& Range)
                 {
                     for (uint32 i = Range.Start; i < Range.End; ++i)
                     {

@@ -1436,9 +1436,10 @@ float3 ScreenSpaceDither(float2 ScreenPos)
 {
     float3 S0 = float3(dot(float2(171.0, 231.0), ScreenPos.xy));
     float3 S1 = float3(dot(float2(113.0, 271.0), ScreenPos.xy + 13.7));
-    float3 R0 = frac(S0 / float3(103.0, 71.0, 97.0));
-    float3 R1 = frac(S1 / float3(89.0, 113.0, 127.0));
-    return (R0 + R1 - 1.0) / 255.0;
+    // Multiplies by the reciprocals, since a division is a transcendental-unit op on every fullscreen pixel.
+    float3 R0 = frac(S0 * float3(1.0 / 103.0, 1.0 / 71.0, 1.0 / 97.0));
+    float3 R1 = frac(S1 * float3(1.0 / 89.0, 1.0 / 113.0, 1.0 / 127.0));
+    return (R0 + R1 - 1.0) * (1.0 / 255.0);
 }
 
 // Jimenez's interleaved gradient noise in its fixed screen-space pattern.

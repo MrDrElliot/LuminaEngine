@@ -106,12 +106,15 @@ float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, fl
     // A hit farther behind the ray than this is a separate surface, so a background pixel beside a silhouette stays lit.
     const float Thickness = clamp(abs(ViewPos.z) * kContactThicknessPerMeter, StepLength, Reach);
 
+    // Projection is linear in homogeneous space, so the clip position advances by a fixed step too.
+    float4       Clip     = mul(GetCameraProjection(), float4(RayPos, 1.0));
+    const float4 ClipStep = mul(GetCameraProjection(), float4(Step, 0.0));
+
     float Occlusion = 0.0;
     float PrevDelta = -StepLength;
     [loop]
     for (uint i = 0u; i < Steps; ++i)
     {
-        const float4 Clip = mul(GetCameraProjection(), float4(RayPos, 1.0));
         if (Clip.w <= 0.0)
         {
             break;
@@ -156,6 +159,7 @@ float ContactShadow(float3 ViewPos, float3 ViewN, float3 ViewL, float Jitter, fl
         }
 
         RayPos += Step;
+        Clip   += ClipStep;
     }
 
     return 1.0 - Occlusion;

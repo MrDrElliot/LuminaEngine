@@ -63,15 +63,18 @@ float4 MarchShafts(float2 UV, float2 TexelPos, float Depth)
 
     // Sun.Direction points toward the sun, so negate it for the travel-direction phase convention.
     const float  CosSun      = dot(-normalize(Sun.Direction), -RayDir);
-    const float3 SunRadiance = UnpackColor(Sun.Color).rgb * Sun.Intensity * Sun.VolumetricIntensity;
+    // The scattering coefficient scales every step's light, so it is folded into both terms once.
+    const float  Scattering  = uFog.VolumetricParams.x;
+    const float3 SunRadiance = UnpackColor(Sun.Color).rgb * Sun.Intensity * Sun.VolumetricIntensity * Scattering;
 
     const float  StepLen      = (TEnd - T0) / float(Pass().Steps);
     // Same per-pixel hash the froxel lookup uses, so step banding lands as grain, not arcs.
     const float  Jitter       = InterleavedGradientNoise(TexelPos);
     const float2 ShadowCenter = float2(Pass().CloudShadowCenterX, Pass().CloudShadowCenterY);
-    const float3 Ambient      = GetVolumetricAmbientRadiance();
+    const float3 Ambient      = GetVolumetricAmbientRadiance() * Scattering;
     const FFogPhaseTerms Phase = Fog_MultiScatterPhaseTerms(uFog, CosSun, uFog.VolumetricParams.y);
     const float DirStart      = uFog.VolumetricParams.w;
+    const float InvDirStart   = DirStart > 0.0 ? 1.0 / DirStart : 0.0;
     const float AlbedoLobe    = pow(saturate(CosSun), uFog.DirectionalColor.w);
     float3 InScatter = float3(0.0);
     float  Trans     = 1.0;
@@ -96,12 +99,12 @@ float4 MarchShafts(float2 UV, float2 TexelPos, float Depth)
                      * CloudShadow_Sample(Pass().CloudShadow, P, ShadowCenter, Pass().CloudShadowExtent);
 
         float3 Light  = Ambient + SunRadiance * Fog_ApplyPhaseShadow(Phase, Shadow);
-        float  Ramp   = DirStart > 0.0 ? saturate(T / DirStart - 1.0) : 1.0;
+        float  Ramp   = DirStart > 0.0 ? saturate(T * InvDirStart - 1.0) : 1.0;
         float3 Albedo = lerp(uFog.InscatteringColor.rgb, uFog.DirectionalColor.rgb, AlbedoLobe * Ramp);
 
         float  StepTrans = exp(-Density * StepLen);
         // Analytic integral of in-scatter across the step, matching the froxel integrate pass.
-        InScatter += Trans * Albedo * Light * uFog.VolumetricParams.x * (1.0 - StepTrans);
+        InScatter += Trans * Albedo * Light * (1.0 - StepTrans);
         Trans     *= StepTrans;
     }
     return float4(InScatter, Trans);

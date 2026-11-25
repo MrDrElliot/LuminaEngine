@@ -1460,7 +1460,7 @@ namespace Lumina::ECS::Utils
             Slot.Reset();
         }
 
-        auto FilterChunk = [&](const Jobs::FParallelRange& Chunk)
+        auto FilterChunk = [&](const Jobs::FRange& Chunk)
         {
             uint32 Worker = Jobs::GetThreadSlot();
             if (Worker >= static_cast<uint32>(DirtyState.HierBySlot.Num())) { Worker = 0; }
@@ -1506,7 +1506,7 @@ namespace Lumina::ECS::Utils
         }
         else
         {
-            FilterChunk(Jobs::FParallelRange{ 0, (uint32)Raw.Num(), 0 });
+            FilterChunk(Jobs::FRange{ 0, (uint32)Raw.Num(), 0 });
         }
 
         TVector<uint32>& DirtySlots = DirtyState.HierScratch;
@@ -1621,7 +1621,7 @@ namespace Lumina::ECS::Utils
         };
 
         // Ranges are contiguous runs of the preorder, so a chunk publishes them in batches rather than one lock each.
-        auto ResolveRangeChunk = [&](const Jobs::FParallelRange& Chunk)
+        auto ResolveRangeChunk = [&](const Jobs::FRange& Chunk)
         {
             constexpr uint32 MovedBatch = 128;
             ECS::FEntity Moved[MovedBatch];
@@ -1658,7 +1658,7 @@ namespace Lumina::ECS::Utils
         }
         else
         {
-            ResolveRangeChunk(Jobs::FParallelRange{ 0, (uint32)RangeStarts.Num(), 0 });
+            ResolveRangeChunk(Jobs::FRange{ 0, (uint32)RangeStarts.Num(), 0 });
         }
     }
 

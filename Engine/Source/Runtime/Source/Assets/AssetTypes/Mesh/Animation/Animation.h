@@ -296,6 +296,9 @@ namespace Lumina
 
         bool IsAdditive() const { return AdditiveAnimType != EAdditiveAnimType::None; }
 
+        // True when any bone's scale track animates or holds a non-unit scale, which the GPU crowd tier cannot play.
+        bool ScalesBones() const;
+
         /** The base clip an additive delta is taken against, or null when the base is the skeleton's ref pose. */
         CAnimation* GetAdditiveBaseAnimation() const;
 

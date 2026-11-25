@@ -89,7 +89,7 @@ namespace Lumina
         Jobs::Spawn(Jobs::EJobPriority::High, ExtractLatch,
             [this, PointView, SpotView, AreaView, Transforms, Sun, NumChunks, FirstLocalLight]() -> Jobs::TTask<void>
         {
-            co_await Jobs::Fork(Jobs::ForEach(NumChunks, [this, PointView, SpotView, AreaView, Transforms](const Jobs::FParallelRange& Range)
+            co_await Jobs::Fork(Jobs::ForEach(NumChunks, [this, PointView, SpotView, AreaView, Transforms](const Jobs::FRange& Range)
             {
                 LUMINA_PROFILE_SECTION("Process Local Lights");
                 for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)

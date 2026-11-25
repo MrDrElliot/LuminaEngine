@@ -7,9 +7,13 @@
 #include "imgui_internal.h"
 #include "Assets/AssetTypes/Curve/CurveAsset.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
+#include "Core/Math/Hash/Hash.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/Package/Package.h"
+#include "Core/Reflection/Type/LuminaTypes.h"
+#include "Core/Serialization/MemoryArchiver.h"
+#include "Core/Serialization/ObjectArchiver.h"
 #include "Nodes/MaterialNodes.h"
 #include "Tools/UI/ImGui/ImGuiDragDrop.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
@@ -65,6 +69,58 @@ namespace Lumina
     bool CMaterialNodeGraph::IsGraphRootNode(CEdGraphNode* Node) const
     {
         return Cast<CMaterialOutputNode>(Node) != nullptr;
+    }
+
+    uint64 CMaterialNodeGraph::GetOutputGraphHash() const
+    {
+        THashSet<CEdGraphNode*> Contributing;
+        CollectContributingNodes(Contributing);
+
+        TVector<uint8> Bytes;
+        FMemoryWriter Writer(Bytes);
+        FObjectProxyArchiver Archive(Writer, false);
+        FArchive& Ar = Archive;
+
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
+        {
+            if (!Contributing.Contains(Node.Get()))
+            {
+                continue;
+            }
+
+            int64 NodeID = Node->GetNodeID();
+            FName ClassName = Node->GetClass()->GetName();
+            Ar << NodeID << ClassName;
+
+            for (const CStruct* Type = Node->GetClass(); Type != CEdGraphNode::StaticClass(); Type = Type->GetSuperStruct())
+            {
+                for (FProperty* Property : Type->GetOwnProperties())
+                {
+                    if (Property->ShouldSerialize())
+                    {
+                        Property->Serialize(Ar, Property->GetValuePtr<void>(Node.Get()));
+                    }
+                }
+            }
+
+            int32 InputCount = Node->GetInputPins().Num();
+            Ar << InputCount;
+            for (const auto& Input : Node->GetInputPins())
+            {
+                uint32 InputID = Input->GetPinGUID();
+                const auto Connections = Input->GetConnections();
+                int32 ConnectionCount = Connections.Num();
+                Ar << InputID << ConnectionCount;
+                for (const CEdNodeGraphPin* Source : Connections)
+                {
+                    uint32 SourceID = Source->GetPinGUID();
+                    int64 SourceNodeID = Source->GetOwningNode()->GetNodeID();
+                    Ar << SourceNodeID << SourceID;
+                }
+            }
+        }
+
+        return Hash::GetHash64(Bytes);
     }
 
     void CMaterialNodeGraph::Shutdown()

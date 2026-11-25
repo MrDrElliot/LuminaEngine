@@ -6,7 +6,7 @@
 namespace Lumina
 {
     // Emits a constant scalar, such as a fixed blend alpha or speed multiplier.
-    REFLECT()
+    REFLECT(MinimalAPI)
     class CAnimGraphNode_FloatConstant : public CAnimGraphNode
     {
         GENERATED_BODY()

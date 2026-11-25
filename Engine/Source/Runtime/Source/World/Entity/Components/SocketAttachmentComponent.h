@@ -16,11 +16,11 @@ namespace Lumina
         GENERATED_BODY()
 
         /** Socket (or skeletal bone) on the parent's mesh to follow. */
-        PROPERTY(Editable, Category = "Attachment", Picker = "Socket")
+        PROPERTY(Editable, Replicated, Category = "Attachment", Picker = "Socket")
         FName SocketName;
 
         /** Additional offset applied in socket space. */
-        PROPERTY(Editable, Category = "Attachment")
+        PROPERTY(Editable, Replicated, Category = "Attachment")
         FTransform RelativeTransform;
     };
 }

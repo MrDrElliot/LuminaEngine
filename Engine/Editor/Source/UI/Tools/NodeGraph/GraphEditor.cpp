@@ -203,6 +203,7 @@ namespace Lumina
         DoubleClickedNode   = 0;
         DoubleClickedLink   = 0;
         BreakLinksPin       = 0;
+        BreakLinkID         = 0;
         bBackgroundClicked  = false;
         Shortcuts           = 0;
         FinishedStroke      = EGraphStroke::None;
@@ -393,7 +394,7 @@ namespace Lumina
             return;
         }
 
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false))
+        if (!IO.KeyAlt && (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false)))
         {
             Shortcuts |= (uint8)EGraphShortcut::Delete;
         }
@@ -718,6 +719,13 @@ namespace Lumina
             HoveredLink        = 0;
             HoveredTie         = 0;
             HoveredResizeEdges = 0;
+        }
+
+        const ImGuiIO& IO = ImGui::GetIO();
+        if (HoveredLink != 0 && IO.KeyAlt && !IO.KeyCtrl && !IO.WantTextInput
+            && !ImGui::IsAnyItemActive() && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+        {
+            BreakLinkID = HoveredLink;
         }
 
         ProcessInput(Mouse);
@@ -1353,7 +1361,12 @@ namespace Lumina
                     }
                     case EGraphItem::Link:
                     {
-                        if (bDoubleClick)
+                        if (Press.bAlt)
+                        {
+                            BreakLinkID = HoveredLink;
+                            Action = EAction::None;
+                        }
+                        else if (bDoubleClick)
                         {
                             DoubleClickedLink = HoveredLink;
                         }

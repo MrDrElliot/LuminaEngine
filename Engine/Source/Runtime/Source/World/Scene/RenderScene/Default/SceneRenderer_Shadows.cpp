@@ -209,7 +209,9 @@ namespace Lumina
         // Past this distance the reach covers too few pixels for the march to find a gap the shadow map misses.
         constexpr float kSunContactMinPixels = 2.0f;
 
-        // Matches kTile in SunContactShadow.slang, whose groups resolve their ordered jitter in shared memory.
+        // Matches the trace's numthreads in SunContactShadow.slang.
+        constexpr uint32 kSunContactTraceGroup = 8u;
+        // Matches kTile in SunContactResolve.slang, whose groups resolve their ordered jitter in shared memory.
         constexpr uint32 kSunContactTile = 16u;
     }
 
@@ -311,8 +313,9 @@ namespace Lumina
         }
 
         static const FShaderH ContactCS = FShaderLibrary::Get("SunContactShadow.slang");
+        static const FShaderH ResolveCS = FShaderLibrary::Get("SunContactResolve.slang");
         const int32 OutputSlot = Mask.GetMipUAVIndex(0);
-        if (!ContactCS || OutputSlot < 0)
+        if (!ContactCS || !ResolveCS || OutputSlot < 0)
         {
             return;
         }
@@ -333,6 +336,16 @@ namespace Lumina
         Args.MinPixels      = kSunContactMinPixels;
 
         DispatchCompute(CL, ContactCS, Args,
+            RenderUtils::GetGroupCount(Args.ScreenSize[0], kSunContactTraceGroup),
+            RenderUtils::GetGroupCount(Args.ScreenSize[1], kSunContactTraceGroup), 1);
+
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+
+        // The trace filled red whether or not the far trace ran, so the resolve always reads the mask back.
+        Args.FarMaskIndex = (uint32)Mask.GetResourceID();
+        DispatchCompute(CL, ResolveCS, Args,
             RenderUtils::GetGroupCount(Args.ScreenSize[0], kSunContactTile),
             RenderUtils::GetGroupCount(Args.ScreenSize[1], kSunContactTile), 1);
 

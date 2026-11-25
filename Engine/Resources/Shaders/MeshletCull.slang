@@ -131,7 +131,67 @@ groupshared uint gsBlockPrevBits[MESHLET_CULL_GROUP_SIZE];
 groupshared uint gsBlockFlags[MESHLET_CULL_GROUP_SIZE];
 groupshared uint gsBlockStart[MESHLET_CULL_GROUP_SIZE + 1];
 groupshared uint gsBlockVisibleBits[MESHLET_CULL_GROUP_SIZE];
-groupshared FMeshletCullContext gsBlockContext[MESHLET_CULL_GROUP_SIZE];
+// The block context as the item loop reads it, packed because shared memory was what kept more groups from launching.
+struct FSharedCullContext
+{
+    uint4  Ids;
+    uint4  Packed;
+    float4 Rows[3];
+    float4 InstSphere;
+};
+groupshared FSharedCullContext gsBlockContext[MESHLET_CULL_GROUP_SIZE];
+
+uint CullFlagBit(bool bSet, uint Bit) { return bSet ? (1u << Bit) : 0u; }
+bool HasCullFlagBit(uint Flags, uint Bit) { return ((Flags >> Bit) & 1u) != 0u; }
+
+FSharedCullContext PackCullContext(FMeshletCullContext Ctx)
+{
+    const uint Flags = CullFlagBit(Ctx.bSkinned, 0u) | CullFlagBit(Ctx.bPosedBounds, 1u) | CullFlagBit(Ctx.bNoCull, 2u)
+                     | CullFlagBit(Ctx.bCaster, 3u) | CullFlagBit(Ctx.bFoliage, 4u) | CullFlagBit(Ctx.bShadowOnly, 5u)
+                     | CullFlagBit(Ctx.bTwoSided, 6u) | CullFlagBit(Ctx.bCustomDepth, 7u) | CullFlagBit(Ctx.bShadowCached, 8u)
+                     | CullFlagBit(Ctx.bMover, 9u) | CullFlagBit(Ctx.bSelectsLOD, 10u) | CullFlagBit(Ctx.bCameraCut, 11u);
+    FSharedCullContext S;
+    S.Ids        = uint4(Ctx.DrawID, Ctx.HeaderSlot, Ctx.SkinnedBoundsBase, Ctx.SurfaceDescIndex);
+    S.Packed     = uint4(Flags, Ctx.Layers, asuint(Ctx.LODErrorMultiplier), asuint(Ctx.MaxScale));
+    // The instance matrix is affine, so its last row is always the one ToMatrix appends.
+    S.Rows[0]    = Ctx.Model[0];
+    S.Rows[1]    = Ctx.Model[1];
+    S.Rows[2]    = Ctx.Model[2];
+    S.InstSphere = float4(Ctx.InstCenter, Ctx.InstRadius);
+    return S;
+}
+
+FMeshletCullContext UnpackCullContext(FSharedCullContext S)
+{
+    const uint Flags = S.Packed.x;
+    FMeshletCullContext Ctx;
+    Ctx.DrawID             = S.Ids.x;
+    Ctx.HeaderSlot         = S.Ids.y;
+    Ctx.SkinnedBoundsBase  = S.Ids.z;
+    Ctx.SurfaceDescIndex   = S.Ids.w;
+    Ctx.bSkinned           = HasCullFlagBit(Flags, 0u);
+    Ctx.bPosedBounds       = HasCullFlagBit(Flags, 1u);
+    Ctx.bNoCull            = HasCullFlagBit(Flags, 2u);
+    Ctx.bCaster            = HasCullFlagBit(Flags, 3u);
+    Ctx.bFoliage           = HasCullFlagBit(Flags, 4u);
+    Ctx.bShadowOnly        = HasCullFlagBit(Flags, 5u);
+    Ctx.bTwoSided          = HasCullFlagBit(Flags, 6u);
+    Ctx.bCustomDepth       = HasCullFlagBit(Flags, 7u);
+    Ctx.bShadowCached      = HasCullFlagBit(Flags, 8u);
+    Ctx.bMover             = HasCullFlagBit(Flags, 9u);
+    Ctx.bSelectsLOD        = HasCullFlagBit(Flags, 10u);
+    Ctx.bCameraCut         = HasCullFlagBit(Flags, 11u);
+    Ctx.Layers             = S.Packed.y;
+    Ctx.LODErrorMultiplier = asfloat(S.Packed.z);
+    Ctx.MaxScale           = asfloat(S.Packed.w);
+    Ctx.Model              = float4x4(S.Rows[0], S.Rows[1], S.Rows[2], float4(0.0, 0.0, 0.0, 1.0));
+    Ctx.InstCenter         = S.InstSphere.xyz;
+    Ctx.InstRadius         = S.InstSphere.w;
+    // Both are cheaper to rebuild than to keep resident, as MakeMeshletCullContext derives them.
+    Ctx.DistToCamera       = length(Ctx.InstCenter - GetCullCameraPosition());
+    Ctx.MaxShadowDist      = Scene().CullData.ShadowMaxDistance;
+    return Ctx;
+}
 
 // Inverts the dense prefix BuildMeshletCullArgs writes, since blocks are sparse across the arena.
 uint FindBucketForWork(uint WorkIndex, uint NumBuckets)
@@ -317,7 +377,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
         {
             Ctx.LODErrorMultiplier = Pass().SurfaceDescs.At(Ctx.SurfaceDescIndex).LODErrorMultiplier;
         }
-        gsBlockContext[ThreadID] = Ctx;
+        gsBlockContext[ThreadID] = PackCullContext(Ctx);
     }
     if (ThreadID == 0u)
     {
@@ -355,7 +415,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint ThreadID : SV_GroupIndex)
             // Late also tests what early drew, since that test is what writes next frame's flag and bits.
             if (bLate || bEmitPhase)
             {
-                const FMeshletCullContext Ctx = gsBlockContext[Owner];
+                const FMeshletCullContext Ctx = UnpackCullContext(gsBlockContext[Owner]);
                 // Blocks of a group nearly always share a view, so this load hits one address across the wave.
                 const FCullView View          = CullViews().GetAligned(KeepArg / NumDraws);
                 FMeshletBoundsCache Cache     = MakeMeshletBoundsCache();

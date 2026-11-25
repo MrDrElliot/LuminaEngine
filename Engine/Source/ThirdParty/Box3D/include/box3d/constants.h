@@ -14,9 +14,9 @@ B3_API void b3SetLengthUnitsPerMeter( float lengthUnits );
 /// Get the current length units per meter.
 B3_API float b3GetLengthUnitsPerMeter( void );
 
-// Used to detect bad values. In float mode positions greater than about 16km have precision
-// problems, so 100km is a safe limit. Large world mode keeps coordinates accurate much farther
-// from the origin, so the sanity limit widens to keep valid far-field positions from tripping it.
+/// Used to detect bad values. In float mode positions greater than about 16km have precision
+/// problems, so 100km is a safe limit. Large world mode keeps coordinates accurate much farther
+/// from the origin, so the sanity limit widens to keep valid far-field positions from tripping it.
 #if defined( BOX3D_DOUBLE_PRECISION )
 #define B3_HUGE ( 1.0e9f * b3GetLengthUnitsPerMeter() )
 #else
@@ -32,18 +32,14 @@ B3_API float b3GetLengthUnitsPerMeter( void );
 /// size array for Box3D task, which may help with creating stable user task pointers.
 #define B3_MAX_TASKS 256
 
-// Maximum number of colors in the constraint graph. Constraints that cannot
-// find a color are added to the overflow set which are solved single-threaded.
-// The compound barrel benchmark has minor overflow with 24 colors
+/// Maximum number of colors in the constraint graph. Constraints that cannot
+/// find a color are added to the overflow set which are solved single-threaded.
+/// The compound barrel benchmark has minor overflow with 24 colors
 #define B3_GRAPH_COLOR_COUNT 24
 
-// Number of contact point buckets for counting the number of contact points per
-// shape contact pair. This is just for reporting and doesn't affect simulation.
-#define B3_CONTACT_MANIFOLD_COUNT_BUCKETS 8
-
-// A small length used as a collision and constraint tolerance. Usually it is
-// chosen to be numerically significant, but visually insignificant. In meters.
-// @warning modifying this can have a significant impact on stability
+/// A small length used as a collision and constraint tolerance. Usually it is
+/// chosen to be numerically significant, but visually insignificant. In meters.
+/// @warning modifying this can have a significant impact on stability
 #define B3_LINEAR_SLOP ( 0.005f * b3GetLengthUnitsPerMeter() )
 
 /// The minimum length of a capsules. Very short capsules should be created as spheres
@@ -102,6 +98,11 @@ B3_API float b3GetLengthUnitsPerMeter( void );
 /// The maximum number of restitution iterations. Needed to avoid a solver overflow.
 #define B3_MAX_RESTITUTION_ITERATIONS 63
 
+/// The maximum number of contact manifolds between shape pairs. Excess manifolds are dropped using heuristics until
+/// this number is reached. Culling can lead to contact dither across time steps. Contact recycling mitigates the
+/// dithering.
+#define B3_MAX_MANIFOLDS 8
+
 /// The maximum number of contact points between two touching shapes.
 /// The default and minimum is 4 and this case uses a fast approximate hull to reduce the
 /// point count. A larger value builds a 2D convex hull of the candidate points and then
@@ -137,10 +138,3 @@ B3_API float b3GetLengthUnitsPerMeter( void );
 #define B3_CHILD_POWER ( 64 - 2 * B3_SHAPE_POWER )
 #define B3_MAX_SHAPES ( 1 << B3_SHAPE_POWER )
 #define B3_MAX_CHILD_SHAPES ( 1 << B3_CHILD_POWER )
-
-/// This is the limit on how many mesh or heightfield triangles a single convex shape can collide with.
-/// Increasing this will increase stack usage, so be careful. I recommend to simplify your collision data
-/// before increasing this. For example, using render mesh for collision often leads to poor performance.
-#ifndef B3_MAX_MESH_CONTACT_TRIANGLES
-#define B3_MAX_MESH_CONTACT_TRIANGLES 512
-#endif

@@ -7,6 +7,7 @@
 
 #include "box3d/base.h"
 #include "box3d/constants.h"
+#include "box3d/types.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -121,7 +122,7 @@ b3Scheduler* b3CreateScheduler( int workerCount )
 		scheduler->workerContexts[i].scheduler = scheduler;
 		scheduler->workerContexts[i].threadIndex = i + 1;
 
-		char name[16];
+		char name[32];
 		snprintf( name, sizeof( name ), "box3d_worker_%02d", i + 1 );
 		scheduler->threads[i] = b3CreateThread( b3SchedulerWorkerMain, scheduler->workerContexts + i, name );
 	}
@@ -154,9 +155,9 @@ void b3ResetScheduler( b3Scheduler* scheduler )
 	b3AtomicStoreInt( &scheduler->nextSlot, 0 );
 }
 
-void* b3SchedulerEnqueueTask( b3TaskCallback* task, void* taskContext, void* userContext, const char* name )
+void* b3SchedulerEnqueueTask( b3TaskCallback* task, void* taskContext, void* userContext, b3TaskType taskType )
 {
-	B3_UNUSED( name );
+	B3_UNUSED( taskType );
 	b3Scheduler* scheduler = userContext;
 
 	int slot = b3AtomicFetchAddInt( &scheduler->nextSlot, 1 );

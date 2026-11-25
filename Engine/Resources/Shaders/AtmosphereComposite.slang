@@ -81,7 +81,7 @@ static const float kCloudDepthMismatch  = 1.0e6;
 static const float kCloudDepthSharpness = 32.0;
 
 // How far a cloud texel's marched depth is from this pixel's, relative to the pixel's own distance.
-float CloudDepthError(float PixelRaw, float PixelLinear, float TexelRaw)
+float CloudDepthError(float PixelRaw, float PixelLinear, float InvPixelLinear, float TexelRaw)
 {
     bool bPixelSky = PixelRaw <= 0.0;
     bool bTexelSky = TexelRaw <= 0.0;
@@ -98,7 +98,7 @@ float CloudDepthError(float PixelRaw, float PixelLinear, float TexelRaw)
     {
         return kCloudDepthMismatch;
     }
-    return abs(LinearizeSceneDepth(TexelRaw) - PixelLinear) / PixelLinear;
+    return abs(LinearizeSceneDepth(TexelRaw) - PixelLinear) * InvPixelLinear;
 }
 
 // One texel of a GatherRed quad, whose components run (0,1), (1,1), (1,0), (0,0).
@@ -119,7 +119,8 @@ float4 UpsampleHalfRes(FTexture2D Source, FTexture2D SourceDepth, float2 UV, flo
     const int2   Base  = int2(floor(Coord));
     const float2 Frac  = Coord - float2(Base);
 
-    const float PixelLinear = Depth > 0.0 ? LinearizeSceneDepth(Depth) : 0.0;
+    const float PixelLinear    = Depth > 0.0 ? LinearizeSceneDepth(Depth) : 0.0;
+    const float InvPixelLinear = Depth > 0.0 ? 1.0 / PixelLinear : 0.0;
 
     float4 Sum        = float4(0.0, 0.0, 0.0, 0.0);
     float  WeightSum  = 0.0;
@@ -134,7 +135,7 @@ float4 UpsampleHalfRes(FTexture2D Source, FTexture2D SourceDepth, float2 UV, flo
         const int2   Offset = int2(i & 1, i >> 1);
         const int2   Texel  = clamp(Base + Offset, int2(0, 0), MaxTexel);
         const float4 Value  = Source.Load(int3(Texel, 0));
-        const float  Err    = CloudDepthError(Depth, PixelLinear, GatherTexel(DepthQuad, Offset));
+        const float  Err    = CloudDepthError(Depth, PixelLinear, InvPixelLinear, GatherTexel(DepthQuad, Offset));
 
         const float2 Axis   = lerp(1.0 - Frac, Frac, float2(Offset));
         const float  Weight = Axis.x * Axis.y / (1.0 + Err * kCloudDepthSharpness);

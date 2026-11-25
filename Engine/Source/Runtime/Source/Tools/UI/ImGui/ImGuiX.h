@@ -13,8 +13,6 @@
 #include "Platform/GenericPlatform.h"
 #include "Renderer/RHITexture.h"
 
-struct ImGuiWindow;
-
 namespace Lumina
 {
     class CClass;
@@ -267,9 +265,6 @@ namespace Lumina::ImGuiX
         RUNTIME_API ImDrawCallback GetDisplayStateCallback();
     }
 
-    RUNTIME_API void RenderWindowOuterBorders(ImGuiWindow* Window);
-    RUNTIME_API bool UpdateWindowManualResize(ImGuiWindow* Window, ImVec2& NewSize, ImVec2& NewPosition);
-    
     namespace Notifications
     {
         enum class EType

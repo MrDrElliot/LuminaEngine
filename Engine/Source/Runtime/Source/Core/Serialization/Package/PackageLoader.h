@@ -25,21 +25,19 @@ namespace Lumina
     // Held by shared pointer so a reader in flight keeps the buffer alive after the package drops its cache.
     struct FPackageFileBytes
     {
-        FPackageFileBytes(void* InData, int64 InSize) : Data(InData), Size(InSize) {}
-
-        ~FPackageFileBytes()
+        // Takes the decompressed buffer itself, since a copy of a large package costs as much as reading it.
+        explicit FPackageFileBytes(TVector<uint8>&& InStorage)
+            : Storage(Move(InStorage)), Data(Storage.GetData()), Size(Storage.Num())
         {
-            if (Data != nullptr)
-            {
-                Memory::Free(Data);
-            }
         }
 
+        ~FPackageFileBytes() = default;
         FPackageFileBytes(const FPackageFileBytes&) = delete;
         FPackageFileBytes& operator=(const FPackageFileBytes&) = delete;
         FPackageFileBytes(FPackageFileBytes&&) = delete;
         FPackageFileBytes& operator=(FPackageFileBytes&&) = delete;
 
+        TVector<uint8> Storage;
         void* Data = nullptr;
         int64 Size = 0;
     };

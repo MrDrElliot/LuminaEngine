@@ -26,6 +26,29 @@ namespace Lumina
         float   Blend = 1.0f;
     };
 
+    // What a distant crowd character does with a node, which the editor's crowd view marks.
+    enum class EAnimCrowdNodeFate : uint8
+    {
+        // Passes its input pose straight through.
+        Bypassed,
+        // Feeds only nodes the crowd skips, so it never runs.
+        Unused,
+    };
+
+    // Which nodes the GPU crowd tier skips and which clips it cannot play, rebuilt by every compile.
+    struct FAnimGraphCrowdView
+    {
+        THashMap<const CEdGraphNode*, EAnimCrowdNodeFate> Skipped;
+
+        // Clips a crowd character can reach that keep it on the CPU while they play.
+        TVector<const CAnimation*> CpuClips;
+
+        // Nodes that emit any op, which the skipped count is a share of.
+        int32 NumNodes = 0;
+
+        bool bShow = false;
+    };
+
     // What the debug target computed this frame, read by node previews and the pose weight overlay.
     struct EDITOR_API FAnimGraphDebugView
     {
@@ -44,6 +67,8 @@ namespace Lumina
 
         bool bLive = false;
         bool bShowWeights = false;
+
+        FAnimGraphCrowdView Crowd;
 
         // An input reads its own register when it has one, else whatever its wire carries.
         TOptional<float> ReadPin(const CEdNodeGraphPin* Pin) const;

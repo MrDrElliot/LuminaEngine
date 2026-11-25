@@ -5,20 +5,32 @@ namespace Lumina
 {
     namespace SceneRendererExtractSkinnedInternal
     {
-        // Distance to the nearest point of the bounds, so a large mesh is never coarser than its closest part allows.
-        float LODReach(const FCullView& View, const FVector4& Sphere)
+        bool IsOrthographicLOD(const FCullView& View)
         {
-            const bool bOrthographic = (GetCullViewFlags(View) & ECullViewFlags::OrthographicLOD) != 0u;
-            return bOrthographic
-                 ? 1.0f
-                 : Math::Max(Math::Length(FVector3(Sphere) - FVector3(View.ViewOriginAndFlags)) - Sphere.w, 0.0f);
+            return (GetCullViewFlags(View) & ECullViewFlags::OrthographicLOD) != 0u;
+        }
+
+        // Measured once per primitive, since its bone tolerance and every surface's LOD range read the same distance.
+        float LODViewDistance(const FCullView& View, const FVector4& Sphere)
+        {
+            return Math::Length(FVector3(Sphere) - FVector3(View.ViewOriginAndFlags));
+        }
+
+        // Distance to the nearest point of the bounds, so a large mesh is never coarser than its closest part allows.
+        float LODReach(const FCullView& View, const FVector4& Sphere, float ViewDistance)
+        {
+            if (IsOrthographicLOD(View))
+            {
+                return 1.0f;
+            }
+            return Math::Max(ViewDistance - Sphere.w, 0.0f);
         }
 
         // Group spheres nest loosely inside the instance sphere, mirroring kClusterReachSlack in Culling.slang.
         constexpr float kClusterReachSlack = 1.25f;
 
         // Mirrors SelectClusterSlotRange in Culling.slang, so the slots pre-skinned hold every meshlet the camera's cut can take.
-        FUIntVector2 SelectClusterSlotRange(const FSurfaceDescGPU& Desc, const FCullView& View, const FVector4& Sphere, float MaxScale)
+        FUIntVector2 SelectClusterSlotRange(const FSurfaceDescGPU& Desc, const FCullView& View, const FVector4& Sphere, float MaxScale, float ViewDistance)
         {
             const uint32 NumSlots = Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS);
             if (NumSlots <= 1u || View.LODErrorScale <= 0.0f)
@@ -26,10 +38,13 @@ namespace Lumina
                 return FUIntVector2(0u, 0u);
             }
 
-            const bool  bOrtho     = (GetCullViewFlags(View) & ECullViewFlags::OrthographicLOD) != 0u;
-            const float Dist       = Math::Length(FVector3(Sphere) - FVector3(View.ViewOriginAndFlags));
-            const float ReachNear  = bOrtho ? 1.0f : Math::Max(Dist - Sphere.w * kClusterReachSlack, 0.0f);
-            const float ReachFar   = bOrtho ? 1.0f : Dist + Sphere.w * kClusterReachSlack;
+            float ReachNear = 1.0f;
+            float ReachFar  = 1.0f;
+            if (!IsOrthographicLOD(View))
+            {
+                ReachNear = Math::Max(ViewDistance - Sphere.w * kClusterReachSlack, 0.0f);
+                ReachFar  = ViewDistance + Sphere.w * kClusterReachSlack;
+            }
             const float ErrorScale = View.LODErrorScale * MaxScale * Desc.LODErrorMultiplier;
 
             uint32 Lo = 0u;
@@ -46,13 +61,13 @@ namespace Lumina
         }
 
         // The mesh-local error the camera tolerates here, which is what picks a skinned LOD and how much of the skeleton may hold still.
-        float ResolveBoneLODTolerance(const SWorldRenderSettings& Settings, const FCullView* CameraView, const FVector4& Sphere, float MaxScale)
+        float ResolveBoneLODTolerance(const SWorldRenderSettings& Settings, const FCullView* CameraView, const FVector4& Sphere, float MaxScale, float ViewDistance)
         {
             if (!Settings.bUseLODs || CameraView == nullptr || CameraView->LODErrorScale <= 0.0f || MaxScale <= 0.0f)
             {
                 return 0.0f;
             }
-            return LODReach(*CameraView, Sphere) / (CameraView->LODErrorScale * MaxScale);
+            return LODReach(*CameraView, Sphere, ViewDistance) / (CameraView->LODErrorScale * MaxScale);
         }
 
         // Leaves FrameTag and SkinnedBoundsBase alone, since UploadSkinnedFrameData stamps both on the render thread.
@@ -147,6 +162,7 @@ namespace Lumina
                                    const FCullView* CameraView,
                                    const FVector4& Sphere,
                                    float MaxScale,
+                                   float ViewDistance,
                                    FPreSkinShareTable* PreSkinShare)
         {
             const uint32 MeshletHeaderSlot = Prim.MeshletHeaderSlot;
@@ -163,18 +179,24 @@ namespace Lumina
                 const FSurfaceDescGPU& Desc = SurfaceDescs[Binding.SurfaceDescIndex];
 
                 // Shadows take the camera's pick too, so every view cuts within one pre-skin slice.
-                const FUIntVector2 Slots = Settings.bUseLODs && CameraView != nullptr ? SelectClusterSlotRange(Desc, *CameraView, Sphere, MaxScale) : FUIntVector2(0u, 0u);
+                FUIntVector2 Slots(0u, 0u);
+                if (Settings.bUseLODs && CameraView != nullptr)
+                {
+                    Slots = SelectClusterSlotRange(Desc, *CameraView, Sphere, MaxScale, ViewDistance);
+                }
 
-                const uint32 LastLOD = Desc.NumLODs > 0u ? Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS) - 1u : 0u;
-                const uint32 SliceEnd = Desc.LODMeshletOffset[Slots.y] + Desc.LODMeshletCount[Slots.y];
+                const uint32 LastLOD    = Desc.NumLODs > 0u ? Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS) - 1u : 0u;
+                const uint32 SliceBegin = Desc.LODMeshletOffset[Slots.x];
+                const uint32 SliceEnd   = Desc.LODMeshletOffset[Slots.y] + Desc.LODMeshletCount[Slots.y];
 
                 FSkinnedFrameData Data = {};
-                // Zero meshlet count gates the cull shader's MeshletHeader deref.
-                Data.SurfaceMeshletCount     = MeshletHeaderSlot && SliceEnd > Desc.LODMeshletOffset[Slots.x] ? SliceEnd - Desc.LODMeshletOffset[Slots.x] : 0u;
-                Data.SurfaceMeshletOffset    = Desc.LODMeshletOffset[Slots.x];
-                Data.MeshletTotalCount       = MeshletHeaderSlot
-                                             ? Desc.LODMeshletOffset[LastLOD] + Desc.LODMeshletCount[LastLOD]
-                                             : 0u;
+                Data.SurfaceMeshletOffset = SliceBegin;
+                // Zero meshlet counts gate the cull shader's MeshletHeader deref.
+                if (MeshletHeaderSlot != 0u)
+                {
+                    Data.SurfaceMeshletCount = SliceEnd > SliceBegin ? SliceEnd - SliceBegin : 0u;
+                    Data.MeshletTotalCount   = Desc.LODMeshletOffset[LastLOD] + Desc.LODMeshletCount[LastLOD];
+                }
                 // Seeded to the sentinel so a rejected slot keeps no slice rather than last frame's base.
                 Data.SkinnedVertexBase       = kNoPreSkinBase;
                 if (PreSkinShare && MeshletHeaderSlot && SkinnedIndex < kPreSkinShareBit)
@@ -200,6 +222,27 @@ namespace Lumina
                     Local.DeferredSlots.Emplace(SkinnedIndex, Data);
                 }
             }
+        }
+
+        // A GPU-crowd pose skips the upload and marks the slice as holding no CPU pose, unless a ragdoll dirtied the CPU bones over it.
+        bool EmitGpuPose(FScenePrimitive& Tracked, const SSkeletalMeshComponent& Mesh, uint32 BoneSlice,
+                         TVector<FGpuPoseRequest>& Requests, TVector<FAnimWeightedSample>& Samples)
+        {
+            if (!Mesh.bGpuPose || Mesh.bRenderBonesDirty || Mesh.GpuSkeleton == nullptr || Mesh.GpuSamples.IsEmpty() || (uint32)Mesh.GpuSkeleton->GetNumBones() != Tracked.BoneCount)
+            {
+                return false;
+            }
+
+            FGpuPoseRequest& Request = Requests.EmplaceGetRef();
+            Request.BoneSlice    = BoneSlice;
+            Request.FirstSample  = (uint32)Samples.Num();
+            Request.NumSamples   = (uint32)Mesh.GpuSamples.Num();
+            Request.RootLockBone = Mesh.GpuRootLockBone;
+            Request.Skeleton     = Mesh.GpuSkeleton;
+            Samples.Append(Mesh.GpuSamples);
+
+            Tracked.UploadedSliceBase = kNoBoneSlice;
+            return true;
         }
 
         // Writes the pose into its slice unless the arena already holds it, and reports the range to upload.
@@ -287,7 +330,7 @@ namespace Lumina
         {
             co_await LightsReady;
 
-            co_await Jobs::Call(Jobs::ForEach(NumSkeletal, [this](const Jobs::FParallelRange& Range)
+            co_await Jobs::Call(Jobs::ForEach(NumSkeletal, [this](const Jobs::FRange& Range)
             {
                 LUMINA_PROFILE_SECTION("Cull Skinned Primitives");
                 FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
@@ -297,7 +340,7 @@ namespace Lumina
             // Sizes the arena from what survived, which is what keeps it O(visible), not O(scene).
             LayoutSkinnedBoneSlices(ThreadLocalStorage, FollowerStorage, SkeletalStorage);
 
-            co_await Jobs::Call(Jobs::ForEach(SkinnedCandidateCount, [this, SkeletalStorage](const Jobs::FParallelRange& Range)
+            co_await Jobs::Call(Jobs::ForEach(SkinnedCandidateCount, [this, SkeletalStorage](const Jobs::FRange& Range)
             {
                 LUMINA_PROFILE_SECTION("Emit Skinned Primitives");
                 FThreadLocalDrawData& Local = AcquireThreadLocalDrawData(Range.Thread);
@@ -308,7 +351,7 @@ namespace Lumina
         });
     }
 
-    void FDefaultSceneRenderer::CullSkinnedPrimitives(const Jobs::FParallelRange& Range, FThreadLocalDrawData& Local)
+    void FDefaultSceneRenderer::CullSkinnedPrimitives(const Jobs::FRange& Range, FThreadLocalDrawData& Local)
     {
         using namespace SceneRendererExtractSkinnedInternal;
 
@@ -497,55 +540,53 @@ namespace Lumina
         const FScenePrimitive* LayoutPrims = ScenePrimitives.GetPrimitives();
 
         // Reuse needs nothing shared; only the misses fall through to the serial allocator below.
-        Jobs::ParallelFor(SkinnedCandidateCount,
-            [&](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(SkinnedCandidateCount, [&](const Jobs::FRange& Range)
+        {
+            TBatchedAppend<uint32>       Pending(PendingSliceCursor, PendingSliceAllocs);
+            TBatchedAppend<FUIntVector2> Shared(SharedPoseCursor, SharedPoses);
+
+            // A crowd follows a handful of leaders, so the last lookup usually answers the next follower too.
+            ECS::FEntity LastLeaderEntity = ECS::NullEntity;
+            uint32       LastLeader       = Constants::kIndexNoneU32;
+
+            for (uint32 c = Range.Start; c < Range.End; ++c)
             {
-                TBatchedAppend<uint32>       Pending(PendingSliceCursor, PendingSliceAllocs);
-                TBatchedAppend<FUIntVector2> Shared(SharedPoseCursor, SharedPoses);
-
-                // A crowd follows a handful of leaders, so the last lookup usually answers the next follower too.
-                ECS::FEntity LastLeaderEntity = ECS::NullEntity;
-                uint32       LastLeader       = Constants::kIndexNoneU32;
-
-                for (uint32 c = Range.Start; c < Range.End; ++c)
+                const uint32 Index = SkinnedCandidates[c];
+                if (Index >= NumPrimitives)
                 {
-                    const uint32 Index = SkinnedCandidates[c];
-                    if (Index >= NumPrimitives)
-                    {
-                        continue;
-                    }
-
-                    BoneSliceBorrowed[Index] = 0u;
-                    const FScenePrimitive& Prim = LayoutPrims[Index];
-
-                    // Its own slice is left untouched, so it ages out while the leader's serves both.
-                    const SFollowerPoseComponent* Follower = FollowerStorage.TryGet(Prim.Entity);
-                    if (Follower != nullptr && Follower->bSharesLeaderPose)
-                    {
-                        BoneSliceByPrimitive[Index] = kNoBoneSlice;
-                        if (Follower->CopiedLeader != LastLeaderEntity)
-                        {
-                            LastLeaderEntity = Follower->CopiedLeader;
-                            LastLeader       = ScenePrimitives.FindSkeletalPrimitive(LastLeaderEntity);
-                        }
-
-                        // Only the entity and bone count are read here, which nothing in this pass writes.
-                        const uint32 Leader = LastLeader;
-                        const bool bCanLend = Leader < NumPrimitives && Leader != Index && LayoutPrims[Leader].Entity == LastLeaderEntity &&
-                                              LayoutPrims[Leader].BoneCount == Prim.BoneCount;
-                        Shared.Add(FUIntVector2(Index, bCanLend ? Leader : Constants::kIndexNoneU32));
-                        continue;
-                    }
-
-                    const uint32 Base = ScenePrimitives.TouchBoneSlice(Index, Prim.BoneCount, BoneSliceFrameNumber);
-                    BoneSliceByPrimitive[Index] = Base;
-                    if (Base == kNoBoneSlice)
-                    {
-                        Pending.Add(Index);
-                    }
+                    continue;
                 }
-            },
-            GSkinnedLayoutGrain, Jobs::EJobPriority::High);
+
+                BoneSliceBorrowed[Index] = 0u;
+                const FScenePrimitive& Prim = LayoutPrims[Index];
+
+                // Its own slice is left untouched, so it ages out while the leader's serves both.
+                const SFollowerPoseComponent* Follower = FollowerStorage.TryGet(Prim.Entity);
+                if (Follower != nullptr && Follower->bSharesLeaderPose)
+                {
+                    BoneSliceByPrimitive[Index] = kNoBoneSlice;
+                    if (Follower->CopiedLeader != LastLeaderEntity)
+                    {
+                        LastLeaderEntity = Follower->CopiedLeader;
+                        LastLeader       = ScenePrimitives.FindSkeletalPrimitive(LastLeaderEntity);
+                    }
+
+                    // Only the entity and bone count are read here, which nothing in this pass writes.
+                    const uint32 Leader = LastLeader;
+                    const bool bCanLend = Leader < NumPrimitives && Leader != Index && LayoutPrims[Leader].Entity == LastLeaderEntity &&
+                                          LayoutPrims[Leader].BoneCount == Prim.BoneCount;
+                    Shared.Add(FUIntVector2(Index, bCanLend ? Leader : Constants::kIndexNoneU32));
+                    continue;
+                }
+
+                const uint32 Base = ScenePrimitives.TouchBoneSlice(Index, Prim.BoneCount, BoneSliceFrameNumber);
+                BoneSliceByPrimitive[Index] = Base;
+                if (Base == kNoBoneSlice)
+                {
+                    Pending.Add(Index);
+                }
+            }
+        }, GSkinnedLayoutGrain, Jobs::EJobPriority::High);
 
         const auto AcquirePending = [&]()
         {
@@ -557,6 +598,7 @@ namespace Lumina
             }
             PendingSliceCursor.store(0, std::memory_order_relaxed);
         };
+        
         AcquirePending();
 
         // A leader nothing else gathered this frame still owes its followers a pose, so it is given a slice once here and packed below.
@@ -583,26 +625,25 @@ namespace Lumina
         }
 
         // Every leader slice is settled, so followers only read them; one whose leader cannot lend packs its own copy of the pose.
-        Jobs::ParallelFor(NumShared,
-            [&](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(NumShared, [&](const Jobs::FRange& Range)
+        {
+            TBatchedAppend<uint32> OwnSlice(PendingSliceCursor, PendingSliceAllocs);
+            for (uint32 n = Range.Start; n < Range.End; ++n)
             {
-                TBatchedAppend<uint32> OwnSlice(PendingSliceCursor, PendingSliceAllocs);
-                for (uint32 n = Range.Start; n < Range.End; ++n)
+                const FUIntVector2 Pose = SharedPoses[n];
+                const uint32 Base = Pose.y != Constants::kIndexNoneU32 ? BoneSliceByPrimitive[Pose.y] : kNoBoneSlice;
+                if (Base != kNoBoneSlice)
                 {
-                    const FUIntVector2 Pose = SharedPoses[n];
-                    const uint32 Base = Pose.y != Constants::kIndexNoneU32 ? BoneSliceByPrimitive[Pose.y] : kNoBoneSlice;
-                    if (Base != kNoBoneSlice)
-                    {
-                        BoneSliceByPrimitive[Pose.x] = Base;
-                        BoneSliceBorrowed[Pose.x]    = 1u;
-                    }
-                    else
-                    {
-                        OwnSlice.Add(Pose.x);
-                    }
+                    BoneSliceByPrimitive[Pose.x] = Base;
+                    BoneSliceBorrowed[Pose.x]    = 1u;
                 }
-            },
-            GSkinnedLayoutGrain, Jobs::EJobPriority::High);
+                else
+                {
+                    OwnSlice.Add(Pose.x);
+                }
+            }
+        }, GSkinnedLayoutGrain, Jobs::EJobPriority::High);
+        
         AcquirePending();
 
         PreSkinShare.Prepare(NumShared);
@@ -624,7 +665,7 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::EmitSkinnedPrimitives(const Jobs::FParallelRange& Range, FThreadLocalDrawData& Local, const auto& SkeletalStorage)
+    void FDefaultSceneRenderer::EmitSkinnedPrimitives(const Jobs::FRange& Range, FThreadLocalDrawData& Local, const auto& SkeletalStorage)
     {
         using namespace SceneRendererExtractSkinnedInternal;
 
@@ -634,13 +675,13 @@ namespace Lumina
         const FVector3           CameraPos       = FVector3(SceneGlobalData.CameraData.Location);
         const FCullView*         CameraView      = &Frame.Views.CameraLODView;
 
-        const FScenePrimitive*      Prims    = ScenePrimitives.GetPrimitives();
-        const FVector4*             Spheres  = ScenePrimitives.GetBounds();
-        const FPrimitiveCullData*   Culls    = ScenePrimitives.GetCullData();
-        const FSurfaceBinding*      Bindings = ScenePrimitives.GetBindings();
-        const FSurfaceDescGPU*      SurfaceDescs     = ScenePrimitives.GetSurfaceDescs();
-        const uint32                NumSurfaceDescs  = ScenePrimitives.GetSurfaceDescCount();
-        FScenePrimitive*            MutablePrims = ScenePrimitives.GetMutablePrimitives();
+        const FScenePrimitive*    Prims           = ScenePrimitives.GetPrimitives();
+        const FVector4*           Spheres         = ScenePrimitives.GetBounds();
+        const FPrimitiveCullData* Culls           = ScenePrimitives.GetCullData();
+        const FSurfaceBinding*    Bindings        = ScenePrimitives.GetBindings();
+        const FSurfaceDescGPU*    SurfaceDescs    = ScenePrimitives.GetSurfaceDescs();
+        const uint32              NumSurfaceDescs = ScenePrimitives.GetSurfaceDescCount();
+        FScenePrimitive*          MutablePrims    = ScenePrimitives.GetMutablePrimitives();
 
         // Sized by LayoutSkinnedBoneSlices before this pass runs, and every slice below is disjoint.
         TVector<FBoneTransform>& ArenaMirror = ExtractFrame->Geometry.BonesData;
@@ -691,21 +732,24 @@ namespace Lumina
                 BoneArenaBase = BoneSlice;
 
                 // A borrowed slice belongs to the leader, whose own gather or the layout pass packs it.
-                if (!BoneSliceBorrowed[i])
+                if (!BoneSliceBorrowed[i] && !EmitGpuPose(MutablePrims[i], *MeshComponent, BoneSlice, Local.GpuPoseRequests, Local.GpuPoseSamples))
                 {
                     PackPoseIntoSlice(MutablePrims[i], *MeshComponent, BoneSlice, ArenaMirror, Local.BoneUploadRanges);
                 }
             }
 
-            MeshComponent->LastDistanceOverRadius = (Radius > 0.0f) ? (Math::Sqrt(DistSq) / Radius) : 0.0f;
+            MeshComponent->LastDistanceOverRadius = Radius > 0.0f ? Math::Sqrt(DistSq) / Radius : 0.0f;
 
-            const float MaxScale = Prim.WorldMaxScale;
-            MeshComponent->LastBoneLODTolerance = ResolveBoneLODTolerance(FrameSettings, CameraView, Sphere, MaxScale);
+            const float MaxScale     = Prim.WorldMaxScale;
+            const float ViewDistance = LODViewDistance(*CameraView, Sphere);
+            MeshComponent->LastBoneLODTolerance = ResolveBoneLODTolerance(FrameSettings, CameraView, Sphere, MaxScale, ViewDistance);
 
+            // Only a follower skinning a borrowed pose can share the vertices its leader's other followers skin.
+            const bool bSharesPose = BoneSliceBorrowed[i] && BoneArenaBase != kNoBoneSlice;
             EmitPrimitiveSurfaces(Local, Prim, Bindings + Prim.BindingBase,
                                   SurfaceDescs, NumSurfaceDescs,
-                                  BoneArenaBase, Target, FrameSettings, CameraView, Sphere, MaxScale,
-                                  BoneSliceBorrowed[i] && BoneArenaBase != kNoBoneSlice ? &PreSkinShare : nullptr);
+                                  BoneArenaBase, Target, FrameSettings, CameraView, Sphere, MaxScale, ViewDistance,
+                                  bSharesPose ? &PreSkinShare : nullptr);
         }
     }
 
@@ -732,6 +776,11 @@ namespace Lumina
         BoneUploadRanges.Append(LeaderPoseUploadRanges);
         LeaderPoseUploadRanges.Reset();
 
+        TVector<FGpuPoseRequest>&     GpuPoseRequests = Frame.Geometry.GpuPoseRequests;
+        TVector<FAnimWeightedSample>& GpuPoseSamples  = Frame.Geometry.GpuPoseSamples;
+        GpuPoseRequests.Reset();
+        GpuPoseSamples.Reset();
+
         uint64 TotalInstancesCulled = 0;
         for (uint32 t = 0; t < NumThreads; ++t)
         {
@@ -739,6 +788,15 @@ namespace Lumina
             TotalInstancesCulled += Local.Stats.NumInstancesCulled;
 
             BoneUploadRanges.Append(Local.BoneUploadRanges);
+
+            // Each worker numbered its samples from zero, so they are rebased onto the merged list.
+            const uint32 SampleBase = (uint32)GpuPoseSamples.Num();
+            for (FGpuPoseRequest Request : Local.GpuPoseRequests)
+            {
+                Request.FirstSample += SampleBase;
+                GpuPoseRequests.Add(Request);
+            }
+            GpuPoseSamples.Append(Local.GpuPoseSamples);
         }
         FrameStats.NumInstancesCulled += TotalInstancesCulled;
 

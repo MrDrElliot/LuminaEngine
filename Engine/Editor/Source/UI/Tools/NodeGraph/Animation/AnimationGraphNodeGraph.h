@@ -53,6 +53,7 @@ namespace Lumina
         bool HasNodePreview(const CEdGraphNode* Node) override;
         void DrawNodePreviewContent(CEdGraphNode* Node) override;
         bool IsNodeIdle(const CEdGraphNode* Node) const override;
+        bool GetNodeBadge(const CEdGraphNode* Node, FString& OutText, ImU32& OutColor) override;
         void GetLinkStyle(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, ImU32& OutColor, float& OutThickness) const override;
         bool GetLinkBadge(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, FString& OutText, ImU32& OutColor) override;
         bool WantsLinkFlow(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin) override;

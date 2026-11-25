@@ -44,24 +44,46 @@ float3 ConeDirection(uint Cone, float3 N, float3 T, float3 B)
     {
         return N;
     }
+    // N, T and B are orthonormal and the polar cosine and sine square to one, so the sum is already unit length.
     const float Phi = float(Cone - 1u) * (2.0 * 3.14159265 / 8.0);
-    return normalize(N * kRingCosPolar + (T * cos(Phi) + B * sin(Phi)) * kRingSinPolar);
+    return N * kRingCosPolar + (T * cos(Phi) + B * sin(Phi)) * kRingSinPolar;
 }
 
 // Fixed sample distances rather than sphere tracing, so the nearest approach a cone finds moves smoothly with the receiver.
 static const uint kSkyConeSteps = 10u;
 
-float TraceSkyCone(FWorldDistanceField* Field, float3 Origin, float3 Dir, float Start, float MaxDistance, float FadeStart)
+// Every cone of a pixel shares its start and reach, so the march schedule is built once for all of them.
+struct FSkyConeSchedule
 {
-    const float InvFade = 1.0 / max(MaxDistance - FadeStart, 1e-4);
-    const float Ratio   = MaxDistance / Start;
+    float Start;
+    float StepRatio;
+    float FadeStart;
+    float InvFade;
+};
+
+FSkyConeSchedule MakeSkyConeSchedule(float Start, float MaxDistance, float FadeStart)
+{
+    FSkyConeSchedule Schedule;
+    Schedule.Start     = Start;
+    Schedule.StepRatio = pow(MaxDistance / Start, 1.0 / float(kSkyConeSteps - 1u));
+    Schedule.FadeStart = FadeStart;
+    Schedule.InvFade   = 1.0 / max(MaxDistance - FadeStart, 1e-4);
+    return Schedule;
+}
+
+float TraceSkyCone(FWorldDistanceField* Field, float3 Origin, float3 Dir, FSkyConeSchedule Schedule, uint ReceiverLevel)
+{
+    const float Start     = Schedule.Start;
+    const float StepRatio = Schedule.StepRatio;
+    const float FadeStart = Schedule.FadeStart;
+    const float InvFade   = Schedule.InvFade;
 
     float Visibility = 1.0;
+    float t          = Start;
+    uint  Level      = ReceiverLevel;
     [loop]
-    for (uint Step = 0; Step < kSkyConeSteps && Visibility > 0.0; ++Step)
+    for (uint Step = 0; Step < kSkyConeSteps && Visibility > 0.0; ++Step, t *= StepRatio)
     {
-        const float t = Start * pow(Ratio, float(Step) / float(kSkyConeSteps - 1u));
-        uint Level;
         const float Distance = Field.Sample(Origin + Dir * t, Level);
         if (Level >= kWorldDFLevels)
         {
@@ -100,7 +122,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float2 DepthSize = float2(Pass().DepthSize);
     const float2 UV        = (float2(Texel) + 0.5) / DepthSize;
     const float3 ViewPos   = ReconstructViewPos(UV, Raw, GetInverseCameraProjection());
-    const float3 P         = LiftOntoTerrains(mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz, Pass().Terrains, Pass().NumTerrains);
+    const float3 P         = LiftOntoTerrains(mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz, &Pass().Terrains[0], Pass().NumTerrains);
     const float  Distance  = length(P - GetCameraPosition());
 
     FWorldDistanceField* Field = &Pass().Field;
@@ -125,11 +147,14 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float  FadeStart   = MaxDistance * kFadeStartFraction;
     const float  Start       = min(0.5 * Field.VoxelSize(ReceiverLevel), MaxDistance * 0.5);
 
+    const FSkyConeSchedule Schedule = MakeSkyConeSchedule(Start, MaxDistance, FadeStart);
     float ConeVisibility[kNumCones];
     [unroll]
     for (uint Cone = 0u; Cone < kNumCones; ++Cone)
     {
-        ConeVisibility[Cone] = TraceSkyCone(Field, Origin, ConeDirection(Cone, N, T, B), Start, MaxDistance, FadeStart);
+        // A cone this far down counts as open whatever it finds, so it is not traced.
+        const float3 Dir = ConeDirection(Cone, N, T, B);
+        ConeVisibility[Cone] = Dir.y > kGroundConeY ? TraceSkyCone(Field, Origin, Dir, Schedule, ReceiverLevel) : 1.0;
     }
 
     float  Visibility = 0.0;

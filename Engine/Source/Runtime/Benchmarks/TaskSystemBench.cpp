@@ -102,7 +102,7 @@ TEST(TaskBench, StrongScaling_HeavyCompute)
 
     for (double& P : Partials) P = 0.0;
     const auto P0 = Lumina::PlatformTime::Cycles();
-    Jobs::ParallelFor(Chunks, [&](const Jobs::FParallelRange& R)
+    Jobs::ParallelFor(Chunks, [&](const Jobs::FRange& R)
     {
         double Acc = 0.0;
         for (uint32 c = R.Start; c < R.End; ++c) Acc += BusySpin(PerChunk, (double)c);
@@ -200,7 +200,7 @@ TEST(TaskBench, IterationThroughput)
     TVector<uint64> Partials;
     Partials.SetNum(Jobs::GetNumThreadSlots(), 0);
 
-    auto Body = [&](const Jobs::FParallelRange& R)
+    auto Body = [&](const Jobs::FRange& R)
     {
         uint64 h = (uint64)R.Start * 2654435761ull + 1ull;
         for (uint32 i = R.Start; i < R.End; ++i)
@@ -389,7 +389,7 @@ TEST(TaskBench, Reduction_ForkJoinVsParallelFor)
         Partials.Reset();
         Partials.SetNum(Jobs::GetNumThreadSlots(), 0);
         const auto P0 = Lumina::PlatformTime::Cycles();
-        Jobs::ParallelFor(N, [&](const Jobs::FParallelRange& R)
+        Jobs::ParallelFor(N, [&](const Jobs::FRange& R)
         {
             uint64 Local = 0;
             for (uint32 i = R.Start; i < R.End; ++i) Local += Data[i];
@@ -556,7 +556,7 @@ TEST(TaskBench, GranularityCrossover)
     auto RunGrain = [&](uint32 Grain)
     {
         const auto T0 = Lumina::PlatformTime::Cycles();
-        Jobs::ParallelFor(N, [&](const Jobs::FParallelRange& R)
+        Jobs::ParallelFor(N, [&](const Jobs::FRange& R)
         {
             double Local = 0.0;
             for (uint32 i = R.Start; i < R.End; ++i)

@@ -338,10 +338,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const float4 SphereBounds = float4(Center, Radius);
 
     // The primary camera's pick, which the instance carries for anything that reads it outside a view.
-    uint SurfaceDrawBound = SurfaceMeshletCount;
     if (bSelectPerView && bHasGeometry)
     {
-        const uint2 CameraRange = SelectViewMeshletRange(Desc, GetCullView(0u), SphereBounds, MaxScale, SurfaceDrawBound);
+        const uint2 CameraRange = SelectViewMeshletRange(Desc, GetCullView(0u), SphereBounds, MaxScale);
         SurfaceMeshletOffset = CameraRange.x;
         SurfaceMeshletCount  = CameraRange.y;
     }
@@ -353,7 +352,6 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
 
         uint2 Range     = uint2(0u, 0u);
         uint  Emitted   = 0u;
-        uint  DrawBound = 0u;
 
         // Views before the first visible one already failed the test above, and that view already passed it.
         const bool bVisible = v == FirstVisibleView
@@ -364,12 +362,11 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
             // View 0 reuses the camera's pick above.
             if (bSelectPerView && v > 0u)
             {
-                Range = bHasGeometry ? SelectViewMeshletRange(Desc, View, SphereBounds, MaxScale, DrawBound) : uint2(0u, 0u);
+                Range = bHasGeometry ? SelectViewMeshletRange(Desc, View, SphereBounds, MaxScale) : uint2(0u, 0u);
             }
             else
             {
                 Range     = uint2(SurfaceMeshletOffset, SurfaceMeshletCount);
-                DrawBound = SurfaceDrawBound;
             }
 
             // Clamped here, so the builder inherits a range that is already in bounds.
@@ -384,8 +381,8 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         {
             FRenderBucket* Bucket = Pass().OutBuckets.At(v * Pass().NumBatches + DrawID);
 
-            // One reservation per meshlet the cut can draw, since every pass that rasterizes the batch draws the same list.
-            InterlockedAdd(Bucket.DrawCapacity, min(DrawBound, Emitted));
+            // Cluster cuts can draw from any slot in the selected range.
+            InterlockedAdd(Bucket.DrawCapacity, Emitted);
 
             // Rounded up per instance because blocks never span instances, and split on runs as BuildMeshletBlocks splits them.
             const uint Blocks = RangeBlockCount(uint2(Range.x, Emitted), bSelectPerView);

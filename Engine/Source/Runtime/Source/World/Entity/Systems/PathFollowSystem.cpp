@@ -462,7 +462,7 @@ namespace Lumina
         }
 
         // One query per grab, so a burst of retargets spreads across every worker instead of piling onto a few chunks.
-        Jobs::ParallelFor((uint32)RepathQueue.Num(), [&](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RepathQueue.Num(), [&](const Jobs::FRange& Range)
         {
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {

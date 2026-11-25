@@ -16,7 +16,7 @@ namespace Lumina
             return false;
         }
 
-        return true;
+        return From->IsExecutionPin() == To->IsExecutionPin();
     }
 
     bool FEdGraphSchema::AllowsMultipleConnections(CEdNodeGraphPin* InputPin) const

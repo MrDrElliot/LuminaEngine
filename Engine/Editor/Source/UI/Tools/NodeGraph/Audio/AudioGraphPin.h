@@ -23,6 +23,7 @@ namespace Lumina
         bool HasInlineEditor() const override;
 
         uint32 GetPinColor() const override { return GetAudioGraphTypeColor(PinType); }
+        bool IsExecutionPin() const override { return PinType == EAudioGraphType::Trigger; }
 
         void SetPinType(EAudioGraphType InType) { PinType = InType; }
         EAudioGraphType GetPinType() const { return PinType; }

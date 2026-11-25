@@ -1056,7 +1056,7 @@ namespace Lumina
 
     void CEdNodeGraph::DrawPinTooltip(CEdNodeGraphPin* Pin)
     {
-        const FString TypeName = Pin->GetPinTypeName();
+        const FString TypeName = Pin->IsExecutionPin() ? FString("Execution") : Pin->GetPinTypeName();
         if (!TypeName.IsEmpty())
         {
             ImGui::TextColored(ImVec4(0.60f, 0.80f, 1.00f, 1.0f), "%s", *TypeName);
@@ -1245,6 +1245,13 @@ namespace Lumina
         if (GetNodeHeat(Node, Heat, HeatLabel))
         {
             DrawNodeHeat(Node, Heat, HeatLabel);
+        }
+
+        FString Badge;
+        ImU32   BadgeColor = 0;
+        if (GetNodeBadge(Node, Badge, BadgeColor))
+        {
+            DrawNodeBadge(Node, Badge, BadgeColor);
         }
 
         if (IsNodePreviewed(Node))
@@ -1560,6 +1567,12 @@ namespace Lumina
             BreakPinLinks(Pin);
         }
 
+        if (const auto* Link = FindLink(Links, Editor.GetBreakLink()))
+        {
+            SetPendingEditLabel("Break Link");
+            BreakLink(Link->Key, Link->Value);
+        }
+
         HandleLinkDrag();
         HandleStroke(Links);
         HandleSplice(Links);
@@ -1654,7 +1667,9 @@ namespace Lumina
         // Moved wires land on a pin facing the same way as the one they leave.
         if (bDragMovesLinks)
         {
-            return Pin->bInputPin == DragSourcePin->bInputPin && !Pin->IsDisabled() ? EGraphPinHighlight::Accepts : EGraphPinHighlight::Refuses;
+            const bool bCompatible = Pin->bInputPin == DragSourcePin->bInputPin
+                && Pin->IsExecutionPin() == DragSourcePin->IsExecutionPin() && !Pin->IsDisabled();
+            return bCompatible ? EGraphPinHighlight::Accepts : EGraphPinHighlight::Refuses;
         }
 
         if (Pin->bInputPin == DragSourcePin->bInputPin || Pin->IsDisabled() || Pin->GetOwningNode() == DragSourcePin->GetOwningNode())
@@ -1996,6 +2011,23 @@ namespace Lumina
         DrawList->AddText(ImVec2(Min.x + Size.x - TextSize.x - Inset, Min.y + Inset * 0.5f), Color, *Label);
     }
 
+    void CEdNodeGraph::DrawNodeBadge(CEdGraphNode* Node, const FString& Text, ImU32 Color)
+    {
+        constexpr float PadX = 6.0f;
+        constexpr float PadY = 2.0f;
+
+        // Centered on the top edge, so it reads as a tag on the node without covering its title.
+        const ImVec2 Min(Node->GetNodeX(), Node->GetNodeY());
+        const ImVec2 Size     = Editor.GetNodeSize(Node->GetNodeID());
+        const ImVec2 TextSize = ImGui::CalcTextSize(*Text);
+        const ImVec2 PillMin(Min.x + (Size.x - TextSize.x) * 0.5f - PadX, Min.y - TextSize.y * 0.5f - PadY);
+        const ImVec2 PillMax(PillMin.x + TextSize.x + PadX * 2.0f, PillMin.y + TextSize.y + PadY * 2.0f);
+
+        ImDrawList* DrawList = Editor.GetNodeBackgroundDrawList(Node->GetNodeID());
+        DrawList->AddRectFilled(PillMin, PillMax, Color, (PillMax.y - PillMin.y) * 0.5f);
+        DrawList->AddText(ImVec2(PillMin.x + PadX, PillMin.y + PadY), IM_COL32_WHITE, *Text);
+    }
+
     void CEdNodeGraph::HandleLinkDrag()
     {
         const FGraphLinkDrag* Drag = Editor.GetLinkDrag();
@@ -2263,7 +2295,7 @@ namespace Lumina
             const ImVec2 OpenedAt = Editor.ScreenToCanvas(ImGui::GetMousePosOnOpeningCurrentPopup());
             if (const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* Link = FindLink(Links, ContextMenuLinkID))
             {
-                if (ImGui::MenuItem(LE_ICON_LINK_OFF " Break Link", "Delete"))
+                if (ImGui::MenuItem(LE_ICON_LINK_OFF " Break Link", "Alt+Delete"))
                 {
                     SetPendingEditLabel("Break Link");
                     BreakLink(Link->Key, Link->Value);

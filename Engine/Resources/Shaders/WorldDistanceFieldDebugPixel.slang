@@ -60,7 +60,7 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
     for (uint Step = 0u; Step < kMaxSteps; ++Step)
     {
         const float3 P = Origin + Dir * t;
-        uint Level;
+        uint Level = 0u;
         const float Distance = Field.Sample(P, Level);
         if (Level >= kWorldDFLevels)
         {

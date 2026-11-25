@@ -104,21 +104,6 @@ static inline b3FloatW4 b3MaxW4( b3FloatW4 a, b3FloatW4 b )
 	return r;
 }
 
-// clamp a to [-b, b]
-static inline b3FloatW4 b3SymClampW4( b3FloatW4 a, b3FloatW4 b )
-{
-	b3FloatW4 r;
-	r.x = a.x <= b.x ? a.x : b.x;
-	r.y = a.y <= b.y ? a.y : b.y;
-	r.z = a.z <= b.z ? a.z : b.z;
-	r.w = a.w <= b.w ? a.w : b.w;
-	r.x = r.x <= -b.x ? -b.x : r.x;
-	r.y = r.y <= -b.y ? -b.y : r.y;
-	r.z = r.z <= -b.z ? -b.z : r.z;
-	r.w = r.w <= -b.w ? -b.w : r.w;
-	return r;
-}
-
 // Logical operations on the scalar path are 0/1 float values. Not bit-wise like SIMD.
 
 static inline b3FloatW4 b3AndW4( b3FloatW4 a, b3FloatW4 b )

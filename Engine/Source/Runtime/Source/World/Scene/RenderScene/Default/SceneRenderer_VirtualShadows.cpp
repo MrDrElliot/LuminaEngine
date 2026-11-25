@@ -315,20 +315,25 @@ namespace Lumina
             ComputeToCompute(CL);
         };
 
-        if (Res.bNeedsTable)
         {
-            Run(kModeInitialize, Math::Max(kTotalPages, PoolPages));
-            Res.bNeedsTable = false;
+            SCENE_GPU_SCOPE(CL, "Reset Pages");
+            if (Res.bNeedsTable)
+            {
+                Run(kModeInitialize, Math::Max(kTotalPages, PoolPages));
+                Res.bNeedsTable = false;
+            }
+            Run(kModeReset, 1u);
         }
-        Run(kModeReset, 1u);
 
         if (!Virtual.InvalidSpheres.IsEmpty())
         {
+            SCENE_GPU_SCOPE(CL, "Invalidate Pages");
             PC.Spheres = RHI::CopyTransientArray(Virtual.InvalidSpheres.GetData(), Virtual.InvalidSpheres.Num());
             Run(kModeInvalidate, (uint32)Virtual.InvalidSpheres.Num() * VSM_MAX_LEVELS);
         }
 
         {
+            SCENE_GPU_SCOPE(CL, "Mark Requested Pages");
             const FSceneImage& Depth = GetNamedImage(ENamedImage::DepthAttachment);
             FMarkPC Mark;
             Mark.Pages        = PC.Pages;
@@ -342,19 +347,27 @@ namespace Lumina
             ComputeToCompute(CL);
         }
 
-        Run(kModeCount, kTotalPages);
-        Run(kModeRelease, kTotalPages);
-        Run(kModeAllocate, kTotalPages);
-        Run(kModeFinish, 1u);
-        Run(kModeMaskBase, kTotalPages);
-        for (uint32 Mip = 1u; Mip < VSM_MASK_MIPS; ++Mip)
         {
-            PC.Mip = Mip;
-            const uint32 Side = VSM_LEVEL_PAGES >> Mip;
-            Run(kModeMaskMip, VSM_MAX_LEVELS * Side * Side);
+            SCENE_GPU_SCOPE(CL, "Allocate Pages");
+            Run(kModeCount, kTotalPages);
+            Run(kModeRelease, kTotalPages);
+            Run(kModeAllocate, kTotalPages);
+            Run(kModeFinish, 1u);
+        }
+
+        {
+            SCENE_GPU_SCOPE(CL, "Build Page Masks");
+            Run(kModeMaskBase, kTotalPages);
+            for (uint32 Mip = 1u; Mip < VSM_MASK_MIPS; ++Mip)
+            {
+                PC.Mip = Mip;
+                const uint32 Side = VSM_LEVEL_PAGES >> Mip;
+                Run(kModeMaskMip, VSM_MAX_LEVELS * Side * Side);
+            }
         }
 
         // Fresh and invalidated static pages start at the far plane before the raster fills them.
+        SCENE_GPU_SCOPE(CL, "Clear Static Pages");
         FFillPC Fill;
         Fill.Pages     = PC.Pages;
         Fill.List      = PC.StaticList;

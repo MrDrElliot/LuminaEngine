@@ -228,6 +228,7 @@ namespace Lumina
 
                 if (CAnimGraphNode* AnimNode = Cast<CAnimGraphNode>(Node))
                 {
+                    FAnimationGraphCompiler::FNodeScope Scope(Compiler, AnimNode);
                     AnimNode->GenerateBytecode(Compiler);
                     EmittedNodes.Add(Node);
                 }
@@ -249,6 +250,7 @@ namespace Lumina
 
             if (CAnimGraphNode* AnimNode = Cast<CAnimGraphNode>(Node))
             {
+                FAnimationGraphCompiler::FNodeScope Scope(Compiler, AnimNode);
                 AnimNode->GenerateBytecode(Compiler);
             }
         }
@@ -478,7 +480,23 @@ namespace Lumina
 
     bool CAnimationGraphNodeGraph::IsNodeIdle(const CEdGraphNode* Node) const
     {
+        if (DebugView != nullptr && DebugView->Crowd.bShow && DebugView->Crowd.Skipped.Contains(Node))
+        {
+            return true;
+        }
         return DebugView != nullptr && DebugView->bShowWeights && DebugView->NodeWeights.Contains(Node) && DebugView->GetNodeWeight(Node) < kIdleWeight;
+    }
+
+    bool CAnimationGraphNodeGraph::GetNodeBadge(const CEdGraphNode* Node, FString& OutText, ImU32& OutColor)
+    {
+        const EAnimCrowdNodeFate* Fate = DebugView != nullptr && DebugView->Crowd.bShow ? DebugView->Crowd.Skipped.Find(Node) : nullptr;
+        if (Fate == nullptr)
+        {
+            return false;
+        }
+        OutText  = *Fate == EAnimCrowdNodeFate::Bypassed ? "Skipped in crowds" : "Unused in crowds";
+        OutColor = EditorColors::U32(EditorColors::WithAlpha(*Fate == EAnimCrowdNodeFate::Bypassed ? EditorColors::Warning() : EditorColors::TextMuted(), 0.9f));
+        return true;
     }
 
     void CAnimationGraphNodeGraph::GetLinkStyle(CEdNodeGraphPin* InputPin, CEdNodeGraphPin* OutputPin, ImU32& OutColor, float& OutThickness) const

@@ -21,12 +21,18 @@ namespace Lumina
         void (*Declare)(const void* Param, FSystemAccess& Access) = nullptr;
         bool (*HasWork)(const void* Param)                        = nullptr;
         void (*Unbind)(void* Param)                               = nullptr;
+
+        // True when the member learned of access it must declare, which the world applies before the next update stage.
+        bool (*NeedsRedeclare)(const void* Param)                 = nullptr;
     };
 
     // Called from a member's constructor; it registers only while that member is being built as part of a system.
     RUNTIME_API void RegisterSystemParam(void* Param, const FSystemParamOps& Ops);
 
     RUNTIME_API ECS::FRegistry&    GetSystemRegistry(CWorld& World);
+
+    // Safe from any thread, so a worker that meets a new type can ask for it to be declared.
+    RUNTIME_API void RequestSystemRedeclare(CWorld& World);
     RUNTIME_API ECS::FEventQueues& GetSystemEvents(CWorld& World);
 
     // Membership is what DeclareParamMembership returned for the param, or kIndexNone when it may reach any entity.

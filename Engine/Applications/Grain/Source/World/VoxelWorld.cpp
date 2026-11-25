@@ -113,7 +113,7 @@ namespace Grain
 
         const uint32 LocalSeed = Seed;
 
-        Jobs::ParallelFor(uint32(kWorldVoxelsZ), [this, LocalSeed](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kWorldVoxelsZ), [this, LocalSeed](const Jobs::FRange& Range)
         {
             for (uint32 Z = Range.Start; Z < Range.End; ++Z)
             {
@@ -126,7 +126,7 @@ namespace Grain
         }, 8);
 
         // Slope needs both neighbors, so surface materials are a second pass over the finished heights.
-        Jobs::ParallelFor(uint32(kWorldVoxelsZ), [this](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kWorldVoxelsZ), [this](const Jobs::FRange& Range)
         {
             for (uint32 Z = Range.Start; Z < Range.End; ++Z)
             {
@@ -197,7 +197,7 @@ namespace Grain
         CoarseMin.Init(0.0f, kCoarseX * kCoarseZ);
         CoarseMax.Init(0.0f, kCoarseX * kCoarseZ);
 
-        Jobs::ParallelFor(uint32(kCoarseZ), [this](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kCoarseZ), [this](const Jobs::FRange& Range)
         {
             for (uint32 CZ = Range.Start; CZ < Range.End; ++CZ)
             {
@@ -820,7 +820,7 @@ namespace Grain
         const int32 NodeCount = Nodes.Num();
         Prefix.Init(0u, NodeCount * 8);
 
-        Jobs::ParallelFor(uint32(NodeCount), [this](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(NodeCount), [this](const Jobs::FRange& Range)
         {
             for (uint32 Node = Range.Start; Node < Range.End; ++Node)
             {
@@ -854,7 +854,7 @@ namespace Grain
         TVector<uint32> RootLocal;
         RootLocal.Init(~0u, kRootCount);
 
-        Jobs::ParallelFor(uint32(kRootCount), [this, &Buffers, &RootLocal](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kRootCount), [this, &Buffers, &RootLocal](const Jobs::FRange& Range)
         {
             for (uint32 Root = Range.Start; Root < Range.End; ++Root)
             {

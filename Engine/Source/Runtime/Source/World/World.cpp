@@ -1447,6 +1447,8 @@ namespace Lumina
         const SDefaultWorldSettings& Settings = GetDefaultWorldSettings();
         State->Gravity              = Settings.GravityDirection * (9.81f * Settings.GravityScale);
         State->bAnimatesWhilePaused = bAnimatesWhilePaused;
+        State->bGpuCrowdAnimation   = Settings.bGpuCrowdAnimation;
+        State->GpuCrowdMinDistanceOverRadius = Settings.GpuCrowdMinDistanceOverRadius;
     }
 
     SDefaultWorldSettings& CWorld::GetDefaultWorldSettings()
@@ -2275,6 +2277,18 @@ namespace Lumina
 
     void CWorld::ApplyPendingSystemChanges()
     {
+        if (bSystemRedeclareRequested.exchange(false, std::memory_order_acq_rel))
+        {
+            for (const TStrongObjectPtr<CEntitySystem>& System : Systems)
+            {
+                if (System != nullptr && System->NeedsRedeclare())
+                {
+                    System->ConfigureSystem();
+                }
+            }
+            RebuildSystemSchedule();
+        }
+
         if (!bSystemsDirty)
         {
             return;

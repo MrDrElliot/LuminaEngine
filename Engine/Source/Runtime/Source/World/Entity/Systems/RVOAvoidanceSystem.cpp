@@ -272,7 +272,7 @@ namespace Lumina
         else
         {
             std::atomic<bool> bAnyDebug{false};
-            Jobs::ParallelFor((uint32)Count, [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor((uint32)Count, [&](const Jobs::FRange& Range)
             {
                 int32 Solved = 0;
                 bool  bDebug = false;

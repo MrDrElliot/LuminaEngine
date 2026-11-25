@@ -15,6 +15,45 @@ namespace Lumina
         constexpr float kDrawPressureRelax  = 1.02f;
         constexpr float kMaxDrawPressureLODDivisor = 16.0f;
 
+        // Mirrors MESHLET_BUILD_* in BuildMeshletBlocks.slang.
+        enum class EMeshletBuildMode : uint32
+        {
+            Early        = 0,
+            Late         = 1,
+            EarlyNoSplit = 2,
+        };
+
+        // Mirrors bDeferShadows in MeshletCull.slang, where shadow levels wait for this frame's pages and then cull in their own phase.
+        enum class EShadowDeferral : uint32
+        {
+            None        = 0,
+            Deferred    = 1,
+            ShadowPhase = 2,
+        };
+
+        // The shadow build appends to the front like an unsplit early build, since shadow levels never take two phases.
+        EMeshletBuildMode MeshletBuildMode(bool bShadowPhase, bool bLatePass, bool bSplitPhases)
+        {
+            if (bShadowPhase)
+            {
+                return EMeshletBuildMode::EarlyNoSplit;
+            }
+            if (bLatePass)
+            {
+                return EMeshletBuildMode::Late;
+            }
+            return bSplitPhases ? EMeshletBuildMode::Early : EMeshletBuildMode::EarlyNoSplit;
+        }
+
+        EShadowDeferral ShadowDeferral(bool bShadowPhase, bool bVirtualShadows)
+        {
+            if (bShadowPhase)
+            {
+                return EShadowDeferral::ShadowPhase;
+            }
+            return bVirtualShadows ? EShadowDeferral::Deferred : EShadowDeferral::None;
+        }
+
         #if !defined(LE_SHIPPING)
         TConsoleVar<float> CVarCullDebugCapacityScale("r.Cull.DebugCapacityScale", 1.0f,
             "Scales the meshlet draw and block lists below demand, to exercise the coarse-LOD overflow fallback.");
@@ -247,7 +286,7 @@ namespace Lumina
         const uint32 NumTasks = RenderUtils::GetGroupCount(NumWork, BlocksPerTask);
         const bool bAll = bBlockBoundsRebuildAll;
         bBlockBoundsRunning = true;
-        const auto ComputeBlockBounds = [this, Entries, NumSlots, NumWork, bAll, StreamedBlocks](const Jobs::FParallelRange& Range)
+        const auto ComputeBlockBounds = [this, Entries, NumSlots, NumWork, bAll, StreamedBlocks](const Jobs::FRange& Range)
         {
             for (uint32 TaskIndex = Range.Start; TaskIndex < Range.End; ++TaskIndex)
             {
@@ -580,14 +619,8 @@ namespace Lumina
         ReserveBuffer(CL, SkinnedMeshletConeBuffer, Math::Max<SIZE_T>(sizeof(FMeshletCone), (SIZE_T)BoundsTotal * sizeof(FMeshletCone)));
 
         // The smaller of the two, since one base indexes both and a slot must fit in each.
-        const uint32 SphereCap = SkinnedMeshletBoundsBuffer
-            ? SkinnedMeshletBoundsBuffer.CapacityOf<FMeshletSphere>()
-            : 0u;
-        const uint32 ConeCap = SkinnedMeshletConeBuffer
-            ? SkinnedMeshletConeBuffer.CapacityOf<FMeshletCone>()
-            : 0u;
-
-        SkinnedMeshletBoundsCapacity = Math::Min(SphereCap, ConeCap);
+        SkinnedMeshletBoundsCapacity = Math::Min(SkinnedMeshletBoundsBuffer.CapacityOf<FMeshletSphere>(),
+                                                 SkinnedMeshletConeBuffer.CapacityOf<FMeshletCone>());
 
         // Stamped on the render thread, since the merge ran against a different FFrameData.
         uint32 BoundsCursor  = 0;
@@ -1517,7 +1550,11 @@ namespace Lumina
             RHI::CmdMemset(CL, { GetRenderBuckets().Gpu, ViewDrawEntries * sizeof(FRenderBucketGPU) }, 0u);
         }
 
+        PrepareGpuPoses(CL, Frame);
         Barriers::TransferToCompute(CL);
+
+        // Overwrites the uploaded mirror for GPU-crowd slices, so it lands after the upload and before every bone reader.
+        EvaluateGpuPoses(CL);
 
         // Reads RetainedStatic, so it has to sit after that upload and after the barrier publishing it.
         SkinnedMeshletBoundsPass(CL, Frame);
@@ -1592,9 +1629,7 @@ namespace Lumina
             // Zeroed because zero is the one tag no frame ever stamps, so a new slot has no history.
             ReserveBuffer(CL, InstanceVisibilityBuffers[v], VisBytes);
 
-            VisCapacity = Math::Min(VisCapacity, InstanceVisibilityBuffers[v]
-                ? InstanceVisibilityBuffers[v].CapacityOf<uint32>()
-                : 0u);
+            VisCapacity = Math::Min(VisCapacity, InstanceVisibilityBuffers[v].CapacityOf<uint32>());
         }
 
         InstanceVisibilityCapacity = VisCapacity;
@@ -1602,7 +1637,7 @@ namespace Lumina
         // History is kept across a grow, since the zeroed tail is the only part with none.
         ReserveBuffer(CL, MeshletVisibilityBuffer, Math::Max<SIZE_T>(sizeof(uint32), (SIZE_T)Upload.MeshletVisibilityWords * sizeof(uint32)),
                       /*bAllowShrink*/ false, /*bPreserveContents*/ true);
-        MeshletVisibilityCapacity = MeshletVisibilityBuffer ? MeshletVisibilityBuffer.CapacityOf<uint32>() : 0u;
+        MeshletVisibilityCapacity = MeshletVisibilityBuffer.CapacityOf<uint32>();
 
         // A grow that failed leaves a buffer shorter than the slot range, and the writes below are unchecked.
         const bool bRetainedFits = RetainedCullEntryBuffer.CapacityOf<FInstanceCullEntry>() >= RetainedSlots
@@ -1634,9 +1669,15 @@ namespace Lumina
 
         // Published after the grow, so the proxy pass reads the arrays the cull reads this frame and not a retired copy.
         const uint32 ProxyCap = RetainedProxyBuffer.CapacityOf<FInstanceProxy>();
-        SceneRootShared.RetainedTransforms = bRetainedFits ? RHI::TGPUSpan<FTransform3x4>{ RetainedTransformBuffer, Math::Min(RetainedSlots, TransformCap) } : RHI::TGPUSpan<FTransform3x4>{};
-        SceneRootShared.RetainedStatic     = bRetainedFits ? RHI::TGPUSpan<FInstanceStatic>{ RetainedStaticBuffer, Math::Min(RetainedSlots, StaticCap) } : RHI::TGPUSpan<FInstanceStatic>{};
-        SceneRootShared.RetainedProxies    = bRetainedFits ? RHI::TGPUSpan<FInstanceProxy>{ RetainedProxyBuffer, Math::Min(RetainedSlots, ProxyCap) } : RHI::TGPUSpan<FInstanceProxy>{};
+        SceneRootShared.RetainedTransforms = {};
+        SceneRootShared.RetainedStatic     = {};
+        SceneRootShared.RetainedProxies    = {};
+        if (bRetainedFits)
+        {
+            SceneRootShared.RetainedTransforms = { RetainedTransformBuffer, Math::Min(RetainedSlots, TransformCap) };
+            SceneRootShared.RetainedStatic     = { RetainedStaticBuffer, Math::Min(RetainedSlots, StaticCap) };
+            SceneRootShared.RetainedProxies    = { RetainedProxyBuffer, Math::Min(RetainedSlots, ProxyCap) };
+        }
         return bRetainedFits;
     }
 
@@ -1809,19 +1850,23 @@ namespace Lumina
         PC.PreSkinArena           = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
         PC.OutPreSkinCursor       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address + sizeof(uint32) * 2, 1u);
         // An empty span turns the block skip off, which is the safe answer whenever the bounds are not current.
-        PC.BlockBounds            = bInstanceBlockBoundsValid && SceneRendererCullInternal::CVarInstanceBlockCull.GetValue()
-                                  ? RHI::TGPUSpan<FInstanceBlockBounds>{ InstanceBlockBoundsBuffer, (uint32)InstanceBlockBounds.Num() }
-                                  : RHI::TGPUSpan<FInstanceBlockBounds>{};
+        PC.BlockBounds            = {};
+        if (SceneRendererCullInternal::CVarInstanceBlockCull.GetValue())
+        {
+            PC.BlockBounds = CurrentInstanceBlockBounds();
+        }
 
         // An empty list turns the proxy path off in the shader, which is also what a list that failed to grow gets.
         const bool bProxies = ProxyListRing[Slot] && ProxyDrawArgsRing[Slot] && ProxyListCapacity > 0u && RetainedProxyBuffer;
         PC.OutProxyList           = bProxies ? RHI::TGPUSpan<uint32>{ ProxyListRing[Slot], ProxyListCapacity } : RHI::TGPUSpan<uint32>{};
         PC.OutProxyDrawArgs       = bProxies ? RHI::TGPUSpan<uint32>{ ProxyDrawArgsRing[Slot], 4u } : RHI::TGPUSpan<uint32>{};
-        // A two-phase camera draws the second half, which its late occlusion cull fills, so every reader indexes the list that was drawn.
-        SceneRootShared.ProxyList = bProxies ? RHI::TGPUSpan<uint32>::Slice(ProxyListRing[Slot], IsTwoPhaseView(Frame, 0u) ? ProxyListCapacity : 0u, ProxyListCapacity)
-                                             : RHI::TGPUSpan<uint32>{};
+        SceneRootShared.ProxyList = {};
         if (bProxies)
         {
+            // A two-phase camera draws the second half, which its late occlusion cull fills, so every reader indexes the list that was drawn.
+            const uint32 DrawnHalf = IsTwoPhaseView(Frame, 0u) ? ProxyListCapacity : 0u;
+            SceneRootShared.ProxyList = RHI::TGPUSpan<uint32>::Slice(ProxyListRing[Slot], DrawnHalf, ProxyListCapacity);
+
             // One four-corner strip per proxy, and each cull counts its list into the second word.
             const RHI::FDrawIndirectArguments ProxyArgs[2] = { { 4u, 0u, 0u, 0u }, { 4u, 0u, 0u, 0u } };
             WriteBuffer(CL, ProxyDrawArgsRing[Slot].Gpu, ProxyArgs, sizeof(ProxyArgs));
@@ -1925,9 +1970,8 @@ namespace Lumina
         {
             bSplitMeshletPhasesThisFrame = SceneRendererCullInternal::CVarSplitMeshletPhases.GetValue();
         }
-        // The shadow build appends to the front like an unsplit early build, since shadow levels never take two phases.
-        BPC.BuildMode          = bShadowPhase ? 2u : (bLatePass ? 1u : (bSplitMeshletPhasesThisFrame ? 0u : 2u));
-        BPC.bDeferShadows      = bShadowPhase ? 2u : (bVirtualShadowsThisFrame ? 1u : 0u);
+        BPC.BuildMode          = (uint32)SceneRendererCullInternal::MeshletBuildMode(bShadowPhase, bLatePass, bSplitMeshletPhasesThisFrame);
+        BPC.bDeferShadows      = (uint32)SceneRendererCullInternal::ShadowDeferral(bShadowPhase, bVirtualShadowsThisFrame);
         BPC.VisibilityTag      = InstanceVisibilityTag;
         BPC.PrevVisibility     = { GetInstanceVisibilityPrev(), InstanceVisibilityCapacity };
 
@@ -2011,7 +2055,7 @@ namespace Lumina
         APC.VertexPathCorners       = RHI::SupportsMeshShaders() ? 0u : (uint32)MESHLET_MAX_TRIANGLES * 3u;
         APC.SubDrawsPerSlice        = MeshSubDrawsPerSlice;
         APC.bSplitPhases            = bSplitMeshletPhasesThisFrame ? 1u : 0u;
-        APC.bDeferShadows           = bShadowPhase ? 2u : (bVirtualShadowsThisFrame ? 1u : 0u);
+        APC.bDeferShadows           = (uint32)SceneRendererCullInternal::ShadowDeferral(bShadowPhase, bVirtualShadowsThisFrame);
         APC.Buckets             = { GetRenderBuckets() };
         APC.Totals              = { GetTotals(), kTotalsSlots };
         APC.OutCullDispatchArgs = { GetMeshletCullDispatchArgs() };
@@ -2061,7 +2105,9 @@ namespace Lumina
         CPC.BlockList      = { GetMeshletBlocks() };
         CPC.PrevVisibility = { GetInstanceVisibilityPrev(), InstanceVisibilityCapacity };
         CPC.OutVisibility  = { GetInstanceVisibilityWrite(), InstanceVisibilityCapacity };
-        CPC.MeshletVisibility = { GetMeshletVisibility(), SceneRendererCullInternal::CVarCullMeshletVisibility.GetValue() != 0 ? MeshletVisibilityCapacity : 0u };
+        // An empty span decides the occlusion phase per instance, the A/B the console variable asks for.
+        const bool bMeshletVisibility = SceneRendererCullInternal::CVarCullMeshletVisibility.GetValue() != 0;
+        CPC.MeshletVisibility = { GetMeshletVisibility(), bMeshletVisibility ? MeshletVisibilityCapacity : 0u };
         CPC.bDeferShadows  = APC.bDeferShadows;
         CPC.CullDispatch   = APC.OutCullDispatchArgs;
         CPC.SurfaceDescs   = { SurfaceDescBuffer, UploadedSurfaceDescs };

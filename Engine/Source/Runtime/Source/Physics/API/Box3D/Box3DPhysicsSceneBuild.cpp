@@ -397,12 +397,14 @@ namespace Lumina::Physics
         Out.BodyDef.enableSleep = RigidBody->bAllowSleeping;
         Out.BodyDef.isBullet = RigidBody->bUseContinuousCollision;
 
-        Out.BodyDef.motionLocks.linearX = RigidBody->bLockTranslationX;
-        Out.BodyDef.motionLocks.linearY = RigidBody->bLockTranslationY;
-        Out.BodyDef.motionLocks.linearZ = RigidBody->bLockTranslationZ;
-        Out.BodyDef.motionLocks.angularX = RigidBody->bLockRotationX;
-        Out.BodyDef.motionLocks.angularY = RigidBody->bLockRotationY;
-        Out.BodyDef.motionLocks.angularZ = RigidBody->bLockRotationZ;
+        // Two locked rotation axes leave one to turn about, which a motion lock joint holds, and a single locked axis has no Box3D form.
+        const bool RotationLocks[3] = { RigidBody->bLockRotationX, RigidBody->bLockRotationY, RigidBody->bLockRotationZ };
+        const int32 NumRotationLocks = (int32)RotationLocks[0] + (int32)RotationLocks[1] + (int32)RotationLocks[2];
+        Out.BodyDef.fixedRotation = NumRotationLocks == 3;
+        Out.FreeRotationAxis = NumRotationLocks == 2 ? (!RotationLocks[0] ? 0 : (!RotationLocks[1] ? 1 : 2)) : Constants::kIndexNone;
+        Out.bLockLinear[0] = RigidBody->bLockTranslationX;
+        Out.bLockLinear[1] = RigidBody->bLockTranslationY;
+        Out.bLockLinear[2] = RigidBody->bLockTranslationZ;
 
         Out.ShapeDef = b3DefaultShapeDef();
         Out.ShapeDef.filter = Box3DUtils::MakeShapeFilter(RigidBody->CollisionProfile);
@@ -567,6 +569,12 @@ namespace Lumina::Physics
                 MassData.mass = Build.ComputedMass;
             }
             b3Body_SetMassData(BodyId, MassData);
+        }
+
+        const bool bLocksMotion = Build.bLockLinear[0] || Build.bLockLinear[1] || Build.bLockLinear[2] || Build.FreeRotationAxis != Constants::kIndexNone;
+        if (Build.BodyDef.type == b3_dynamicBody && bLocksMotion)
+        {
+            LockBodyMotion(BodyId, Build);
         }
 
         StoreBodyMaterial(Handle, Build);

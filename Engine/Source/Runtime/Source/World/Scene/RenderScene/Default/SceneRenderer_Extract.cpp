@@ -556,7 +556,7 @@ namespace Lumina
         {
             Jobs::Spawn(Jobs::EJobPriority::Normal, ExtractLatch, [this, LineBatcher, LineChunkCount]() -> Jobs::TTask<void>
             {
-                co_await Jobs::Call(Jobs::ForEach(LineChunkCount, [this](const Jobs::FParallelRange& Range)
+                co_await Jobs::Call(Jobs::ForEach(LineChunkCount, [this](const Jobs::FRange& Range)
                 {
                     BatchLineChunks(Range);
                 }, 1));
@@ -948,7 +948,7 @@ namespace Lumina
         return (uint32)LineChunkScratch.Num();
     }
 
-    void FDefaultSceneRenderer::BatchLineChunks(const Jobs::FParallelRange& Range)
+    void FDefaultSceneRenderer::BatchLineChunks(const Jobs::FRange& Range)
     {
         LUMINA_PROFILE_SECTION("Batch Lines");
 
@@ -1101,7 +1101,7 @@ namespace Lumina
 
         // Parallel scatter, where each worker copies its buckets into their reserved slices.
         FSimpleElementVertex* const Dst = SimpleVertices.GetData();
-        auto CopyBody = [&](const Jobs::FParallelRange& Range)
+        auto CopyBody = [&](const Jobs::FRange& Range)
         {
             LUMINA_PROFILE_SECTION("Copy Batched Lines");
             for (uint32 t = Range.Start; t < Range.End; ++t)
@@ -1119,7 +1119,7 @@ namespace Lumina
             }
         };
         if (bParallel) { Jobs::ParallelFor(NumThreads, CopyBody, 1); }
-        else           { CopyBody(Jobs::FParallelRange{ 0u, NumThreads, 0u }); }
+        else           { CopyBody(Jobs::FRange{ 0u, NumThreads, 0u }); }
 
         LineBatches.Reserve(LineBatches.Num() + Global.Num());
         for (const FGlobalBucket& B : Global)

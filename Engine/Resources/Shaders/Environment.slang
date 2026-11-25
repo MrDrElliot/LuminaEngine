@@ -28,12 +28,7 @@ FragmentOutput FragmentMain(FragmentInput Input)
     float3 Color;
     uint SkyMode = (SPEC_SKY_MODE == SKY_MODE_RUNTIME) ? asuint(uEnvironment.Misc.x) : SPEC_SKY_MODE;
 
-    // Lighting overwrites covered pixels, but HDRI keeps them since its mip selection needs screen derivatives.
-    if (SkyMode != SKY_MODE_HDRI && Scene().SceneDepth.IsValid()
-        && Scene().SceneDepth.Load(int3(int2(Input.Position.xy), 0)).r > 0.0)
-    {
-        discard;
-    }
+    // The pass's equal test against the far plane already rejects every covered pixel before this runs.
     if (SkyMode == SKY_MODE_SOLID)
     {
         Color = uEnvironment.SolidSkyColor.rgb;

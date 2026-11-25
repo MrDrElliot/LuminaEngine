@@ -271,35 +271,12 @@ bool IsMeshletRunCulled(FMeshletHeader* Header, uint Run, FCullView View, float4
     return Lod.ParentError * ErrorScale <= NearReach;
 }
 
-// The pick's meshlet range, x the mesh-global offset and y the count, and the most of it one cut can draw. A cluster surface's slots are contiguous, so a slot span is one range.
-uint2 SelectViewMeshletRange(FSurfaceDesc Desc, FCullView View, float4 SphereBounds, float MaxScale, out uint DrawBound)
+uint2 SelectViewMeshletRange(FSurfaceDesc Desc, FCullView View, float4 SphereBounds, float MaxScale)
 {
     const uint2 Slots = SelectClusterSlotRange(Desc, View, SphereBounds, MaxScale);
     const uint  Begin = Desc.LODMeshletOffset[Slots.x];
     const uint  End   = Desc.LODMeshletOffset[Slots.y] + Desc.LODMeshletCount[Slots.y];
-    const uint  Count = End > Begin ? End - Begin : 0u;
-
-    // The cut gathers around the slot the instance center picks and spreads a slot either way, which is what the list is reserved for; the survivors the readback reports grow it from there.
-    const float Dist = View.HasFlag(CULL_VIEW_FLAG_ORTHOGRAPHIC_LOD) ? 1.0 : length(SphereBounds.xyz - View.ViewOrigin);
-    const float ES   = View.LODErrorScale * MaxScale * Desc.LODErrorMultiplier;
-    uint Mid = Slots.x;
-    for (uint s = Slots.x + 1u; s <= Slots.y; ++s)
-    {
-        if (Desc.LODError[s] * ES > Dist)
-        {
-            break;
-        }
-        Mid = s;
-    }
-    const uint First = Mid > Slots.x ? Mid - 1u : Slots.x;
-    const uint Last  = min(Mid + 1u, Slots.y);
-    uint Expected = MESHLET_CULL_GROUP_SIZE;
-    for (uint s = First; s <= Last; ++s)
-    {
-        Expected += Desc.LODMeshletCount[s];
-    }
-    DrawBound = min(Count, Expected);
-    return uint2(Begin, Count);
+    return uint2(Begin, End > Begin ? End - Begin : 0u);
 }
 
 // Diameter of a world sphere in pixels of the cull camera, unbounded when the camera is inside it.

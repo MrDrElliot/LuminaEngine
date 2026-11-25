@@ -40,7 +40,8 @@ struct FTerrainHeightfield
 };
 
 // Coarse terrain LODs cut under the height field between vertices, and a receiver left there reads as buried in it.
-float3 LiftOntoTerrains(float3 P, FTerrainHeightfield Terrains[kMaxTerrainHeightfields], uint NumTerrains)
+// By pointer, since a by-value array copies every record into registers and costs the whole pass occupancy.
+float3 LiftOntoTerrains(float3 P, FTerrainHeightfield* Terrains, uint NumTerrains)
 {
     for (uint i = 0; i < min(NumTerrains, kMaxTerrainHeightfields); ++i)
     {

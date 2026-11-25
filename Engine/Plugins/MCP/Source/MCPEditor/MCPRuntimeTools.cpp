@@ -339,9 +339,14 @@ namespace Lumina::MCP
             {
                 SGpuPassTime& Pass = Out.Passes.EmplaceGetRef();
                 Pass.Name  = *Scope.Name;
-                Pass.Ms    = (float)Scope.DurationMs();
-                Pass.Depth = Scope.Depth;
-                Pass.Queue = GPUProfileQueueName(Scope.Queue);
+                Pass.Ms     = (float)Scope.DurationMs();
+                Pass.SelfMs = (float)Scope.SelfMs;
+                Pass.Depth  = Scope.Depth;
+                Pass.Queue  = GPUProfileQueueName(Scope.Queue);
+                if (Scope.ParentIndex != Constants::kIndexNone)
+                {
+                    Pass.Parent = *Frame.Scopes[Scope.ParentIndex].Name;
+                }
             }
             Algo::Sort(Out.Passes, [](const SGpuPassTime& A, const SGpuPassTime& B) { return A.Ms > B.Ms; });
             Out.Passes.SetNum(Math::Min(Out.Passes.Num(), Math::Max(In.Top, 1)));
@@ -351,8 +356,8 @@ namespace Lumina::MCP
             for (const SGpuPassTime& Pass : Out.Passes)
             {
                 const bool bGraphics = Pass.Queue == GPUProfileQueueName(RHI::EQueueType::Graphics);
-                Summary += bGraphics ?Lumina::Format(" {}[{}] {:.2f}", Pass.Name, Pass.Depth, Pass.Ms)
-                                     : Lumina::Format(" {}[{} {}] {:.2f}", Pass.Name, Pass.Queue, Pass.Depth, Pass.Ms);
+                Summary += bGraphics ? Lumina::Format(" {}[{}] {:.2f} self {:.2f}", Pass.Name, Pass.Depth, Pass.Ms, Pass.SelfMs)
+                                     : Lumina::Format(" {}[{} {}] {:.2f} self {:.2f}", Pass.Name, Pass.Queue, Pass.Depth, Pass.Ms, Pass.SelfMs);
             }
             return Agent::FToolResult::Ok(Summary);
         }

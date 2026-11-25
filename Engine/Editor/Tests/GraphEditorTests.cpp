@@ -2,9 +2,30 @@
 
 #include "ImGuiTestHarness.h"
 #include "Containers/Function.h"
+#include "Core/Object/ObjectCore.h"
+#include "Core/Object/Package/Package.h"
+#include "UI/Tools/NodeGraph/EdNodeGraph.h"
 #include "UI/Tools/NodeGraph/GraphEditor.h"
 
 using namespace Lumina;
+
+TEST(GraphEditor, ExecutionPinsRejectDataLinks)
+{
+    CPackage* Package = CPackage::CreatePackage("/GraphEditor/ExecutionPins");
+    CEdNodeGraph* Graph = NewObject<CEdNodeGraph>(Package, "Graph");
+    CEdGraphNode* Source = Graph->CreateNode(CEdGraphNode::StaticClass());
+    CEdGraphNode* Target = Graph->CreateNode(CEdGraphNode::StaticClass());
+    CEdNodeGraphPin* ExecutionOutput = Source->CreateExecutionPin("Then", ENodePinDirection::Output);
+    CEdNodeGraphPin* ExecutionInput = Target->CreateExecutionPin("Execute", ENodePinDirection::Input);
+    CEdNodeGraphPin* DataOutput = Source->CreatePin(CEdNodeGraphPin::StaticClass(), "Value", ENodePinDirection::Output);
+    CEdNodeGraphPin* DataInput = Target->CreatePin(CEdNodeGraphPin::StaticClass(), "Value", ENodePinDirection::Input);
+
+    EXPECT_EQ(ExecutionOutput->GetPinShape(), EGraphPinShape::Execution);
+    EXPECT_FALSE(Graph->ConnectPins(ExecutionOutput, DataInput));
+    EXPECT_FALSE(Graph->ConnectPins(DataOutput, ExecutionInput));
+    EXPECT_TRUE(Graph->ConnectPins(ExecutionOutput, ExecutionInput));
+    EXPECT_TRUE(Graph->ConnectPins(DataOutput, DataInput));
+}
 
 namespace
 {
@@ -257,6 +278,34 @@ TEST(GraphEditor, AltRightDragAcrossAWireAsksForAZipTie)
     ASSERT_EQ(Hits.Num(), 1);
     EXPECT_EQ(Hits[0].LinkID, Harness.LinkID);
     EXPECT_NEAR(Hits[0].Point.x, Middle.x, 2.0f);
+}
+
+TEST(GraphEditor, AltDeleteAndAltClickTargetTheHoveredWire)
+{
+    FCanvasHarness Harness;
+    Harness.bLinked = true;
+    Harness.Frames(2);
+    Harness.MoveTo(Harness.NodeCenter(0));
+    Harness.Button(ImGuiMouseButton_Left, true);
+    Harness.Button(ImGuiMouseButton_Left, false);
+    ASSERT_TRUE(Harness.Editor.IsNodeSelected(Harness.Nodes[0].ID));
+
+    Harness.MoveTo((Harness.OutputPinCenter(0) + Harness.InputPinCenter(1)) * 0.5f);
+    ASSERT_EQ(Harness.Editor.GetHoveredLink(), Harness.LinkID);
+    Harness.Modifier(ImGuiMod_Alt, true);
+    ImGui::GetIO().AddKeyEvent(ImGuiKey_Delete, true);
+    Harness.Frame([&]()
+    {
+        EXPECT_EQ(Harness.Editor.GetBreakLink(), Harness.LinkID);
+        EXPECT_FALSE(Harness.Editor.WasShortcutPressed(EGraphShortcut::Delete));
+    });
+    Harness.Modifier(ImGuiKey_Delete, false);
+
+    Harness.Button(ImGuiMouseButton_Left, true, [&]()
+    {
+        EXPECT_EQ(Harness.Editor.GetBreakLink(), Harness.LinkID);
+        EXPECT_TRUE(Harness.Editor.IsNodeSelected(Harness.Nodes[0].ID));
+    });
 }
 
 TEST(GraphEditor, ATiedWireRunsThroughItsTie)

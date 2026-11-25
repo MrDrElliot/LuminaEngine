@@ -9,9 +9,17 @@ struct FragmentInput
     float2 UV       : TEXCOORD0;
 };
 
+// Mirror of FData in SceneRenderer_Post.cpp.
 struct FData
 {
+    // Previous view projection times this view's inverse view and inverse projection.
+    float4x4   ClipToPrevClip;
+    // Previous view projection times this view's inverse view.
+    float4x4   ViewToPrevClip;
     FTexture2D Depth;
+    uint       _Pad0;
+    uint       _Pad1;
+    uint       _Pad2;
 };
 
 // Any depth on the ray reconstructs the same direction, so this one is picked for float range, not distance.
@@ -38,16 +46,13 @@ float2 FragmentMain(FragmentInput Input) : SV_Target0
     // Reverse-Z puts the far plane at exactly 0, where a position unprojects past float precision.
     if (Raw <= 0.0)
     {
-        const float3 ViewRay  = ReconstructViewPos(Input.UV, kRayProbeDepth, GetInverseCameraProjection());
-        const float3 WorldRay = mul((float3x3)GetInverseCameraView(), ViewRay);
+        const float3 ViewRay = ReconstructViewPos(Input.UV, kRayProbeDepth, GetInverseCameraProjection());
 
         // Zero w drops the translation column, which is what a point at infinity should ignore.
-        return VelocityFromClip(mul(GetPrevViewProjection(), float4(WorldRay, 0.0)), Input.UV - GetTemporalJitterUV());
+        return VelocityFromClip(mul(Data.ViewToPrevClip, float4(ViewRay, 0.0)), Input.UV - GetTemporalJitterUV());
     }
 
-    // The inverse carries this frame's jitter, so the unprojection is exact for the depth that was rendered.
-    const float3 ViewPos  = ReconstructViewPos(Input.UV, Raw, GetInverseCameraProjection());
-    const float4 WorldPos = mul(GetInverseCameraView(), float4(ViewPos, 1.0));
-
-    return VelocityFromClip(mul(GetPrevViewProjection(), WorldPos), Input.UV - GetTemporalJitterUV());
+    // Homogeneous all the way, so the previous clip position comes out scaled by this view's positive w, which the divide cancels.
+    const float4 Clip = float4(Input.UV * 2.0 - 1.0, Raw, 1.0);
+    return VelocityFromClip(mul(Data.ClipToPrevClip, Clip), Input.UV - GetTemporalJitterUV());
 }

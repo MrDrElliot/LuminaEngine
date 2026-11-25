@@ -27,6 +27,7 @@
 #include "World/Scene/RenderScene/EditorGridRequest.h"
 #endif
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
+#include "World/Scene/RenderScene/Default/GpuPoseEvaluation.h"
 #include "World/Scene/RenderScene/Default/SunShadowCache.h"
 #include "World/Scene/RenderScene/Default/WorldDistanceField.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
@@ -159,6 +160,8 @@ namespace Lumina
             TVector<uint32>                     SkinnedIndices;
             TVector<FDeferredSkinnedSlot>       DeferredSlots;
             TVector<FUIntVector2>               BoneUploadRanges;
+            TVector<FGpuPoseRequest>            GpuPoseRequests;
+            TVector<FAnimWeightedSample>        GpuPoseSamples;
 
             FSceneRenderStats                   Stats = {};
             bool                                bTouched = false;
@@ -176,6 +179,8 @@ namespace Lumina
                 SkinnedIndices.Reset();
                 DeferredSlots.Reset();
                 BoneUploadRanges.Reset();
+                GpuPoseRequests.Reset();
+                GpuPoseSamples.Reset();
                 Stats = {};
                 bTouched = false;
             }
@@ -402,6 +407,9 @@ namespace Lumina
                 uint32                           BoneCount = 0;
                 // Slices whose pose or base moved this frame. Everything else is already resident.
                 TVector<FUIntVector2>            BoneUploadRanges;
+                // Meshes the GPU crowd tier poses, whose slices the GPU writes every frame instead of the upload.
+                TVector<FGpuPoseRequest>         GpuPoseRequests;
+                TVector<FAnimWeightedSample>     GpuPoseSamples;
                 // Indexed by skinned index, only gathered entries are written, and stale ones fail their frame tag.
                 TVector<FSkinnedFrameData>       SkinnedFrameData;
                 TVector<uint32>                  SkinnedIndices;
@@ -1357,9 +1365,9 @@ namespace Lumina
         void SyncScenePrimitives();
 
         // Skeletal primitives only; statics flow through the retained batch registry, not a per-frame gather.
-        void CullSkinnedPrimitives(const Jobs::FParallelRange& Range, FThreadLocalDrawData& Local);
+        void CullSkinnedPrimitives(const Jobs::FRange& Range, FThreadLocalDrawData& Local);
         void LayoutSkinnedBoneSlices(TVector<FThreadLocalDrawData>& ThreadLocal, const auto& FollowerStorage, const auto& SkeletalStorage);
-        void EmitSkinnedPrimitives(const Jobs::FParallelRange& Range, FThreadLocalDrawData& Local, const auto& SkeletalStorage);
+        void EmitSkinnedPrimitives(const Jobs::FRange& Range, FThreadLocalDrawData& Local, const auto& SkeletalStorage);
 
         void BuildSceneCullContext(const SDirectionalLightComponent* Sun);
         void MergeMeshDrawData(TVector<FThreadLocalDrawData>& ThreadLocal);
@@ -1449,7 +1457,7 @@ namespace Lumina
         bool HasCustomDepthPrimitives() const { return ScenePrimitives.GetCustomDepthPrimitiveCount() > 0u; }
         
         uint32 PrepareBatchedLines(FLineBatcherComponent& Batcher);
-        void   BatchLineChunks(const Jobs::FParallelRange& Range);
+        void   BatchLineChunks(const Jobs::FRange& Range);
         void   FinalizeBatchedLines(FLineBatcherComponent& Batcher);
         void   ProcessBatchedTriangles(FTriangleBatcherComponent& Batcher);
 
@@ -1565,7 +1573,7 @@ namespace Lumina
                 }
 
                 RHI::CmdSetPipeline(CL, Pipeline);
-                Bound(Batch);
+                Bound(Key, Batch);
 
                 DrawMeshletBatch(CL, Batch, Ctx);
             }
@@ -1584,7 +1592,7 @@ namespace Lumina
                                  const FMeshletPassContext& Ctx, TSetup&& Setup)
         {
             ForEachMeshletBatch(CL, DrawList, Ctx, static_cast<TSetup&&>(Setup),
-                                [](const FMeshDrawCommand&) {});
+                                [](const FGraphicsPipelineKey&, const FMeshDrawCommand&) {});
         }
 
         RHI::FPipelineH      GetOrCreateComputePipeline(FShaderH CS,
@@ -1641,6 +1649,15 @@ namespace Lumina
         void LaunchInstanceBlockBounds();
         void JoinInstanceBlockBounds();
         void FinishInstanceBlockBounds(RHI::FCmdListH CL);
+        // Empty while the bounds are not current, which every reader takes as no block skip.
+        RHI::TGPUSpan<FInstanceBlockBounds> CurrentInstanceBlockBounds() const
+        {
+            if (!bInstanceBlockBoundsValid)
+            {
+                return {};
+            }
+            return { InstanceBlockBoundsBuffer, (uint32)InstanceBlockBounds.Num() };
+        }
         void DispatchMeshletBlockBuild(RHI::FCmdListH CL, bool bLatePass, bool bShadowPhase = false);
         bool bSplitMeshletPhasesThisFrame = false;
         void FlushStagedWrites(RHI::FCmdListH CL);
@@ -2021,6 +2038,14 @@ namespace Lumina
         // Must run before CullInstances and before the skinning dispatch.
         void UploadSkinnedFrameData(RHI::FCmdListH CL, FFrameData& Frame);
         void SkinnedMeshletBoundsPass(RHI::FCmdListH CL, const FFrameData& Frame);
+
+        // Resolves the frame's GPU-crowd poses and uploads any newly baked clips, before the transfer barrier publishes them.
+        void PrepareGpuPoses(RHI::FCmdListH CL, const FFrameData& Frame);
+        void UploadGpuPosePools(RHI::FCmdListH CL);
+
+        // Writes the GPU-crowd poses into this slot's bone arena, after its upload and before the first pass that reads bones.
+        void EvaluateGpuPoses(RHI::FCmdListH CL);
+        FGpuPoseRegistry GpuPoses;
         // Slots whose list and frame data reached the GPU this frame, zero when either buffer failed to grow.
         uint32 SkinnedSlotsUploaded = 0;
 

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "Animation/AnimEvents.h"
+#include "Animation/AnimGraphPlan.h"
 #include "Animation/AnimSyncTrack.h"
 #include "Animation/RootMotion.h"
 #include "Animation/RootMotionTypes.h"
 #include "Animation/TaskSystem/AnimTask.h"
+#include "Animation/TaskSystem/AnimTaskRecord.h"
 #include "Containers/Vector.h"
 #include "Core/Object/ObjectMacros.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -115,6 +117,9 @@ namespace Lumina
 
         // Lets the VM run only a machine's current state. Operands are smIdx uint16, numStates uint16, statesEnd uint32, then begin and end uint32 per state.
         EnterStateMachine,
+
+        // Plan only and never compiled into bytecode, where a pruned node hands its input pose straight through. Operands are src pReg, dst pReg.
+        Forward,
     };
 
     // MakeAdditiveEx base operand meaning "no base pose supplied".
@@ -229,6 +234,9 @@ namespace Lumina
         // The VM re-initializes the state when the component's graph asset changes underneath it.
         const void* SourceGraph = nullptr;
 
+        // Keeps the scalar registers after an update so a debugger can read them; without it they live on the stack for the call.
+        bool bPersistentRegisters = true;
+
         bool bInitialized = false;
     };
 
@@ -278,5 +286,30 @@ namespace Lumina
                                TVector<FAnimNotifyEvent>* OutEvents = nullptr,
                                const FAnimMontagePlayer* Montages = nullptr,
                                const FAnimGraphSceneContext* SceneContext = nullptr);
+
+        // A tier's own plan of the graph, recorded as tasks.
+        static void BuildTasks(const CAnimationGraph* Graph,
+                               const FAnimGraphPlan& Plan,
+                               FSkeletonResource* Skeleton,
+                               float DeltaTime,
+                               FAnimGraphVMState& State,
+                               FAnimTaskList& OutTasks,
+                               FAnimGraphRootMotion& RootMotionInOut,
+                               TVector<FAnimNotifyEvent>* OutEvents = nullptr,
+                               const FAnimMontagePlayer* Montages = nullptr,
+                               const FAnimGraphSceneContext* SceneContext = nullptr);
+
+        // The crowd tier's update, which runs a plan of the same graph but keeps only a topology key and per-frame payload, copying tasks to CapturedTasks only when given one for a topology cache miss.
+        static void BuildRecord(const CAnimationGraph* Graph,
+                                const FAnimGraphPlan& Plan,
+                                FSkeletonResource* Skeleton,
+                                float DeltaTime,
+                                FAnimGraphVMState& State,
+                                FAnimTaskRecord& OutRecord,
+                                FAnimTaskList* CapturedTasks,
+                                FAnimGraphRootMotion& RootMotionInOut,
+                                TVector<FAnimNotifyEvent>* OutEvents = nullptr,
+                                const FAnimMontagePlayer* Montages = nullptr,
+                                const FAnimGraphSceneContext* SceneContext = nullptr);
     };
 }

@@ -1,4 +1,5 @@
 #include "AnimationGraphCompiler.h"
+#include "Containers/Algorithm.h"
 
 #include "Assets/AssetTypes/Animation/BlendSpace/BlendSpace.h"
 #include "Core/Reflection/Type/Properties/ObjectProperty.h"
@@ -430,111 +431,47 @@ namespace Lumina
 
     void FAnimationGraphCompiler::ValidateParameterKey(const FName& Name, CEdGraphNode* Node)
     {
-        if (Name.IsNone())
+        FAnimGraphParamBinding Binding;
+        FString Reason;
+        if (Name.IsNone() || Graph == nullptr || Graph->ResolveParameterPath(Name, false, Binding, &Reason))
         {
             return;
         }
 
-        if (DataStruct == nullptr)
-        {
-            EdNodeGraph::FError Warning;
-            Warning.Name        = "No Parameter Struct";
-            Warning.Description = FString("'") + Name.ToString() + "' cannot be read: this graph has no Parameter "
-                "Struct assigned, so nothing written on the component reaches it and every parameter holds its default.";
-            Warning.Node        = Node;
-            AddWarning(Warning);
-            return;
-        }
-
-        FProperty* Property = DataStruct->GetProperty(Name);
-        if (Property == nullptr)
-        {
-            EdNodeGraph::FError Warning;
-            Warning.Name        = "Unknown Parameter";
-            Warning.Description = FString("'") + Name.ToString() + "' is not a field on " +
-                *DataStruct->GetName() + " (renamed or removed?). It will read the default value.";
-            Warning.Node        = Node;
-            AddWarning(Warning);
-            return;
-        }
-
-        if (Property->HasSetterOrGetter())
-        {
-            EdNodeGraph::FError Warning;
-            Warning.Name        = "Parameter Has Accessor";
-            Warning.Description = FString("'") + Name.ToString() +
-                "' is behind a getter or setter, so it cannot be read directly. It will read the default value.";
-            Warning.Node        = Node;
-            AddWarning(Warning);
-            return;
-        }
-
-        const EAnimParamValueType Type = AnimParamValueTypeFromProperty(Property);
-        if (Type == EAnimParamValueType::Unresolved || Type == EAnimParamValueType::Object)
-        {
-            EdNodeGraph::FError Warning;
-            Warning.Name        = "Parameter Type";
-            Warning.Description = FString("'") + Name.ToString() +
-                "' is not a numeric, bool, or enum field, so it can't drive a value parameter; it will read 0.";
-            Warning.Node        = Node;
-            AddWarning(Warning);
-        }
+        EdNodeGraph::FError Warning;
+        Warning.Name        = "Unreadable Parameter";
+        Warning.Description = Format("'{}' reads its default value, because {}.", Name, Reason);
+        Warning.Node        = Node;
+        AddWarning(Warning);
     }
 
     void FAnimationGraphCompiler::ValidateObjectParameterKey(const FName& Name, EAnimObjectParamType Expected, CEdGraphNode* Node)
     {
-        if (Name.IsNone())
+        if (Name.IsNone() || Graph == nullptr)
         {
             return;
         }
 
-        if (DataStruct == nullptr)
+        FAnimGraphParamBinding Binding;
+        FString Reason;
+        const FProperty* Leaf = nullptr;
+        if (Graph->ResolveParameterPath(Name, true, Binding, &Reason, &Leaf))
         {
-            EdNodeGraph::FError Warning;
-            Warning.Name        = "No Parameter Struct";
-            Warning.Description = FString("'") + Name.ToString() + "' cannot supply an asset: this graph has no "
-                "Parameter Struct assigned, so the node falls back to its statically assigned asset.";
-            Warning.Node        = Node;
-            AddWarning(Warning);
-            return;
+            const char* ExpectedClassName = Expected == EAnimObjectParamType::BlendSpace ? "CBlendSpace" : "CAnimation";
+            CClass* Required = FindObject<CClass>(FName(ExpectedClassName));
+            CClass* Declared = static_cast<const FObjectProperty*>(Leaf)->GetPropertyClass();
+            if (Declared == nullptr || Required == nullptr || Declared->IsChildOf(Required))
+            {
+                return;
+            }
+            Reason = Format("it holds a {}, and this node plays a {}", Declared->GetName(), Required->GetName());
         }
 
-        const char* ExpectedClassName = Expected == EAnimObjectParamType::BlendSpace ? "CBlendSpace" : "CAnimation";
-
-        FProperty* Property = DataStruct->GetProperty(Name);
-        if (Property == nullptr)
-        {
-            EdNodeGraph::FError Warning;
-            Warning.Name        = "Unknown Parameter";
-            Warning.Description = FString("'") + Name.ToString() + "' is not a field on " +
-                *DataStruct->GetName() + ". It will read the default asset.";
-            Warning.Node        = Node;
-            AddWarning(Warning);
-            return;
-        }
-
-        if (AnimParamValueTypeFromProperty(Property) != EAnimParamValueType::Object)
-        {
-            EdNodeGraph::FError Warning;
-            Warning.Name        = "Parameter Type";
-            Warning.Description = FString("'") + Name.ToString() +
-                "' is not an object field, so it cannot supply an asset.";
-            Warning.Node        = Node;
-            AddWarning(Warning);
-            return;
-        }
-
-        CClass* Required = FindObject<CClass>(FName(ExpectedClassName));
-        CClass* Declared = static_cast<FObjectProperty*>(Property)->GetPropertyClass();
-        if (Declared != nullptr && Required != nullptr && !Declared->IsChildOf(Required))
-        {
-            EdNodeGraph::FError Warning;
-            Warning.Name        = "Parameter Class";
-            Warning.Description = FString("'") + Name.ToString() + "' holds a " + *Declared->GetName() +
-                ", which is not a " + ExpectedClassName + ". This node would fall back to the bind pose.";
-            Warning.Node        = Node;
-            AddWarning(Warning);
-        }
+        EdNodeGraph::FError Warning;
+        Warning.Name        = "Unreadable Parameter";
+        Warning.Description = Format("'{}' supplies no asset, so the node plays its own, because {}.", Name, Reason);
+        Warning.Node        = Node;
+        AddWarning(Warning);
     }
 
     int32 FAnimationGraphCompiler::ResolveBoneIndex(const FName& BoneName) const
@@ -928,6 +865,12 @@ namespace Lumina
     void FAnimationGraphCompiler::EmitHalt()
     {
         WriteOp(EAnimOp::Halt);
+    }
+
+    const CEdGraphNode* FAnimationGraphCompiler::FindOpOwner(uint32 Offset) const
+    {
+        const auto Found = Algo::LowerBound(OpOwners, Offset, [](const FOpOwner& Owner, uint32 Value) { return Owner.Offset < Value; });
+        return Found != OpOwners.end() && Found->Offset == Offset ? Found->Node : nullptr;
     }
 
     void FAnimationGraphCompiler::SetPinRegister(const CEdNodeGraphPin* Pin, uint16 Register)

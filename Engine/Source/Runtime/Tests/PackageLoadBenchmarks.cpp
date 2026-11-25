@@ -22,6 +22,7 @@
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Serialization/MemoryArchiver.h"
 #include "FileSystem/FileSystem.h"
+#include "FileSystem/NativeFileSystem.h"
 #include "GUID/GUID.h"
 #include "Log/Log.h"
 #include "Platform/Time/PlatformTime.h"
@@ -503,6 +504,68 @@ TEST(PackageLoadBenchmark, DISABLED_ExportTableScaling)
             Exports, Phases.FullyLoadMs, (Phases.FullyLoadMs * 1000.0) / Exports);
         std::fflush(stdout);
     }
+}
+
+// One real package off disk, named by LUMINA_BENCH_PACKAGE, split into the phases a cold load of it pays.
+TEST(PackageLoadBenchmark, DISABLED_LargeNativePackage)
+{
+    const char* NativePath = std::getenv("LUMINA_BENCH_PACKAGE");
+    if (NativePath == nullptr)
+    {
+        GTEST_SKIP() << "set LUMINA_BENCH_PACKAGE to a .lasset on disk";
+    }
+
+    FQuietLog Quiet;
+    RegisterPendingTypes();
+
+    FString DiskPath(NativePath);
+    for (char& C : DiskPath)
+    {
+        C = C == '\\' ? '/' : C;
+    }
+    const int32 Slash = DiskPath.FindLast('/');
+    ASSERT_NE(Slash, Constants::kIndexNone);
+    VFS::Mount<VFS::FNativeFileSystem>("/PkgNative", DiskPath.Left(Slash));
+    const FString Path = FString("/PkgNative/") + DiskPath.Mid(Slash + 1);
+
+    constexpr int32 Reps = 3;
+    double ReadMs = 1e30;
+    double LoadMs = 1e30;
+    double CopyMs = 1e30;
+    double FullMs = 1e30;
+    int64  Inflated = 0;
+    for (int32 Rep = 0; Rep < Reps; ++Rep)
+    {
+        TVector<uint8> Binary;
+        PlatformTime::FStopwatch ReadWatch;
+        ASSERT_TRUE(CPackage::ReadPackageFile(Path, Binary, nullptr));
+        ReadMs = Math::Min(ReadMs, ReadWatch.ElapsedMilliseconds());
+        Inflated = Binary.Num();
+
+        // What publishing the loader bytes cost before they were moved instead of copied.
+        PlatformTime::FStopwatch CopyWatch;
+        TVector<uint8> Copy = Binary;
+        CopyMs = Math::Min(CopyMs, CopyWatch.ElapsedMilliseconds());
+        EXPECT_EQ(Copy.Num(), Binary.Num());
+
+        PlatformTime::FStopwatch LoadWatch;
+        CPackage* Package = CPackage::LoadPackage(Path);
+        LoadMs = Math::Min(LoadMs, LoadWatch.ElapsedMilliseconds());
+        ASSERT_NE(Package, nullptr);
+
+        PlatformTime::FStopwatch FullWatch;
+        (void)Package->FullyLoad();
+        FullMs = Math::Min(FullMs, FullWatch.ElapsedMilliseconds());
+
+        Retire(Package);
+    }
+
+    std::printf("\n%s, %.1f MiB inflated, best of %d\n", *Path, (double)Inflated / double(Constants::kMiB), Reps);
+    std::printf("  read + inflate          %8.2f ms\n", ReadMs);
+    std::printf("  LoadPackage (container) %8.2f ms\n", LoadMs);
+    std::printf("  one copy of the bytes   %8.2f ms\n", CopyMs);
+    std::printf("  FullyLoad (objects)     %8.2f ms\n", FullMs);
+    std::fflush(stdout);
 }
 
 // same export count as OneExportPerPackage but one property each, isolating per-property cost

@@ -82,7 +82,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Physics")
         bool bUseGravity = true;
 
-        // Per-axis world space locks for dynamic bodies, and locking all six is ignored (use a Static body).
+        // World space locks for dynamic bodies, where rotation locks act in pairs (turn about the third axis only) or all three, and one alone does nothing.
 
         /** Prevent the body from translating along the world X axis. */
         PROPERTY(Editable, Category = "Physics|Constraints")

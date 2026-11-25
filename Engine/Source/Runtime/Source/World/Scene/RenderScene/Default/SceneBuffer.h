@@ -72,10 +72,11 @@ namespace Lumina
         // About two seconds of frames, the spacing a streaming load's growths fall inside.
         static constexpr uint32 kGrowthStreakReserves = 240;
 
+        // Zero for a buffer holding no allocation, so a failed grow reads as no room rather than its old size.
         template<typename T>
         NODISCARD uint32 CapacityOf() const
         {
-            return (uint32)Math::Min<uint64>(Size / sizeof(T), 0xFFFFFFFFull);
+            return Gpu != 0 ? (uint32)Math::Min<uint64>(Size / sizeof(T), 0xFFFFFFFFull) : 0u;
         }
     };
 

@@ -118,7 +118,7 @@ namespace Lumina
         SyncStats.RefreshInstanceCalls += Count;
 
         ResetParallelBuckets();
-        Jobs::ParallelFor(Count, [&ApplyOne, Moved, this](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(Count, [&ApplyOne, Moved, this](const Jobs::FRange& Range)
         {
             TVector<uint32>& Bucket = BucketFor(Range.Thread).Slots;
             for (uint32 i = Range.Start; i < Range.End; ++i)
@@ -499,7 +499,7 @@ namespace Lumina
         };
 
         const uint32 Base = StreamCount;
-        Jobs::ParallelFor(Count, [&StreamOne, Moved, Base, this](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(Count, [&StreamOne, Moved, Base, this](const Jobs::FRange& Range)
         {
             FDirtySlotBucket& Bucket = BucketFor(Range.Thread);
             for (uint32 i = Range.Start; i < Range.End; ++i)
@@ -535,7 +535,7 @@ namespace Lumina
 
             // Streamed again, or moved through the CPU path this frame, means its copies are already handled.
             const uint32 Frame = StreamFrame;
-            Jobs::ParallelForOrSerial(StreamedLastFrame.Used, 1, [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelForOrSerial(StreamedLastFrame.Used, 1, [&](const Jobs::FRange& Range)
             {
                 TVector<ECS::FEntity>& Stopped = BucketFor(Range.Thread).Stopped;
                 for (uint32 List = Range.Start; List < Range.End; ++List)

@@ -34,6 +34,8 @@ bool b3WheelJoint_IsSuspensionEnabled( b3JointId jointId )
 
 void b3WheelJoint_SetSuspensionHertz( b3JointId jointId, float hertz )
 {
+	B3_CHECK_INPUT( b3IsValidFloat( hertz ) );
+
 	b3World* world = b3GetWorld( jointId.world0 );
 	B3_REC( world, WheelJointSetSuspensionHertz, jointId, hertz );
 	b3JointSim* joint = b3GetJointSimCheckType( jointId, b3_wheelJoint );
@@ -48,6 +50,8 @@ float b3WheelJoint_GetSuspensionHertz( b3JointId jointId )
 
 void b3WheelJoint_SetSuspensionDampingRatio( b3JointId jointId, float dampingRatio )
 {
+	B3_CHECK_INPUT( b3IsValidFloat( dampingRatio ) );
+
 	b3World* world = b3GetWorld( jointId.world0 );
 	B3_REC( world, WheelJointSetSuspensionDampingRatio, jointId, dampingRatio );
 	b3JointSim* joint = b3GetJointSimCheckType( jointId, b3_wheelJoint );
@@ -93,7 +97,10 @@ float b3WheelJoint_GetUpperSuspensionLimit( b3JointId jointId )
 
 void b3WheelJoint_SetSuspensionLimits( b3JointId jointId, float lower, float upper )
 {
-	B3_ASSERT( lower <= upper );
+	B3_CHECK_INPUT( b3IsValidFloat( lower ) );
+	B3_CHECK_INPUT( b3IsValidFloat( upper ) );
+	B3_CHECK_INPUT( lower <= upper );
+
 	b3World* world = b3GetWorld( jointId.world0 );
 	B3_REC( world, WheelJointSetSuspensionLimits, jointId, lower, upper );
 	b3JointSim* joint = b3GetJointSimCheckType( jointId, b3_wheelJoint );
@@ -126,6 +133,8 @@ bool b3WheelJoint_IsSpinMotorEnabled( b3JointId jointId )
 
 void b3WheelJoint_SetSpinMotorSpeed( b3JointId jointId, float motorSpeed )
 {
+	B3_CHECK_INPUT( b3IsValidFloat( motorSpeed ) );
+
 	b3World* world = b3GetWorld( jointId.world0 );
 	B3_REC( world, WheelJointSetSpinMotorSpeed, jointId, motorSpeed );
 	b3JointSim* joint = b3GetJointSimCheckType( jointId, b3_wheelJoint );
@@ -140,6 +149,8 @@ float b3WheelJoint_GetSpinMotorSpeed( b3JointId jointId )
 
 void b3WheelJoint_SetMaxSpinTorque( b3JointId jointId, float torque )
 {
+	B3_CHECK_INPUT( b3IsValidFloat( torque ) );
+
 	b3World* world = b3GetWorld( jointId.world0 );
 	B3_REC( world, WheelJointSetMaxSpinTorque, jointId, torque );
 	b3JointSim* joint = b3GetJointSimCheckType( jointId, b3_wheelJoint );
@@ -160,6 +171,9 @@ void b3WheelJoint_EnableSteering( b3JointId jointId, bool flag )
 	if ( joint->wheelJoint.enableSteering != flag )
 	{
 		joint->wheelJoint.angularImpulse = (b3Vec2){ 0.0f, 0.0f };
+		joint->wheelJoint.steeringSpringImpulse = 0.0f;
+		joint->wheelJoint.lowerSteeringImpulse = 0.0f;
+		joint->wheelJoint.upperSteeringImpulse = 0.0f;
 		joint->wheelJoint.enableSteering = flag;
 	}
 }
@@ -172,6 +186,8 @@ bool b3WheelJoint_IsSteeringEnabled( b3JointId jointId )
 
 void b3WheelJoint_SetSteeringHertz( b3JointId jointId, float hertz )
 {
+	B3_CHECK_INPUT( b3IsValidFloat( hertz ) );
+
 	b3World* world = b3GetWorld( jointId.world0 );
 	B3_REC( world, WheelJointSetSteeringHertz, jointId, hertz );
 	b3JointSim* joint = b3GetJointSimCheckType( jointId, b3_wheelJoint );
@@ -186,6 +202,8 @@ float b3WheelJoint_GetSteeringHertz( b3JointId jointId )
 
 void b3WheelJoint_SetSteeringDampingRatio( b3JointId jointId, float dampingRatio )
 {
+	B3_CHECK_INPUT( b3IsValidFloat( dampingRatio ) );
+
 	b3World* world = b3GetWorld( jointId.world0 );
 	B3_REC( world, WheelJointSetSteeringDampingRatio, jointId, dampingRatio );
 	b3JointSim* joint = b3GetJointSimCheckType( jointId, b3_wheelJoint );
@@ -200,6 +218,8 @@ float b3WheelJoint_GetSteeringDampingRatio( b3JointId jointId )
 
 void b3WheelJoint_SetMaxSteeringTorque( b3JointId jointId, float maxTorque )
 {
+	B3_CHECK_INPUT( b3IsValidFloat( maxTorque ) );
+
 	b3World* world = b3GetWorld( jointId.world0 );
 	B3_REC( world, WheelJointSetMaxSteeringTorque, jointId, maxTorque );
 	b3JointSim* joint = b3GetJointSimCheckType( jointId, b3_wheelJoint );
@@ -245,7 +265,10 @@ float b3WheelJoint_GetUpperSteeringLimit( b3JointId jointId )
 
 void b3WheelJoint_SetSteeringLimits( b3JointId jointId, float lowerRadians, float upperRadians )
 {
-	B3_ASSERT( lowerRadians <= upperRadians );
+	B3_CHECK_INPUT( b3IsValidFloat( lowerRadians ) );
+	B3_CHECK_INPUT( b3IsValidFloat( upperRadians ) );
+	B3_CHECK_INPUT( lowerRadians <= upperRadians );
+
 	b3World* world = b3GetWorld( jointId.world0 );
 	B3_REC( world, WheelJointSetSteeringLimits, jointId, lowerRadians, upperRadians );
 	b3JointSim* joint = b3GetJointSimCheckType( jointId, b3_wheelJoint );
@@ -255,6 +278,8 @@ void b3WheelJoint_SetSteeringLimits( b3JointId jointId, float lowerRadians, floa
 
 void b3WheelJoint_SetTargetSteeringAngle( b3JointId jointId, float radians )
 {
+	B3_CHECK_INPUT( b3IsValidFloat( radians ) );
+
 	b3World* world = b3GetWorld( jointId.world0 );
 	B3_REC( world, WheelJointSetTargetSteeringAngle, jointId, radians );
 	b3JointSim* joint = b3GetJointSimCheckType( jointId, b3_wheelJoint );
@@ -278,7 +303,7 @@ float b3WheelJoint_GetSpinSpeed( b3JointId jointId )
 	b3Body* bodyA = b3Array_Get( world->bodies, idA  );
 	b3Body* bodyB = b3Array_Get( world->bodies, idB  );
 
-	b3SolverSet* setB = b3Array_Get( world->solverSets, bodyB->setIndex  );
+	b3SolverSet* setB = b3GetSolverSet( world, bodyB->setIndex );
 	int localIndexB = bodyB->localIndex;
 	b3BodySim* bodySimB = b3Array_Get( setB->bodySims, localIndexB  );
 
@@ -321,8 +346,8 @@ float b3WheelJoint_GetSteeringAngle( b3JointId jointId )
 	b3Body* bodyA = b3Array_Get( world->bodies, idA  );
 	b3Body* bodyB = b3Array_Get( world->bodies, idB  );
 
-	b3SolverSet* setA = b3Array_Get( world->solverSets, bodyA->setIndex  );
-	b3SolverSet* setB = b3Array_Get( world->solverSets, bodyB->setIndex  );
+	b3SolverSet* setA = b3GetSolverSet( world, bodyA->setIndex );
+	b3SolverSet* setB = b3GetSolverSet( world, bodyB->setIndex );
 
 	int localIndexA = bodyA->localIndex;
 	int localIndexB = bodyB->localIndex;
@@ -357,9 +382,9 @@ b3Vec3 b3GetWheelJointForce( b3World* world, b3JointSim* base )
 
 	// impulse in joint space
 	b3Vec3 impulse = {
+		joint->suspensionSpringImpulse + joint->lowerSuspensionImpulse - joint->upperSuspensionImpulse,
 		joint->linearImpulse.x,
 		joint->linearImpulse.y,
-		joint->lowerSuspensionLimit + joint->upperSuspensionImpulse + joint->suspensionSpringImpulse,
 	};
 
 	// convert impulse to force
@@ -377,27 +402,47 @@ b3Vec3 b3GetWheelJointTorque( b3World* world, b3JointSim* base )
 {
 	B3_ASSERT( base->type == b3_wheelJoint );
 
-	// chase body id to the solver set where the body lives
-	int idA = base->bodyIdA;
-	// int idB = base->bodyIdB;
+	b3WheelJoint* joint = &base->wheelJoint;
 
-	b3Body* bodyA = b3Array_Get( world->bodies, idA  );
-	// b3Body* bodyB = b3Array_Get( world->bodies, idB  );
+	b3WorldTransform transformA = b3GetBodyTransform( world, base->bodyIdA );
+	b3WorldTransform transformB = b3GetBodyTransform( world, base->bodyIdB );
+	b3Quat quatA = b3MulQuat( transformA.q, base->localFrameA.q );
+	b3Quat quatB = b3MulQuat( transformB.q, base->localFrameB.q );
+	if ( b3DotQuat( quatA, quatB ) < 0.0f )
+	{
+		quatB = b3NegateQuat( quatB );
+	}
 
-	b3SolverSet* setA = b3Array_Get( world->solverSets, bodyA->setIndex  );
-	// b3SolverSet* setB = b3Array_Get( world->solverSets, bodyB->setIndex  );
+	b3Matrix3 matrixA = b3MakeMatrixFromQuat( quatA );
+	b3Matrix3 matrixB = b3MakeMatrixFromQuat( quatB );
+	b3Vec3 spinAxis = matrixB.cz;
 
-	int localIndexA = bodyA->localIndex;
-	// int localIndexB = bodyB->localIndex;
+	b3Vec3 impulse;
+	if ( joint->enableSteering )
+	{
+		float cs = b3Dot( matrixB.cz, matrixA.cz );
+		float ss = -b3Dot( matrixB.cz, matrixA.cy );
+		float den = cs * cs + ss * ss;
+		den = den > 0.0f ? 1.0f / den : 0.0f;
+		b3Vec3 steeringAxis =
+			b3MulSV( den, b3Cross( matrixB.cz, b3Sub( b3MulSV( -cs, matrixA.cy ), b3MulSV( ss, matrixA.cz ) ) ) );
 
-	b3BodySim* bodySimA = b3Array_Get( setA->bodySims, localIndexA  );
-	// b3BodySim* bodySimB = b3Array_Get( setB->bodySims, localIndexB  );
+		b3Vec3 perpAxis = b3Cross( spinAxis, matrixA.cx );
+		float steeringImpulse = joint->steeringSpringImpulse + joint->lowerSteeringImpulse - joint->upperSteeringImpulse;
+		impulse = b3Blend3( joint->angularImpulse.x, perpAxis, joint->spinImpulse, spinAxis, steeringImpulse, steeringAxis );
+	}
+	else
+	{
+		b3Quat relQ = b3InvMulQuat( quatA, quatB );
+		b3Vec3 perpAxisX = b3MulSV(
+			0.5f, b3RotateVector( quatA, b3Add( b3MulSV( relQ.s, b3Vec3_axisX ), b3Cross( relQ.v, b3Vec3_axisX ) ) ) );
+		b3Vec3 perpAxisY = b3MulSV(
+			0.5f, b3RotateVector( quatA, b3Add( b3MulSV( relQ.s, b3Vec3_axisY ), b3Cross( relQ.v, b3Vec3_axisY ) ) ) );
+		impulse = b3Blend3( joint->angularImpulse.x, perpAxisX, joint->angularImpulse.y, perpAxisY, joint->spinImpulse,
+							spinAxis );
+	}
 
-	b3Quat qA = b3MulQuat( bodySimA->transform.q, base->localFrameA.q );
-
-	b3Matrix3 matrixA = b3MakeMatrixFromQuat( qA );
-
-	return b3MulSV( world->inv_h * base->wheelJoint.spinImpulse, matrixA.cz );
+	return b3MulSV( world->inv_h, impulse );
 }
 
 // See constraints.pdf
@@ -416,8 +461,8 @@ void b3PrepareWheelJoint( b3JointSim* base, b3StepContext* context )
 	b3Body* bodyB = b3Array_Get( world->bodies, idB  );
 
 	B3_ASSERT( bodyA->setIndex == b3_awakeSet || bodyB->setIndex == b3_awakeSet );
-	b3SolverSet* setA = b3Array_Get( world->solverSets, bodyA->setIndex  );
-	b3SolverSet* setB = b3Array_Get( world->solverSets, bodyB->setIndex  );
+	b3SolverSet* setA = b3GetFixedSolverSet( world, bodyA->setIndex );
+	b3SolverSet* setB = b3GetFixedSolverSet( world, bodyB->setIndex );
 
 	int localIndexA = bodyA->localIndex;
 	int localIndexB = bodyB->localIndex;
@@ -500,6 +545,14 @@ void b3PrepareWheelJoint( b3JointSim* base, b3StepContext* context )
 		joint->lowerSteeringImpulse = 0.0f;
 		joint->upperSteeringImpulse = 0.0f;
 	}
+	else if ( base->fixedRotation )
+	{
+		joint->angularImpulse = (b3Vec2){ 0.0f, 0.0f };
+		joint->spinImpulse = 0.0f;
+		joint->steeringSpringImpulse = 0.0f;
+		joint->lowerSteeringImpulse = 0.0f;
+		joint->upperSteeringImpulse = 0.0f;
+	}
 }
 
 void b3WarmStartWheelJoint( b3JointSim* base, b3StepContext* context )
@@ -552,7 +605,7 @@ void b3WarmStartWheelJoint( b3JointSim* base, b3StepContext* context )
 	b3Vec3 linearImpulse = b3Blend3( suspensionImpulse, matrixA.cx, linearImpulseY, matrixA.cy, linearImpulseZ, matrixA.cz );
 	b3Vec3 angularImpulseA = b3Blend3( suspensionImpulse, sAx, linearImpulseY, sAy, linearImpulseZ, sAz );
 	b3Vec3 angularImpulseB = b3Blend3( suspensionImpulse, sBx, linearImpulseY, sBy, linearImpulseZ, sBz );
-	b3Vec3 angularImpulse = b3MulSV( joint->spinImpulse, matrixA.cz );
+	b3Vec3 angularImpulse;
 
 	b3Vec3 spinAxis = matrixB.cz;
 
@@ -577,9 +630,8 @@ void b3WarmStartWheelJoint( b3JointSim* base, b3StepContext* context )
 			0.5f, b3RotateVector( quatA, b3Add( b3MulSV( relQ.s, b3Vec3_axisX ), b3Cross( relQ.v, b3Vec3_axisX ) ) ) );
 		b3Vec3 perpAxisY = b3MulSV(
 			0.5f, b3RotateVector( quatA, b3Add( b3MulSV( relQ.s, b3Vec3_axisY ), b3Cross( relQ.v, b3Vec3_axisY ) ) ) );
-		angularImpulse = b3Add(
-			angularImpulse,
-			b3Blend3( angularImpulseX, perpAxisX, angularImpulseY, perpAxisY, joint->spinImpulse, spinAxis ) );
+		angularImpulse =
+			b3Blend3( angularImpulseX, perpAxisX, angularImpulseY, perpAxisY, joint->spinImpulse, spinAxis );
 	}
 
 	if ( stateA->flags & b3_dynamicFlag )
@@ -701,7 +753,7 @@ void b3SolveWheelJoint( b3JointSim* base, b3StepContext* context, bool useBias )
 
 		{
 			// This is a real spring and should be applied even during relax
-			float c = steeringAngle - joint->targetSteeringAngle;
+			float c = b3UnwindAngle( steeringAngle - joint->targetSteeringAngle );
 			float bias = joint->steeringSoftness.biasRate * c;
 			float massScale = joint->steeringSoftness.massScale;
 			float impulseScale = joint->steeringSoftness.impulseScale;
@@ -1072,14 +1124,16 @@ void b3DrawWheelJoint( b3DebugDraw* draw, b3JointSim* base, b3WorldTransform tra
 		float upper = joint->upperSteeringLimit;
 
 		b3CosSin cs = b3ComputeCosSin( lower );
+		b3CosSin delta = b3ComputeCosSin( ( upper - lower ) / sliceCount );
 		b3Pos vertex1 = b3TransformWorldPoint( frame, (b3Vec3){ 0.0f, -radius * cs.sine, radius * cs.cosine } );
 
 		for ( int index = 0; index < sliceCount; ++index )
 		{
-			float t2 = ( index + 1.0f ) / sliceCount;
-			float phi = b3LerpFloat( lower, upper, t2 );
+			float cosine = delta.cosine * cs.cosine - delta.sine * cs.sine;
+			float sine = delta.sine * cs.cosine + delta.cosine * cs.sine;
+			cs.cosine = cosine;
+			cs.sine = sine;
 
-			cs = b3ComputeCosSin( phi );
 			b3Pos vertex2 = b3TransformWorldPoint( frame, (b3Vec3){ 0.0f, -radius * cs.sine, radius * cs.cosine } );
 
 			if ( index == 0 )

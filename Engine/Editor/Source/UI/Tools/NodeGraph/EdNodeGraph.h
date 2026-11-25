@@ -271,6 +271,9 @@ namespace Lumina
         // A 0 to 1 share of the graph's cost and its label, drawn along the node while a cost view is on.
         virtual bool GetNodeHeat(const CEdGraphNode* Node, float& OutHeat, FString& OutLabel) { return false; }
 
+        // A short status pill drawn on the node's top edge, such as a view marking what a tier skips.
+        virtual bool GetNodeBadge(const CEdGraphNode* Node, FString& OutText, ImU32& OutColor) { return false; }
+
         // What the node compiled to, offered from its context menu.
         virtual bool GetNodeGeneratedCode(const CEdGraphNode* Node, FString& OutCode) { return false; }
 
@@ -395,6 +398,7 @@ namespace Lumina
         void DrawFindPopup();
         void DrawGeneratedCodePopup();
         void DrawNodeHeat(CEdGraphNode* Node, float Heat, const FString& Label);
+        void DrawNodeBadge(CEdGraphNode* Node, const FString& Text, ImU32 Color);
 
         // A lone node dropped on a wire takes it in through FindAutoConnectPin on both ends, and only into a free input.
         void HandleSplice(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links);

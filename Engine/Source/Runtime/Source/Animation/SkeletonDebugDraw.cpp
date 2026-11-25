@@ -450,7 +450,7 @@ namespace Lumina::SkeletonDebugDraw
             ? FImmediateLineRenderer::DepthTested
             : FImmediateLineRenderer::XRay;
 
-        Jobs::ParallelFor((uint32)Jobs.Num(), [&](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)Jobs.Num(), [&](const Jobs::FRange& Range)
         {
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {

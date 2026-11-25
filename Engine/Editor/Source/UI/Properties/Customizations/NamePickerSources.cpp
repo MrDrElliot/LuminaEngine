@@ -8,6 +8,10 @@
 #include "UI/Tools/NodeGraph/Animation/AnimStateMachineGraph.h"
 #include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_State.h"
 #include "Renderer/SkeletonResource.h"
+#include "Containers/Algorithm.h"
+#include "Core/Reflection/Type/Properties/ObjectProperty.h"
+#include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "World/Entity/Components/Component.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 
@@ -298,29 +302,166 @@ namespace Lumina
             }
         };
 
-        void GatherStructParameters(CAnimationGraph* Graph, bool bObjectValued, TVector<FName>& Out)
-        {
-            CStruct* Struct = (Graph != nullptr) ? Graph->GetParameterStruct() : nullptr;
-            if (Struct == nullptr)
-            {
-                return;
-            }
+        // Deep enough for a vector inside a struct inside an input, and a bound on cycles through asset references.
+        constexpr int32 kMaxParameterDepth = 5;
 
+        constexpr ImVec2 kParameterTreeSize(420.0f, 440.0f);
+
+        // One field a parameter path can reach, readable as the wanted kind, a way down to more fields, or both.
+        struct FParameterField
+        {
+            const FProperty* Property = nullptr;
+            FString          Path;
+            bool             bReadable = false;
+            CStruct*         Inner = nullptr;
+            bool             bHops = false;
+        };
+
+        // A path follows at most one asset reference, matching what the graph resolves at runtime.
+        template<typename TVisit>
+        void ForEachParameterField(CStruct* Struct, const FString& Prefix, bool bObjectValued, bool bHopped, TVisit&& Visit)
+        {
             Struct->ForEachProperty<FProperty>([&](FProperty* Property)
             {
+                if (Property->HasSetterOrGetter())
+                {
+                    return;
+                }
+
+                FParameterField Field;
+                Field.Property = Property;
+                Field.Path = Prefix.IsEmpty() ? FString(*Property->GetPropertyName()) : Prefix + "." + *Property->GetPropertyName();
                 const EAnimParamValueType Type = AnimParamValueTypeFromProperty(Property);
-                if (Type == EAnimParamValueType::Unresolved || Property->HasSetterOrGetter())
+                Field.bReadable = Type != EAnimParamValueType::Unresolved && (Type == EAnimParamValueType::Object) == bObjectValued;
+                if (Property->GetType() == EPropertyTypeFlags::Struct)
                 {
-                    return;
+                    Field.Inner = static_cast<const FStructProperty*>(Property)->GetStruct();
                 }
-                if ((Type == EAnimParamValueType::Object) != bObjectValued)
+                else if (Property->GetType() == EPropertyTypeFlags::Object && !bHopped)
                 {
-                    return;
+                    Field.Inner = static_cast<const FObjectProperty*>(Property)->GetPropertyClass();
+                    Field.bHops = true;
                 }
-                Out.Add(Property->Name);
+                if (Field.bReadable || Field.Inner != nullptr)
+                {
+                    Visit(Field);
+                }
             });
         }
 
+        void GatherParameterPaths(CStruct* Struct, const FString& Prefix, bool bObjectValued, bool bHopped, int32 Depth, TVector<FName>& Out)
+        {
+            ForEachParameterField(Struct, Prefix, bObjectValued, bHopped, [&](const FParameterField& Field)
+            {
+                if (Field.bReadable)
+                {
+                    Out.Add(FName(*Field.Path));
+                }
+                if (Field.Inner != nullptr && Depth < kMaxParameterDepth)
+                {
+                    GatherParameterPaths(Field.Inner, Field.Path, bObjectValued, bHopped || Field.bHops, Depth + 1, Out);
+                }
+            });
+        }
+
+        // The struct an input's component type names right now, so a type added since the last compile shows at once.
+        CStruct* FindInputStruct(const SAnimGraphInput& Input)
+        {
+            return Input.Component.IsNone() ? nullptr : FindComponentStruct(Input.Component.ToString());
+        }
+
+        void GatherGraphParameterPaths(const CAnimationGraph* Graph, bool bObjectValued, TVector<FName>& Out)
+        {
+            if (Graph == nullptr)
+            {
+                return;
+            }
+            for (const SAnimGraphInput& Input : Graph->Inputs)
+            {
+                if (CStruct* Struct = FindInputStruct(Input))
+                {
+                    GatherParameterPaths(Struct, Input.Name.ToString(), bObjectValued, false, 0, Out);
+                }
+            }
+            if (CStruct* Struct = Graph->GetParameterStruct())
+            {
+                GatherParameterPaths(Struct, FString(), bObjectValued, false, 0, Out);
+            }
+        }
+
+        const char* DescribeFieldType(const FProperty* Property)
+        {
+            switch (Property->GetType())
+            {
+            case EPropertyTypeFlags::Float:
+            case EPropertyTypeFlags::Double: return "float";
+            case EPropertyTypeFlags::Bool:   return "bool";
+            case EPropertyTypeFlags::Enum:   return "enum";
+            case EPropertyTypeFlags::Struct: return *static_cast<const FStructProperty*>(Property)->GetStruct()->GetName();
+            case EPropertyTypeFlags::Object:
+                {
+                    const CClass* Class = static_cast<const FObjectProperty*>(Property)->GetPropertyClass();
+                    return Class != nullptr ? *Class->GetName() : "asset";
+                }
+            default: return "int";
+            }
+        }
+
+        // Called right after the row's item, whose line the hint joins at the right edge.
+        void DrawTypeHint(const char* Text)
+        {
+            const float Width = ImGui::CalcTextSize(Text).x;
+            const float RightEdge = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x;
+            ImGui::SameLine();
+            ImGui::SetCursorPosX(Math::Max(RightEdge - Width, ImGui::GetCursorPosX() + 12.0f));
+            ImGui::TextDisabled("%s", Text);
+        }
+
+        void PickField(const FParameterField& Field, FNamePickerResult& Result)
+        {
+            Result = { true, FName(*Field.Path) };
+            ImGui::CloseCurrentPopup();
+        }
+
+        void DrawParameterFieldTree(CStruct* Struct, const FString& Prefix, bool bObjectValued, bool bHopped, int32 Depth,
+                                    const FNamePickerArgs& Args, FNamePickerResult& Result)
+        {
+            ForEachParameterField(Struct, Prefix, bObjectValued, bHopped, [&](const FParameterField& Field)
+            {
+                const char* Name = *Field.Property->GetPropertyName();
+                const bool bSelected = Args.Current == FName(*Field.Path);
+                ImGuiTreeNodeFlags Flags = ImGuiTreeNodeFlags_SpanAvailWidth | (bSelected ? ImGuiTreeNodeFlags_Selected : 0);
+                const char* Icon = Field.bReadable ? (bObjectValued ? LE_ICON_CUBE_OUTLINE : LE_ICON_VARIABLE) : LE_ICON_FOLDER_OUTLINE;
+
+                ImGui::PushID(Name);
+                if (Field.Inner != nullptr && Depth < kMaxParameterDepth)
+                {
+                    const bool bOpen = ImGui::TreeNodeEx("##Field", Flags | ImGuiTreeNodeFlags_OpenOnArrow, "%s  %s", Icon, Name);
+                    if (Field.bReadable && ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+                    {
+                        PickField(Field, Result);
+                    }
+                    DrawTypeHint(DescribeFieldType(Field.Property));
+                    if (bOpen)
+                    {
+                        DrawParameterFieldTree(Field.Inner, Field.Path, bObjectValued, bHopped || Field.bHops, Depth + 1, Args, Result);
+                        ImGui::TreePop();
+                    }
+                }
+                else if (Field.bReadable)
+                {
+                    ImGui::TreeNodeEx("##Field", Flags | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen, "%s  %s", Icon, Name);
+                    if (ImGui::IsItemClicked())
+                    {
+                        PickField(Field, Result);
+                    }
+                    DrawTypeHint(DescribeFieldType(Field.Property));
+                }
+                ImGui::PopID();
+            });
+        }
+
+        // Inputs first, since they are where a graph's data usually comes from, then the instance's own parameter block.
         class FAnimParameterSource : public INamePickerSource
         {
         public:
@@ -330,26 +471,121 @@ namespace Lumina
             void GatherChoices(const FPropertyEditContext& Context, TVector<FName>& Out) const override
             {
                 const FAnimGraphEditContext* Anim = Context.Get<FAnimGraphEditContext>();
-                GatherStructParameters((Anim != nullptr) ? Anim->Graph : nullptr, bObjectValued, Out);
+                GatherGraphParameterPaths((Anim != nullptr) ? Anim->Graph : nullptr, bObjectValued, Out);
             }
 
-            const char* GetItemIcon() const override { return bObjectValued ? LE_ICON_CUBE_OUTLINE : LE_ICON_VARIABLE; }
+            bool WantsCustomBody() const override { return true; }
 
-            const char* GetStaleHint() const override { return "Not declared on this graph's parameter struct"; }
-
-            const char* GetUnavailableHint(const FPropertyEditContext& Context) const override
+            FNamePickerResult DrawCustomBody(const FNamePickerArgs& Args) const override
             {
-                const FAnimGraphEditContext* Anim = Context.Get<FAnimGraphEditContext>();
-                if (Anim == nullptr || Anim->Graph == nullptr)
+                const FAnimGraphEditContext* Anim = Args.Context.Get<FAnimGraphEditContext>();
+                const CAnimationGraph* Graph = Anim != nullptr ? Anim->Graph : nullptr;
+
+                TVector<FName> Choices;
+                GatherGraphParameterPaths(Graph, bObjectValued, Choices);
+                const bool bStale = Graph != nullptr && !Args.Current.IsNone() && !Algo::Contains(Choices, Args.Current);
+
+                FNamePickerResult Result;
+                if (BeginPickerCombo(Args, bStale))
                 {
-                    return "This editor does not provide a graph to pick parameters from";
+                    // At least the tree's own width, and the popup's when the field is wider, so type hints never sit under the scrollbar.
+                    const float Width = Math::Max(ImGui::GetContentRegionAvail().x, kParameterTreeSize.x);
+                    if (Args.State->Filter.Draw("##Filter", Width))
+                    {
+                        Args.State->Tree.MarkTreeDirty();
+                    }
+                    ImGui::Separator();
+
+                    if (ImGui::BeginChild("##Parameters", ImVec2(Width, kParameterTreeSize.y)))
+                    {
+                        DrawNoneRow(Args.Current, Result);
+                        if (Graph == nullptr)
+                        {
+                            ImGui::TextDisabled("This editor does not provide a graph to pick parameters from.");
+                        }
+                        else if (Args.State->Filter.IsActive())
+                        {
+                            DrawFiltered(Args, Choices, Result);
+                        }
+                        else
+                        {
+                            DrawSources(Args, *Graph, Result);
+                        }
+                    }
+                    ImGui::EndChild();
+                    ImGui::EndCombo();
                 }
-                return (Anim->Graph->GetParameterStruct() == nullptr)
-                    ? "No parameter struct assigned; set one on the graph asset"
-                    : "The parameter struct declares no field of this type";
+
+                if (bStale && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                {
+                    ImGuiX::TextTooltip_Internal("Nothing this graph reads has this path; renamed or removed?");
+                }
+                return Result;
             }
 
         private:
+
+            void DrawFiltered(const FNamePickerArgs& Args, const TVector<FName>& Choices, FNamePickerResult& Result) const
+            {
+                bool bAny = false;
+                for (const FName& Choice : Choices)
+                {
+                    if (!ImGuiX::PassSearchFilter(Args.State->Filter, *Choice))
+                    {
+                        continue;
+                    }
+                    bAny = true;
+                    if (ImGui::Selectable(*Choice, Choice == Args.Current))
+                    {
+                        Result = { true, Choice };
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+                if (!bAny)
+                {
+                    ImGui::TextDisabled("Nothing matches.");
+                }
+            }
+
+            void DrawSources(const FNamePickerArgs& Args, const CAnimationGraph& Graph, FNamePickerResult& Result) const
+            {
+                bool bAny = false;
+                for (const SAnimGraphInput& Input : Graph.Inputs)
+                {
+                    CStruct* Struct = FindInputStruct(Input);
+                    if (Struct == nullptr || Input.Name.IsNone())
+                    {
+                        continue;
+                    }
+                    bAny = true;
+                    ImGui::PushID(*Input.Name);
+                    const bool bOpen = ImGui::TreeNodeEx("##Input", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
+                                                         LE_ICON_PUZZLE_OUTLINE "  %s", *Input.Name);
+                    DrawTypeHint(*Struct->GetName());
+                    if (bOpen)
+                    {
+                        DrawParameterFieldTree(Struct, Input.Name.ToString(), bObjectValued, false, 0, Args, Result);
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+
+                if (CStruct* Struct = Graph.GetParameterStruct())
+                {
+                    bAny = true;
+                    if (ImGui::TreeNodeEx("##Instance", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
+                                          LE_ICON_TUNE_VARIANT "  Graph Parameters"))
+                    {
+                        DrawParameterFieldTree(Struct, FString(), bObjectValued, false, 0, Args, Result);
+                        ImGui::TreePop();
+                    }
+                }
+
+                if (!bAny)
+                {
+                    ImGui::TextWrapped("Nothing to read yet. Add an input in the graph editor's Parameters panel to read a component off the entity.");
+                }
+            }
 
             bool bObjectValued = false;
         };

@@ -21,26 +21,23 @@ FProxyPixelOutput FragmentMain(FProxyVertexOutput Input)
 
     if (Input.bAlphaTest != 0u)
     {
-        const FVisProxy P      = LoadProxyEntry(Input.Entry);
-        FMeshletHeader* Header = MeshletHeaderAt(P.Static.MeshletHeaderSlot);
-
-        float3 GroundWiden;
-        ProxyWidenedCenter(P.Model, P.Proxy, GroundWiden);
-        const float4x4 Model = ProxyWidenedModel(P.Model, GroundWiden);
+        FMeshletHeader* Header = MeshletHeaderAt(Input.HeaderSlot);
 
         // Taken before any lane can discard, since the threshold differentiates across the quad.
         const float Threshold = HashedAlphaThreshold(Input.WorldPos, length(Input.WorldPos - GetCameraPosition()), kImpostorCoverageCutoff);
 
-        const FImpostorRay    Ray    = MakeImpostorRay(Header, Model, Input.WorldPos);
-        const FImpostorViews  Views  = SelectImpostorViews(Ray.ToEye, Header.ImpostorFrames);
-        const float3          Center = mul(Model, float4(Header.ImpostorCenter, 1.0)).xyz;
-        const FImpostorSample S      = SampleImpostor(Header, Views, Ray.Origin, Ray.Dir, ImpostorMipLevel(Header, Center, Header.ImpostorRadius * MatrixMaxScale(P.Model)));
-        if (S.Coverage < Threshold)
+        const float           InvLength = rsqrt(max(dot(Input.LocalDir, Input.LocalDir), 1.0e-20));
+        const FImpostorViews  Views     = UnpackImpostorViews(Input.ViewFrames, Input.ViewWeights);
+        const FImpostorTaps   Taps      = GatherImpostorTaps(Header, Views, Input.LocalOrigin, Input.LocalDir * InvLength, Input.Mip);
+        if (Taps.Coverage < Threshold)
         {
             discard;
         }
+        const FImpostorSample S = ResolveImpostorTaps(Header, Views, Taps, Input.Mip);
 
-        const float4 Clip = WorldToClip(mul(Model, float4(Ray.Origin + Ray.Dir * S.RayT, 1.0)).xyz);
+        // The local ray is the world one through the inverse model, so the hit lies the same share along the unnormalized world ray.
+        const float3 WorldDir = IsCameraOrthographic() ? GetCameraForward() : Input.WorldPos - GetCameraPosition();
+        const float4 Clip     = WorldToClip(Input.WorldPos + WorldDir * (S.RayT * InvLength));
         Out.Depth = saturate(Clip.z / Clip.w);
     }
     return Out;

@@ -276,6 +276,9 @@ namespace Lumina
         // ReadPackageFile plus the header check, so a truncated or foreign file is refused before anyone walks its tables.
         NODISCARD RUNTIME_API static bool ReadPackageContainer(FStringView Path, TVector<uint8>& OutBinary, FPackageHeader& OutHeader, FBulkRegion* OutBulkRegion = nullptr);
 
+        // ReadPackageContainer over a whole file the caller already read, with Path only naming it in errors.
+        NODISCARD RUNTIME_API static bool DecodePackageFile(TVector<uint8>&& FileBytes, FStringView Path, TVector<uint8>& OutBinary, FPackageHeader& OutHeader);
+
         // One ranged read of a bulk payload, uncached so the caller owns the bytes, and safe from a worker thread.
         NODISCARD RUNTIME_API bool ReadBulkData(const FBulkDataRef& Ref, TVector<uint8>& OutBytes, uint32 ExpectedGeneration = 0) const;
 
@@ -291,8 +294,8 @@ namespace Lumina
         // True while a save copies this bulk region across verbatim, where a PreSave that reads payloads back costs the whole saving.
         NODISCARD RUNTIME_API bool IsBulkPassthrough() const { return bBulkPassthrough; }
 
-        // Publishes a copy of FileBinary as the resident bytes and returns it, with no name table until a reader parses one.
-        TSharedPtr<FPackageFileBytes> CreateLoader(const TVector<uint8>& FileBinary);
+        // Takes FileBinary as the resident bytes and returns them, with no name table until a reader parses one.
+        TSharedPtr<FPackageFileBytes> CreateLoader(TVector<uint8>&& FileBinary);
 
         // the bytes, the version to stamp a reader with and the table to resolve its slots, re-read from disk when the cache was dropped
         TSharedPtr<FPackageFileBytes> AcquireLoaderBytes(int32& OutFileVersion, TSharedPtr<const FPackageNameTable>& OutNames);
@@ -327,27 +330,31 @@ namespace Lumina
 #endif
 
         NODISCARD RUNTIME_API FFixedString GetPackagePath() const;
-        
-        RUNTIME_API void MarkDirty() { if (!IsTransientPackage()) { bDirty = true; ++EditGeneration; } }
-        RUNTIME_API void ClearDirty() { bDirty = false; }
-        NODISCARD RUNTIME_API bool IsDirty() const { return bDirty; }
+
+        RUNTIME_API void MarkDirty() { if (!IsTransientPackage()) { bDirty.store(true, std::memory_order_release); ++EditGeneration; } }
+
+        // Also lets go of the exports kept alive for the save, so call it only once the file matches memory or the edits are abandoned.
+        RUNTIME_API void ClearDirty();
+        NODISCARD RUNTIME_API bool IsDirty() const { return bDirty.load(std::memory_order_acquire); }
 
         // Bumped by every MarkDirty, so an editor can tell an edit happened even while the package stays dirty.
         NODISCARD uint32 GetEditGeneration() const { return EditGeneration; }
-        
+
+        // Takes Object's last strong reference when it is an export of a package with unsaved edits, since a save would otherwise read it back from the stale file.
+        static bool RetainUnsavedExport(CObjectBase* Object);
+
         template<typename T>
         static void AddPackageExt(T& String)
         {
             String += ".lasset";
         }
-        
+
     public:
-        
+
         RUNTIME_API static FPackageDestroyedDelegate OnPackageDestroyed;
 
-        uint32                           bDirty:1 = false;
         uint32                           EditGeneration = 0;
-        
+
         TSharedPtr<FPackageFileBytes>    LoaderBytes;
         TVector<FObjectImport>           ImportTable;
         TVector<FObjectExport>           ExportTable;
@@ -355,6 +362,19 @@ namespace Lumina
     private:
 
         friend class FPackageLoader;
+
+        // The tables and each export's index into them, so a cook or a failed save can put back the layout the resident bytes follow.
+        struct FLayoutSnapshot
+        {
+            TVector<FObjectImport> Imports;
+            TVector<FObjectExport> Exports;
+        };
+
+        FLayoutSnapshot SnapshotLayout() const;
+        void RestoreLayout(FLayoutSnapshot&& Snapshot);
+
+        // Creates or finds the export's shell and loads it, which an index already names without a search of the table.
+        CObject* LoadExport(int32 ExportIndex, FLoadRequest& Request);
 
         // Phased-load steps for LoadAssetGraph, each one task over this package's whole ExportTable.
 
@@ -393,6 +413,16 @@ namespace Lumina
         FFixedString GetBulkSource(FBulkRegion* OutRegion = nullptr) const;
 
         TAtomic<ELoadState>             LoadState{ELoadState::Unloaded};
+
+        // Read by a release on any thread deciding whether to keep an export, so it changes under UnsavedExportsMutex.
+        std::atomic<bool>               bDirty{false};
+
+        // Exports whose holders all let go while edits were unsaved, held until ClearDirty.
+        TVector<TStrongObjectPtr<CObject>> UnsavedExports;
+        mutable FMutex                  UnsavedExportsMutex;
+
+        // Exports before this index were resident at the last check, so dropping the bytes does not rescan them per load.
+        std::atomic<int32>              ResidentExportScan{0};
 
         // Located at load from the file's trailer and refreshed on save, zero when no export wrote anything bulk.
         FBulkRegion                     BulkRegion;

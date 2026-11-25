@@ -119,7 +119,7 @@ namespace Lumina::Avoidance
             return;
         }
 
-        Jobs::ParallelFor((uint32)Count, [&](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)Count, [&](const Jobs::FRange& Range)
         {
             for (uint32 i = Range.Start; i < Range.End; ++i)
             {

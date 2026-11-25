@@ -41,10 +41,10 @@ float TraceSunField(FWorldDistanceField* Field, float3 P, float3 ToSun, float Ta
 
     float Visibility = 1.0;
     float t = 1.5 * Field.VoxelSize(ReceiverLevel);
+    uint  Level = ReceiverLevel;
     [loop]
     for (uint Step = 0u; Step < kSunFieldSteps && t < MaxTrace; ++Step)
     {
-        uint Level;
         const float Distance = Field.Sample(P + ToSun * t, Level);
         if (Level >= kWorldDFLevels)
         {
@@ -131,7 +131,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     if (Raw > 0.0 && Pass().ToSun.y > 0.0)
     {
         const float2 UV = (float2(Pixel) + 0.5) / float2(Pass().ScreenSize);
-        const float3 P  = LiftOntoTerrains(ReconstructWorldPos(UV, Raw), Pass().Terrains, Pass().NumTerrains);
+        const float3 P  = LiftOntoTerrains(ReconstructWorldPos(UV, Raw), &Pass().Terrains[0], Pass().NumTerrains);
         const float  ViewDistance = length(P - GetCameraPosition());
 
         [loop]

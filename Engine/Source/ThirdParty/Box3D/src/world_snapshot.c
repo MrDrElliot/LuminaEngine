@@ -33,7 +33,7 @@
 
 // Snapshot image magic 'BNS3' and version
 #define B3_SNAP_MAGIC 0x33534E42u
-#define B3_SNAP_VERSION 11u // isotropic inertia tolerance
+#define B3_SNAP_VERSION 12u // body motion lock removal
 
 #define B3_SNAP_FLAG_VALIDATION 0x1u
 #define B3_SNAP_FLAG_DOUBLE_PRECISION 0x2u
@@ -125,7 +125,7 @@ static void b3SnapRCheck( b3SnapReader* r, int need )
 static void b3SnapR_Bytes( b3SnapReader* r, void* dst, int n )
 {
 	b3SnapRCheck( r, n );
-	if ( !r->ok )
+	if ( !r->ok || n == 0 )
 	{
 		return;
 	}
@@ -672,7 +672,10 @@ static void b3DesShapes( b3SnapReader* r, b3World* world, b3RecReader* rdr )
 	}
 
 	b3Array_Resize( world->shapes, count );
-	memset( world->shapes.data, 0, (size_t)count * sizeof( b3Shape ) );
+	if ( count > 0 )
+	{
+		memset( world->shapes.data, 0, (size_t)count * sizeof( b3Shape ) );
+	}
 
 	for ( int i = 0; i < count && r->ok; ++i )
 	{
@@ -900,7 +903,10 @@ static void b3DesContacts( b3SnapReader* r, b3World* world )
 	}
 
 	b3Array_Resize( world->contacts, count );
-	memset( world->contacts.data, 0, (size_t)count * sizeof( b3Contact ) );
+	if ( count > 0 )
+	{
+		memset( world->contacts.data, 0, (size_t)count * sizeof( b3Contact ) );
+	}
 
 	for ( int i = 0; i < count && r->ok; ++i )
 	{
@@ -925,7 +931,8 @@ static void b3DesContacts( b3SnapReader* r, b3World* world )
 
 		if ( isLive && manifoldCount > 0 )
 		{
-			if ( b3SnapCheckCount( r, manifoldCount, (int)sizeof( b3Manifold ), (int)sizeof( b3Manifold ) ) == false )
+			if ( manifoldCount > B3_MAX_MANIFOLDS ||
+				 b3SnapCheckCount( r, manifoldCount, (int)sizeof( b3Manifold ), (int)sizeof( b3Manifold ) ) == false )
 			{
 				r->ok = false;
 				break;
@@ -1056,11 +1063,11 @@ int b3SerializeWorld( b3World* world, b3RecBuffer* buf, b3Recording* rec )
 	b3SerIdPool( buf, &world->solverSetIdPool );
 
 	// Solver sets
-	int setCount = world->solverSets.count;
+	int setCount = b3GetSolverSetCount( world );
 	b3SnapW_I32( buf, setCount );
 	for ( int i = 0; i < setCount; ++i )
 	{
-		b3SerSolverSet( buf, world->solverSets.data + i );
+		b3SerSolverSet( buf, b3GetSolverSet( world, i ) );
 	}
 
 	// Sparse body array (userData is host wiring, zero it on the copy)
@@ -1200,9 +1207,10 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 	b3DesIdPool( r, &world->solverSetIdPool );
 
 	// 3. Solver sets: destroy inner arrays of existing sets first
-	for ( int i = 0; i < world->solverSets.count; ++i )
+	int oldSetCount = b3GetSolverSetCount( world );
+	for ( int i = 0; i < oldSetCount; ++i )
 	{
-		b3SolverSet* set = world->solverSets.data + i;
+		b3SolverSet* set = b3GetSolverSet( world, i );
 		b3Array_Destroy( set->bodySims );
 		b3Array_Destroy( set->bodyStates );
 		b3Array_Destroy( set->jointSims );
@@ -1211,17 +1219,24 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 	}
 
 	int setCount = b3SnapR_I32( r );
-	if ( r->ok && b3SnapCheckCount( r, setCount, (int)sizeof( b3SolverSet ), 6 * (int)sizeof( int ) ) == false )
+	if ( r->ok && ( setCount < b3_firstSleepingSet ||
+					b3SnapCheckCount( r, setCount, (int)sizeof( b3SolverSet ), 6 * (int)sizeof( int ) ) == false ) )
 	{
 		r->ok = false;
 	}
 	if ( r->ok )
 	{
-		b3Array_Resize( world->solverSets, setCount );
-		memset( world->solverSets.data, 0, (size_t)setCount * sizeof( b3SolverSet ) );
+		int sleepingSetCount = setCount - b3_firstSleepingSet;
+		b3Array_Resize( world->sleepingSets, sleepingSetCount );
+		memset( world->fixedSets, 0, sizeof( world->fixedSets ) );
+		if ( sleepingSetCount > 0 )
+		{
+			memset( world->sleepingSets.data, 0, (size_t)sleepingSetCount * sizeof( b3SolverSet ) );
+		}
+
 		for ( int i = 0; i < setCount; ++i )
 		{
-			b3DesSolverSet( r, world->solverSets.data + i );
+			b3DesSolverSet( r, b3GetSolverSet( world, i ) );
 		}
 	}
 
@@ -1244,7 +1259,9 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 			{
 				b3SnapR_Bytes( r, world->bodies.data + i, sizeof( b3Body ) );
 				world->bodies.data[i].userData = NULL;
+				world->bodies.data[i].bodyMoveIndex = B3_NULL_INDEX;
 			}
+			b3Array_Clear( world->bodyMoveEvents );
 		}
 	}
 
@@ -1307,7 +1324,10 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 		if ( r->ok )
 		{
 			b3Array_Resize( world->sensors, sensorCount );
-			memset( world->sensors.data, 0, (size_t)sensorCount * sizeof( b3Sensor ) );
+			if ( sensorCount > 0 )
+			{
+				memset( world->sensors.data, 0, (size_t)sensorCount * sizeof( b3Sensor ) );
+			}
 		}
 
 		for ( int i = 0; i < sensorCount && r->ok; ++i )
@@ -1336,7 +1356,10 @@ bool b3DeserializeIntoShell( const uint8_t* data, int size, b3World* world, b3Re
 		if ( r->ok )
 		{
 			b3Array_Resize( world->islands, islandCount );
-			memset( world->islands.data, 0, (size_t)islandCount * sizeof( b3Island ) );
+			if ( islandCount > 0 )
+			{
+				memset( world->islands.data, 0, (size_t)islandCount * sizeof( b3Island ) );
+			}
 		}
 
 		for ( int i = 0; i < islandCount && r->ok; ++i )

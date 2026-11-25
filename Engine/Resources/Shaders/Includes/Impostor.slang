@@ -110,13 +110,39 @@ struct FImpostorSample
     float  RayT;
 };
 
-// Each view weighted by its share and its coverage, so a view that misses the pixel does not darken the others.
-FImpostorSample SampleImpostor(FMeshletHeader* Header, FImpostorViews Views, float3 RayOrigin, float3 RayDir, float Mip)
+// The three views' atlas taps and blended coverage, enough to reject a pixel before its normal and depth are fetched.
+struct FImpostorTaps
 {
-    const FTexture2D BaseColorAtlas   = FTexture2D(Header.ImpostorBaseColorIndex);
+    float2 UV[3];
+    float  T[3];
+    float  Denom[3];
+    float4 Base[3];
+    float  Coverage;
+};
+
+FImpostorTaps GatherImpostorTaps(FMeshletHeader* Header, FImpostorViews Views, float3 RayOrigin, float3 RayDir, float Mip)
+{
+    const FTexture2D BaseColorAtlas = FTexture2D(Header.ImpostorBaseColorIndex);
+
+    FImpostorTaps Taps;
+    Taps.Coverage = 0.0;
+    [unroll]
+    for (uint i = 0u; i < 3u; ++i)
+    {
+        Taps.UV[i]     = ImpostorAtlasUV(Header, Views.Frame[i], RayOrigin, RayDir, Taps.T[i], Taps.Denom[i]);
+        Taps.Base[i]   = BaseColorAtlas.SampleLevel(Samplers::LinearClamp, Taps.UV[i], Mip);
+        Taps.Coverage += Views.Weights[i] * Taps.Base[i].a;
+    }
+    return Taps;
+}
+
+// Each view weighted by its share and its coverage, so a view that misses the pixel does not darken the others and skips its second fetch.
+FImpostorSample ResolveImpostorTaps(FMeshletHeader* Header, FImpostorViews Views, FImpostorTaps Taps, float Mip)
+{
     const FTexture2D NormalDepthAtlas = FTexture2D(Header.ImpostorNormalDepthIndex);
 
     FImpostorSample S = (FImpostorSample)0;
+    S.Coverage    = Taps.Coverage;
     float3 Color  = float3(0.0, 0.0, 0.0);
     float3 Normal = float3(0.0, 0.0, 0.0);
     float  AO     = 0.0;
@@ -125,18 +151,17 @@ FImpostorSample SampleImpostor(FMeshletHeader* Header, FImpostorViews Views, flo
     [unroll]
     for (uint i = 0u; i < 3u; ++i)
     {
-        float T, Denom;
-        const float2 UV   = ImpostorAtlasUV(Header, Views.Frame[i], RayOrigin, RayDir, T, Denom);
-        const float4 Base = BaseColorAtlas.SampleLevel(Samplers::LinearClamp, UV, Mip);
-        const float4 ND   = NormalDepthAtlas.SampleLevel(Samplers::LinearClamp, UV, Mip);
-        const float  W    = Views.Weights[i] * Base.a;
-        S.Coverage += W;
-        Color      += Base.rgb * W;
-        Normal     += OctDecode01(ND.rg) * W;
-        AO         += ND.a * W;
-        // The bake stored the surface's offset toward the view as a share of the radius, which the ray reaches this much sooner.
-        RayT       += (T + (ND.b * 2.0 - 1.0) * Header.ImpostorRadius / Denom) * W;
-        PlaneT     += T * Views.Weights[i];
+        const float W = Views.Weights[i] * Taps.Base[i].a;
+        PlaneT += Taps.T[i] * Views.Weights[i];
+        if (W > 0.0)
+        {
+            const float4 ND = NormalDepthAtlas.SampleLevel(Samplers::LinearClamp, Taps.UV[i], Mip);
+            Color  += Taps.Base[i].rgb * W;
+            Normal += OctDecode01(ND.rg) * W;
+            AO     += ND.a * W;
+            // The bake stored the surface's offset toward the view as a share of the radius, which the ray reaches this much sooner.
+            RayT   += (Taps.T[i] + (ND.b * 2.0 - 1.0) * Header.ImpostorRadius / Taps.Denom[i]) * W;
+        }
     }
 
     const float Inv = 1.0 / max(S.Coverage, 1.0e-4);
@@ -145,6 +170,11 @@ FImpostorSample SampleImpostor(FMeshletHeader* Header, FImpostorViews Views, flo
     S.AmbientOcclusion = AO * Inv;
     S.RayT             = S.Coverage > 1.0e-4 ? RayT * Inv : PlaneT;
     return S;
+}
+
+FImpostorSample SampleImpostor(FMeshletHeader* Header, FImpostorViews Views, float3 RayOrigin, float3 RayDir, float Mip)
+{
+    return ResolveImpostorTaps(Header, Views, GatherImpostorTaps(Header, Views, RayOrigin, RayDir, Mip), Mip);
 }
 
 // The camera ray through a world point in the instance's own space, and the direction from the impostor toward the eye that picks its views.

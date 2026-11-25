@@ -7,7 +7,7 @@
 namespace Lumina
 {
     // Converts a pose into a delta against the Base pin, or against the bind pose when Base is unconnected.
-    REFLECT()
+    REFLECT(MinimalAPI)
     class CAnimGraphNode_MakeAdditive : public CAnimGraphNode
     {
         GENERATED_BODY()
@@ -30,7 +30,7 @@ namespace Lumina
     };
 
     // Layers an additive delta on a base pose, where alpha 0 leaves the base unchanged and 1 applies the full delta.
-    REFLECT()
+    REFLECT(MinimalAPI)
     class CAnimGraphNode_ApplyAdditive : public CAnimGraphNode
     {
         GENERATED_BODY()

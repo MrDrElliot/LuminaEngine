@@ -40,6 +40,7 @@ namespace Lumina
         bool IsAssetEditorTool() const override;
         FFixedString GetAssetVirtualPath() const override;
         NODISCARD bool IsUnsavedDocument() override;
+        void DiscardUnsavedEdits() override;
         bool HasLostAsset() const override { return bOpenedOnAsset && !Asset.IsValid(); }
 
         virtual void OnAssetLoadFinished() {}

@@ -87,7 +87,7 @@ namespace Umbral
 
         const int32 PerChunk = (Count + kGridChunks - 1) / kGridChunks;
 
-        Jobs::ParallelFor(uint32(Count), [this](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(Count), [this](const Jobs::FRange& Range)
         {
             for (uint32 Index = Range.Start; Index < Range.End; ++Index)
             {
@@ -97,7 +97,7 @@ namespace Umbral
 
         Memory::Memzero(ChunkCounts.GetData(), ChunkCounts.Num() * sizeof(int32));
 
-        Jobs::ParallelFor(uint32(kGridChunks), [this, PerChunk](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kGridChunks), [this, PerChunk](const Jobs::FRange& Range)
         {
             for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)
             {
@@ -126,7 +126,7 @@ namespace Umbral
         }
         CellStart[kGridCells] = Running;
 
-        Jobs::ParallelFor(uint32(kGridChunks), [this, PerChunk](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kGridChunks), [this, PerChunk](const Jobs::FRange& Range)
         {
             for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)
             {
@@ -149,7 +149,7 @@ namespace Umbral
             return;
         }
 
-        Jobs::ParallelFor(uint32(Count), [this, Delta, Target](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(Count), [this, Delta, Target](const Jobs::FRange& Range)
         {
             for (uint32 Index = Range.Start; Index < Range.End; ++Index)
             {

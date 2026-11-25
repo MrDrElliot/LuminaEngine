@@ -48,7 +48,6 @@ public abstract class LuminaTargetRules : TargetRules
             "_SILENCE_CXX23_ALIGNED_UNION_DEPRECATION_WARNING",
             "_SILENCE_CXX23_ALIGNED_STORAGE_DEPRECATION_WARNING",
             "IMGUI_DEFINE_MATH_OPERATORS",
-            "IMGUI_IMPL_VULKAN_USE_VOLK",
             "RMLUI_STATIC_LIB",
             "__AVX__",
 

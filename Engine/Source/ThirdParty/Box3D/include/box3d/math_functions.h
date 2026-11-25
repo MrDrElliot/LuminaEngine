@@ -189,20 +189,61 @@ B3_INLINE float b3LerpFloat( float a, float b, float alpha )
 /// This is hand coded for cross-platform determinism. The atan2f
 /// function in the standard library is not cross-platform deterministic.
 ///	Accurate to around 0.0023 degrees.
-B3_API float b3Atan2( float y, float x );
+/// https://stackoverflow.com/questions/46210708/atan2-approximation-with-11bits-in-mantissa-on-x86with-sse2-and-armwith-vfpv4
+B3_INLINE float b3Atan2( float y, float x )
+{
+	// Added check for (0,0) to match atan2f and avoid NaN
+	if ( x == 0.0f && y == 0.0f )
+	{
+		return 0.0f;
+	}
+
+	float ax = b3AbsFloat( x );
+	float ay = b3AbsFloat( y );
+	float mx = b3MaxFloat( ay, ax );
+	float mn = b3MinFloat( ay, ax );
+	float a = mn / mx;
+
+	// Minimax polynomial approximation to atan(a) on [0,1]
+	float s = a * a;
+	float c = s * a;
+	float q = s * s;
+	float r = 0.024840285f * q + 0.18681418f;
+	float t = -0.094097948f * q - 0.33213072f;
+	r = r * s + t;
+	r = r * c + a;
+
+	// Map to full circle
+	if ( ay > ax )
+	{
+		r = 1.57079637f - r;
+	}
+
+	if ( x < 0 )
+	{
+		r = 3.14159274f - r;
+	}
+
+	if ( y < 0 )
+	{
+		r = -r;
+	}
+
+	return r;
+}
 
 /// Compute the cosine and sine of an angle in radians. Implemented
 /// for cross-platform determinism.
 B3_API b3CosSin b3ComputeCosSin( float radians );
 
-/// @deprecated 
+/// @deprecated
 B3_INLINE float b3Sin( float radians )
 {
 	b3CosSin cs = b3ComputeCosSin( radians );
 	return cs.sine;
 }
 
-/// @deprecated 
+/// @deprecated
 B3_INLINE float b3Cos( float radians )
 {
 	b3CosSin cs = b3ComputeCosSin( radians );
@@ -756,7 +797,7 @@ B3_INLINE b3WorldTransform b3MakeWorldTransform( b3Transform t )
 	return w;
 }
 
-/// Translate a local AABB by a world position, rounding outward so the single precision box 
+/// Translate a local AABB by a world position, rounding outward so the single precision box
 /// encloses the double precision box. Far from the origin a plain conversion could clip a
 /// shape out of its own box.
 /// In single precision mode the the rounding is a no-op.
@@ -1051,6 +1092,18 @@ B3_FORCE_INLINE b3AABB b3AABB_Transform( b3Transform transform, b3AABB a )
 B3_INLINE b3Vec3 b3ClosestPointToAABB( b3Vec3 point, b3AABB a )
 {
 	return b3Clamp( point, a.lowerBound, a.upperBound );
+}
+
+/// One-dimensional mass-spring-damper simulation. Returns the new velocity given the position and
+/// time step. You can then compute the new position using:
+/// position += timeStep * newVelocity
+/// This drives towards a zero position. By using implicit integration we get a stable solution that
+/// doesn't require transcendental functions.
+B3_INLINE float b3SpringDamper( float hertz, float dampingRatio, float position, float velocity, float timeStep )
+{
+	float omega = 2.0f * B3_PI * hertz;
+	float omegaH = omega * timeStep;
+	return ( velocity - omega * omegaH * position ) / ( 1.0f + 2.0f * dampingRatio * omegaH + omegaH * omegaH );
 }
 
 /// The closest points between to segments or infinite lines.

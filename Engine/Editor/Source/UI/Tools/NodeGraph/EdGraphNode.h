@@ -175,6 +175,7 @@ namespace Lumina
         const TVector<TStrongObjectPtr<CEdNodeGraphPin>>& GetOutputPins() const { return NodePins[static_cast<uint32>(ENodePinDirection::Output)]; }
 
         CEdNodeGraphPin* CreatePin(CClass* InClass, const FString& Name, ENodePinDirection Direction);
+        CEdNodeGraphPin* CreateExecutionPin(const FString& Name, ENodePinDirection Direction);
 
         // True when a pin on this node already uses this id, in either direction.
         bool IsPinIDTaken(uint32 ID) const;

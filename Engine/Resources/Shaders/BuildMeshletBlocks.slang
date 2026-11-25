@@ -86,21 +86,6 @@ void WriteBlocks(uint InstanceID, uint2 Range, bool bRuns, uint ForceBits, uint 
     }
 }
 
-// What CullInstances charged the bucket for this range, the meshlets its cut can draw rather than every slot it spans, so a short bucket charges the same.
-uint ViewDrawCharge(FGPUInstance* Inst, uint ViewIndex, uint Count)
-{
-    // A skinned range is the camera's pick, charged and kept whole.
-    const uint DescIndex = Inst.SurfaceDescIndex;
-    if (FGPUInstance::HasFlag(Inst, EInstanceFlags::Skinned) || DescIndex == kNoSurfaceDesc || !Pass().SurfaceDescs.Contains(DescIndex))
-    {
-        return Count;
-    }
-    const FSurfaceDesc Desc = Pass().SurfaceDescs.Get(DescIndex);
-    uint Bound = Count;
-    SelectViewMeshletRange(Desc, CullViews().GetAligned(ViewIndex), loadAligned<16>(&Inst.SphereBounds), TransformMaxScale(Inst.Transform), Bound);
-    return min(Bound, Count);
-}
-
 // The LOD after the one Current starts at, empty when there is none or the instance cannot re-select.
 uint2 NextCoarserRange(FGPUInstance* Inst, uint2 Current, inout bool bForceAll)
 {
@@ -247,7 +232,7 @@ void ComputeMain(uint3 ThreadID : SV_DispatchThreadID)
     bool bForceAll = false;
     uint Blocks = RangeBlockCount(Range, bRuns);
     uint Slot;
-    if (!TryReserveRun(BucketIndex, Bucket, Blocks, ViewDrawCharge(Inst, ViewIndex, Range.y), Slot))
+    if (!TryReserveRun(BucketIndex, Bucket, Blocks, Range.y, Slot))
     {
         bool bFitted = false;
         for (uint Step = 0u; Step < (uint)MESHLET_MAX_LODS && !bFitted; ++Step)

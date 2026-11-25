@@ -273,7 +273,7 @@ namespace Lumina
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, DeltaVal, Stride, OriginXZ](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, DeltaVal, Stride, OriginXZ](const Jobs::FRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -307,7 +307,7 @@ namespace Lumina
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Target, Speed, Stride, OriginXZ](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Target, Speed, Stride, OriginXZ](const Jobs::FRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -358,7 +358,7 @@ namespace Lumina
         }
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Speed, Stride, OriginXZ, SnapMinX, SnapMinY, SnapW](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Speed, Stride, OriginXZ, SnapMinX, SnapMinY, SnapW](const Jobs::FRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -449,7 +449,7 @@ namespace Lumina
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, DeltaPerSecond, Stride, OriginXZ, Freq, Octaves](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, DeltaPerSecond, Stride, OriginXZ, Freq, Octaves](const Jobs::FRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -504,7 +504,7 @@ namespace Lumina
         const float Feather   = Math::Clamp(Dab.Falloff, 0.0f, 1.0f);
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Speed, Stride, OriginXZ, A, AB, ABLen2, StartN, EndN, HalfWidth, InvLen, Feather](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Speed, Stride, OriginXZ, A, AB, ABLen2, StartN, EndN, HalfWidth, InvLen, Feather](const Jobs::FRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {
@@ -575,7 +575,7 @@ namespace Lumina
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
         const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Speed, Stride, OriginXZ, Layer, LayerStride, Res](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Speed, Stride, OriginXZ, Layer, LayerStride, Res](const Jobs::FRange& Range)
         {
             for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
             {

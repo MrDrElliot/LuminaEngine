@@ -5,6 +5,11 @@
 #include "Core/Object/Class.h"
 #include "Core/Reflection/Type/LuminaTypes.h"
 #include "Core/Reflection/Type/Properties/EnumProperty.h"
+#include "Core/Reflection/Type/Properties/ObjectProperty.h"
+#include "Core/Reflection/Type/Properties/StructProperty.h"
+#include "Containers/StringFormat.h"
+#include "Core/Math/Hash/Hash.h"
+#include "World/Entity/Components/Component.h"
 
 namespace Lumina
 {
@@ -104,74 +109,178 @@ namespace Lumina
         return Algo::IndexOf(ObjectParameters, Name, &SAnimGraphObjectParameter::Name);
     }
 
-    void CAnimationGraph::LinkParameters()
+    int32 CAnimationGraph::FindInput(FName Name) const
     {
-        ParamBindings.Init(FAnimGraphParamBinding(), Parameters.Num());
-        ObjectParamBindings.Init(FAnimGraphParamBinding(), ObjectParameters.Num());
+        return Algo::IndexOf(Inputs, Name, &SAnimGraphInput::Name);
+    }
 
-        CStruct* Struct = GetParameterStruct();
-        if (Struct == nullptr)
+    bool CAnimationGraph::ResolveParameterPath(FName Path, bool bWantObject, FAnimGraphParamBinding& Out, FString* OutError, const FProperty** OutLeaf) const
+    {
+        Out = FAnimGraphParamBinding();
+        const auto Fail = [OutError](FString Message)
         {
-            if (!Parameters.IsEmpty() || !ObjectParameters.IsEmpty())
+            if (OutError != nullptr)
             {
-                LOG_WARN("Anim graph '{}' reads {} parameter(s) but has no ParameterStruct assigned; none of them will ever receive a value.",
-                         *GetName(), Parameters.Num() + ObjectParameters.Num());
+                *OutError = Move(Message);
             }
-            return;
+            return false;
+        };
+
+        if (Path.IsNone())
+        {
+            return Fail("No parameter named");
         }
 
-        const auto Bind = [Struct](const FName& Name, bool bWantObject) -> FAnimGraphParamBinding
+        const FString Text = Path.ToString();
+        TVector<FStringView> Parts;
+        for (FStringView Rest(Text); !Rest.IsEmpty();)
         {
-            FAnimGraphParamBinding Binding;
-            if (Name.IsNone())
-            {
-                return Binding;
-            }
+            const int32 Dot = Rest.Find('.');
+            Parts.Add(Dot == Constants::kIndexNone ? Rest : Rest.Left(Dot));
+            Rest = Dot == Constants::kIndexNone ? FStringView() : Rest.Mid(Dot + 1);
+        }
 
-            FProperty* Property = Struct->GetProperty(Name);
+        // A first part naming an input reads that component, and anything else reads the instance's own parameter block.
+        const CStruct* Struct = GetParameterStruct();
+        int32 First = 0;
+        if (Parts.Num() > 1)
+        {
+            const int32 InputIndex = FindInput(FName(Parts[0]));
+            if (InputIndex != Constants::kIndexNone && InputIndex < kMaxAnimGraphInputs)
+            {
+                Struct = InputIndex < InputStructs.Num() ? InputStructs[InputIndex] : nullptr;
+                if (Struct == nullptr)
+                {
+                    return Fail(Format("Input '{}' names component '{}', which does not exist", Inputs[InputIndex].Name, Inputs[InputIndex].Component));
+                }
+                Out.Input = (uint16)InputIndex;
+                First = 1;
+            }
+        }
+        if (Struct == nullptr)
+        {
+            return Fail(Format("'{}' names no input, and the graph has no parameter struct", Parts[0]));
+        }
+
+        uint32 Offset = 0;
+        for (int32 i = First; i < Parts.Num(); ++i)
+        {
+            const FProperty* Property = Struct->GetProperty(FName(Parts[i]));
+            if (Property == nullptr)
+            {
+                return Fail(Format("'{}' has no field '{}'", Struct->GetName(), Parts[i]));
+            }
 
             // A raw offset read would bypass an accessor, so refuse rather than return a stale value.
-            if (Property == nullptr || Property->HasSetterOrGetter())
+            if (Property->HasSetterOrGetter())
             {
-                return Binding;
+                return Fail(Format("'{}' reads through an accessor, which a graph cannot", Parts[i]));
             }
 
-            const EAnimParamValueType Type = AnimParamValueTypeFromProperty(Property);
-            const bool bIsObject = Type == EAnimParamValueType::Object;
-            if (Type == EAnimParamValueType::Unresolved || bIsObject != bWantObject)
+            if (i == Parts.Num() - 1)
             {
-                return Binding;
+                const EAnimParamValueType Type = AnimParamValueTypeFromProperty(Property);
+                if (Type == EAnimParamValueType::Unresolved)
+                {
+                    return Fail(Format("'{}' is not a number, bool, enum or asset", Parts[i]));
+                }
+                if ((Type == EAnimParamValueType::Object) != bWantObject)
+                {
+                    return Fail(bWantObject ? Format("'{}' is a value, not an asset", Parts[i]) : Format("'{}' is an asset, not a value", Parts[i]));
+                }
+                Out.Offset = Offset + (uint32)Property->Offset;
+                Out.Type   = Type;
+                if (OutLeaf != nullptr)
+                {
+                    *OutLeaf = Property;
+                }
+                return true;
             }
 
-            Binding.Offset = Property->Offset;
-            Binding.Type   = Type;
+            if (Property->GetType() == EPropertyTypeFlags::Struct)
+            {
+                Offset += (uint32)Property->Offset;
+                Struct = static_cast<const FStructProperty*>(Property)->GetStruct();
+            }
+            else if (Property->GetType() == EPropertyTypeFlags::Object && Out.HopOffset == kAnimNoHop)
+            {
+                Out.HopOffset = Offset + (uint32)Property->Offset;
+                Offset = 0;
+                Struct = static_cast<const FObjectProperty*>(Property)->GetPropertyClass();
+            }
+            else
+            {
+                return Fail(Property->GetType() == EPropertyTypeFlags::Object
+                    ? Format("'{}' is a second asset reference, and a path follows only one", Parts[i])
+                    : Format("'{}' has no fields to read", Parts[i]));
+            }
+
+            if (Struct == nullptr)
+            {
+                return Fail(Format("'{}' has no reflected type", Parts[i]));
+            }
+        }
+        return Fail("The path ends before naming a field");
+    }
+
+    void CAnimationGraph::RefreshInputStructs(TVector<FString>* OutProblems)
+    {
+        InputStructs.Reset();
+        for (const SAnimGraphInput& Input : Inputs)
+        {
+            CStruct* Struct = Input.Component.IsNone() ? nullptr : FindComponentStruct(Input.Component.ToString());
+            InputStructs.Add(Struct);
+            if (Struct == nullptr && !Input.Component.IsNone() && OutProblems != nullptr)
+            {
+                OutProblems->Add(Format("input '{}' names component '{}', which does not exist; its fields hold their defaults", Input.Name, Input.Component));
+            }
+        }
+        if (Inputs.Num() > kMaxAnimGraphInputs && OutProblems != nullptr)
+        {
+            OutProblems->Add(Format("{} inputs, and only the first {} are read", Inputs.Num(), kMaxAnimGraphInputs));
+        }
+    }
+
+    void CAnimationGraph::LinkParameters()
+    {
+        TVector<FString> Problems;
+        RefreshInputStructs(&Problems);
+
+        const auto Bind = [this, &Problems](const FName& Name, bool bWantObject) -> FAnimGraphParamBinding
+        {
+            FAnimGraphParamBinding Binding;
+            FString Error;
+            if (!Name.IsNone() && !ResolveParameterPath(Name, bWantObject, Binding, &Error))
+            {
+                Problems.Add(Format("parameter '{}' holds its default, because {}", Name, Error));
+            }
             return Binding;
         };
 
-        const auto WarnUnresolved = [this, Struct](const FName& Name)
-        {
-            if (!Name.IsNone())
-            {
-                LOG_WARN("Anim graph '{}': parameter '{}' does not resolve to a readable field on '{}'; it will hold its default.",
-                         *GetName(), *Name.ToString(), *Struct->GetName());
-            }
-        };
-
+        ParamBindings.SetNum(Parameters.Num());
         for (int32 i = 0; i < Parameters.Num(); ++i)
         {
             ParamBindings[i] = Bind(Parameters[i].Name, false);
-            if (!ParamBindings[i].IsResolved())
-            {
-                WarnUnresolved(Parameters[i].Name);
-            }
         }
 
+        ObjectParamBindings.SetNum(ObjectParameters.Num());
         for (int32 i = 0; i < ObjectParameters.Num(); ++i)
         {
             ObjectParamBindings[i] = Bind(ObjectParameters[i].Name, true);
-            if (!ObjectParamBindings[i].IsResolved())
+        }
+
+        // An editor relinks every frame and a reload relinks per world, so the same problems are reported once until they change.
+        size_t ProblemsHash = 0;
+        for (const FString& Problem : Problems)
+        {
+            Hash::HashCombine(ProblemsHash, GetTypeHash(Problem));
+        }
+        if (ProblemsHash != ReportedLinkProblems)
+        {
+            ReportedLinkProblems = ProblemsHash;
+            for (const FString& Problem : Problems)
             {
-                WarnUnresolved(ObjectParameters[i].Name);
+                LOG_WARN("Anim graph '{}': {}.", *GetName(), Problem);
             }
         }
     }
@@ -208,5 +317,9 @@ namespace Lumina
             }
             SM.TransitionsByStateStart[NumStates] = (uint32)SM.TransitionsByState.Num();
         }
+
+        // Loading and compiling both end here, so the decoded plan always matches the bytecode.
+        LowerAnimGraphPlan(*this, Plan);
+        PruneAnimGraphPlanForCrowd(*this, Plan, CrowdPlan);
     }
 }

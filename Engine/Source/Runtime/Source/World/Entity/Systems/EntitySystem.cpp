@@ -3,6 +3,7 @@
 #include "EntitySystem.h"
 #include "ExclusiveSystem.h"
 
+#include "Containers/Algorithm.h"
 #include "Core/Object/Class.h"
 #include "Core/Object/ObjectBase.h"
 #include "Core/Object/ObjectIteration.h"
@@ -214,6 +215,11 @@ namespace Lumina
         return World.GetEntityRegistry();
     }
 
+    void RequestSystemRedeclare(CWorld& World)
+    {
+        World.RequestSystemRedeclare();
+    }
+
     ECS::FEventQueues& GetSystemEvents(CWorld& World)
     {
         return World.GetEventQueues();
@@ -407,6 +413,14 @@ namespace Lumina
                 Registered.Ops->Unbind(Registered.Param);
             }
         }
+    }
+
+    bool CEntitySystem::NeedsRedeclare() const
+    {
+        return Algo::AnyOf(Params, [](const FRegisteredParam& Registered)
+        {
+            return Registered.Ops->NeedsRedeclare != nullptr && Registered.Ops->NeedsRedeclare(Registered.Param);
+        });
     }
 
     void CEntitySystem::ConfigureSystem()

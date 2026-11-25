@@ -114,7 +114,7 @@ namespace Lumina
         const int32 NumItems = PrepareParticleSystems(ParticleView);
         Frame.Extracts.ParticleExtracts.SetNum(NumItems);
 
-        Jobs::ParallelFor((uint32)ParticleSystemWork.Num(), [&](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)ParticleSystemWork.Num(), [&](const Jobs::FRange& Range)
         {
             for (uint32 Index = Range.Start; Index < Range.End; ++Index)
             {

@@ -1351,7 +1351,7 @@ namespace Lumina
             return Range.z != VisibilityMeshletsOf(Slot) || RetainedStatic[Slot].MeshletVisibilityBase != Range.x;
         };
         constexpr uint32 kMeshletVisibilityScanGrain = 4096;
-        Jobs::ParallelForOrSerial(NumCandidates, kMeshletVisibilityScanGrain, [&](const Jobs::FParallelRange& Range)
+        Jobs::ParallelForOrSerial(NumCandidates, kMeshletVisibilityScanGrain, [&](const Jobs::FRange& Range)
         {
             TVector<uint32>& Stale = BucketFor(Range.Thread).Slots;
             for (uint32 Candidate = Range.Start; Candidate < Range.End; ++Candidate)

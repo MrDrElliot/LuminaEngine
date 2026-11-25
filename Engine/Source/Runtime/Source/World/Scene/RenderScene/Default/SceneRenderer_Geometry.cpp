@@ -146,8 +146,10 @@ namespace Lumina
         Ctx.ViewportH     = (float)Extent.y;
         Ctx.Slice         = Slice;
 
-        ForEachMeshletBatch(CL, RenderFrame->Geometry.OpaqueDrawList, Ctx,
-            [&](FGraphicsPipelineKey& Key, const FMeshDrawCommand& Batch)
+        
+        bool bDrawScopeOpen = false;
+        bool bMaskedDrawScope = false;
+        ForEachMeshletBatch(CL, RenderFrame->Geometry.OpaqueDrawList, Ctx, [&](FGraphicsPipelineKey& Key, const FMeshDrawCommand& Batch)
             {
                 const bool bMaskedClip = Batch.bMasked
                                       && Batch.MaskedVisBufferPixelShader != nullptr
@@ -164,8 +166,19 @@ namespace Lumina
                 Key.ColorTargets.Add({ VisFormat, {} });
                 return true;
             },
-            [&](const FMeshDrawCommand& Batch)
+            [&](const FGraphicsPipelineKey& Key, const FMeshDrawCommand& Batch)
             {
+                if (!bDrawScopeOpen || bMaskedDrawScope != Key.bVisBufferMasked)
+                {
+                    if (bDrawScopeOpen)
+                    {
+                        RHI::CmdEndDebugLabel(CL);
+                    }
+                    bDrawScopeOpen = true;
+                    bMaskedDrawScope = Key.bVisBufferMasked;
+                    RHI::CmdBeginDebugLabel(CL, bMaskedDrawScope ? "Masked" : "Opaque");
+                }
+
                 if (FrameSettings.bWireframe)
                 {
                     RHI::CmdSetLineWidth(CL, 1.5f);
@@ -181,10 +194,13 @@ namespace Lumina
                 Key.bVisBufferMasked = false;
                 return Key.MS != nullptr;
             });
+        if (bDrawScopeOpen)
+        {
+            RHI::CmdEndDebugLabel(CL);
+        }
     }
 
-    void FDefaultSceneRenderer::VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear,
-                                            ECullPhase::Type Phase)
+    void FDefaultSceneRenderer::VisBufferPass(RHI::FCmdListH CL, uint32 ViewIndex, bool bClear, ECullPhase::Type Phase)
     {
         const FFrameData& Frame             = *RenderFrame;
         const auto& DrawCommands            = Frame.Geometry.DrawCommands;
@@ -273,7 +289,9 @@ namespace Lumina
 
         if (bDrawTerrain)
         {
+            RHI::CmdBeginDebugLabel(CL, "Terrain");
             DrawTerrainVisBuffer(CL, VisRT.Desc.Format);
+            RHI::CmdEndDebugLabel(CL);
         }
 
         if (bHasDraws)

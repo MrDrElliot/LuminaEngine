@@ -171,6 +171,9 @@ namespace Lumina
 		void ProcessPackagePath(FStringView Path);
 		void ProcessPackage(FStringView Path, int64 MTimeNs, uint64 FileSize);
 
+		// The entry a changed file reads as, or null when its stamp or hash shows nothing changed or it could not be read.
+		FAssetDataPtr ExtractPackage(FStringView Path, int64 MTimeNs, uint64 FileSize);
+
 		void ClearAssets();
 
 		// Persistence to <Project>/Intermediates/AssetRegistry.bin; stale entries re-validated on next discovery.

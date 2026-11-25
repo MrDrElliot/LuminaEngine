@@ -17,6 +17,7 @@
 #include "Components/NetworkComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Components/TagComponent.h"
+#include "World/Entity/Components/SocketAttachmentComponent.h"
 #include "Components/RepTransformComponent.h"
 #include "Net/NetReplicationGraph.h"
 #include "Net/NetPrediction.h"
@@ -68,6 +69,12 @@ namespace Lumina
             case ENetMode::DedicatedServer: return "DedicatedServer";
             }
             return "Unknown";
+        }
+
+        // A socket attachment poses itself from its parent's bone on every peer, so a streamed local would fight it.
+        bool StreamsMovement(ECS::FRegistry& Registry, ECS::FEntity Entity, const SNetworkComponent& Net)
+        {
+            return Net.bReplicatesMovement && !Registry.HasAll<SSocketAttachmentComponent>(Entity);
         }
 
         void InheritNetworking(ECS::FRegistry& Registry, ECS::FEntity Parent, TVector<ECS::FEntity>* OutAdded)
@@ -171,7 +178,7 @@ namespace Lumina
 
                 const bool bMirrored = !bServer && Net.LocalRole == ENetRole::SimulatedProxy;
                 SyncTag<SNetProxyTag>(Registry, Entity, bMirrored);
-                SyncTag<SNetDrivenTransformTag>(Registry, Entity, bMirrored && Net.bReplicatesMovement);
+                SyncTag<SNetDrivenTransformTag>(Registry, Entity, bMirrored && StreamsMovement(Registry, Entity, Net));
             });
         }
 
@@ -1054,7 +1061,7 @@ namespace Lumina
             LUMINA_PROFILE_SCOPE();
             Registry.View<ECS::Read<SNetworkComponent>>().ForEach([&](ECS::FEntity Entity, const SNetworkComponent& Net)
             {
-                const bool bQualifies = Net.bReplicates && Net.bReplicatesMovement && Net.bNetLoadOnClient
+                const bool bQualifies = Net.bReplicates && StreamsMovement(Registry, Entity, Net) && Net.bNetLoadOnClient
                     && Registry.HasAll<STransformComponent>(Entity);
                 const bool bHas = Registry.HasAll<FRepTransform>(Entity);
 
@@ -1767,6 +1774,11 @@ namespace Lumina
             }
 
             const SNetworkComponent* Net = Registry.TryGet<ECS::Read<SNetworkComponent>>(Entity);
+            // A pose sent before the sender saw the attachment would otherwise recreate the ring it just dropped.
+            if (Net != nullptr && !StreamsMovement(Registry, Entity, *Net))
+            {
+                return true;
+            }
             // The client skips entities it controls, since the server pose would be stale.
             if (bSkipAutonomous && Net != nullptr && Net->LocalRole == ENetRole::AutonomousProxy)
             {

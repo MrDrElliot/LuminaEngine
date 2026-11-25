@@ -371,7 +371,11 @@ namespace Lumina
         PC.CloudShadowCenter[1] = Fog.CloudShadowCenter.y;
         const CRendererSettings* RS = GetDefault<CRendererSettings>();
         const bool bSupersample = RS == nullptr || RS->bSupersampleVolumetricLights;
-        PC.LocalLightSamples    = !Frame.Volumetrics.bLocalVolumetricLights ? 0u : (bSupersample ? 4u : 1u);
+        PC.LocalLightSamples    = 0u;
+        if (Frame.Volumetrics.bLocalVolumetricLights)
+        {
+            PC.LocalLightSamples = bSupersample ? 4u : 1u;
+        }
         if (NumVolumes > 0)
         {
             PC.FogVolumes = RHI::CopyTransientArray(Frame.Volumetrics.FogVolumes.GetData(), NumVolumes);

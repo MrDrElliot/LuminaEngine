@@ -468,7 +468,7 @@ namespace Lumina
         {
             // Specialized per slot on velocity and vertex kinds, since each unused path costs about a third of the registers.
             const uint8  Kinds   = Slot < (uint32)BinnedDeferredSlotKinds.Num() ? BinnedDeferredSlotKinds[Slot] : 3u;
-            const uint64 Skinned = Kinds == 1u ? 0u : (Kinds == 2u ? 1u : 2u);
+            const uint64 Skinned = SelectSkinnedMode((Kinds & 2u) != 0u, (Kinds & 1u) != 0u);
             const RHI::FSpecializationConstant DeferredConsts[] =
             {
                 RHI::FSpecializationConstant{ .ConstantID = 9u, .AsInt = bVelocity, .Type = RHI::ESpecializationConstantType::UInt32 },
@@ -669,7 +669,7 @@ namespace Lumina
                 #endif
                 return true;
             },
-            [&](const FMeshDrawCommand& Batch)
+            [&](const FGraphicsPipelineKey&, const FMeshDrawCommand& Batch)
             {
                 RHI::CmdSetCullMode(CL, Batch.bTwoSided ? RHI::ECullMode::None : RHI::ECullMode::Back);
             });
@@ -822,7 +822,7 @@ namespace Lumina
                 #endif
                 return true;
             },
-            [&](const FMeshDrawCommand& Batch)
+            [&](const FGraphicsPipelineKey&, const FMeshDrawCommand& Batch)
             {
                 // A material may sample scene depth, so a batch that writes it gets pass breaks on both sides.
                 if (Batch.bWriteDepth || bPreviousWroteDepth)

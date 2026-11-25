@@ -25,6 +25,8 @@ namespace Lumina
         RHI::EQueueType Queue       = RHI::EQueueType::Graphics;
         double          StartMs     = 0.0;
         double          EndMs       = 0.0;
+        // Duration not covered by any child scope, which is where a pass with no finer markers hides its cost.
+        double          SelfMs      = 0.0;
 
         NODISCARD double DurationMs() const { return EndMs - StartMs; }
     };

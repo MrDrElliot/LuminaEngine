@@ -190,6 +190,20 @@ namespace Lumina
         void SetDebugPlayhead(const CEdGraphNode* Node, uint16 TimeRegister) { DebugPlayheads[Node] = TimeRegister; }
         const THashMap<const CEdGraphNode*, uint16>& GetDebugPlayheads() const { return DebugPlayheads; }
 
+        // Attributes every op a node writes to that node, nested so a state machine's states own their own ops.
+        class FNodeScope
+        {
+        public:
+            FNodeScope(FAnimationGraphCompiler& InCompiler, const CEdGraphNode* Node) : Compiler(InCompiler) { Compiler.NodeStack.Add(Node); }
+            ~FNodeScope() { Compiler.NodeStack.Pop(); }
+
+        private:
+            FAnimationGraphCompiler& Compiler;
+        };
+
+        // The node that wrote the op at this bytecode offset, or null for ops the compiler adds itself.
+        const CEdGraphNode* FindOpOwner(uint32 Offset) const;
+
         // Machines emitted so far. One less than this is the index of the machine just emitted.
         uint16 GetStateMachineCount() const { return (uint16)StateMachines.Num(); }
 
@@ -250,7 +264,10 @@ namespace Lumina
         void SetDataStruct(CStruct* InStruct) { DataStruct = InStruct; }
         CStruct* GetDataStruct() const { return DataStruct; }
 
-        // Warns when Name is not a readable scalar field on the parameter struct.
+        // The asset being compiled, whose inputs and parameter struct parameter paths resolve against.
+        void SetGraph(const CAnimationGraph* InGraph) { Graph = InGraph; }
+
+        // Warns when Name is not a readable scalar path, an input's field or the parameter struct's.
         void ValidateParameterKey(const FName& Name, CEdGraphNode* Node);
 
         // Warns when Name is not an object field, or its class cannot supply the expected asset.
@@ -287,7 +304,17 @@ namespace Lumina
             Bytecode.Append(Bytes, Bytes + sizeof(T));
         }
 
-        void WriteOp(EAnimOp Op) { Bytecode.Add((uint8)Op); }
+        void WriteOp(EAnimOp Op)
+        {
+            OpOwners.Emplace((uint32)Bytecode.Num(), NodeStack.IsEmpty() ? nullptr : NodeStack.Last());
+            Bytecode.Add((uint8)Op);
+        }
+
+        struct FOpOwner
+        {
+            uint32              Offset = 0;
+            const CEdGraphNode* Node   = nullptr;
+        };
 
         template <typename T>
         void WriteAt(SIZE_T Offset, const T& Value)
@@ -326,8 +353,13 @@ namespace Lumina
         THashMap<const CEdNodeGraphPin*, uint16> PinRegisters;
         TVector<FAnimGraphDebugStateNode>       DebugStateNodes;
         THashMap<const CEdGraphNode*, uint16>   DebugPlayheads;
+        TVector<const CEdGraphNode*>            NodeStack;
+
+        // In bytecode order, since ops are only ever appended.
+        TVector<FOpOwner>                       OpOwners;
         const FSkeletonResource*                Skeleton = nullptr;
         CStruct*                                DataStruct = nullptr;
+        const CAnimationGraph*                  Graph = nullptr;
 
         uint16 NextScalarReg = 0;
         uint16 NextPoseReg   = 0;

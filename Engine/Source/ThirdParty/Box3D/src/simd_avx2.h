@@ -92,14 +92,6 @@ static inline b3FloatW8 b3MaxW8( b3FloatW8 a, b3FloatW8 b )
 	return _mm256_max_ps( a, b );
 }
 
-// Clamp a to [-b, b]
-static inline b3FloatW8 b3SymClampW8( b3FloatW8 a, b3FloatW8 b )
-{
-	b3FloatW8 nb = b3NegW8( b );
-	b3FloatW8 c = b3MaxW8( nb, a );
-	return b3MinW8( c, b );
-}
-
 static inline b3FloatW8 b3AndW8( b3FloatW8 a, b3FloatW8 b )
 {
 	return _mm256_and_ps( a, b );

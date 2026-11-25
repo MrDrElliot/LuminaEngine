@@ -23,6 +23,7 @@ namespace Lumina
         void Shutdown() override;
         
         void CompileGraph(FMaterialCompiler& Compiler);
+        uint64 GetOutputGraphHash() const;
 
         // Stamps the compiler's findings onto the nodes that raised them, driving their in-graph status.
         void ApplyDiagnosticsToNodes(const FMaterialCompiler& Compiler);

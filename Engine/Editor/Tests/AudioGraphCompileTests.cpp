@@ -30,6 +30,26 @@ namespace
     }
 }
 
+TEST(AudioGraphCompile, TriggerPinsUseExecutionArrows)
+{
+    CAudioNodeGraph* Graph = MakeAudioNodeGraph("/AudioGraphCompile/ExecutionPins");
+    CAudioGraphInputNode* OnPlay = Graph->FindOnPlayNode();
+    ASSERT_NE(OnPlay, nullptr);
+    CEdGraphNode* Player = Graph->CreateNode(CAudioNode_WavePlayer::StaticClass());
+    ASSERT_NE(Player, nullptr);
+
+    CEdNodeGraphPin* TriggerOutput = OnPlay->GetOutputPins()[0].Get();
+    CEdNodeGraphPin* TriggerInput = Player->GetInputPins()[1].Get();
+    CEdNodeGraphPin* DataInput = Player->GetInputPins()[0].Get();
+
+    EXPECT_TRUE(TriggerOutput->IsExecutionPin());
+    EXPECT_EQ(TriggerOutput->GetPinShape(), EGraphPinShape::Execution);
+    EXPECT_EQ(TriggerInput->GetPinShape(), EGraphPinShape::Execution);
+    EXPECT_EQ(DataInput->GetPinShape(), EGraphPinShape::Circle);
+    EXPECT_FALSE(Graph->ConnectPins(TriggerOutput, DataInput));
+    EXPECT_TRUE(Graph->ConnectPins(TriggerOutput, TriggerInput));
+}
+
 // A dropped wave is wired to play the moment the graph does, which a new graph's On Play trigger makes possible.
 TEST(AudioGraphCompile, DroppedWavePlaysOnPlay)
 {

@@ -205,7 +205,7 @@ namespace Lumina
         // Parallel only earns its keep with multiple live worlds; one world takes the serial path.
         if (CVarParallelWorldRender.GetValue() && LiveWorlds > 1)
         {
-            Jobs::ParallelFor((uint32)Contexts.Num(), [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor((uint32)Contexts.Num(), [&](const Jobs::FRange& Range)
             {
                 for (uint32 i = Range.Start; i < Range.End; ++i)
                 {

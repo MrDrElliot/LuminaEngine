@@ -9,6 +9,7 @@
 #include "BuoyancySystem.h"
 #include "RagdollSystem.h"
 
+#include "Animation/AnimGpuClip.h"
 #include "Animation/BindPose.h"
 #include "Animation/SkeletalMeshUtils.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
@@ -134,7 +135,15 @@ namespace Lumina
                     return;
                 }
                 Entry.PoseSerial = SkeletalMesh->PoseSerial;
-                SocketTransform = bPosed ? SkeletalMesh->BoneTransforms[Entry.Bone] * Entry.Post : Entry.Post;
+                if (SkeletalMesh->bGpuPose && SkeletalMesh->GpuSkeleton == Skeleton)
+                {
+                    const FMatrix4 BoneGlobal = Anim::EvaluateWeightedBoneGlobal(*SkeletalMesh->GpuSkeleton, SkeletalMesh->GpuSamples, SkeletalMesh->GpuRootLockBone, Entry.Bone);
+                    SocketTransform = BoneGlobal * Skeleton->GetBone(Entry.Bone).InvBindMatrix * Entry.Post;
+                }
+                else
+                {
+                    SocketTransform = bPosed ? SkeletalMesh->BoneTransforms[Entry.Bone] * Entry.Post : Entry.Post;
+                }
             }
             else if (const SStaticMeshComponent* StaticMesh = StaticParents.TryGet<SStaticMeshComponent>(Parent))
             {

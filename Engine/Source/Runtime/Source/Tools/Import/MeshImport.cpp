@@ -189,7 +189,7 @@ namespace Lumina::Import::Mesh
             FVector3*     OutNormals = UnpackedNormals.GetData();
             FVector2*     OutUVs     = UnpackedUVs.GetData();
 
-            Jobs::ParallelFor((uint32)NumVertices, [=](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor((uint32)NumVertices, [=](const Jobs::FRange& Range)
             {
                 const size_t Count = Range.End - Range.Start;
                 VertexOps::UnpackNormals(InNormals + Range.Start, OutNormals + Range.Start, Count);
@@ -262,7 +262,7 @@ namespace Lumina::Import::Mesh
         uint32*       Tangents = MeshResource.Tangents.GetData();
 
         constexpr uint32 kBatch = 256;
-        Jobs::ParallelFor((uint32)NumVertices, [=](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor((uint32)NumVertices, [=](const Jobs::FRange& Range)
         {
             FVector3 N[kBatch];
             float TangentsXYZW[kBatch * 4];
@@ -923,7 +923,7 @@ namespace Lumina::Import::Mesh
             Data.VertexAttributes.SetNum(UniqueCount);
             {
                 LUMINA_PROFILE_SECTION("Resolve Shared Vertices");
-                Jobs::ParallelFor(UniqueCount, [&](const Jobs::FParallelRange& Range)
+                Jobs::ParallelFor(UniqueCount, [&](const Jobs::FRange& Range)
                 {
                     for (uint32 i = Range.Start; i < Range.End; ++i)
                     {
@@ -949,7 +949,7 @@ namespace Lumina::Import::Mesh
 
             Data.PositionGrid = ComputeMeshPositionGrid(Positions.GetData(), Positions.Num());
             Data.VertexPositions.SetNum(UniqueCount);
-            Jobs::ParallelFor(UniqueCount, [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor(UniqueCount, [&](const Jobs::FRange& Range)
             {
                 for (uint32 i = Range.Start; i < Range.End; ++i)
                 {

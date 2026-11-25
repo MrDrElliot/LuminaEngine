@@ -84,20 +84,60 @@ namespace Lumina::Physics
         return Handle;
     }
 
-    // Caller holds ConstraintsMutex, reached from SynchronizeConstraints.
-    bool FBox3DPhysicsScene::CommitConstraint(uint32 Handle, const SConstraintDesc& Desc)
+    b3BodyId FBox3DPhysicsScene::EnsureWorldAnchorBody()
     {
-        LUMINA_PROFILE_SCOPE();
-
-        // Box3D has no world body, so a joint anchored to the world hangs off one shared static body at the origin.
-        if (Desc.BodyA == ECS::NullEntity && !b3Body_IsValid(WorldAnchorBody))
+        if (!b3Body_IsValid(WorldAnchorBody))
         {
             b3BodyDef AnchorDef = b3DefaultBodyDef();
             AnchorDef.type = b3_staticBody;
             WorldAnchorBody = b3CreateBody(WorldId, &AnchorDef);
         }
+        return WorldAnchorBody;
+    }
 
-        const b3BodyId BodyA = Desc.BodyA == ECS::NullEntity ? WorldAnchorBody : ResolveBody(FindEntityBody(Desc.BodyA));
+    void FBox3DPhysicsScene::LockBodyMotion(b3BodyId BodyId, const FRigidBodyBuildResult& Build)
+    {
+        // The joint only lets the body turn about frame A's z axis, so that axis is turned onto the one world axis left free.
+        constexpr float kHalfSqrt2 = 0.70710678f;
+        b3Quat AxisFrame = b3Quat_identity;
+        if (Build.FreeRotationAxis == 0)
+        {
+            AxisFrame = b3Quat{ { 0.0f, kHalfSqrt2, 0.0f }, kHalfSqrt2 };
+        }
+        else if (Build.FreeRotationAxis == 1)
+        {
+            AxisFrame = b3Quat{ { -kHalfSqrt2, 0.0f, 0.0f }, kHalfSqrt2 };
+        }
+
+        // Linear locks are along frame A's axes too, so each takes the lock of the world axis it now points along.
+        bool FrameLocks[3] = { false, false, false };
+        for (int32 FrameAxis = 0; FrameAxis < 3; ++FrameAxis)
+        {
+            const b3Vec3 Unit = { FrameAxis == 0 ? 1.0f : 0.0f, FrameAxis == 1 ? 1.0f : 0.0f, FrameAxis == 2 ? 1.0f : 0.0f };
+            const b3Vec3 Direction = b3RotateVector(AxisFrame, Unit);
+            const float Along[3] = { b3AbsFloat(Direction.x), b3AbsFloat(Direction.y), b3AbsFloat(Direction.z) };
+            const int32 WorldAxis = Along[0] > 0.5f ? 0 : (Along[1] > 0.5f ? 1 : 2);
+            FrameLocks[FrameAxis] = Build.bLockLinear[WorldAxis];
+        }
+
+        b3MotionLockJointDef Def = b3DefaultMotionLockJointDef();
+        Def.base.bodyIdA     = EnsureWorldAnchorBody();
+        Def.base.bodyIdB     = BodyId;
+        Def.base.localFrameA = b3Transform{ Build.BodyDef.position, AxisFrame };
+        Def.base.localFrameB = b3Transform{ b3Vec3_zero, b3InvMulQuat(Build.BodyDef.rotation, AxisFrame) };
+        Def.lockLinearX      = FrameLocks[0];
+        Def.lockLinearY      = FrameLocks[1];
+        Def.lockLinearZ      = FrameLocks[2];
+        Def.lockAngularXY    = Build.FreeRotationAxis != Constants::kIndexNone;
+        b3CreateMotionLockJoint(WorldId, &Def);
+    }
+
+    // Caller holds ConstraintsMutex, reached from SynchronizeConstraints.
+    bool FBox3DPhysicsScene::CommitConstraint(uint32 Handle, const SConstraintDesc& Desc)
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const b3BodyId BodyA = Desc.BodyA == ECS::NullEntity ? EnsureWorldAnchorBody() : ResolveBody(FindEntityBody(Desc.BodyA));
         const b3BodyId BodyB = Desc.BodyB == ECS::NullEntity ? b3_nullBodyId : ResolveBody(FindEntityBody(Desc.BodyB));
         if (!b3Body_IsValid(BodyA) || !b3Body_IsValid(BodyB))
         {

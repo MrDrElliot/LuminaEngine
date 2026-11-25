@@ -188,24 +188,49 @@ uint MaskBits(uint Level, int2 Wrapped)
     return ((Entry & VSM_PAGE_RENDER_STATIC) != 0u ? VSM_MASK_STATIC : 0u) | ((Entry & VSM_PAGE_REQUESTED) != 0u ? VSM_MASK_REQUESTED : 0u);
 }
 
-void MaskBase(uint Index)
-{
-    const uint Level = Index / VSM_PAGES_PER_LEVEL;
-    const uint Local = Index % VSM_PAGES_PER_LEVEL;
-    const int2 Wrapped = int2(Local % VSM_LEVEL_PAGES, Local / VSM_LEVEL_PAGES);
+#if VSM_PAGE_GROUP_SIZE != 64
+#error "MaskBase tiles a group as 8x8 pages."
+#endif
 
-    uint Bits = MaskBits(Level, Wrapped);
-    // Next frame's instance cull reads the requested pages grown by two, so a moving camera finds its casters already kept.
-    bool bHot = false;
-    for (int dy = -2; dy <= 2; ++dy)
+static const uint kMaskTile        = 8u;
+static const uint kMaskApron       = 2u;
+static const uint kMaskSpan        = kMaskTile + 2u * kMaskApron;
+static const uint kMaskTilesPerRow = VSM_LEVEL_PAGES / kMaskTile;
+
+groupshared uint GMaskTile[kMaskSpan * kMaskSpan];
+
+// A group owns an 8x8 block of one level and loads it with its apron once, rather than every page reading its 25 neighbors from memory.
+void MaskBase(uint Thread)
+{
+    const uint Group = Thread / VSM_PAGE_GROUP_SIZE;
+    const uint Lane  = Thread % VSM_PAGE_GROUP_SIZE;
+    const uint Level = Group / (kMaskTilesPerRow * kMaskTilesPerRow);
+    const uint Tile  = Group % (kMaskTilesPerRow * kMaskTilesPerRow);
+    const int2 Base  = int2(Tile % kMaskTilesPerRow, Tile / kMaskTilesPerRow) * int(kMaskTile);
+
+    for (uint i = Lane; i < kMaskSpan * kMaskSpan; i += VSM_PAGE_GROUP_SIZE)
     {
-        for (int dx = -2; dx <= 2; ++dx)
+        const int2 Page = (Base + int2(i % kMaskSpan, i / kMaskSpan) - int(kMaskApron)) & int2(VSM_LEVEL_PAGES - 1u, VSM_LEVEL_PAGES - 1u);
+        GMaskTile[i] = MaskBits(Level, Page);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    const uint2 Local = uint2(Lane % kMaskTile, Lane / kMaskTile);
+    uint Bits = GMaskTile[(Local.y + kMaskApron) * kMaskSpan + Local.x + kMaskApron];
+
+    // Next frame's instance cull reads the requested pages grown by two, so a moving camera finds its casters already kept.
+    uint Near = 0u;
+    for (uint dy = 0u; dy <= 2u * kMaskApron; ++dy)
+    {
+        for (uint dx = 0u; dx <= 2u * kMaskApron; ++dx)
         {
-            bHot = bHot || (MaskBits(Level, (Wrapped + int2(dx, dy)) & int2(VSM_LEVEL_PAGES - 1u, VSM_LEVEL_PAGES - 1u)) & VSM_MASK_REQUESTED) != 0u;
+            Near |= GMaskTile[(Local.y + dy) * kMaskSpan + Local.x + dx];
         }
     }
-    Bits |= bHot ? VSM_MASK_HOT : 0u;
-    Pass().Masks.Set(Level * VSM_MASK_CELLS_PER_LEVEL + Local, Bits);
+    Bits |= (Near & VSM_MASK_REQUESTED) != 0u ? VSM_MASK_HOT : 0u;
+
+    const int2 Wrapped = Base + int2(Local);
+    Pass().Masks.Set(Level * VSM_MASK_CELLS_PER_LEVEL + uint(Wrapped.y) * VSM_LEVEL_PAGES + uint(Wrapped.x), Bits);
 }
 
 void MaskMip(uint Thread)
@@ -303,6 +328,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     }
     else if (Mode == kModeMaskBase)
     {
+        // Pages is a whole number of groups, so this is uniform per group and every lane reaches the tile's barrier.
         if (Thread < Pages)
         {
             MaskBase(Thread);

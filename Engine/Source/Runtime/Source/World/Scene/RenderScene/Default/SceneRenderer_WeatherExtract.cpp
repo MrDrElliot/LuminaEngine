@@ -290,7 +290,14 @@ namespace Lumina
 
         Out.bSnow = bSnowLying;
         const bool bDisturbed = !Out.Contacts.IsEmpty() || !Out.Impacts.IsEmpty();
-        WeatherFieldQuietFrames = bDisturbed ? 0u : (bWasIdle ? WeatherFieldQuietFrames : WeatherFieldQuietFrames + 1u);
+        if (bDisturbed)
+        {
+            WeatherFieldQuietFrames = 0u;
+        }
+        else if (!bWasIdle)
+        {
+            ++WeatherFieldQuietFrames;
+        }
         Out.bField = WeatherFieldQuietFrames < SettleFrames;
 
         if (Out.bField)

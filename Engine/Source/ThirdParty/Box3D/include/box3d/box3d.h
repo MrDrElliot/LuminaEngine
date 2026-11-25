@@ -15,10 +15,10 @@
  * @defgroup world World
  * These functions allow you to create a simulation world.
  *
- * You can add rigid bodies and joint constraints to the world and run the simulation. You can get contact
- * information to get contact points and normals as well as events. You can query the world, checking for overlaps and casting
- * rays or shapes. There is also debugging information such as debug draw, timing information, and counters. You can find
- * documentation here: https://box2d.org/
+ * You can add rigid bodies and joint constraints to the world and run the simulation. You can get
+ * contact information to get contact points and normals as well as events. You can query the world,
+ * checking for overlaps and casting rays or shapes. There is also debugging information such as
+ * debug draw, timing information, and counters. You can find documentation here: https://box2d.org/
  * @{
  */
 
@@ -29,8 +29,9 @@
 #define b3CreateWorld b3CreateWorldDoublePrecision
 #endif
 
-/// Create a world for rigid body simulation. A world contains bodies, shapes, and constraints. You may create
-/// up to 128 worlds. Each world is completely independent and may be simulated in parallel.
+/// Create a world for rigid body simulation. A world contains bodies, shapes, and constraints. You
+/// may create up to 128 worlds. Each world is completely independent and may be simulated in
+/// parallel.
 /// @return the world id.
 B3_API b3WorldId b3CreateWorld( const b3WorldDef* def );
 
@@ -46,41 +47,53 @@ B3_API int b3GetMaxWorldCount( void );
 /// World id validation. Provides validation for up to 64K allocations.
 B3_API bool b3World_IsValid( b3WorldId id );
 
-/// Simulate a world for one time step. This performs collision detection, integration, and constraint solution.
-/// A time step of zero runs the broad-phase and collision, but skips the solver. So you can still get contact
-/// and sensor events.
+/// Simulate a world for one time step. This performs collision detection, integration, and
+/// constraint solution. A time step of zero runs the broad-phase and collision, but skips the
+/// solver. So you can still get contact and sensor events.
 /// @param worldId The world to simulate
 /// @param timeStep The amount of time to simulate, this should be a fixed number. Usually 1/60.
-/// @param subStepCount The number of sub-steps, increasing the sub-step count can increase accuracy. Usually 4.
+/// @param subStepCount The number of sub-steps, increasing the sub-step count can increase
+/// accuracy. Usually 4.
 B3_API void b3World_Step( b3WorldId worldId, float timeStep, int subStepCount );
+
+/// The pull model for tasking. Instead of getting task callbacks from b3World_Step you can call
+/// this to kick off a step and get an array of tasks to execute.
+B3_API b3TaskBatch b3World_BeginStep( b3WorldId worldId, float timeStep, int subStepCount );
+
+/// Call this after executing each task batch. The step is done when the batch is empty.
+B3_API b3TaskBatch b3World_ContinueStep( b3WorldId worldId );
 
 /// Call this to draw shapes and other debug draw data
 B3_API void b3World_Draw( b3WorldId worldId, b3DebugDraw* draw, uint64_t maskBits );
 
-/// Get the world's bounds. This is the bounding box that covers the current simulation. May have a small
-/// amount of padding.
+/// Get the world's bounds. This is the bounding box that covers the current simulation. May have a
+/// small amount of padding.
 B3_API b3AABB b3World_GetBounds( b3WorldId worldId );
 
-/// Get the body events for the current time step. The event data is transient. Do not store a reference to this data.
+/// Get the body events for the current time step. The event data is transient. Do not store a
+/// reference to this data.
 B3_API b3BodyEvents b3World_GetBodyEvents( b3WorldId worldId );
 
-/// Get sensor events for the current time step. The event data is transient. Do not store a reference to this data.
+/// Get sensor events for the current time step. The event data is transient. Do not store a
+/// reference to this data.
 B3_API b3SensorEvents b3World_GetSensorEvents( b3WorldId worldId );
 
-/// Get contact events for this current time step. The event data is transient. Do not store a reference to this data.
+/// Get contact events for this current time step. The event data is transient. Do not store a
+/// reference to this data.
 B3_API b3ContactEvents b3World_GetContactEvents( b3WorldId worldId );
 
-/// Get the joint events for the current time step. The event data is transient. Do not store a reference to this data.
+/// Get the joint events for the current time step. The event data is transient. Do not store a
+/// reference to this data.
 B3_API b3JointEvents b3World_GetJointEvents( b3WorldId worldId );
 
-/// Overlap test for all shapes that *potentially* overlap the provided AABB
+/// Overlap test for all shapes that *potentially* overlap the provided AABB.
 B3_API b3TreeStats b3World_OverlapAABB( b3WorldId worldId, b3AABB aabb, b3QueryFilter filter, b3OverlapResultFcn* fcn,
 										void* context );
 
 /// Overlap test for all shapes that overlap the provided shape proxy. The proxy points are relative
 /// to the world origin, which lets the query stay precise far from the world origin.
-B3_API b3TreeStats b3World_OverlapShape( b3WorldId worldId, b3Pos origin, const b3ShapeProxy* proxy, b3QueryFilter filter,
-										 b3OverlapResultFcn* fcn, void* context );
+B3_API b3TreeStats b3World_OverlapShape( b3WorldId worldId, b3Pos origin, const b3ShapeProxy* proxy,
+										 b3QueryFilter filter, b3OverlapResultFcn* fcn, void* context );
 
 /// Cast a ray into the world to collect shapes in the path of the ray.
 /// Your callback function controls whether you get the closest point, any point, or n-points.
@@ -96,21 +109,43 @@ B3_API b3TreeStats b3World_OverlapShape( b3WorldId worldId, b3Pos origin, const 
 B3_API b3TreeStats b3World_CastRay( b3WorldId worldId, b3Pos origin, b3Vec3 translation, b3QueryFilter filter,
 									b3CastResultFcn* fcn, void* context );
 
-/// Cast a ray into the world to collect the closest hit. This is a convenience function. Ignores initial overlap.
-/// This is less general than b3World_CastRay() and does not allow for custom filtering. Ignores back-side collision
-/// on meshes and height-fields.
+/// Cast a ray into the world to collect the closest hit. This is a convenience function. Ignores
+/// initial overlap. This is less general than b3World_CastRay() and does not allow for custom
+/// filtering. Ignores back-side collision on meshes and height-fields.
 B3_API b3RayResult b3World_CastRayClosest( b3WorldId worldId, b3Pos origin, b3Vec3 translation, b3QueryFilter filter );
 
-/// Cast a shape through the world. Similar to a cast ray except that a shape is cast instead of a point.
-/// The proxy points are relative to the origin and the hit points come back as world positions, so the
-/// cast stays precise far from the world origin. Ignores back-side collision on meshes and height-fields.
+/// Cast a shape through the world. Similar to a cast ray except that a shape is cast instead of a
+/// point. The proxy points are relative to the origin and the hit points come back as world
+/// positions, so the cast stays precise far from the world origin. Ignores back-side collision on
+/// meshes and height-fields.
 ///	@see b3World_CastRay
 B3_API b3TreeStats b3World_CastShape( b3WorldId worldId, b3Pos origin, const b3ShapeProxy* proxy, b3Vec3 translation,
 									  b3QueryFilter filter, b3CastResultFcn* fcn, void* context );
 
-/// Cast a capsule mover through the world. This is a special shape cast that handles sliding along other shapes while reducing
-/// clipping. This is not a good source of information about what the mover is touching. Instead use the planes returned by
-/// b3World_CollideMover. Ignores back-side collision on meshes and height-fields.
+/// Overlap test for all shapes that *potentially* overlap the provided AABB. This only considers static bodies,
+/// so it may be invoked concurrently with b3World_Step. This is not thread-safe with creation and destruction
+/// operations. This is a workaround for The Legend of California and may be removed later if the workaround is no
+/// longer needed. This is not part of a strategy to make concurrent queries thread-safe.
+B3_API b3TreeStats b3World_OverlapAABB_Static( b3WorldId worldId, b3AABB aabb, b3QueryFilter filter,
+											   b3OverlapResultFcn* fcn, void* context );
+
+/// Similar for shape overlap.
+B3_API b3TreeStats b3World_OverlapShape_Static( b3WorldId worldId, b3Pos origin, const b3ShapeProxy* proxy,
+												b3QueryFilter filter, b3OverlapResultFcn* fcn, void* context );
+
+/// Similar for cast ray.
+B3_API b3TreeStats b3World_CastRay_Static( b3WorldId worldId, b3Pos origin, b3Vec3 translation, b3QueryFilter filter,
+										   b3CastResultFcn* fcn, void* context );
+
+/// Similar for cast shape.
+B3_API b3TreeStats b3World_CastShape_Static( b3WorldId worldId, b3Pos origin, const b3ShapeProxy* proxy,
+											 b3Vec3 translation, b3QueryFilter filter, b3CastResultFcn* fcn,
+											 void* context );
+
+/// Cast a capsule mover through the world. This is a special shape cast that handles sliding along
+/// other shapes while reducing clipping. This is not a good source of information about what the
+/// mover is touching. Instead use the planes returned by b3World_CollideMover. Ignores back-side
+/// collision on meshes and height-fields.
 /// @param worldId World to cast the mover against
 /// @param origin World position the mover capsule is relative to
 /// @param mover Capsule mover, relative to the origin
@@ -119,12 +154,12 @@ B3_API b3TreeStats b3World_CastShape( b3WorldId worldId, b3Pos origin, const b3S
 /// @param fcn Optional callback for custom shape filtering
 /// @param context A user context that is passed along to the callback function
 /// @return the translation fraction
-B3_API float b3World_CastMover( b3WorldId worldId, b3Pos origin, const b3Capsule* mover, b3Vec3 translation, b3QueryFilter filter,
-								b3MoverFilterFcn* fcn, void* context );
+B3_API float b3World_CastMover( b3WorldId worldId, b3Pos origin, const b3Capsule* mover, b3Vec3 translation,
+								b3QueryFilter filter, b3MoverFilterFcn* fcn, void* context );
 
-/// Collide a capsule mover with the world, gathering collision planes that can be fed to b3SolvePlanes. Useful for
-/// kinematic character movement. The mover and the returned planes are relative to the origin.
-/// Ignores back-side collision on meshes and height-fields.
+/// Collide a capsule mover with the world, gathering collision planes that can be fed to
+/// b3SolvePlanes. Useful for kinematic character movement. The mover and the returned planes are
+/// relative to the origin. Ignores back-side collision on meshes and height-fields.
 B3_API void b3World_CollideMover( b3WorldId worldId, b3Pos origin, const b3Capsule* mover, b3QueryFilter filter,
 								  b3PlaneResultFcn* fcn, void* context );
 
@@ -136,9 +171,9 @@ B3_API void b3World_EnableSleeping( b3WorldId worldId, bool flag );
 /// Is body sleeping enabled?
 B3_API bool b3World_IsSleepingEnabled( b3WorldId worldId );
 
-/// Enable/disable continuous collision between dynamic and static bodies. Generally you should keep continuous
-/// collision enabled to prevent fast moving objects from going through static objects. The performance gain from
-/// disabling continuous collision is minor.
+/// Enable/disable continuous collision between dynamic and static bodies. Generally you should keep
+/// continuous collision enabled to prevent fast moving objects from going through static objects.
+/// The performance gain from disabling continuous collision is minor.
 /// @see b3WorldDef
 B3_API void b3World_EnableContinuous( b3WorldId worldId, bool flag );
 
@@ -166,8 +201,8 @@ B3_API void b3World_EnableRestitutionPropagation( b3WorldId worldId, bool flag )
 /// Is restitution propagation enabled?
 B3_API bool b3World_IsRestitutionPropagationEnabled( b3WorldId worldId );
 
-/// Adjust the hit event threshold. This controls the collision speed needed to generate a b3ContactHitEvent.
-/// Usually in meters per second.
+/// Adjust the hit event threshold. This controls the collision speed needed to generate a
+/// b3ContactHitEvent. Usually in meters per second.
 /// @see b3WorldDef::hitEventThreshold
 B3_API void b3World_SetHitEventThreshold( b3WorldId worldId, float value );
 
@@ -396,8 +431,8 @@ B3_API int b3RecPlayer_GetDivergeFrame( const b3RecPlayer* player );
 
 /// Set the worker count of the replay world. Clamped to [1, B3_MAX_WORKERS]. Applied to the live
 /// world at once and reused whenever the player rebuilds its world on Restart or a backward seek.
-/// Replaying at a different count than recorded re-partitions the constraint graph, so the StateHash
-/// check becomes a cross-thread determinism test.
+/// Replaying at a different count than recorded re-partitions the constraint graph, so the
+/// StateHash check becomes a cross-thread determinism test.
 B3_API void b3RecPlayer_SetWorkerCount( b3RecPlayer* player, int count );
 
 /// Tune the keyframe ring used to speed up backward seeking. A keyframe is a periodic snapshot the
@@ -446,7 +481,8 @@ B3_API void b3RecPlayer_SetDebugShapeCallbacks( b3RecPlayer* player, b3CreateDeb
 /// @param player a valid player handle
 /// @param draw debug draw callbacks
 /// @param queryIndex index of the frame query to draw, or -1 to draw all of them
-/// @param selectedIndex index of the query to emphasize (reserved color plus a label), or -1 for none
+/// @param selectedIndex index of the query to emphasize (reserved color plus a label), or -1 for
+/// none
 B3_API void b3RecPlayer_DrawFrameQueries( b3RecPlayer* player, b3DebugDraw* draw, int queryIndex, int selectedIndex );
 
 /// The kind of a recorded spatial query, matching the public query and cast functions.
@@ -503,8 +539,8 @@ B3_API b3RecQueryHit b3RecPlayer_GetFrameQueryHit( const b3RecPlayer* player, in
  * @{
  */
 
-/// Create a rigid body given a definition. No reference to the definition is retained. So you can create the definition
-/// on the stack and pass it as a pointer.
+/// Create a rigid body given a definition. No reference to the definition is retained. So you can
+/// create the definition on the stack and pass it as a pointer.
 /// @code{.c}
 /// b3BodyDef bodyDef = b3DefaultBodyDef();
 /// b3BodyId myBodyId = b3CreateBody(myWorldId, &bodyDef);
@@ -698,8 +734,8 @@ B3_API float b3Body_GetGravityScale( b3BodyId bodyId );
 B3_API bool b3Body_IsAwake( b3BodyId bodyId );
 
 /// Wake a body from sleep. This wakes the entire island the body is touching.
-/// @warning Putting a body to sleep will put the entire island of bodies touching this body to sleep,
-/// which can be expensive and possibly unintuitive.
+/// @warning Putting a body to sleep will put the entire island of bodies touching this body to
+/// sleep, which can be expensive and possibly unintuitive.
 B3_API void b3Body_SetAwake( b3BodyId bodyId, bool awake );
 
 /// Enable or disable sleeping for this body. If sleeping is disabled the body will wake.
@@ -714,7 +750,8 @@ B3_API void b3Body_SetSleepThreshold( b3BodyId bodyId, float sleepThreshold );
 /// Get the sleep threshold, usually in meters per second.
 B3_API float b3Body_GetSleepThreshold( b3BodyId bodyId );
 
-/// Set the continuous collision safety factor. Smaller is safer but can lead to hitching. Recommended range [0.01, 0.5]. Non-dimensional.
+/// Set the continuous collision safety factor. Smaller is safer but can lead to hitching.
+/// Recommended range [0.01, 0.5]. Non-dimensional.
 B3_API void b3Body_SetSafetyFactor( b3BodyId bodyId, float safetyFactor );
 
 /// Get the continuous collision safety factor. Non-dimensional.
@@ -729,11 +766,11 @@ B3_API void b3Body_Disable( b3BodyId bodyId );
 /// Enable a body by adding it to the simulation. This is expensive.
 B3_API void b3Body_Enable( b3BodyId bodyId );
 
-/// Set the motion locks on this body.
-B3_API void b3Body_SetMotionLocks( b3BodyId bodyId, b3MotionLocks locks );
+/// Fix the rotation of this body. Sets the angular velocity to zero.
+B3_API void b3Body_SetFixedRotation( b3BodyId bodyId, bool flag );
 
-/// Get the motion locks for this body.
-B3_API b3MotionLocks b3Body_GetMotionLocks( b3BodyId bodyId );
+/// Does this body have fixed rotation?
+B3_API bool b3Body_IsFixedRotation( b3BodyId bodyId );
 
 /// Set this body to be a bullet. A bullet does continuous collision detection
 /// against dynamic bodies (but not other bullets).
@@ -750,10 +787,10 @@ B3_API void b3Body_AllowFastRotation( b3BodyId bodyId, bool flag );
 /// Is this body allowed to rotate fast?
 B3_API bool b3Body_IsFastRotationAllowed( b3BodyId bodyId );
 
-/// Enable or disable contact recycling for this body. Contact recycling is a performance optimization
-/// that reuses contact manifolds when bodies move slightly. Disabling it can avoid ghost collisions
-/// on characters at the cost of higher per-step work. Existing contacts retain their prior setting;
-/// only contacts created after this call see the new value.
+/// Enable or disable contact recycling for this body. Contact recycling is a performance
+/// optimization that reuses contact manifolds when bodies move slightly. Disabling it can avoid
+/// ghost collisions on characters at the cost of higher per-step work. Existing contacts retain
+/// their prior setting; only contacts created after this call see the new value.
 /// @see b3BodyDef::enableContactRecycling
 B3_API void b3Body_EnableContactRecycling( b3BodyId bodyId, bool flag );
 
@@ -787,8 +824,9 @@ B3_API int b3Body_GetContactCapacity( b3BodyId bodyId );
 /// Get the touching contact data for a body
 B3_API int b3Body_GetContactData( b3BodyId bodyId, b3ContactData* contactData, int capacity );
 
-/// Get the current world AABB that contains all the attached shapes. Note that this may not encompass the body origin.
-/// If there are no shapes attached then the returned AABB is empty and centered on the body origin.
+/// Get the current world AABB that contains all the attached shapes. Note that this may not
+/// encompass the body origin. If there are no shapes attached then the returned AABB is empty and
+/// centered on the body origin.
 B3_API b3AABB b3Body_ComputeAABB( b3BodyId bodyId );
 
 /// The minimum distance from any shape to the shape centroid.
@@ -823,68 +861,74 @@ B3_API bool b3Body_OverlapShape( b3BodyId bodyId, b3Pos origin, const b3ShapePro
 B3_API int b3Body_CollideMover( b3BodyId bodyId, b3BodyPlaneResult* bodyPlanes, int planeCapacity, b3Pos origin,
 								const b3Capsule* mover, b3QueryFilter filter, b3WorldTransform bodyTransform );
 
-/// Perform a time of impact between a character mover and a body using specified sweep transforms. 
+/// Perform a time of impact between a character mover and a body using specified sweep transforms.
 /// Initial overlap of any shape on the body is ignored. A non-overlapped shape can still be hit.
 /// Only considers convex shapes on the body.
-B3_API b3BodyTOIResult b3Body_TimeOfImpactMover( b3BodyId bodyId, b3Pos origin, const b3Capsule* mover, b3Vec3 moverTranslation,
-												 b3QueryFilter filter, b3WorldTransform bodyTransform1,
-												 b3WorldTransform bodyTransform2 );
+B3_API b3BodyTOIResult b3Body_TimeOfImpactMover( b3BodyId bodyId, b3Pos origin, const b3Capsule* mover,
+												 b3Vec3 moverTranslation, b3QueryFilter filter,
+												 b3WorldTransform bodyTransform1, b3WorldTransform bodyTransform2 );
 
 /** @} */ // body
 
 /**
  * @defgroup shape Shape
  * Functions to create, destroy, and access.
- * Shapes bind raw geometry to bodies and hold material properties including friction and restitution.
- * You may add multiple shapes to a single body. There are no hard limits on shape count per body.
+ * Shapes bind raw geometry to bodies and hold material properties including friction and
+ * restitution. You may add multiple shapes to a single body. There are no hard limits on shape
+ * count per body.
  *
- * When you create a shape on a body the center of mass moves. This can lead to the body linear velocity
- * changing if the angular velocity is non-zero.
+ * When you create a shape on a body the center of mass moves. This can lead to the body linear
+ * velocity changing if the angular velocity is non-zero.
  * @{
  */
 
-/// Create a circle shape and attach it to a body. The shape definition and geometry are fully cloned.
-/// Contacts are not created until the next time step.
+/// Create a circle shape and attach it to a body. The shape definition and geometry are fully
+/// cloned. Contacts are not created until the next time step.
 /// @return the shape id for accessing the shape
 B3_API b3ShapeId b3CreateSphereShape( b3BodyId bodyId, const b3ShapeDef* def, const b3Sphere* sphere );
 
-/// Create a capsule shape and attach it to a body. The shape definition and geometry are fully cloned.
-/// Contacts are not created until the next time step.
+/// Create a capsule shape and attach it to a body. The shape definition and geometry are fully
+/// cloned. Contacts are not created until the next time step.
 /// @return the shape id for accessing the shape
 B3_API b3ShapeId b3CreateCapsuleShape( b3BodyId bodyId, const b3ShapeDef* def, const b3Capsule* capsule );
 
-/// Create a convex hull shape and attach it to a body. The shape definition is fully cloned. Contacts are not created
-/// until the next time step.
+/// Create a convex hull shape and attach it to a body. The shape definition is fully cloned.
+/// Contacts are not created until the next time step.
 /// @return the shape id for accessing the shape
 B3_API b3ShapeId b3CreateHullShape( b3BodyId bodyId, const b3ShapeDef* def, const b3HullData* hull );
 
-/// Create a convex hull shape and attach it to a body. The hull is cloned then transformed with scale applied first.
-/// Use this for non-uniform or mirrored scale or a baked local transform. The baked result is shared through the
-/// world hull database. The shape definition and geometry are fully cloned. Contacts are not created until the next time step.
+/// Create a convex hull shape and attach it to a body. The hull is cloned then transformed with
+/// scale applied first. Use this for non-uniform or mirrored scale or a baked local transform. The
+/// baked result is shared through the world hull database. The shape definition and geometry are
+/// fully cloned. Contacts are not created until the next time step.
 /// @return the shape id for accessing the shape
 B3_API b3ShapeId b3CreateTransformedHullShape( b3BodyId bodyId, const b3ShapeDef* def, const b3HullData* hull,
 											   b3Transform transform, b3Vec3 scale );
 
-/// Create a mesh hull shape and attach it to a body. The shape definition is fully cloned but the mesh is not.
-/// Contacts are not created until the next time step.
-/// Mesh collision only creates contacts on static bodies.
-/// @warning this holds reference to the input mesh data which must remain valid for the lifetime of this shape
+/// Create a mesh hull shape and attach it to a body. The shape definition is fully cloned but the
+/// mesh is not. Contacts are not created until the next time step. Mesh collision only creates
+/// contacts on static bodies.
+/// @warning this holds reference to the input mesh data which must remain valid for the lifetime of
+/// this shape
 /// @return the shape id for accessing the shape
 B3_API b3ShapeId b3CreateMeshShape( b3BodyId bodyId, const b3ShapeDef* def, const b3MeshData* mesh, b3Vec3 scale );
 
-/// Create a height-field shape and attach it to a body. The shape definition is fully cloned but the height field is not.
-/// Contacts are not created until the next time step.
-/// Height field is only allowed on static bodies.
-/// @warning this holds reference to the input height field which must remain valid for the lifetime of this shape
+/// Create a height-field shape and attach it to a body. The shape definition is fully cloned but
+/// the height field is not. Contacts are not created until the next time step. Height field is only
+/// allowed on static bodies.
+/// @warning this holds reference to the input height field which must remain valid for the lifetime
+/// of this shape
 /// @return the shape id for accessing the shape
-B3_API b3ShapeId b3CreateHeightFieldShape( b3BodyId bodyId, const b3ShapeDef* def, const b3HeightFieldData* heightField );
+B3_API b3ShapeId b3CreateHeightFieldShape( b3BodyId bodyId, const b3ShapeDef* def,
+										   const b3HeightFieldData* heightField );
 
 /// Baked compound shapes are only allowed on static bodies.
 /// Note: runtime compounds are achieved by adding multiple shapes to a body.
 /// Runtime compounds can be dynamic and/or kinematic.
 B3_API b3ShapeId b3CreateBakedCompoundShape( b3BodyId bodyId, b3ShapeDef* def, const b3CompoundData* compound );
 
-/// Destroy a shape. You may defer the body mass update which can improve performance if several shapes on a
+/// Destroy a shape. You may defer the body mass update which can improve performance if several
+/// shapes on a
 ///	body are destroyed at once.
 ///	@see b3Body_ApplyMassFromShapes
 B3_API void b3DestroyShape( b3ShapeId shapeId, bool updateBodyMass );
@@ -959,25 +1003,28 @@ B3_API b3Filter b3Shape_GetFilter( b3ShapeId shapeId );
 /// @see b3ShapeDef::filter
 /// @param shapeId the shape
 /// @param filter the new filter
-/// @param invokeContacts if true then the shape will have all contacts recomputed the next time step (expensive)
+/// @param invokeContacts if true then the shape will have all contacts recomputed the next time
+/// step (expensive)
 B3_API void b3Shape_SetFilter( b3ShapeId shapeId, b3Filter filter, bool invokeContacts );
 
-/// Enable sensor events for this shape. Only applies to kinematic and dynamic bodies. Ignored for sensors.
+/// Enable sensor events for this shape. Only applies to kinematic and dynamic bodies. Ignored for
+/// sensors.
 /// @see b3ShapeDef::isSensor
 B3_API void b3Shape_EnableSensorEvents( b3ShapeId shapeId, bool flag );
 
 /// Returns true if sensor events are enabled
 B3_API bool b3Shape_AreSensorEventsEnabled( b3ShapeId shapeId );
 
-/// Enable contact events for this shape. Only applies to kinematic and dynamic bodies. Ignored for sensors.
+/// Enable contact events for this shape. Only applies to kinematic and dynamic bodies. Ignored for
+/// sensors.
 /// @see b3ShapeDef::enableContactEvents
 B3_API void b3Shape_EnableContactEvents( b3ShapeId shapeId, bool flag );
 
 /// Returns true if contact events are enabled
 B3_API bool b3Shape_AreContactEventsEnabled( b3ShapeId shapeId );
 
-/// Enable pre-solve contact events for this shape. Only applies to dynamic bodies. These are expensive
-/// and must be carefully handled due to multithreading. Ignored for sensors.
+/// Enable pre-solve contact events for this shape. Only applies to dynamic bodies. These are
+/// expensive and must be carefully handled due to multithreading. Ignored for sensors.
 /// @see b3PreSolveFcn
 B3_API void b3Shape_EnablePreSolveEvents( b3ShapeId shapeId, bool flag );
 
@@ -1036,7 +1083,8 @@ B3_API void b3Shape_SetMesh( b3ShapeId shapeId, const b3MeshData* meshData, b3Ve
 /// Get the maximum capacity required for retrieving all the touching contacts on a shape
 B3_API int b3Shape_GetContactCapacity( b3ShapeId shapeId );
 
-/// Get the touching contact data for a shape. The provided shapeId will be either shapeIdA or shapeIdB on the contact data.
+/// Get the touching contact data for a shape. The provided shapeId will be either shapeIdA or
+/// shapeIdB on the contact data.
 /// @note Box3D uses speculative collision so some contact points may be separated.
 /// @returns the number of elements filled in the provided array
 /// @warning do not ignore the return value, it specifies the valid number of elements
@@ -1073,7 +1121,8 @@ B3_API b3Vec3 b3Shape_GetClosestPoint( b3ShapeId shapeId, b3Vec3 target );
 /// @param wind the wind velocity in world space
 /// @param drag the drag coefficient, the force that opposes the relative velocity
 /// @param lift the lift coefficient, the force that is perpendicular to the relative velocity
-/// @param maxSpeed the maximum relative speed. Speed cap is necessary for stability. Typically 10m/s or less.
+/// @param maxSpeed the maximum relative speed. Speed cap is necessary for stability. Typically
+/// 10m/s or less.
 /// @param wake should this wake the body
 B3_API void b3Shape_ApplyWind( b3ShapeId shapeId, b3Vec3 wind, float drag, float lift, float maxSpeed, bool wake );
 
@@ -1081,7 +1130,8 @@ B3_API void b3Shape_ApplyWind( b3ShapeId shapeId, b3Vec3 wind, float drag, float
 
 /**
  * @defgroup joint Joint
- * @brief Joints allow you to connect rigid bodies together while allowing various forms of relative motions.
+ * @brief Joints allow you to connect rigid bodies together while allowing various forms of relative
+ * motions.
  * @{
  */
 
@@ -1139,10 +1189,12 @@ B3_API b3Vec3 b3Joint_GetConstraintForce( b3JointId jointId );
 /// Get the current constraint torque for this joint
 B3_API b3Vec3 b3Joint_GetConstraintTorque( b3JointId jointId );
 
-/// Get the current linear separation error for this joint. Does not consider admissible movement. Usually in meters.
+/// Get the current linear separation error for this joint. Does not consider admissible movement.
+/// Usually in meters.
 B3_API float b3Joint_GetLinearSeparation( b3JointId jointId );
 
-/// Get the current angular separation error for this joint. Does not consider admissible movement. Usually in radians.
+/// Get the current angular separation error for this joint. Does not consider admissible movement.
+/// Usually in radians.
 B3_API float b3Joint_GetAngularSeparation( b3JointId jointId );
 
 /// Set the joint constraint tuning. Advanced feature.
@@ -1197,6 +1249,30 @@ B3_API float b3ParallelJoint_GetMaxTorque( b3JointId jointId );
 /** @} */ // parallel_joint
 
 /**
+ * @defgroup motion_lock_joint Motion Lock Joint
+ * @brief Functions for the motion lock joint.
+ * @{
+ */
+
+/// Create a motion lock joint.
+/// @see b3MotionLockJointDef for details
+B3_API b3JointId b3CreateMotionLockJoint( b3WorldId worldId, const b3MotionLockJointDef* def );
+
+/// Enable/disable a linear lock.
+B3_API void b3MotionLockJoint_EnableLinearLock( b3JointId jointId, int axis, bool flag );
+
+/// Is a linear lock enabled?
+B3_API bool b3MotionLockJoint_IsLinearLockEnabled( b3JointId jointId, int axis );
+
+/// Enable/disable the angular lock.
+B3_API void b3MotionLockJoint_EnableAngularLock( b3JointId jointId, bool flag );
+
+/// Is the angular lock enabled?
+B3_API bool b3MotionLockJoint_IsAngularLockEnabled( b3JointId jointId );
+
+/** @} */ // motion_lock_joint
+
+/**
  * @defgroup distance_joint Distance Joint
  * @brief Functions for the distance joint.
  * @{
@@ -1238,8 +1314,8 @@ B3_API float b3DistanceJoint_GetSpringHertz( b3JointId jointId );
 /// Get the spring damping ratio
 B3_API float b3DistanceJoint_GetSpringDampingRatio( b3JointId jointId );
 
-/// Enable joint limit. The limit only works if the joint spring is enabled. Otherwise the joint is rigid
-/// and the limit has no effect.
+/// Enable joint limit. The limit only works if the joint spring is enabled. Otherwise the joint is
+/// rigid and the limit has no effect.
 B3_API void b3DistanceJoint_EnableLimit( b3JointId jointId, bool enableLimit );
 
 /// Is the distance joint limit enabled?
@@ -1359,11 +1435,100 @@ B3_API float b3MotorJoint_GetMaxSpringTorque( b3JointId jointId );
 /**@}*/ // motor_joint
 
 /**
+ * @defgroup mover_joint Mover Joint
+ * @brief Functions for the mover joint.
+ *
+ * The mover joint is designed for a dynamic character mover.
+ *
+ * @warning Experimental. The mover joint may change in future versions.
+ * @{
+ */
+
+/// Create a mover joint.
+/// @see b3MoverJointDef for details
+B3_API b3JointId b3CreateMoverJoint( b3WorldId worldId, const b3MoverJointDef* def );
+
+/// Set the desired relative linear velocity, usually in meters per second.
+B3_API void b3MoverJoint_SetLinearVelocity( b3JointId jointId, b3Vec3 velocity );
+
+/// Get the desired relative linear velocity, usually in meters per second.
+B3_API b3Vec3 b3MoverJoint_GetLinearVelocity( b3JointId jointId );
+
+/// Set the joint maximum force, usually in newtons.
+B3_API void b3MoverJoint_SetMaxVelocityForce( b3JointId jointId, float maxForce );
+
+/// Get the joint maximum force, usually in newtons.
+B3_API float b3MoverJoint_GetMaxVelocityForce( b3JointId jointId );
+
+/**@}*/ // mover_joint
+
+/**
+ * @defgroup pogo_joint Pogo Joint
+ * @brief Functions for the pogo joint. Used for dynamic character movers.
+ *
+ * @warning Experimental. The pogo joint may change in future versions.
+ * @{
+ */
+
+/// Create a pogo joint
+/// @see b3PogoJointDef for details
+B3_API b3JointId b3CreatePogoJoint( b3WorldId worldId, const b3PogoJointDef* def );
+
+/// Set the rest length of a pogo joint
+/// @param jointId The id for a pogo joint
+/// @param length The new pogo joint length
+B3_API void b3PogoJoint_SetRestLength( b3JointId jointId, float length );
+
+/// Get the rest length of a pogo joint
+B3_API float b3PogoJoint_GetRestLength( b3JointId jointId );
+
+/// Set the spring stiffness in Hertz
+B3_API void b3PogoJoint_SetSpringHertz( b3JointId jointId, float hertz );
+
+/// Get the spring Hertz
+B3_API float b3PogoJoint_GetSpringHertz( b3JointId jointId );
+
+/// Set the spring damping ratio, non-dimensional
+B3_API void b3PogoJoint_SetSpringDampingRatio( b3JointId jointId, float dampingRatio );
+
+/// Get the spring damping ratio
+B3_API float b3PogoJoint_GetSpringDampingRatio( b3JointId jointId );
+
+/// Set the max tension force, usually in Newtons.
+B3_API void b3PogoJoint_SetMaxTensionForce( b3JointId jointId, float force );
+
+/// Get the max tension force, usually in Newtons.
+B3_API float b3PogoJoint_GetMaxTensionForce( b3JointId jointId );
+
+/// Set the max compression force, usually in Newtons.
+B3_API void b3PogoJoint_SetMaxCompressionForce( b3JointId jointId, float force );
+
+/// Get the max compression force, usually in Newtons.
+B3_API float b3PogoJoint_GetMaxCompressionForce( b3JointId jointId );
+
+// Set the unit ground normal.
+B3_API void b3PogoJoint_SetNormal( b3JointId jointId, b3Vec3 normal );
+
+// Get the unit ground normal.
+B3_API b3Vec3 b3PogoJoint_GetNormal( b3JointId jointId );
+
+/// Get the current length of the pogo.
+B3_API float b3PogoJoint_GetCurrentLength( b3JointId jointId );
+
+/// Get the internal pogo velocity.
+B3_API float b3PogoJoint_GetCurrentSpeed( b3JointId jointId );
+
+/// Get the internal pogo impulse.
+B3_API float b3PogoJoint_GetImpulse( b3JointId jointId );
+
+/**@}*/ // pogo_joint
+
+/**
  * @defgroup filter_joint Filter Joint
  * @brief Functions for the filter joint.
  *
- * The filter joint is used to disable collision between two bodies. As a side effect of being a joint, it also
- * keeps the two bodies in the same simulation island.
+ * The filter joint is used to disable collision between two bodies. As a side effect of being a
+ * joint, it also keeps the two bodies in the same simulation island.
  * @{
  */
 
@@ -1377,8 +1542,8 @@ B3_API b3JointId b3CreateFilterJoint( b3WorldId worldId, const b3FilterJointDef*
  * @defgroup prismatic_joint Prismatic Joint
  * @brief A prismatic joint allows for translation along a single axis with no rotation.
  *
- * The prismatic joint is useful for things like pistons and moving platforms, where you want a body to translate
- * along an axis and have no rotation. Also called a *slider* joint.
+ * The prismatic joint is useful for things like pistons and moving platforms, where you want a body
+ * to translate along an axis and have no rotation. Also called a *slider* joint.
  * @{
  */
 
@@ -1393,8 +1558,8 @@ B3_API void b3PrismaticJoint_EnableSpring( b3JointId jointId, bool enableSpring 
 B3_API bool b3PrismaticJoint_IsSpringEnabled( b3JointId jointId );
 
 /// Set the prismatic joint stiffness in Hertz.
-/// This should usually be less than a quarter of the simulation rate. For example, if the simulation
-/// runs at 60Hz then the joint stiffness should be 15Hz or less.
+/// This should usually be less than a quarter of the simulation rate. For example, if the
+/// simulation runs at 60Hz then the joint stiffness should be 15Hz or less.
 B3_API void b3PrismaticJoint_SetSpringHertz( b3JointId jointId, float hertz );
 
 /// Get the prismatic joint stiffness in Hertz
@@ -1458,7 +1623,8 @@ B3_API float b3PrismaticJoint_GetSpeed( b3JointId jointId );
 
 /**
  * @defgroup revolute_joint Revolute Joint
- * @brief A revolute joint allows for relative rotation about a single axis with no relative translation.
+ * @brief A revolute joint allows for relative rotation about a single axis with no relative
+ * translation.
  *
  * Also called a *hinge* or *pin* joint.
  * @{
@@ -1536,7 +1702,8 @@ B3_API float b3RevoluteJoint_GetMaxMotorTorque( b3JointId jointId );
 
 /**
  * @defgroup spherical_joint Spherical Joint
- * @brief A spherical joint allows for relative rotation in the 3D space with no relative translation.
+ * @brief A spherical joint allows for relative rotation in the 3D space with no relative
+ * translation.
  *
  * Also called a *ball-in-socket* or *point-to-point* joint.
  * @{
@@ -1609,9 +1776,7 @@ B3_API void b3SphericalJoint_EnableMotor( b3JointId jointId, bool enableMotor );
 /// Is the spherical joint motor enabled?
 B3_API bool b3SphericalJoint_IsMotorEnabled( b3JointId jointId );
 
-/// Set the spherical joint motor velocity in radians per second. This is the relative angular
-/// velocity between the two bodies in world space.
-/// motorVelocity = angularVelocityB - angularVelocityA
+/// Set the spherical joint motor velocity in radians per second.
 B3_API void b3SphericalJoint_SetMotorVelocity( b3JointId jointId, b3Vec3 motorVelocity );
 
 /// Get the spherical joint motor velocity in radians per second
@@ -1630,12 +1795,14 @@ B3_API float b3SphericalJoint_GetMaxMotorTorque( b3JointId jointId );
 
 /**
  * @defgroup weld_joint Weld Joint
- * @brief A weld joint fully constrains the relative transform between two bodies while allowing for springiness
+ * @brief A weld joint fully constrains the relative transform between two bodies while allowing for
+ * springiness
  *
- * A weld joint constrains the relative rotation and translation between two bodies. Both rotation and translation
- * can have damped springs.
+ * A weld joint constrains the relative rotation and translation between two bodies. Both rotation
+ * and translation can have damped springs.
  *
- * @note The accuracy of weld joint is limited by the accuracy of the solver. Long chains of weld joints may flex.
+ * @note The accuracy of weld joint is limited by the accuracy of the solver. Long chains of weld
+ * joints may flex.
  * @{
  */
 

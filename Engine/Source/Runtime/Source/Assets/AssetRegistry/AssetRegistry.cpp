@@ -229,9 +229,28 @@ namespace Lumina
 
         Jobs::Spawn(Jobs::EJobPriority::Background, [](FAssetRegistry* Self, TVector<FDiscoveredPackage> Discovered) -> Jobs::TTask<void>
         {
-            for (const FDiscoveredPackage& Package : Discovered)
+            // Built once up front, so every stamp check below takes the shared lock.
+            Self->EnsurePathIndex();
+
+            // A changed file is read, hashed and parsed on its own, so a cold project spreads that across every worker.
+            constexpr uint32 kPackagesPerTask = 64;
+            TVector<FAssetDataPtr> Extracted(Discovered.Num());
+            Jobs::ParallelFor((uint32)Discovered.Num(), [Self, &Discovered, &Extracted](uint32 Index)
             {
-                Self->ProcessPackage(FStringView(*Package.Path, Package.Path.Len()), Package.MTimeNs, Package.FileSize);
+                const FDiscoveredPackage& Package = Discovered[Index];
+                Extracted[Index] = Self->ExtractPackage(FStringView(*Package.Path, Package.Path.Len()), Package.MTimeNs, Package.FileSize);
+            }, kPackagesPerTask);
+
+            // Inserted in walk order, so which of two files sharing a GUID wins does not depend on thread timing.
+            {
+                FWriteScopeLock Lock(Self->AssetsMutex);
+                for (FAssetDataPtr& Data : Extracted)
+                {
+                    if (Data != nullptr)
+                    {
+                        Self->InsertAssetLocked(Move(Data));
+                    }
+                }
             }
 
             Self->OnInitialDiscoveryCompleted();
@@ -300,9 +319,22 @@ namespace Lumina
         }
 
         // A classless entry was cached before its header was read; the UI font resolver keys on the class.
+        const auto Matches = [&](const FAssetDataPtr& Data)
+        {
+            return Data != nullptr && !Data->AssetClass.IsNone() && Data->SourceMTimeNs == MTimeNs && Data->FileSize == FileSize;
+        };
+
+        // Discovery asks this for every file at once, and a built index answers under the shared lock.
+        {
+            FReadScopeLock Lock(AssetsMutex);
+            if (bPathIndexValid)
+            {
+                return Matches(FindSourceLocked(Path));
+            }
+        }
+
         FWriteScopeLock Lock(AssetsMutex);
-        const FAssetDataPtr Data = FindSourceLocked(Path);
-        return Data != nullptr && !Data->AssetClass.IsNone() && Data->SourceMTimeNs == MTimeNs && Data->FileSize == FileSize;
+        return Matches(FindSourceLocked(Path));
     }
 
     bool FAssetRegistry::RefreshStampIfContentUnchanged(FStringView Path, uint64 ContentHash, int64 MTimeNs, uint64 FileSize)
@@ -1089,11 +1121,20 @@ namespace Lumina
 
     void FAssetRegistry::ProcessPackage(FStringView Path, int64 MTimeNs, uint64 FileSize)
     {
+        if (FAssetDataPtr AssetData = ExtractPackage(Path, MTimeNs, FileSize))
+        {
+            FWriteScopeLock Lock(AssetsMutex);
+            InsertAssetLocked(Move(AssetData));
+        }
+    }
+
+    FAssetDataPtr FAssetRegistry::ExtractPackage(FStringView Path, int64 MTimeNs, uint64 FileSize)
+    {
         LUMINA_MEMORY_SCOPE("Asset Registry");
         if (MatchesCachedStamp(Path, MTimeNs, FileSize))
         {
             DiscoveryUnchanged.fetch_add(1, std::memory_order_relaxed);
-            return;
+            return nullptr;
         }
 
         // The hash covers raw compressed bytes, so a source or compression change invalidates it.
@@ -1102,23 +1143,23 @@ namespace Lumina
         if (Hash != 0 && RefreshStampIfContentUnchanged(Path, Hash, MTimeNs, FileSize))
         {
             DiscoveryRehashed.fetch_add(1, std::memory_order_relaxed);
-            return;
+            return nullptr;
         }
         DiscoveryExtracted.fetch_add(1, std::memory_order_relaxed);
 
         if (RawBytes.IsEmpty())
         {
             LOG_ERROR("AssetRegistry: failed to read {}", Path);
-            return;
+            return nullptr;
         }
 
-        // Decompressed into Bytes, which holds the header and import and export tables.
+        // Decoded from the bytes the hash already read, which holds the header and import and export tables.
         TVector<uint8> Bytes;
         FPackageHeader Header;
-        if (!CPackage::ReadPackageContainer(Path, Bytes, Header))
+        if (!CPackage::DecodePackageFile(Move(RawBytes), Path, Bytes, Header))
         {
             LOG_ERROR("AssetRegistry: refusing to register {}", Path);
-            return;
+            return nullptr;
         }
 
         FName PackageFileName = VFS::FileName(Path, true);
@@ -1131,7 +1172,7 @@ namespace Lumina
         if (!CPackage::ReadNameTable(Reader, Header, Names))
         {
             LOG_ERROR("AssetRegistry: {} has an unreadable name table", Path);
-            return;
+            return nullptr;
         }
         Reader.SetNameTable(&Names);
 
@@ -1148,7 +1189,7 @@ namespace Lumina
         if (Export == Exports.end())
         {
             LOG_ERROR("AssetRegistry: {} contains no export matching its file name; refusing to register", Path);
-            return;
+            return nullptr;
         }
 
         // Hard for a direct CObject reference and Soft for an FSoftObjectPath, as the saver recorded.
@@ -1185,9 +1226,7 @@ namespace Lumina
         AssetData->Dependencies   = Move(Dependencies);
         AssetData->Bundles        = Move(Bundles);
         AssetData->OwningPlugin   = ExtractOwningPlugin(Path);
-
-        FWriteScopeLock Lock(AssetsMutex);
-        InsertAssetLocked(Move(AssetData));
+        return AssetData;
     }
 
     void FAssetRegistry::ClearAssets()

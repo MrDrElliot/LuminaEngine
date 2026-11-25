@@ -116,6 +116,9 @@ namespace Lumina
 
         // Binds the members, runs Configure, and gathers what the members declare into the access set.
         void ConfigureSystem();
+
+        // True when a member has access to add, so the world reconfigures this system between update stages.
+        bool NeedsRedeclare() const;
         void UnbindParams();
 
         bool HasStarted() const { return bStarted; }

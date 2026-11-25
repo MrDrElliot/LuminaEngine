@@ -5,6 +5,7 @@
 #include "Containers/StringFormat.h"
 #include "Core/Math/Math.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
+#include "Tools/UI/ImGui/ImGuiX.h"
 #include "UI/Tools/NodeGraph/GraphActionMenu.h"
 
 #include <cctype>
@@ -13,8 +14,12 @@ namespace Lumina
 {
     namespace
     {
+        // Unscaled, so they follow the editor's UI scale like the fonts do.
         constexpr float kPickerWidth      = 380.0f;
         constexpr float kPickerListHeight = 380.0f;
+
+        float PickerWidth()      { return kPickerWidth * ImGuiX::GetUIScale(); }
+        float PickerListHeight() { return kPickerListHeight * ImGuiX::GetUIScale(); }
 
         // Up to this many items, every category starts open, since collapsing a short list only hides it.
         constexpr int32 kOpenAllBelowCount = 24;
@@ -107,7 +112,7 @@ namespace Lumina
         const ImVec2 ButtonMin = ImGui::GetItemRectMin();
         const ImVec2 ButtonMax = ImGui::GetItemRectMax();
         const ImGuiViewport* Viewport = ImGui::GetWindowViewport();
-        const float PopupHeight = kPickerListHeight + ImGui::GetFrameHeightWithSpacing() * 3.0f;
+        const float PopupHeight = PickerListHeight() + ImGui::GetFrameHeightWithSpacing() * 3.0f;
         const bool bOpenUpward = ButtonMax.y + PopupHeight > Viewport->WorkPos.y + Viewport->WorkSize.y;
         ImGui::SetNextWindowPos(bOpenUpward ? ButtonMin : ImVec2(ButtonMin.x, ButtonMax.y), ImGuiCond_Appearing, ImVec2(0.0f, bOpenUpward ? 1.0f : 0.0f));
 
@@ -131,12 +136,17 @@ namespace Lumina
         if (bAppearing)
         {
             Query[0] = '\0';
+        }
+        if (bAppearing || bRegatherPending)
+        {
+            bRegatherPending = false;
             Rebuild(Gather);
             Rescore();
         }
 
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
-        ImGui::SetNextItemWidth(kPickerWidth);
+        const float UIScale = ImGuiX::GetUIScale();
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f * UIScale, 6.0f * UIScale));
+        ImGui::SetNextItemWidth(PickerWidth());
         if (bAppearing)
         {
             ImGui::SetKeyboardFocusHere();
@@ -173,7 +183,7 @@ namespace Lumina
         DrawingOrder.Reset();
 
         ImGui::Spacing();
-        if (ImGui::BeginChild("##PickerList", ImVec2(kPickerWidth, kPickerListHeight)))
+        if (ImGui::BeginChild("##PickerList", ImVec2(PickerWidth(), PickerListHeight())))
         {
             // Searching expands categories under its own ids, so the user's browsing layout survives clearing the query.
             ImGui::PushID(IsSearching() ? 1 : 0);
@@ -208,7 +218,7 @@ namespace Lumina
         if (SelectedItem >= 0)
         {
             constexpr const char* EnterHint = "Enter to pick";
-            ImGui::SameLine(kPickerWidth - ImGui::CalcTextSize(EnterHint).x);
+            ImGui::SameLine(PickerWidth() - ImGui::CalcTextSize(EnterHint).x);
             ImGui::TextDisabled("%s", EnterHint);
         }
 

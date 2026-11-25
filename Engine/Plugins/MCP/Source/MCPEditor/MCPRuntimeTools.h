@@ -403,9 +403,16 @@ namespace Lumina
         PROPERTY()
         float Ms = 0.0f;
 
+        // Time not covered by a child pass, so a large value on a parent marks work with no finer marker.
+        PROPERTY()
+        float SelfMs = 0.0f;
+
         // Nesting depth, so a parent's time includes its children's.
         PROPERTY()
         int32 Depth = 0;
+
+        PROPERTY()
+        FString Parent;
 
         // The hardware queue the pass ran on, so async compute work reads apart from graphics.
         PROPERTY()

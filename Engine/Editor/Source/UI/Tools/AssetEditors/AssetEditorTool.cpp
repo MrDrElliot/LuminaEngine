@@ -68,6 +68,15 @@ namespace Lumina
         return Asset.IsValid() && Asset->GetPackage() != nullptr && Asset->GetPackage()->IsDirty();
     }
 
+    void FAssetEditorTool::DiscardUnsavedEdits()
+    {
+        // A clean package lets go of the exports it kept for the save, so once this tab releases the asset it reloads from the file.
+        if (Asset.IsValid() && Asset->GetPackage() != nullptr)
+        {
+            Asset->GetPackage()->ClearDirty();
+        }
+    }
+
     void FAssetEditorTool::NotifyAssetDataChanged()
     {
         if (!Asset.IsValid())

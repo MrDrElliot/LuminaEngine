@@ -31,6 +31,9 @@ namespace Lumina
         // The picker inside a popup or menu the caller already has open, gathering each time that window appears.
         const FPickerItem* DrawContents(const FGatherItems& Gather);
 
+        // Gathers again on the next draw while keeping the query, for a caller whose item set changed while open.
+        void Invalidate() { bRegatherPending = true; }
+
         // Shown in the empty search box.
         FString SearchHint = "Search...";
 
@@ -73,5 +76,6 @@ namespace Lumina
         int32                    SelectedItem = -1;
         bool                     bOpenCategoriesByDefault = false;
         bool                     bScrollToSelected = false;
+        bool                     bRegatherPending = false;
     };
 }

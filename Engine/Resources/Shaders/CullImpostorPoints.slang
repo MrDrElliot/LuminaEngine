@@ -95,6 +95,24 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         return;
     }
 
+#ifdef IMPOSTOR_SHADOW_CULL
+    // The block's test is the same for each of its points, so a block no fresh page touches leaves before loading any of them.
+    const float3 BlockCenter = (Block.Min + Block.Max) * 0.5;
+    const float  BlockRadius = length(Block.Max - BlockCenter);
+    uint BlockLevels = 0u;
+    for (uint Level = Pass().FirstLevel; Level <= Pass().LastLevel; ++Level)
+    {
+        if (!IsVirtualShadowPageCulled(Level, VSM_MASK_STATIC, BlockCenter, BlockRadius))
+        {
+            BlockLevels |= 1u << (Level - Pass().FirstLevel);
+        }
+    }
+    if (BlockLevels == 0u)
+    {
+        return;
+    }
+#endif
+
     const FImpostorPoint Point = Pass().Points.GetAligned(Index);
     if (!Pass().Types.Contains(Point.Type))
     {
@@ -118,11 +136,9 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     }
 
     // A point is drawn only where its static page is fresh or was cleared, so a settled forest lists almost nothing.
-    const float3 BlockCenter = (Block.Min + Block.Max) * 0.5;
-    const float  BlockRadius = length(Block.Max - BlockCenter);
     for (uint Level = Pass().FirstLevel; Level <= Pass().LastLevel; ++Level)
     {
-        if (IsVirtualShadowPageCulled(Level, VSM_MASK_STATIC, BlockCenter, BlockRadius)
+        if (((BlockLevels >> (Level - Pass().FirstLevel)) & 1u) == 0u
             || IsVirtualShadowPageCulled(Level, VSM_MASK_STATIC, Sphere.Center, Sphere.Radius))
         {
             continue;

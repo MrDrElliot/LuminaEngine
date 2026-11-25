@@ -1458,12 +1458,20 @@ namespace Lumina
         Key.ColorTargets.Add({ Output.Desc.Format, {} });
         RHI::CmdSetPipeline(CL, GetOrCreatePipeline(Key));
 
+        // Composed here once rather than three matrices deep on every pixel, in the same column-vector order the shader multiplies.
+        const FCameraData& Camera = GetCurrentViewGlobals().CameraData;
         struct FData
         {
-            uint32 DepthIndex;
-        } PC;
+            FMatrix4 ClipToPrevClip;
+            FMatrix4 ViewToPrevClip;
+            uint32   DepthIndex;
+            uint32   _Pad[3];
+        } PC = {};
+        static_assert(sizeof(FData) == 144, "FData must match Velocity.slang.");
 
-        PC.DepthIndex = (uint32)Depth.GetResourceID();
+        PC.ViewToPrevClip = Camera.PrevViewProjection * Camera.InverseView;
+        PC.ClipToPrevClip = PC.ViewToPrevClip * Camera.InverseProjection;
+        PC.DepthIndex     = (uint32)Depth.GetResourceID();
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);

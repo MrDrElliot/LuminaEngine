@@ -139,4 +139,11 @@ namespace Lumina
 
         return NewPin;
     }
+
+    CEdNodeGraphPin* CEdGraphNode::CreateExecutionPin(const FString& Name, ENodePinDirection Direction)
+    {
+        CEdNodeGraphPin* Pin = CreatePin(CEdNodeGraphPin::StaticClass(), Name, Direction);
+        Pin->bExecutionPin = true;
+        return Pin;
+    }
 }

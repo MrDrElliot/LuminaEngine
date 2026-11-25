@@ -41,7 +41,6 @@ typedef B3_WIDE( b3Vec3 ) b3Vec3W;
 #define b3MulAddW B3_WIDE( b3MulAdd )
 #define b3MinW B3_WIDE( b3Min )
 #define b3MaxW B3_WIDE( b3Max )
-#define b3SymClampW B3_WIDE( b3SymClamp )
 #define b3AndW B3_WIDE( b3And )
 #define b3OrW B3_WIDE( b3Or )
 #define b3AndNotW B3_WIDE( b3AndNot )

@@ -15,6 +15,7 @@
 //   0x40-0x4F  shape create/destroy
 //   0x50-0x6F  shape mutators
 //   0x80       step
+//   0x81-0x8F  mover and pogo joints
 //   0x90-0xE7  joints (create, generic, per-type)
 //   0xE8-0xEF  spatial queries
 //   0xF0-0xFF  markers
@@ -67,7 +68,7 @@ B3_REC_OP( 0x32, BodyEnableSleep, RET_NONE, ARG( BODYID, body ) ARG( BOOL, flag 
 B3_REC_OP( 0x33, BodySetSleepThreshold, RET_NONE, ARG( BODYID, body ) ARG( F32, threshold ) )
 B3_REC_OP( 0x34, BodyDisable, RET_NONE, ARG( BODYID, body ) )
 B3_REC_OP( 0x35, BodyEnable, RET_NONE, ARG( BODYID, body ) )
-B3_REC_OP( 0x36, BodySetMotionLocks, RET_NONE, ARG( BODYID, body ) ARG( LOCKS, locks ) )
+B3_REC_OP( 0x36, BodySetFixedRotation, RET_NONE, ARG( BODYID, body ) ARG( BOOL, flag ) )
 B3_REC_OP( 0x37, BodySetBullet, RET_NONE, ARG( BODYID, body ) ARG( BOOL, flag ) )
 B3_REC_OP( 0x38, BodyEnableContactRecycling, RET_NONE, ARG( BODYID, body ) ARG( BOOL, flag ) )
 B3_REC_OP( 0x39, BodyEnableHitEvents, RET_NONE, ARG( BODYID, body ) ARG( BOOL, flag ) )
@@ -210,6 +211,24 @@ B3_REC_OP( 0xE4, WheelJointSetMaxSteeringTorque, RET_NONE, ARG( JOINTID, joint )
 B3_REC_OP( 0xE5, WheelJointEnableSteeringLimit, RET_NONE, ARG( JOINTID, joint ) ARG( BOOL, flag ) )
 B3_REC_OP( 0xE6, WheelJointSetSteeringLimits, RET_NONE, ARG( JOINTID, joint ) ARG( F32, lower ) ARG( F32, upper ) )
 B3_REC_OP( 0xE7, WheelJointSetTargetSteeringAngle, RET_NONE, ARG( JOINTID, joint ) ARG( F32, radians ) )
+
+// Mover joint
+B3_REC_OP( 0x81, CreateMoverJoint, RET_JOINTID, ARG( WORLDID, world ) ARG( MOVERJOINTDEF, def ) )
+B3_REC_OP( 0x82, MoverJointSetLinearVelocity, RET_NONE, ARG( JOINTID, joint ) ARG( VEC3, velocity ) )
+B3_REC_OP( 0x83, MoverJointSetMaxVelocityForce, RET_NONE, ARG( JOINTID, joint ) ARG( F32, maxForce ) )
+
+// Pogo joint
+B3_REC_OP( 0x84, CreatePogoJoint, RET_JOINTID, ARG( WORLDID, world ) ARG( POGOJOINTDEF, def ) )
+B3_REC_OP( 0x85, PogoJointSetRestLength, RET_NONE, ARG( JOINTID, joint ) ARG( F32, length ) )
+B3_REC_OP( 0x86, PogoJointSetSpringHertz, RET_NONE, ARG( JOINTID, joint ) ARG( F32, hertz ) )
+B3_REC_OP( 0x87, PogoJointSetSpringDampingRatio, RET_NONE, ARG( JOINTID, joint ) ARG( F32, dampingRatio ) )
+B3_REC_OP( 0x88, PogoJointSetMaxTensionForce, RET_NONE, ARG( JOINTID, joint ) ARG( F32, force ) )
+B3_REC_OP( 0x89, PogoJointSetMaxCompressionForce, RET_NONE, ARG( JOINTID, joint ) ARG( F32, force ) )
+B3_REC_OP( 0x8A, PogoJointSetNormal, RET_NONE, ARG( JOINTID, joint ) ARG( VEC3, normal ) )
+
+B3_REC_OP( 0x8B, CreateMotionLockJoint, RET_JOINTID, ARG( WORLDID, world ) ARG( MOTIONLOCKJOINTDEF, def ) )
+B3_REC_OP( 0x8C, MotionLockJointEnableLinearLock, RET_NONE, ARG( JOINTID, joint ) ARG( I32, axis ) ARG( BOOL, flag ) )
+B3_REC_OP( 0x8D, MotionLockJointEnableAngularLock, RET_NONE, ARG( JOINTID, joint ) ARG( BOOL, flag ) )
 
 // Spatial queries. Inputs flow through the manifest (reader side). The hit tail and result are
 // hand-written in recording.c / recording_replay.c since they are variable length.

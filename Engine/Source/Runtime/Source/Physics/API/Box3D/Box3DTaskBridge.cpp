@@ -57,7 +57,7 @@ namespace Lumina::Physics
         co_return;
     }
 
-    void* FBox3DTaskBridge::EnqueueTask(b3TaskCallback* Task, void* TaskContext, void* UserContext, const char*)
+    void* FBox3DTaskBridge::EnqueueTask(b3TaskCallback* Task, void* TaskContext, void* UserContext, b3TaskType)
     {
         FBox3DTaskBridge* Bridge = static_cast<FBox3DTaskBridge*>(UserContext);
 

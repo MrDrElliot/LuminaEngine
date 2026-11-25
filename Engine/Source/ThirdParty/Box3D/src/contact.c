@@ -19,7 +19,7 @@
 // The order must reproduce from run to run. This is necessary because the Gauss-Seidel constraint solver is order dependent.
 //
 // Creation:
-// - Contacts are created using results from b3UpdateBroadPhasePairs
+// - Contacts are created using results from the broad-phase pair update
 // - These results are ordered according to the order of the broad-phase move array
 // - The move array is ordered according to the shape creation order using a bitset.
 // - The island/shape/body order is determined by creation order
@@ -183,7 +183,7 @@ void b3CreateContact( b3World* world, b3Shape* shapeA, b3Shape* shapeB, int chil
 		setIndex = b3_disabledSet;
 	}
 
-	b3SolverSet* set = b3Array_Get( world->solverSets, setIndex );
+	b3SolverSet* set = b3GetFixedSolverSet( world, setIndex );
 
 	// Create contact key and contact
 	int contactId = b3AllocId( &world->contactIdPool );
@@ -453,7 +453,7 @@ void b3DestroyContact( b3World* world, b3Contact* contact, bool wakeBodies )
 	{
 		// contact is non-touching or is sleeping or is a sensor
 		B3_ASSERT( contact->setIndex != b3_awakeSet || ( contact->flags & b3_contactTouchingFlag ) == 0 );
-		b3SolverSet* set = b3Array_Get( world->solverSets, contact->setIndex );
+		b3SolverSet* set = b3GetSolverSet( world, contact->setIndex );
 
 		int localIndex = contact->localIndex;
 		int movedIndex = b3Array_RemoveSwap( set->contactIndices, localIndex );
@@ -581,6 +581,8 @@ static bool b3ComputeConvexManifold( b3World* world, int workerIndex, b3Contact*
 		target->separation = source->separation;
 		target->featureId = b3MakeFeatureId( source->pair );
 		target->triangleIndex = B3_NULL_INDEX;
+		target->triangleFeature = b3_featureNone;
+		target->meshFlags = 0;
 		target->normalVelocity = 0.0f;
 	}
 

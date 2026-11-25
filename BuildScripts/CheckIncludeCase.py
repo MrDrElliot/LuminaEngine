@@ -30,7 +30,7 @@ SEARCH_ROOTS = [
 
 # Files whose includes we check (first-party only; vendored code is not ours to correct).
 SCAN_DIRS = ["Source/Runtime", "Editor", "Applications", "Plugins"]
-SKIP = ("ThirdParty", "imgui-node-editor", "/generated/", "\\Generated\\")
+SKIP = ("ThirdParty", "/generated/", "\\Generated\\")
 
 # Both quote forms. Angle-bracket includes are just as case-sensitive on Linux, and the engine
 # uses them for the vendored trees such as <imgui.h>.

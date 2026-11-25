@@ -269,8 +269,11 @@ namespace Lumina
             const bool bFinal = (PassIndex + 1u) == NumPasses;
             const bool bEven  = (PassIndex & 1u) == 0u;
 
-            const FSceneImage& Src = bEven ? TermA : TermB;
-            const FSceneImage& Dst = (bFinal && !P.bHalfTrace) ? Output : (bEven ? TermB : TermA);
+            // The last pass lands in the output, unless a half resolution trace still has its upsample to go.
+            const bool         bWritesOutput = bFinal && !P.bHalfTrace;
+            const FSceneImage& Src           = bEven ? TermA : TermB;
+            const FSceneImage& PingPong      = bEven ? TermB : TermA;
+            const FSceneImage& Dst           = bWritesOutput ? Output : PingPong;
 
             const int32 SrcSlot = Src.GetResourceID();
             const int32 DstSlot = Dst.GetMipUAVIndex(0);

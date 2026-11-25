@@ -1745,7 +1745,7 @@ namespace Lumina
             }
 
             constexpr uint32 MinSlotsToSplit = 4096;
-            Jobs::ParallelForOrSerial(Num, MinSlotsToSplit, [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelForOrSerial(Num, MinSlotsToSplit, [&](const Jobs::FRange& Range)
             {
                 TVector<ECS::FEntity>& Bucket = Sources.PollBuckets[Range.Thread];
                 const ECS::FEntity* Dense = DenseSlots.GetData();

@@ -787,6 +787,29 @@ namespace Lumina
         }
     }
 
+    bool CAnimation::ScalesBones() const
+    {
+        constexpr float kUnitScaleTolerance = 1e-4f;
+        if (AnimationResource == nullptr)
+        {
+            return false;
+        }
+        for (const FCompressedAnimBone& Bone : AnimationResource->Compressed.Bones)
+        {
+            const FCompressedAnimTrack& Scale = Bone.Scale;
+            if (Scale.IsAnimated())
+            {
+                return true;
+            }
+            if (Scale.Format == EAnimTrackFormat::Constant
+                && (Math::Abs(Scale.Constant.x - 1.0f) > kUnitScaleTolerance || Math::Abs(Scale.Constant.y - 1.0f) > kUnitScaleTolerance || Math::Abs(Scale.Constant.z - 1.0f) > kUnitScaleTolerance))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void CAnimation::SampleBoneLocal(float Time, FSkeletonResource* InSkeleton, int32 BoneIndex,
                                      FVector3& OutT, FQuat& OutR, FVector3& OutS) const
     {

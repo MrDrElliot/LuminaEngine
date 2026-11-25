@@ -59,7 +59,7 @@ namespace Lumina
     {
         if (Body.IsBound() && Num > 0)
         {
-            Jobs::ParallelFor(Num, [Body](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor(Num, [Body](const Jobs::FRange& Range)
             {
                 Scripting::InvokeScriptCallbackRepeating(Body, static_cast<uint64>(Range.Start) | (static_cast<uint64>(Range.End) << 32));
             }, MinRange, ToBand(Priority));

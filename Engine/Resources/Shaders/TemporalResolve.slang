@@ -94,14 +94,18 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
     {
         const float2 TexelSize = 1.0 / float2(GetDisplaySize());
 
-        float3 BoundsMin;
-        float3 BoundsMax;
-        NeighborhoodBounds(Data.Current, Input.UV, TexelSize, Data.ClampGamma, BoundsMin, BoundsMax);
-
         // Each parity clamps against its own jittered neighborhood, so clamping a still pixel makes the frames disagree.
         const float MotionPixels = length(Velocity / TexelSize);
         const float ClampAmount  = saturate((MotionPixels - kStillMotionPixels) / kFullClampMotionPixels);
-        History = lerp(History, clamp(History, BoundsMin, BoundsMax), ClampAmount);
+
+        // A still pixel blends none of the clamp, so it skips the nine taps that would build it.
+        if (ClampAmount > 0.0)
+        {
+            float3 BoundsMin;
+            float3 BoundsMax;
+            NeighborhoodBounds(Data.Current, Input.UV, TexelSize, Data.ClampGamma, BoundsMin, BoundsMax);
+            History = lerp(History, clamp(History, BoundsMin, BoundsMax), ClampAmount);
+        }
     }
 
     return float4(lerp(Current.rgb, History, Data.HistoryWeight), Current.a);

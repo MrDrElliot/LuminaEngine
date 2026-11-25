@@ -10,10 +10,15 @@ FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instanc
 {
     FProxyVertexOutput Out;
     Out.VisID      = VISBUFFER_PROXY_BIT | (InstanceIndex + 1u);
-    Out.Entry      = 0u;
-    Out.bAlphaTest = 0u;
-    Out.WorldPos   = float3(0.0, 0.0, 0.0);
-    Out.Position   = float4(0.0, 0.0, 0.0, 0.0);
+    Out.HeaderSlot  = 0u;
+    Out.bAlphaTest  = 0u;
+    Out.ViewFrames  = uint3(0u, 0u, 0u);
+    Out.ViewWeights = float3(0.0, 0.0, 0.0);
+    Out.Mip         = 0.0;
+    Out.WorldPos    = float3(0.0, 0.0, 0.0);
+    Out.LocalOrigin = float3(0.0, 0.0, 0.0);
+    Out.LocalDir    = float3(0.0, 0.0, 1.0);
+    Out.Position    = float4(0.0, 0.0, 0.0, 0.0);
 
     if (!ProxyList().Contains(InstanceIndex))
     {
@@ -66,7 +71,7 @@ FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instanc
             // An impostor's coarsest mip holds a few texels per view, which the view's center averages.
             const FImpostorRay   Ray   = MakeImpostorRay(Header, Model, Center);
             const FImpostorViews Views = SelectImpostorViews(Ray.ToEye, Header.ImpostorFrames);
-            Coverage *= SampleImpostor(Header, Views, Ray.Origin, Ray.Dir, log2(float(Header.ImpostorFrameSize))).Coverage;
+            Coverage *= GatherImpostorTaps(Header, Views, Ray.Origin, Ray.Dir, log2(float(Header.ImpostorFrameSize))).Coverage;
         }
         if (float(PCGHash(Entry) >> 8u) / 16777216.0 < Coverage)
         {
@@ -75,9 +80,22 @@ FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instanc
         return Out;
     }
 
-    Out.Entry      = Entry;
+    Out.HeaderSlot = P.Static.MeshletHeaderSlot;
     Out.bAlphaTest = bImpostor ? 1u : 0u;
     Out.WorldPos   = Center + WorldRight * C.x + WorldUp * C.y;
     Out.Position   = ClipCenter + ClipRight * C.x + ClipUp * C.y;
+
+    if (bImpostor)
+    {
+        // Constant across the quad, so it runs for four corners here rather than for every pixel it covers.
+        const float4x4 WorldToLocal = MakeInstanceWorldToLocal(Model);
+        const bool     bOrtho       = IsCameraOrthographic();
+        Out.LocalOrigin = mul(WorldToLocal, float4(Out.WorldPos, 1.0)).xyz;
+        Out.LocalDir    = mul((float3x3)WorldToLocal, bOrtho ? GetCameraForward() : Out.WorldPos - GetCameraPosition());
+
+        const float3 ToEye = bOrtho ? -normalize(Out.LocalDir) : normalize(mul(WorldToLocal, float4(GetCameraPosition(), 1.0)).xyz - Header.ImpostorCenter);
+        PackImpostorViews(SelectImpostorViews(ToEye, Header.ImpostorFrames), Out.ViewFrames, Out.ViewWeights);
+        Out.Mip = ImpostorMipLevel(Header, Center, Header.ImpostorRadius * MatrixMaxScale(P.Model));
+    }
     return Out;
 }

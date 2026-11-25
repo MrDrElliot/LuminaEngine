@@ -13,6 +13,7 @@
 #include "UI/Tools/AssetEditors/Animation/AnimPreview.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 #include "UI/Tools/NodeGraph/Animation/AnimGraphDebugView.h"
+#include "UI/Widgets/CategorizedPicker.h"
 
 namespace Lumina
 {
@@ -26,8 +27,10 @@ namespace Lumina
     class CEdGraphNode;
     class CEdNodeGraph;
     class CEdNodeGraphPin;
+    class CStruct;
     class CWorld;
     struct FAnimGraphVMState;
+    struct SAnimGraphInput;
 
     class FAnimationGraphEditorTool : public FAssetEditorTool
     {
@@ -88,10 +91,19 @@ namespace Lumina
         void DrawTransitionBlend(CAnimStateTransition* Transition);
         void DrawParametersWindow();
         void DrawParameters(CAnimationGraph* Graph);
+        void DrawInputs(CAnimationGraph* Graph, CWorld* ValuesWorld, ECS::FEntity ValuesEntity, bool bPreview);
+        void DrawInput(CAnimationGraph* Graph, int32 Index, CWorld* ValuesWorld, ECS::FEntity ValuesEntity, bool bPreview, int32& OutRemove);
+        void DrawGraphParameters(CAnimationGraph* Graph);
+        void AddInput(CAnimationGraph* Graph, CStruct& Component);
+        void RemoveInput(CAnimationGraph* Graph, int32 Index);
+        void RenameInput(CAnimationGraph* Graph, int32 Index, FName NewName);
+        void DrawInputValues(CAnimationGraph* Graph, int32 Index, CStruct& Struct, CWorld* ValuesWorld, ECS::FEntity ValuesEntity, bool bPreview);
+        void DrawInputReads(const CAnimationGraph& Graph, int32 Index, uint8* Data, bool bPreview);
         void DrawLiveCurveValues(CAnimationGraph* Graph);
         void DrawClipBrowserWindow();
         void DrawTaskGraphWindow();
         void DrawDebugTargetCombo();
+        void DrawCrowdStatus(const CAnimationGraph& Graph);
 
         NODISCARD bool ResolveDebugTarget(CWorld*& OutWorld, ECS::FEntity& OutEntity) const;
 
@@ -127,6 +139,12 @@ namespace Lumina
         FAnimStateMachineEditContext                                    StateMachineCtx;
         THashMap<CAnimStateTransition*, TUniquePtr<FPropertyTable>>     TransitionTables;
         TUniquePtr<FPropertyTable>                                      ParameterTable;
+
+        // The Parameters panel's input rows, their live value tables keyed by input name, and the rename in progress.
+        FCategorizedPicker                                              InputPicker;
+        THashMap<FName, TUniquePtr<FPropertyTable>>                     InputTables;
+        int32                                                           RenamingInput = Constants::kIndexNone;
+        char                                                            RenameBuffer[64] = {};
 
         bool                                                            bDebugEnabled = false;
 

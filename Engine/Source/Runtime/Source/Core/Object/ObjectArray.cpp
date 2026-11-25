@@ -3,6 +3,7 @@
 #include "ObjectBase.h"
 
 #include "Class.h"          // CField, for the shutdown type-object ordering below
+#include "Package/Package.h"
 #include "Containers/HashPrimitives.h"
 #include "Memory/Memory.h"
 #include "Memory/MemoryTracking.h"
@@ -492,7 +493,16 @@ namespace Lumina::Object::Internal
 
         // Read after the decrement, since the entry is what stayed valid, not the caller's pointer.
         CObjectBase* Object = Entry->GetObj();
-        return Object != nullptr && ConditionalDestroy(Object);
+        return Object != nullptr && DestroyReleased(Object);
+    }
+
+    bool FCObjectArray::DestroyReleased(CObjectBase* Object)
+    {
+        if (CPackage::RetainUnsavedExport(Object))
+        {
+            return false;
+        }
+        return ConditionalDestroy(Object);
     }
 
     void FCObjectArray::AddStrongRef(CObjectBase* Object)
@@ -530,7 +540,7 @@ namespace Lumina::Object::Internal
 
                 if (NewCount == 0)
                 {
-                    return ConditionalDestroy(Object);
+                    return DestroyReleased(Object);
                 }
             }
         }

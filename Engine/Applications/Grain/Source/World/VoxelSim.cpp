@@ -23,7 +23,7 @@ namespace Grain
         TVector<uint32> Grid;
         Grid.SetNum(kSimSide * kSimSide * kSimSide);
 
-        Jobs::ParallelFor(uint32(kSimSide), [&](const Jobs::FParallelRange& Range)
+        Jobs::ParallelFor(uint32(kSimSide), [&](const Jobs::FRange& Range)
         {
             for (uint32 Y = Range.Start; Y < Range.End; ++Y)
             {

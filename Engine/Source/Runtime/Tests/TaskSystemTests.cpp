@@ -274,7 +274,7 @@ TEST(TaskSystem, ParallelFor_RangeOverloadCoversContiguously)
 
     std::atomic<uint32> RangeCount{0};
 
-    Jobs::ParallelFor(N, [&](const Jobs::FParallelRange& Range)
+    Jobs::ParallelFor(N, [&](const Jobs::FRange& Range)
     {
         RangeCount.fetch_add(1, std::memory_order_relaxed);
         ASSERT_LE(Range.Start, Range.End);
@@ -358,7 +358,7 @@ TEST(TaskSystem, ParallelForOrSerial_BelowThresholdRunsOneInlineRange)
     const std::thread::id Caller = std::this_thread::get_id();
     uint32 Calls = 0;
     bool bOffThread = false;
-    Jobs::ParallelForOrSerial(100, 1000, [&](const Jobs::FParallelRange& Range)
+    Jobs::ParallelForOrSerial(100, 1000, [&](const Jobs::FRange& Range)
     {
         ++Calls;
         bOffThread |= std::this_thread::get_id() != Caller;
@@ -915,7 +915,7 @@ TEST(TaskSystem, DISABLED_Perf_ParallelForScalesWithWork)
     Partials.SetNum(Jobs::GetNumThreadSlots(), 0.0);
 
     auto P0 = PlatformTime::Cycles();
-    Jobs::ParallelFor(N, [&](const Jobs::FParallelRange& R)
+    Jobs::ParallelFor(N, [&](const Jobs::FRange& R)
     {
         float acc = 0.0f;
         for (uint32 i = R.Start; i < R.End; ++i)

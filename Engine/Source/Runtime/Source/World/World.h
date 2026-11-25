@@ -1,5 +1,7 @@
 ﻿#pragma once
 
+#include <atomic>
+
 #include "Containers/BoundedQueue.h"
 #include "Containers/Tuple.h"
 #include "Containers/FunctionRef.h"
@@ -591,6 +593,9 @@ namespace Lumina
         FUNCTION()
         void SetSystemEnabled(TSubclassOf<CEntitySystem> System, bool bEnabled);
 
+        // Reconfigures the systems whose members learned of new access, then reschedules, at the top of the next update stage. Any thread.
+        void RequestSystemRedeclare() { bSystemRedeclareRequested.store(true, std::memory_order_release); }
+
         // The last frame's per-stage batches with declared access, then with bIncludeIdle every system that had no work. Main thread.
         void GetSystemSchedule(TVector<FSystemScheduleEntry>& Out, bool bIncludeIdle = false) const;
 
@@ -864,6 +869,7 @@ namespace Lumina
         THashSet<FName>         DisabledSystems;
         THashSet<FName>         PendingDisabledSystems;
         bool                    bSystemsDirty = false;
+        std::atomic<bool>       bSystemRedeclareRequested{ false };
 
         //~ Debug drawing and render target painting.
 

@@ -16,7 +16,7 @@ namespace Lumina::Physics
 
         LE_NO_COPYMOVE(FBox3DTaskBridge);
 
-        static void* EnqueueTask(b3TaskCallback* Task, void* TaskContext, void* UserContext, const char* Name);
+        static void* EnqueueTask(b3TaskCallback* Task, void* TaskContext, void* UserContext, b3TaskType Type);
         static void FinishTask(void* UserTask, void* UserContext);
 
         uint32 GetWorkerCount() const { return WorkerCount; }

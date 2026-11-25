@@ -1,5 +1,7 @@
 #pragma once
 #include "EditorTool.h"
+#include "Containers/HashTable.h"
+#include "Containers/Name.h"
 #include "Containers/Vector.h"
 #include "Core/Profiler/AssetLoadTracker.h"
 #include "Core/Profiler/GameplayProfiler.h"
@@ -48,18 +50,57 @@ namespace Lumina
         //~ GPU
 
 #if defined(LUMINA_WITH_GPU_PROFILING)
+        static constexpr int32 kGPUPassHistory = 120;
+
+        // Every scope of one name in a frame, summed, with a window of past frames for its average and worst case.
+        struct FGPUPassStats
+        {
+            float  History[kGPUPassHistory] = {};
+            float  SelfHistory[kGPUPassHistory] = {};
+            int32  Head        = 0;
+            int32  Count       = 0;
+            int32  Calls       = 0;
+            int32  Depth       = 0;
+            uint8  Queue       = 0;
+            uint64 LastFrame   = 0;
+            double LastMs      = 0.0;
+            double LastSelfMs  = 0.0;
+
+            NODISCARD double AverageMs() const;
+            NODISCARD double AverageSelfMs() const;
+            NODISCARD double PeakMs() const;
+        };
+
         void DrawGPU();
         void DrawGPUSummary();
         void DrawGPUFrameGraph();
-        void DrawGPUFlameGraph();
+        void DrawGPUTimeline();
+        void DrawGPUPassTree();
+        void DrawGPUPassTable();
+        void DrawGPUScopeTooltip(int32 ScopeIndex);
+        void DrawGPUTreeNode(int32 ScopeIndex, const TVector<TVector<int32>>& Children, const TVector<bool>& SubtreeMatches);
 
         void SmoothTowards(const FGPUProfileFrame& Live);
+        void AccumulatePassStats(const FGPUProfileFrame& Live);
+        double GetGPUBudgetMs() const;
+        uint32 GPUScopeColor(int32 ScopeIndex) const;
+        bool   IsGPUScopeHighlighted(int32 ScopeIndex) const;
 
         FGPUProfileFrame  GPUFrame;
         TVector<float>    GPUHistory;
-        float             HistoryPeak   = 0.0f;
-        float             GPURowHeight  = 30.0f;
-        int32             SelectedScope = Constants::kIndexNone;
+        THashMap<FName, FGPUPassStats> GPUPassStats;
+        uint64            GPUStatsFrame   = 0;
+        float             HistoryPeak     = 0.0f;
+        float             GPURowHeight    = 24.0f;
+        int32             SelectedScope   = Constants::kIndexNone;
+        FFixedString      SelectedPass;
+        // Visible window of the timeline; a zero duration fits the whole frame.
+        double            GPUViewStartMs  = 0.0;
+        double            GPUViewDurMs    = 0.0;
+        int32             GPUBudgetIndex  = 0;
+        bool              bGPUFlatView    = false;
+        bool              bGPUShowUnmarked = true;
+        char              GPUFilter[64]   = {};
 #endif
 
         //~ Task system

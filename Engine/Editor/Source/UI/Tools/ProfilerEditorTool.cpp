@@ -1,6 +1,8 @@
 #include "ProfilerEditorTool.h"
 #include "ProfilerViewCommon.h"
 
+#include <cmath>
+
 #include "imgui.h"
 #include "Core/Profiler/GameplayProfiler.h"
 
@@ -54,8 +56,10 @@ namespace Lumina
         // A stall while the panel is visible means the window is not being re-submitted.
         ++DrawTicks;
         ProfilerView::Divider();
-        const char Spinner[] = { '|', '/', '-', '\\' };
-        ImGui::TextColored(ImVec4(0.45f, 0.80f, 0.55f, 1.0f), "live %c", Spinner[(DrawTicks / 6) % 4]);
+        const float Pulse = 0.45f + 0.55f * (0.5f + 0.5f * std::sin((float)DrawTicks * 0.12f));
+        ImGui::TextColored(ImVec4(0.45f, 0.80f, 0.55f, Pulse), LE_ICON_CIRCLE);
+        ImGui::SameLine(0.0f, 4.0f);
+        ImGui::TextColored(ImVec4(0.45f, 0.80f, 0.55f, 1.0f), "live");
     }
 
     void FProfilerEditorTool::DrawWindow(bool)

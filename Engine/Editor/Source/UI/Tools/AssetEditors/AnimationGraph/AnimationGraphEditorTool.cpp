@@ -1,6 +1,7 @@
 ﻿#include "AnimationGraphEditorTool.h"
 
 #include <cfloat>
+#include "Animation/AnimGpuClip.h"
 #include "Animation/AnimGraphOps.h"
 #include "Animation/TaskSystem/AnimTaskExecutor.h"
 #include "Assets/AssetRegistry/AssetData.h"
@@ -758,6 +759,13 @@ namespace Lumina
         }
 
         ImGui::SameLine();
+        ImGui::Checkbox("Crowd View", &DebugView.Crowd.bShow);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        {
+            ImGuiX::TextTooltip_Internal("Mark the nodes distant crowd characters skip. Beyond the world's GPU Crowd Min Distance they run this graph's crowd plan, posed on the GPU.");
+        }
+
+        ImGui::SameLine();
         if (bHasCompilationErrors)
         {
             ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Compile failed");
@@ -765,6 +773,11 @@ namespace Lumina
         else if (!CompilationLog.IsEmpty())
         {
             ImGui::TextColored(ImVec4(0.40f, 0.85f, 0.45f, 1.0f), "Compiled");
+        }
+
+        if (DebugView.Crowd.bShow && Graph != nullptr)
+        {
+            DrawCrowdStatus(*Graph);
         }
 
         ImGui::Separator();
@@ -939,55 +952,6 @@ namespace Lumina
         }
     }
 
-    void FAnimationGraphEditorTool::DrawParameters(CAnimationGraph* Graph)
-    {
-        ImGui::TextWrapped("Read-only view of the preview entity's live parameter block. At runtime gameplay "
-            "code writes these directly on the Animation Graph Component.");
-        ImGui::Separator();
-
-        CStruct* Struct = Graph->GetParameterStruct();
-        if (Struct == nullptr)
-        {
-            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.35f, 1.0f),
-                "No parameter struct assigned. Set one on the");
-            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.35f, 1.0f),
-                "graph asset (Graph Properties) to declare parameters.");
-            return;
-        }
-
-        SAnimationGraphComponent* Comp = (World.IsValid() && MeshEntity != ECS::NullEntity && World->IsValidEntity(MeshEntity))
-            ? World->TryGetComponent<SAnimationGraphComponent>(MeshEntity)
-            : nullptr;
-
-        void* Base = Comp != nullptr ? Comp->GetParameterMemory() : nullptr;
-        if (Base == nullptr)
-        {
-            ParameterTable.Reset();
-            ImGui::TextDisabled("Preview entity has no instance yet.");
-            return;
-        }
-
-        if (ParameterTable == nullptr)
-        {
-            ParameterTable = MakeUnique<FPropertyTable>(Base, Struct);
-            ParameterTable->SetShowSearchBar(false);
-            ParameterTable->SetContext(&PropertyContext);
-        }
-        else if (ParameterTable->GetObject() != Base || ParameterTable->GetType() != Struct)
-        {
-            ParameterTable->SetObject(Base, Struct);
-        }
-
-        if (!ParameterTable->PrepareAndTestFilter())
-        {
-            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.35f, 1.0f),
-                "Struct declares no readable fields.");
-            return;
-        }
-
-        ParameterTable->DrawTree(true);
-    }
-
     bool FAnimationGraphEditorTool::NeedsCompile() const
     {
         return NodeGraph != nullptr && NodeGraph->NeedsCompile();
@@ -1030,6 +994,7 @@ namespace Lumina
         DebugView.PinRegisters = Compiler.GetPinRegisters();
         DebugView.Playheads    = Compiler.GetDebugPlayheads();
         DebugStateNodes        = Compiler.GetDebugStateNodes();
+        AnimGraphOps::BuildCrowdView(*Graph, Compiler, DebugView.Crowd);
 
         if (bMarkPackageDirty)
         {
@@ -1037,6 +1002,52 @@ namespace Lumina
         }
 
         CompilationLog += "Animation graph compiled successfully.\n";
+    }
+
+    void FAnimationGraphEditorTool::DrawCrowdStatus(const CAnimationGraph& Graph)
+    {
+        const FAnimGraphCrowdView& Crowd = DebugView.Crowd;
+        const FSkeletonResource* Skeleton = Graph.Skeleton.IsValid() ? Graph.Skeleton->GetSkeletonResource() : nullptr;
+
+        const auto Line = [](const ImVec4& Color, const char* Text)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, Color);
+            ImGui::TextWrapped("%s", Text);
+            ImGui::PopStyleColor();
+        };
+
+        if (!Graph.bGpuCrowd)
+        {
+            Line(EditorColors::TextMuted(), "GPU Crowd is off for this graph, so every character runs the full graph on the CPU. Turn it on under Crowd in the graph's details.");
+            return;
+        }
+        if (Skeleton != nullptr && Skeleton->GetNumBones() > Anim::kMaxGpuPoseBones)
+        {
+            const FString Text = Format("The skeleton has {} bones and the GPU crowd tier takes at most {}, so characters stay on the CPU.", Skeleton->GetNumBones(), Anim::kMaxGpuPoseBones);
+            Line(EditorColors::Warning(), *Text);
+            return;
+        }
+
+        const FString Summary = Crowd.Skipped.IsEmpty()
+            ? Format("Distant characters run every one of the {} nodes.", Crowd.NumNodes)
+            : Format("Distant characters skip {} of {} nodes, marked on the canvas.", Crowd.Skipped.Num(), Crowd.NumNodes);
+        Line(EditorColors::Success(), *Summary);
+        if (!Crowd.Skipped.IsEmpty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && ImGui::BeginTooltip())
+        {
+            for (const auto& [Node, Fate] : Crowd.Skipped)
+            {
+                ImGui::Text("%s", *Node->GetNodeTitleText());
+                ImGui::SameLine();
+                ImGui::TextColored(EditorColors::TextMuted(), "%s", Fate == EAnimCrowdNodeFate::Bypassed ? "passes its input through" : "feeds only skipped nodes");
+            }
+            ImGui::EndTooltip();
+        }
+
+        for (const CAnimation* Clip : Crowd.CpuClips)
+        {
+            const FString Text = Format("{} is additive or scales bones, so a distant character playing it runs on the CPU until it stops.", Clip->GetName().ToString());
+            Line(EditorColors::Warning(), *Text);
+        }
     }
 
     void FAnimationGraphEditorTool::UpdateDebugOverlay()

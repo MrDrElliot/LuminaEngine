@@ -11,7 +11,7 @@ namespace Lumina::Jobs
     RUNTIME_API void Initialize();
     RUNTIME_API void Shutdown();
 
-    struct FParallelRange
+    struct FRange
     {
         uint32 Start;
         uint32 End;
@@ -30,9 +30,9 @@ namespace Lumina::Jobs
         template<typename TFunc>
         FORCEINLINE void InvokeRange(TFunc& Func, uint32 Start, uint32 End, uint32 Thread)
         {
-            if constexpr (std::is_invocable_v<TFunc&, const FParallelRange&>)
+            if constexpr (std::is_invocable_v<TFunc&, const FRange&>)
             {
-                Func(FParallelRange{ Start, End, Thread });
+                Func(FRange{ Start, End, Thread });
             }
             else
             {
@@ -75,7 +75,7 @@ namespace Lumina::Jobs
         }
     }
 
-    // Blocks until Func has run over [0, Num). Func takes (Index), (Index, Thread) or (const FParallelRange&).
+    // Blocks until Func has run over [0, Num). Func takes (Index), (Index, Thread) or (const FRange&).
     template<typename TFunc>
     void ParallelFor(uint32 Num, TFunc&& Func, uint32 MinRange = 0, EJobPriority Band = EJobPriority::Normal)
     {

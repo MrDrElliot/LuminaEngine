@@ -1,7 +1,7 @@
 # Engine checks, read by Rider and clangd as you type and by LuminaBuild Tidy across the tree.
 Checks: '-*,cppcoreguidelines-special-member-functions'
 HeaderFilterRegex: '.*[\\/]Engine[\\/](Source|Editor|Plugins|Applications)[\\/].*'
-ExcludeHeaderFilterRegex: '.*[\\/](ThirdParty|External|Intermediates|imgui-node-editor)[\\/].*'
+ExcludeHeaderFilterRegex: '.*[\\/](ThirdParty|External|Intermediates)[\\/].*'
 CheckOptions:
   # A lone defaulted destructor, such as an interface's virtual one, still leaves every other member implicit and correct.
   cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor: true

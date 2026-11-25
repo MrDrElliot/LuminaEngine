@@ -56,7 +56,7 @@ namespace Lumina::NetGraph
         if (N > 0)
         {
             LUMINA_PROFILE_SECTION("Extract::Parallel");
-            Jobs::ParallelFor(N, [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor(N, [&](const Jobs::FRange& Range)
             {
                 FNetExtractThread& L = Out.Threads[Range.Thread];
                 for (uint32 i = Range.Start; i < Range.End; ++i)

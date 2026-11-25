@@ -105,11 +105,14 @@ float3 Tonemap_GT(float3 X)
     const float C2 = (A * P) / (P - S1);
     const float CP = -C2 / P;
 
-    const float3 W0 = 1.0 - smoothstep(0.0, M, X);
+    // The toe's normalized input, shared by its weight and its curve, as a multiply rather than two divisions.
+    const float3 ToeT = max(X, 0.0) * (1.0 / M);
+    const float3 Ramp = saturate(ToeT);
+    const float3 W0 = 1.0 - Ramp * Ramp * (3.0 - 2.0 * Ramp);
     const float3 W2 = step(S0, X);
     const float3 W1 = 1.0 - W0 - W2;
 
-    const float3 Toe      = M * pow(max(X, 0.0) / M, float3(C)) + B;
+    const float3 Toe      = M * pow(ToeT, float3(C)) + B;
     const float3 Shoulder = P - (P - S1) * exp(CP * (X - S0));
     const float3 Linear   = M + A * (X - M);
     return saturate(Toe * W0 + Linear * W1 + Shoulder * W2);

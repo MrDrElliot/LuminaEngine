@@ -24,11 +24,12 @@ void FragmentMain(FImpostorShadowVertexOutput In)
     const float Mip        = max(log2(float(Header.ImpostorFrameSize) / max(Texels, 1.0e-3)), 0.0);
 
     const FImpostorViews  Views = SelectImpostorViews(-Dir, Header.ImpostorFrames);
-    const FImpostorSample S     = SampleImpostor(Header, Views, Origin, Dir, Mip);
-    if (S.Coverage < kImpostorCoverageCutoff)
+    const FImpostorTaps   Taps  = GatherImpostorTaps(Header, Views, Origin, Dir, Mip);
+    if (Taps.Coverage < kImpostorCoverageCutoff)
     {
         discard;
     }
+    const FImpostorSample S = ResolveImpostorTaps(Header, Views, Taps, Mip);
 
     // The baked depth is 8 bits across the sphere and block compressed, so an unbiased caster shadows its own receiving pixels by chance as the views blend.
     const float RayT = S.RayT + kImpostorShadowDepthBias * Header.ImpostorRadius;

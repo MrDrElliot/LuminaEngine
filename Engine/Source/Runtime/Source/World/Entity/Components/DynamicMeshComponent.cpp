@@ -50,7 +50,7 @@ namespace Lumina
             
             TVector<FVector3> FaceNormals;
             FaceNormals.SetNum(TriangleCount);
-            Jobs::ParallelFor(TriangleCount, [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor(TriangleCount, [&](const Jobs::FRange& Range)
             {
                 for (uint32 Tri = Range.Start; Tri < Range.End; ++Tri)
                 {
@@ -69,7 +69,7 @@ namespace Lumina
 
             TVector<uint32> Offsets;
             Offsets.Init(0u, VertexCount + 1u);
-            Jobs::ParallelFor(TriangleCount, [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor(TriangleCount, [&](const Jobs::FRange& Range)
             {
                 for (uint32 Tri = Range.Start; Tri < Range.End; ++Tri)
                 {
@@ -95,7 +95,7 @@ namespace Lumina
             TVector<uint32> Cursor(Offsets.begin(), Offsets.begin() + VertexCount);
             TVector<uint32> Adjacency;
             Adjacency.SetNum(Running);
-            Jobs::ParallelFor(TriangleCount, [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor(TriangleCount, [&](const Jobs::FRange& Range)
             {
                 for (uint32 Tri = Range.Start; Tri < Range.End; ++Tri)
                 {
@@ -111,7 +111,7 @@ namespace Lumina
                 }
             }, kCommitGrain);
 
-            Jobs::ParallelFor(VertexCount, [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor(VertexCount, [&](const Jobs::FRange& Range)
             {
                 for (uint32 Vertex = Range.Start; Vertex < Range.End; ++Vertex)
                 {
@@ -420,7 +420,7 @@ namespace Lumina
             uint32*         OutNormals = Resource->Normals.GetData();
             uint32*         OutUVs     = Resource->UVs.GetData();
 
-            Jobs::ParallelFor((uint32)VertexCount, [=](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor((uint32)VertexCount, [=](const Jobs::FRange& Range)
             {
                 for (uint32 i = Range.Start; i < Range.End; ++i)
                 {

@@ -226,7 +226,7 @@ namespace Lumina::ECS
                     QueryView.ForEach(Func);
                     return;
                 }
-                Jobs::ParallelFor(Num, [&](const Jobs::FParallelRange& Range) { QueryView.ForEachInRange(Range.Start, Range.End, Func); }, MinRange);
+                Jobs::ParallelFor(Num, [&](const Jobs::FRange& Range) { QueryView.ForEachInRange(Range.Start, Range.End, Func); }, MinRange);
             }
             else
             {

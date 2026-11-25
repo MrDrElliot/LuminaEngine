@@ -786,9 +786,7 @@ namespace Lumina
                 Push.CullEntries = RHI::TGPUSpan<FInstanceCullEntry>::Slice(RetainedCullEntryBuffer, Item.SlotBase, Item.Capacity);
                 Push.Cursor      = { Item.Cursor };
                 Push.PrevCursor  = { Item.PrevCursor };
-                Push.BlockBounds = bInstanceBlockBoundsValid
-                                 ? RHI::TGPUSpan<FInstanceBlockBounds>{ InstanceBlockBoundsBuffer, (uint32)InstanceBlockBounds.Num() }
-                                 : RHI::TGPUSpan<FInstanceBlockBounds>{};
+                Push.BlockBounds = CurrentInstanceBlockBounds();
                 Push.SlotBase    = Item.SlotBase;
                 Push.Capacity    = Item.Capacity;
                 RHI::CmdDispatch(CL, MakeArgs(Push), RenderUtils::GetGroupCount(Item.Capacity, 64u), 1u, 1u);
@@ -827,8 +825,14 @@ namespace Lumina
             return;
         }
 
-        const RHI::FGPURange Indices = bMeshPath ? RHI::FGPURange{}
-                                                 : RHI::CopyTransientArray(GTerrainMeshletIndices.Indices, GTerrainMeshletMaxQuads * 6);
+        SCENE_GPU_SCOPE(CL, "VisBuffer Terrain");
+        
+        RHI::FGPURange Indices{};
+        if (bMeshPath == false)
+        {
+            Indices = RHI::CopyTransientArray(GTerrainMeshletIndices.Indices, GTerrainMeshletMaxQuads * 6);
+        }
+        
         RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
 
         // The record index is the extract index, which TerrainCullPass published the records under.

@@ -3,6 +3,7 @@
 #include "MaterialEditorTool.h"
 #include "Assets/AssetTypes/Material/Material.h"
 #include "Assets/AssetTypes/Textures/Texture.h"
+#include "Config/Config.h"
 #include "Core/Engine/Engine.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
@@ -92,6 +93,7 @@ namespace Lumina
         };
         NodeGraph->Initialize();
         NodeGraph->SetTransactionManager(&GetTransactionManager());
+        ResetAutoCompileBaseline();
         NodeGraph->SetNodeSelectedCallback( [this] (CEdGraphNode* Node)
         {
             if (Node != SelectedNode)
@@ -456,6 +458,49 @@ namespace Lumina
         return NodeGraph != nullptr && NodeGraph->NeedsCompile();
     }
 
+    void FMaterialEditorTool::Update(const FUpdateContext& UpdateContext)
+    {
+        FAssetEditorTool::Update(UpdateContext);
+        UpdateAutoCompile(UpdateContext.GetDeltaTime());
+    }
+
+    void FMaterialEditorTool::UpdateAutoCompile(double DeltaTime)
+    {
+        const CMaterialEditorSettings* Settings = GetDefault<CMaterialEditorSettings>();
+        if (NodeGraph == nullptr || Settings == nullptr || !Settings->bAutoCompile)
+        {
+            return;
+        }
+
+        constexpr double kAutoCompileDelay = 0.35;
+        const uint64 GraphVersion = NodeGraph->GetTreeContentVersion();
+        if (GraphVersion != AutoCompileGraphVersion)
+        {
+            AutoCompileGraphVersion = GraphVersion;
+            AutoCompileDelay = kAutoCompileDelay;
+            return;
+        }
+
+        if (AutoCompileDelay > 0.0)
+        {
+            AutoCompileDelay -= DeltaTime;
+            if (AutoCompileDelay <= 0.0 && NodeGraph->GetOutputGraphHash() != AutoCompileOutputHash)
+            {
+                Compile(false);
+            }
+        }
+    }
+
+    void FMaterialEditorTool::ResetAutoCompileBaseline()
+    {
+        AutoCompileDelay = 0.0;
+        if (NodeGraph != nullptr)
+        {
+            AutoCompileGraphVersion = NodeGraph->GetTreeContentVersion();
+            AutoCompileOutputHash = NodeGraph->GetOutputGraphHash();
+        }
+    }
+
     void FMaterialEditorTool::DrawToolMenu(const FUpdateContext& UpdateContext)
     {
         const bool bPending = NeedsCompile();
@@ -475,6 +520,13 @@ namespace Lumina
             ImGui::PopStyleColor();
             ImGuiX::TextTooltip("{}", "This material has changes that are not in its compiled shader yet.");
         }
+
+        CMaterialEditorSettings* Settings = GetMutableDefault<CMaterialEditorSettings>();
+        if (ImGui::MenuItem("Auto Compile", nullptr, &Settings->bAutoCompile))
+        {
+            Global::GConfig->SaveSettings(CMaterialEditorSettings::StaticClass());
+        }
+        ImGuiX::TextTooltip("{}", "Compile when an edit changes the graph feeding a material output.");
 
         if (ImGui::MenuItem(LE_ICON_FIRE " Cost", nullptr, NodeGraph->bShowCostHeat))
         {
@@ -1280,6 +1332,7 @@ namespace Lumina
 
         // Shared with CompileMaterialGraph so the importer's procedural materials compile identically.
         const FMaterialGraphCompileResult CompileResult = CompileMaterialGraph(Material, NodeGraph.Get());
+        ResetAutoCompileBaseline();
 
         ShaderStats       = CompileResult.Stats;
         bGLSLPreviewDirty = true;

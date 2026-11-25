@@ -59,6 +59,7 @@ namespace Lumina
         bool IsSingleWindowTool() const override { return false; }
         const char* GetTitlebarIcon() const override { return LE_ICON_SPHERE; }
         void OnInitialize() override;
+        void Update(const FUpdateContext& UpdateContext) override;
         CEdNodeGraph* GetActiveNodeGraph() override;
         void OnDeinitialize(const FUpdateContext& UpdateContext) override;
         void SetupWorldForTool() override;
@@ -134,6 +135,12 @@ namespace Lumina
         FString                         VertexTree;
         // True when the graph changed since the last successful Compile.
         NODISCARD bool NeedsCompile() const;
+        void UpdateAutoCompile(double DeltaTime);
+        void ResetAutoCompileBaseline();
+
+        uint64                          AutoCompileGraphVersion = 0;
+        uint64                          AutoCompileOutputHash = 0;
+        double                          AutoCompileDelay = 0.0;
 
         FMaterialCompiler::FShaderStats ShaderStats;
         size_t                          ReplacementStart = 0;

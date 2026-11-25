@@ -222,11 +222,18 @@ namespace Lumina
         {
             Resize(SlotCount);
 
-            const auto Change = [this, SlotCount](uint32 Slot)
+            const FInstanceCullEntry* Entries = Primitives.GetRetainedCullEntries();
+            const FInstanceStatic*    Statics = Primitives.GetRetainedStatic();
+            const auto Change = [this, SlotCount, Entries, Statics](uint32 Slot)
             {
-                if (Slot < SlotCount)
+                if (Slot >= SlotCount)
                 {
-                    Release(Slot);
+                    return;
+                }
+                Release(Slot);
+                // A slot that can never be held, such as a skinned mover, would only sit in the settle list, and a flag change comes back dirty.
+                if (IsCacheable(Entries[Slot]) || IsSwayCandidate(Entries[Slot], Statics[Slot]))
+                {
                     MarkChanged(Slot);
                 }
             };

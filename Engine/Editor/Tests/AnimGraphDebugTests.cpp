@@ -1,12 +1,17 @@
 #include <gtest/gtest.h>
 
+#include "Animation/AnimGraphOps.h"
+#include "Assets/AssetTypes/Animation/AnimationGraph/AnimationGraph.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectCore.h"
 #include "Core/Object/Package/Package.h"
 #include "UI/Tools/NodeGraph/Animation/AnimGraphDebugView.h"
+#include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphNodeGraph.h"
+#include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_Additive.h"
 #include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_Blend.h"
 #include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_ClipPlayer.h"
+#include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_FloatConstant.h"
 #include "UI/Tools/NodeGraph/Animation/Nodes/AnimGraphNode_Output.h"
 
 using namespace Lumina;
@@ -69,4 +74,56 @@ TEST(AnimGraphDebug, PoseWeightsFollowTheBlendAlpha)
     // A state that is not current supplies nothing, however its own blend is set.
     Graph->ComputePoseWeights(View, 0.0f);
     EXPECT_NEAR(View.GetNodeWeight(Run), 0.0f, 1e-5f);
+}
+
+// A crowd passes an overlay's base straight through and never runs what only fed it, and both show against the nodes that wrote them.
+TEST(AnimGraphDebug, CrowdViewMarksSkippedOverlays)
+{
+    CAnimationGraphNodeGraph::StaticClass()->GetDefaultObject();
+    CAnimGraphNode_Output::StaticClass()->GetDefaultObject();
+    CAnimGraphNode_ApplyAdditive::StaticClass()->GetDefaultObject();
+    CAnimGraphNode_MakeAdditive::StaticClass()->GetDefaultObject();
+    CAnimGraphNode_Blend::StaticClass()->GetDefaultObject();
+    CAnimGraphNode_FloatConstant::StaticClass()->GetDefaultObject();
+
+    CPackage* Package = CPackage::CreatePackage("/AnimGraphDebug/Crowd");
+    CAnimationGraph* Asset = NewObject<CAnimationGraph>(Package, "Asset");
+    CAnimationGraphNodeGraph* Graph = NewObject<CAnimationGraphNodeGraph>(Package, "Graph");
+    Graph->EnsureSetup();
+
+    CAnimGraphNode_Output* Output = nullptr;
+    for (const TStrongObjectPtr<CEdGraphNode>& Node : Graph->Nodes)
+    {
+        Output = Output != nullptr ? Output : Cast<CAnimGraphNode_Output>(Node.Get());
+    }
+    ASSERT_NE(Output, nullptr);
+
+    CAnimGraphNode_Blend* Blend = AddAnimNode<CAnimGraphNode_Blend>(Graph, Package, "Blend");
+    CAnimGraphNode_ApplyAdditive* Apply = AddAnimNode<CAnimGraphNode_ApplyAdditive>(Graph, Package, "Apply");
+    CAnimGraphNode_MakeAdditive* Make = AddAnimNode<CAnimGraphNode_MakeAdditive>(Graph, Package, "Make");
+    CAnimGraphNode_FloatConstant* Strength = AddAnimNode<CAnimGraphNode_FloatConstant>(Graph, Package, "Strength");
+    Strength->Value = 0.5f;
+    ASSERT_TRUE(Graph->ConnectPins(Strength->ValuePin, Apply->AlphaPin));
+    ASSERT_TRUE(Graph->ConnectPins(Make->DeltaOutputPin, Apply->DeltaPin));
+    ASSERT_TRUE(Graph->ConnectPins(Blend->ResultPin, Apply->BasePin));
+    ASSERT_TRUE(Graph->ConnectPins(Apply->ResultPin, Output->ResultPosePin));
+
+    FAnimationGraphCompiler Compiler;
+    ASSERT_TRUE(AnimGraphOps::Compile(Asset, Graph, Compiler));
+
+    FAnimGraphCrowdView Crowd;
+    Crowd.bShow = true;
+    AnimGraphOps::BuildCrowdView(*Asset, Compiler, Crowd);
+
+    EXPECT_TRUE(Crowd.bShow);
+    EXPECT_EQ(Crowd.NumNodes, 4);
+    EXPECT_FALSE(Crowd.Skipped.Contains(Blend));
+    ASSERT_TRUE(Crowd.Skipped.Contains(Apply));
+    EXPECT_EQ(*Crowd.Skipped.Find(Apply), EAnimCrowdNodeFate::Bypassed);
+    ASSERT_TRUE(Crowd.Skipped.Contains(Make));
+    EXPECT_EQ(*Crowd.Skipped.Find(Make), EAnimCrowdNodeFate::Unused);
+
+    // Its value is a load lifted out of the ops, and still counts against the node that wrote it.
+    ASSERT_TRUE(Crowd.Skipped.Contains(Strength));
+    EXPECT_EQ(*Crowd.Skipped.Find(Strength), EAnimCrowdNodeFate::Unused);
 }

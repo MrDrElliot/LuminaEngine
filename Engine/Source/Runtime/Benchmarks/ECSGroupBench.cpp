@@ -111,7 +111,7 @@ namespace ECSGroupBenchInternal
         const uint64 Start = PlatformTime::Cycles();
         for (int32 Pass = 0; Pass < Passes; ++Pass)
         {
-            Jobs::ParallelFor(Slots, [&](const Jobs::FParallelRange& Range)
+            Jobs::ParallelFor(Slots, [&](const Jobs::FRange& Range)
             {
                 if (bHandles)
                 {

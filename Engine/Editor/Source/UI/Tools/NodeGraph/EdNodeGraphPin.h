@@ -43,7 +43,8 @@ namespace Lumina
         void SetHideDuringConnection(bool bHide) { bHidePinDuringConnection = bHide; }
         
         virtual uint32 GetPinColor() const { return PinColor; }
-        virtual EGraphPinShape GetPinShape() const { return EGraphPinShape::Circle; }
+        virtual bool IsExecutionPin() const { return bExecutionPin; }
+        virtual EGraphPinShape GetPinShape() const { return IsExecutionPin() ? EGraphPinShape::Execution : EGraphPinShape::Circle; }
 
         // Shader type this pin carries ("float2", ...); empty for graphs whose pins are untyped.
         virtual FString GetPinTypeName() const { return FString(); }
@@ -100,5 +101,9 @@ namespace Lumina
         uint8                           bDrawPinEditor:1;
         uint8                           bHidePinDuringConnection:1;
         uint8                           bDisabled:1;
+
+    private:
+
+        bool bExecutionPin = false;
     };
 }

@@ -6,6 +6,14 @@
 #include "math_internal.h"
 #include "solver.h"
 
+// This is used to make a contact point fully rigid with no push out for a time of impact.
+// It behaves like a speculative contact point that is slightly offset.
+#define B3_TOI_RIGID_SEPARATION ( 0.01f * B3_LINEAR_SLOP )
+
+// This is used in combination with B3_TOI_RIGID_SEPARATION to avoid making a deeper contact point rigid in a
+// secondary TOI (inner sphere fallback or second triangle). These deeper contact points need the push out.
+#define B3_TOI_RIGID_SEPARATION_LIMIT ( -B3_MESH_REST_OFFSET - B3_LINEAR_SLOP )
+
 typedef struct b3ManifoldConstraintPoint
 {
 	b3Vec3 rA, rB;
@@ -61,13 +69,6 @@ void b3PushContacts_Overflow( b3StepContext* context );
 void b3SolveContacts_Overflow( b3StepContext* context );
 void b3ApplyRestitution_Overflow( b3StepContext* context );
 void b3StoreImpulses_Overflow( b3StepContext* context );
-
-void b3PrepareContacts_Mesh( b3SolverBlock block, b3StepContext* context );
-void b3WarmStartContacts_Mesh( b3SolverBlock block, b3StepContext* context );
-void b3PushContacts_Mesh( b3SolverBlock block, b3StepContext* context );
-void b3SolveContacts_Mesh( b3SolverBlock block, b3StepContext* context );
-void b3ApplyRestitution_Mesh( b3SolverBlock block, b3StepContext* context );
-void b3StoreImpulses_Mesh( b3SolverBlock block, b3StepContext* context, int workerIndex );
 
 void b3PrepareContacts_Convex( b3SolverBlock block, b3StepContext* context );
 void b3WarmStartContacts_Convex( b3SolverBlock block, b3StepContext* context );

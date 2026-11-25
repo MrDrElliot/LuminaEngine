@@ -124,6 +124,10 @@ namespace Lumina::Physics
 
         FVector3                SurfaceLinearVelocity = FVector3(0.0f);
         FVector3                SurfaceAngularVelocity = FVector3(0.0f);
+
+        // World axes a motion lock joint holds once the body exists, since a Box3D body itself only fixes all rotation or none.
+        bool                    bLockLinear[3] = { false, false, false };
+        int32                   FreeRotationAxis = Constants::kIndexNone;
     };
 
     // Contact snapshot resolved from Box3D's post-step event arrays and dispatched on the game thread.
@@ -349,6 +353,12 @@ namespace Lumina::Physics
 
         void StoreBodyMaterial(uint32 BodyID, const FRigidBodyBuildResult& Build);
         void ClearBodyMaterial(uint32 BodyID);
+
+        // Box3D has no world body, so whatever is anchored to the world hangs off one shared static body at the origin.
+        b3BodyId EnsureWorldAnchorBody();
+
+        // Holds the build's axis locks with a motion lock joint from the world anchor, framed at the body's spawn pose.
+        void LockBodyMotion(b3BodyId BodyId, const FRigidBodyBuildResult& Build);
 
     private:
 

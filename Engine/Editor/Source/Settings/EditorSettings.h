@@ -494,6 +494,9 @@ namespace Lumina
         /** Compile the graph automatically when the material is saved, if it has changed since the last compile. */
         PROPERTY(Editable, Category = "Compilation")
         bool bCompileOnSave = true;
+
+        PROPERTY(Editable, Category = "Compilation")
+        bool bAutoCompile = false;
     };
 
     // What the content browser orders a folder's files by, with folders always listed first.

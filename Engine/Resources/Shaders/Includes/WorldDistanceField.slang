@@ -17,14 +17,15 @@ struct FWorldDistanceField
     // Zero while the field is off, which every sample then reads as open space.
     uint       NumLevels;
 
-    // The finest level holding P a voxel inside its edge, so the trilinear read never wraps onto the far side.
-    uint LevelAt(float3 P)
+    // The finest level from FirstLevel up holding P a voxel inside its edge, so the trilinear read never wraps onto the far side.
+    uint LevelAt(float3 P, uint FirstLevel = 0u)
     {
         [loop]
-        for (uint Level = 0u; Level < NumLevels; ++Level)
+        for (uint Level = FirstLevel; Level < NumLevels; ++Level)
         {
-            const float3 Voxel = (P - LevelBoxes[Level].xyz) / LevelBoxes[Level].w;
-            if (all(Voxel >= 1.0) && all(Voxel <= float(kWorldDFResolution) - 1.0))
+            // Inside [1, R - 1] on every axis is a voxel's distance from the box center, one compare instead of six.
+            const float3 FromCenter = abs((P - LevelBoxes[Level].xyz) / LevelBoxes[Level].w - 0.5 * float(kWorldDFResolution));
+            if (max(FromCenter.x, max(FromCenter.y, FromCenter.z)) <= 0.5 * float(kWorldDFResolution) - 1.0)
             {
                 return Level;
             }
@@ -49,10 +50,11 @@ struct FWorldDistanceField
         return Levels[Level].SampleLevel(Samplers::LinearWrap, UVW, 0.0).r;
     }
 
-    // Distance in meters to the nearest merged caster, and the level it came from in OutLevel, kWorldDFLevels past the field.
-    float Sample(float3 P, out uint OutLevel)
+    // Distance in meters to the nearest merged caster, searching from Level, which returns the level used and kWorldDFLevels past the field.
+    // A march resumes from its last level, since its samples move away from the receiver into coarser levels.
+    float Sample(float3 P, inout uint Level)
     {
-        OutLevel = LevelAt(P);
-        return OutLevel < kWorldDFLevels ? SampleLevel(OutLevel, P) : 1.0e6;
+        Level = LevelAt(P, Level);
+        return Level < kWorldDFLevels ? SampleLevel(Level, P) : 1.0e6;
     }
 };

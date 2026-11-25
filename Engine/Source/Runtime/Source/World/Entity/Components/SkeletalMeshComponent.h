@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "MeshComponent.h"
 #include "Animation/TaskSystem/AnimTask.h"
+#include "Animation/TaskSystem/AnimTaskRecord.h"
 #include "Core/Math/AABB.h"
 #include "Core/Object/ObjectMacros.h"
 #include "SkeletalMeshComponent.generated.h"
@@ -103,5 +104,17 @@ namespace Lumina
         // The recipe BoneTransforms was last built from, so an identical recipe skips the whole execute.
         FAnimTaskList LastRecipe;
         bool bLastRecipeValid = false;
+
+        // The GPU crowd tier evaluates this pose from GpuSamples, so BoneTransforms and PackedBones are stale while it is set. Transient.
+        bool bGpuPose = false;
+
+        // Root bone each GPU sample pins to its bind pose, as the CPU sampler does when root motion is extracted. Transient.
+        int32 GpuRootLockBone = Constants::kIndexNone;
+
+        // The skeleton GpuSamples were flattened against, which the renderer resolves the baked clips for. Transient.
+        FSkeletonResource* GpuSkeleton = nullptr;
+
+        // The crowd tier's weighted clip samples from the last update. Transient.
+        TVector<FAnimWeightedSample> GpuSamples;
     };
 }

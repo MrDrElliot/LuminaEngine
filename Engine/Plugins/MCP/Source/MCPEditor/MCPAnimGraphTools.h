@@ -320,6 +320,84 @@ namespace Lumina
 
         PROPERTY()
         TVector<FString> Warnings;
+
+        // Whether distant characters may run this graph on the GPU crowd tier, the graph's GPU Crowd setting.
+        PROPERTY()
+        bool bGpuCrowd = false;
+
+        // Nodes distant crowd characters skip, each as "Title (why)".
+        PROPERTY()
+        TVector<FString> CrowdSkipped;
+
+        // Clips that keep a distant character on the CPU while they play.
+        PROPERTY()
+        TVector<FString> CrowdCpuClips;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SAnimGraphInstanceParams
+    {
+        GENERATED_BODY()
+
+        // An entity in the scene on show, the playing world during Play.
+        PROPERTY()
+        FString Entity;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SAnimGraphInstanceInput
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Name;
+
+        PROPERTY()
+        FString Component;
+
+        // False when no component type of that name exists right now, such as after a script removed it.
+        PROPERTY()
+        bool bTypeFound = false;
+
+        // Whether the entity, or an ancestor when the input climbs, has the component this frame.
+        PROPERTY()
+        bool bOnEntity = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SAnimGraphInstanceValue
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString Name;
+
+        PROPERTY()
+        float Value = 0.0f;
+
+        // An object parameter's asset name, empty for a value or a null asset.
+        PROPERTY()
+        FString Object;
+
+        // False when the path no longer resolves, so the graph reads its default.
+        PROPERTY()
+        bool bResolved = false;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SAnimGraphInstanceResult
+    {
+        GENERATED_BODY()
+
+        PROPERTY()
+        FString AnimGraph;
+
+        PROPERTY()
+        TVector<SAnimGraphInstanceInput> Inputs;
+
+        // What the graph read last update, in parameter order, objects after values.
+        PROPERTY()
+        TVector<SAnimGraphInstanceValue> Parameters;
     };
 
     namespace MCP

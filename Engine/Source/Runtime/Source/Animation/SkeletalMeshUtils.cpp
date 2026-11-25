@@ -1,6 +1,7 @@
 ﻿#include "RuntimePCH.h"
 #include "SkeletalMeshUtils.h"
 
+#include "Animation/AnimGpuClip.h"
 #include "Animation/BindPose.h"
 
 #include <cfloat>
@@ -44,6 +45,12 @@ namespace Lumina::SkeletalUtils
         if (Skeleton == nullptr || !Skeleton->IsBoneIndexValid(BoneIndex))
         {
             return false;
+        }
+
+        if (Mesh.bGpuPose && Mesh.GpuSkeleton == Skeleton)
+        {
+            OutTransform = Anim::EvaluateWeightedBoneGlobal(*Mesh.GpuSkeleton, Mesh.GpuSamples, Mesh.GpuRootLockBone, BoneIndex);
+            return true;
         }
 
         const FMatrix4 BindGlobal = AnimPose::GetBindGlobalMatrix(Skeleton, BoneIndex);

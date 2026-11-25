@@ -115,7 +115,7 @@ typedef struct b3TaskContext
 	b3DebugLine lines[B3_DEBUG_LINE_CAPACITY];
 	int lineCount;
 
-	int manifoldCounts[B3_CONTACT_MANIFOLD_COUNT_BUCKETS];
+	int manifoldCounts[B3_MAX_MANIFOLDS];
 	// Prevent false sharing
 	char cacheLine[64];
 } b3TaskContext;
@@ -131,7 +131,7 @@ typedef struct b3World
 	b3ConstraintGraph constraintGraph;
 
 	// Manifold allocators have one allocator for each manifold count.
-	b3Array( b3BlockAllocator ) manifoldAllocators;
+	b3BlockAllocator manifoldAllocators[B3_MAX_MANIFOLDS];
 	b3Mutex* manifoldAllocatorMutex;
 
 	// The body id pool is used to allocate and recycle body ids. Body ids
@@ -147,10 +147,12 @@ typedef struct b3World
 	// Provides free list for solver sets.
 	b3IdPool solverSetIdPool;
 
-	// Solvers sets allow sims to be stored in contiguous arrays. The first
-	// set is all static sims. The second set is active sims. The third set is disabled
-	// sims. The remaining sets are sleeping islands.
-	b3Array( b3SolverSet ) solverSets;
+	// Solvers sets allow body sims to be stored in contiguous arrays. The first holds static bodies. The second set
+	// holds disabled bodies. The third holds awake bodies. A growable array holds the sleeping islands.
+	// This is split up so that the static set can be accessed without being remapped during a static query while
+	// the physics step is concurrently putting an island to sleep (race condition).
+	b3SolverSet fixedSets[b3_firstSleepingSet];
+	b3Array( b3SolverSet ) sleepingSets;
 
 	// Used to create stable ids for joints
 	b3IdPool jointIdPool;
@@ -252,7 +254,7 @@ typedef struct b3World
 	b3Profile profile;
 	int satCallCount;
 	int satCacheHitCount;
-	int manifoldCounts[B3_CONTACT_MANIFOLD_COUNT_BUCKETS];
+	int manifoldCounts[B3_MAX_MANIFOLDS];
 
 	b3Capacity maxCapacity;
 
@@ -267,9 +269,10 @@ typedef struct b3World
 	b3EnqueueTaskCallback* enqueueTaskFcn;
 	b3FinishTaskCallback* finishTaskFcn;
 	void* userTaskContext;
-	void* userTreeTask;
+	struct b3StepContext* stepContext;
 
 	struct b3Scheduler* scheduler;
+	bool useScheduler;
 
 	void* userData;
 
@@ -283,9 +286,6 @@ typedef struct b3World
 	// latest inverse full-step
 	float inv_dt;
 
-	int activeTaskCount;
-	int taskCount;
-
 	uint16_t worldId;
 
 	bool enableSleep;
@@ -298,6 +298,28 @@ typedef struct b3World
 	bool enableSpeculative;
 	bool inUse;
 } b3World;
+
+static inline b3SolverSet* b3GetSolverSet( b3World* world, int setIndex )
+{
+	if ( setIndex < b3_firstSleepingSet )
+	{
+		B3_ASSERT( 0 <= setIndex );
+		return world->fixedSets + setIndex;
+	}
+
+	return b3Array_Get( world->sleepingSets, setIndex - b3_firstSleepingSet );
+}
+
+static inline b3SolverSet* b3GetFixedSolverSet( b3World* world, int setIndex )
+{
+	B3_ASSERT( 0 <= setIndex && setIndex < b3_firstSleepingSet );
+	return world->fixedSets + setIndex;
+}
+
+static inline int b3GetSolverSetCount( const b3World* world )
+{
+	return b3_firstSleepingSet + world->sleepingSets.count;
+}
 
 b3World* b3GetUnlockedWorldFromId( b3WorldId id );
 b3World* b3GetWorldFromId( b3WorldId id );
@@ -329,19 +351,11 @@ static inline b3Manifold* b3AllocateManifolds( b3World* world, int count )
 		return NULL;
 	}
 
-	int index = count - 1;
+	B3_ASSERT( count <= B3_MAX_MANIFOLDS );
 
-	// Need lock because this is called from the parallel narrow phase
+	// Need lock because this is called from the parallel narrow phase.
 	b3LockMutex( world->manifoldAllocatorMutex );
-	int currentCount = world->manifoldAllocators.count;
-	for ( int i = currentCount; i < count; ++i )
-	{
-		b3BlockAllocator allocator = b3CreateBlockAllocator( ( i + 1 ) * sizeof( b3Manifold ), 2 * B3_BLOCK_SIZE );
-		b3Array_Push( world->manifoldAllocators, allocator );
-	}
-
-	b3BlockAllocator* allocator = b3Array_Get( world->manifoldAllocators, index );
-	b3Manifold* manifolds = (b3Manifold*)b3AllocateElement( allocator );
+	b3Manifold* manifolds = b3AllocateElement( world->manifoldAllocators + count - 1 );
 	b3UnlockMutex( world->manifoldAllocatorMutex );
 	memset( manifolds, 0, count * sizeof( b3Manifold ) );
 	return manifolds;
@@ -354,10 +368,9 @@ static inline void b3FreeManifolds( b3World* world, b3Manifold* manifolds, int c
 		return;
 	}
 
-	int index = count - 1;
+	B3_ASSERT( count <= B3_MAX_MANIFOLDS );
+
 	b3LockMutex( world->manifoldAllocatorMutex );
-	b3BlockAllocator* allocator = b3Array_Get( world->manifoldAllocators, index );
-	b3FreeElement( allocator, manifolds );
+	b3FreeElement( world->manifoldAllocators + count - 1, manifolds );
 	b3UnlockMutex( world->manifoldAllocatorMutex );
 }
-

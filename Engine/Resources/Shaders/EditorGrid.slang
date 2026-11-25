@@ -81,6 +81,23 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
     const float2 WorldDeriv = max(float2(length(float2(ddx(Offset.x), ddy(Offset.x))),
                                          length(float2(ddx(Offset.z), ddy(Offset.z)))), 1e-6);
 
+    const float  Reach        = max(Pass().FadeDistance, abs(Camera.y) * 10.0);
+    const float  DistanceFade = 1.0 - smoothstep(Reach * 0.35, Reach, length(Offset.xz));
+    const float  HorizonFade  = saturate(abs(normalize(Dir).y) * 25.0);
+
+    // Reverse-Z, so the scene hides the grid where it is nearer; the margin keeps a floor at the plane from flickering over it.
+    const float4 HitClip    = ViewToClip(mul((float3x3)GetCameraView(), Offset));
+    const float  HitDepth   = HitClip.z / HitClip.w;
+    const float  SceneDepth = Pass().Depth.SampleLevel(Samplers::PointClamp, Input.UV, 0.0).r;
+    const float  Visible    = SceneDepth > HitDepth * 1.002 + 1e-7 ? 0.0 : 1.0;
+
+    // After the derivatives, which every lane of the quad has taken, so a hidden pixel skips the three grid levels it would zero.
+    const float Mask = (bHits ? 1.0 : 0.0) * Visible * DistanceFade * HorizonFade;
+    if (Mask <= 0.0)
+    {
+        discard;
+    }
+
     const float Spacing = max(Pass().Spacing, 1e-4);
     const float Lod     = max(log10(max(WorldDeriv.x, WorldDeriv.y) * kMinCellPixels / Spacing), -1.0);
     const float Fade    = frac(Lod);
@@ -99,17 +116,7 @@ float4 FragmentMain(FragmentInput Input) : SV_Target0
     Result = Over(Result, Pass().AxisZColor.rgb, Pass().AxisZColor.a * AxisLine(AxisDistance.x, Pass().AxisWidth));
     Result = Over(Result, Pass().AxisXColor.rgb, Pass().AxisXColor.a * AxisLine(AxisDistance.y, Pass().AxisWidth));
 
-    const float  Reach        = max(Pass().FadeDistance, abs(Camera.y) * 10.0);
-    const float  DistanceFade = 1.0 - smoothstep(Reach * 0.35, Reach, length(Offset.xz));
-    const float  HorizonFade  = saturate(abs(normalize(Dir).y) * 25.0);
-
-    // Reverse-Z, so the scene hides the grid where it is nearer; the margin keeps a floor at the plane from flickering over it.
-    const float4 HitClip    = ViewToClip(mul((float3x3)GetCameraView(), Offset));
-    const float  HitDepth   = HitClip.z / HitClip.w;
-    const float  SceneDepth = Pass().Depth.SampleLevel(Samplers::PointClamp, Input.UV, 0.0).r;
-    const float  Visible    = SceneDepth > HitDepth * 1.002 + 1e-7 ? 0.0 : 1.0;
-
-    Result *= (bHits ? 1.0 : 0.0) * Visible * DistanceFade * HorizonFade;
+    Result *= Mask;
     if (Result.a <= 0.0)
     {
         discard;

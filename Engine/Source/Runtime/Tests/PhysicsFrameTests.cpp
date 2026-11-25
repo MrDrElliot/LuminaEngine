@@ -132,6 +132,48 @@ TEST(PhysicsFrame, FixedStepCodeReadsTheSimulatedPose)
     EXPECT_GT(Reads, 60);
 }
 
+// Box3D keeps only all-or-nothing rotation on a body, so translation locks and paired rotation locks ride a motion lock joint.
+TEST(PhysicsFrame, AxisLocksHoldWhatTheyLockAndFreeTheRest)
+{
+    FPhysicsFrameWorld W;
+
+    const ECS::FEntity Slider = W.SpawnSphere(FVector3(1.0f, 3.0f, 2.0f), EBodyType::Dynamic, true);
+    W.Registry().Get<SRigidBodyComponent>(Slider).bLockTranslationX = true;
+    W.Registry().Get<SRigidBodyComponent>(Slider).bLockTranslationZ = true;
+
+    const ECS::FEntity Spinner = W.SpawnSphere(FVector3(-4.0f, 3.0f, 0.0f), EBodyType::Dynamic, false);
+    W.Registry().Get<SRigidBodyComponent>(Spinner).bLockRotationX = true;
+    W.Registry().Get<SRigidBodyComponent>(Spinner).bLockRotationZ = true;
+
+    const ECS::FEntity Fixed = W.SpawnSphere(FVector3(4.0f, 3.0f, 0.0f), EBodyType::Dynamic, false);
+    W.Registry().Get<SRigidBodyComponent>(Fixed).bLockRotationX = true;
+    W.Registry().Get<SRigidBodyComponent>(Fixed).bLockRotationY = true;
+    W.Registry().Get<SRigidBodyComponent>(Fixed).bLockRotationZ = true;
+
+    W.Frame(0.0);
+    W.Scene().SetLinearVelocity(Slider, FVector3(3.0f, 0.0f, 4.0f));
+    W.Scene().SetAngularVelocity(Spinner, FVector3(2.0f, 3.0f, 2.0f));
+    W.Scene().SetAngularVelocity(Fixed, FVector3(2.0f, 3.0f, 2.0f));
+    for (int32 Frame = 0; Frame < 60; ++Frame)
+    {
+        W.Frame(kRenderDt);
+    }
+
+    const FVector3 SliderAt = W.Scene().GetBodyPosition(Slider);
+    EXPECT_NEAR(SliderAt.x, 1.0f, 1e-2f) << "a translation lock holds the spawn coordinate";
+    EXPECT_NEAR(SliderAt.z, 2.0f, 1e-2f);
+    EXPECT_LT(SliderAt.y, 2.5f) << "the unlocked axis still falls";
+
+    const FQuat SpinnerTurn = W.Scene().GetBodyRotation(Spinner);
+    const FVector3 SpinnerUp = SpinnerTurn * FVector3(0.0f, 1.0f, 0.0f);
+    EXPECT_NEAR(SpinnerUp.y, 1.0f, 1e-3f) << "locking X and Z leaves only a turn about Y";
+    const FVector3 SpinnerForward = SpinnerTurn * FVector3(0.0f, 0.0f, 1.0f);
+    EXPECT_LT(SpinnerForward.z, 0.99f) << "the free axis still turns";
+
+    const FQuat FixedTurn = W.Scene().GetBodyRotation(Fixed);
+    EXPECT_NEAR(Math::Abs(FixedTurn.w), 1.0f, 1e-4f) << "all three locked fixes the rotation";
+}
+
 TEST(PhysicsFrame, ABodyThatStopsRestsWhereItWasSimulated)
 {
     FPhysicsFrameWorld W;

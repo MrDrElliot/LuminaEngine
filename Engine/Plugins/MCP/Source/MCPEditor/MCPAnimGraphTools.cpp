@@ -10,8 +10,13 @@
 #include "MCPServer.h"
 #include "MCPTextMatch.h"
 #include "Session/SessionOps.h"
+#include "Agent/AgentEntityToken.h"
+#include "World/Entity/Components/AnimationGraphComponent.h"
+#include "World/World.h"
 #include "UI/Tools/NodeGraph/NodeGraphOps.h"
 #include "UI/Tools/NodeGraph/EdNodeGraphPin.h"
+#include "Assets/AssetTypes/Mesh/Animation/Animation.h"
+#include "UI/Tools/NodeGraph/Animation/AnimGraphDebugView.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphCompiler.h"
 #include "UI/Tools/NodeGraph/Animation/AnimationGraphNodeGraph.h"
 #include "UI/Tools/NodeGraph/Animation/AnimStateTransition.h"
@@ -435,9 +440,79 @@ namespace Lumina::MCP
 
                     MarkAssetDirty(Target.Asset);
 
-                    return Agent::FToolResult::Ok(Lumina::Format("Compiled with {} warning(s).",
-                        Out.Warnings.Num()));
+                    FAnimGraphCrowdView Crowd;
+                    AnimGraphOps::BuildCrowdView(*Target.Asset, Compiler, Crowd);
+                    Out.bGpuCrowd = Target.Asset->bGpuCrowd;
+                    for (const auto& [Node, Fate] : Crowd.Skipped)
+                    {
+                        Out.CrowdSkipped.Add(Lumina::Format("{} ({})", Node->GetNodeTitleText(),
+                            Fate == EAnimCrowdNodeFate::Bypassed ? "passes its input through" : "feeds only skipped nodes"));
+                    }
+                    for (const CAnimation* Clip : Crowd.CpuClips)
+                    {
+                        Out.CrowdCpuClips.Add(Clip->GetName().ToString());
+                    }
+
+                    return Agent::FToolResult::Ok(Lumina::Format("Compiled with {} warning(s). Distant crowd characters skip {} of {} nodes.",
+                        Out.Warnings.Num(), Crowd.Skipped.Num(), Crowd.NumNodes));
                 });
+        }
+
+        Agent::FToolResult AnimGraphInstance(const SAnimGraphInstanceParams& In, SAnimGraphInstanceResult& Out)
+        {
+            FString Error;
+            CWorld* World = SessionOps::GetSceneWorld(Error);
+            ECS::FEntity Entity = ECS::NullEntity;
+            if (World == nullptr || !Agent::FEntityTokens::Resolve(World->GetEntityRegistry(), FStringView(In.Entity), Entity, Error))
+            {
+                return Agent::FToolResult::Error(Error);
+            }
+
+            const SAnimationGraphComponent* Component = World->GetEntityRegistry().TryGet<SAnimationGraphComponent>(Entity);
+            const CAnimationGraph* Graph = Component != nullptr ? Component->Graph.Get() : nullptr;
+            if (Graph == nullptr)
+            {
+                return Agent::FToolResult::Error("That entity has no animation graph.");
+            }
+            Out.AnimGraph = FString(*Graph->GetName().ToString());
+
+            for (int32 i = 0; i < Graph->Inputs.Num(); ++i)
+            {
+                SAnimGraphInstanceInput& Info = Out.Inputs.EmplaceGetRef();
+                Info.Name      = FString(*Graph->Inputs[i].Name.ToString());
+                Info.Component = FString(*Graph->Inputs[i].Component.ToString());
+                const CStruct* Struct = i < Graph->InputStructs.Num() ? Graph->InputStructs[i] : nullptr;
+                Info.bTypeFound = Struct != nullptr;
+                Info.bOnEntity  = Struct != nullptr && AnimGraphOps::FindInputComponent(*World, Entity, *Struct, Graph->Inputs[i].Lookup) != nullptr;
+            }
+
+            const FAnimGraphVMState& VMState = Component->VMState;
+            for (int32 i = 0; i < Graph->Parameters.Num(); ++i)
+            {
+                SAnimGraphInstanceValue& Value = Out.Parameters.EmplaceGetRef();
+                Value.Name      = FString(*Graph->Parameters[i].Name.ToString());
+                Value.Value     = i < VMState.Parameters.Num() ? VMState.Parameters[i] : Graph->Parameters[i].DefaultValue;
+                Value.bResolved = i < Graph->ParamBindings.Num() && Graph->ParamBindings[i].IsResolved();
+            }
+            for (int32 i = 0; i < Graph->ObjectParameters.Num(); ++i)
+            {
+                SAnimGraphInstanceValue& Value = Out.Parameters.EmplaceGetRef();
+                Value.Name      = FString(*Graph->ObjectParameters[i].Name.ToString());
+                const CObject* Object = i < VMState.ObjectParameters.Num() ? VMState.ObjectParameters[i].Get() : nullptr;
+                Value.Object    = Object != nullptr ? FString(*Object->GetName().ToString()) : FString();
+                Value.bResolved = i < Graph->ObjectParamBindings.Num() && Graph->ObjectParamBindings[i].IsResolved();
+            }
+
+            return Agent::FToolResult::Ok(Lumina::Format("{} reads {} input(s) and {} parameter(s).",
+                Out.AnimGraph, Out.Inputs.Num(), Out.Parameters.Num()));
+        }
+
+        void RegisterAnimGraphInstance(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SAnimGraphInstanceParams, SAnimGraphInstanceResult>(
+                Owner, "animgraph.instance",
+                "Report what the animation graph on one entity read last update: each input, whether its component is found, and every parameter value.",
+                Agent::EToolEffect::ReadOnly, Agent::EToolThread::GameThread, &AnimGraphInstance);
         }
     }
 
@@ -452,5 +527,6 @@ namespace Lumina::MCP
         RegisterAnimGraphSetNodeProperty(Owner);
         RegisterAnimGraphSetTransitionProperty(Owner);
         RegisterAnimGraphCompile(Owner);
+        RegisterAnimGraphInstance(Owner);
     }
 }

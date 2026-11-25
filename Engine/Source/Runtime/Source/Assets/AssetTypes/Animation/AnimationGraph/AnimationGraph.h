@@ -3,6 +3,7 @@
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/InstancedStruct.h"
+#include "Animation/AnimGraphPlan.h"
 #include "AnimationGraph.generated.h"
 
 namespace Lumina
@@ -66,14 +67,39 @@ namespace Lumina
         Object,
     };
 
-    // A parameter name resolved to a byte offset in the entity's blackboard struct. Transient.
+    // Marks a binding read from the graph instance's own parameter block rather than from an input component.
+    constexpr uint16 kAnimInstanceInput = 0xFFFF;
+
+    // Marks a binding read in place, with no asset reference to follow first.
+    constexpr uint32 kAnimNoHop = 0xFFFFFFFFu;
+
+    // Inputs a graph may name, bounded so an update finds every input's component without allocating.
+    constexpr int32 kMaxAnimGraphInputs = 16;
+
+    // A parameter path resolved to where its value lives, the instance block or an input component, and how to read it there. Transient.
     struct FAnimGraphParamBinding
     {
         uint32 Offset = 0;
+
+        // When set, the asset reference at this offset in the source is followed first, and Offset is into that asset.
+        uint32 HopOffset = kAnimNoHop;
+
+        uint16 Input = kAnimInstanceInput;
         EAnimParamValueType Type = EAnimParamValueType::Unresolved;
 
         bool IsResolved() const { return Type != EAnimParamValueType::Unresolved; }
     };
+
+    // Where a binding's bytes start, given the instance block and this entity's input components, or null when its source is missing.
+    FORCEINLINE const uint8* ResolveAnimParamBase(const FAnimGraphParamBinding& Binding, const uint8* InstanceBase, const uint8* const* InputBases)
+    {
+        const uint8* Base = Binding.Input == kAnimInstanceInput ? InstanceBase : InputBases[Binding.Input];
+        if (Base != nullptr && Binding.HopOffset != kAnimNoHop)
+        {
+            Base = reinterpret_cast<const uint8*>(*reinterpret_cast<CObject* const*>(Base + Binding.HopOffset));
+        }
+        return Base;
+    }
 
     // Unresolved for anything a parameter cannot read, such as containers, structs, strings and delegates.
     RUNTIME_API EAnimParamValueType AnimParamValueTypeFromProperty(const FProperty* Property);
@@ -379,6 +405,35 @@ namespace Lumina
         }
     };
 
+    // Where a graph input finds its component, starting from the entity the graph animates.
+    REFLECT()
+    enum class EAnimGraphInputLookup : uint8
+    {
+        // The animated entity, then each ancestor up to the root, so a mesh under its character finds the character's data.
+        SelfOrAncestor,
+
+        // Only the animated entity.
+        Self,
+    };
+
+    // A component the graph reads in place each update, its fields addressed as Name.Field by Get Parameter nodes.
+    REFLECT()
+    struct RUNTIME_API SAnimGraphInput
+    {
+        GENERATED_BODY()
+
+        // The first part of every path that reads this input, as in Locomotion.Speed.
+        PROPERTY(Editable, Category = "Input")
+        FName Name;
+
+        // The component type read, by its reflected name.
+        PROPERTY(Editable, Category = "Input", Picker = "Component")
+        FName Component;
+
+        PROPERTY(Editable, Category = "Input")
+        EAnimGraphInputLookup Lookup = EAnimGraphInputLookup::SelfOrAncestor;
+    };
+
     // Runtime anim-graph asset holding the bytecode the editor compiles from a CAnimationGraphNodeGraph.
     REFLECT()
     class RUNTIME_API CAnimationGraph : public CObject
@@ -407,8 +462,11 @@ namespace Lumina
         // Null when no parameter struct is assigned.
         CStruct* GetParameterStruct() const { return ParameterStruct.GetScriptStruct(); }
 
-        // Resolves every parameter name to an offset in the parameter struct; call after either changes.
+        // Resolves every parameter path to where its value lives; call after the parameters, the struct or the inputs change.
         void LinkParameters();
+
+        // Looks each input's component type up by name, which LinkParameters does first, adding what it cannot find to OutProblems.
+        void RefreshInputStructs(TVector<FString>* OutProblems = nullptr);
 
         bool IsCompiled() const { return !Bytecode.IsEmpty(); }
 
@@ -450,6 +508,25 @@ namespace Lumina
         PROPERTY(Editable, Category = "Bone Masks")
         TVector<SAnimGraphBoneMaskDef> BoneMaskDefs;
 
+        // Components the graph reads straight off the entity each update, so gameplay never copies values into it. Edited in the graph editor's Parameters panel.
+        PROPERTY(Hidden)
+        TVector<SAnimGraphInput> Inputs;
+
+        // Parallel to Inputs and resolved by LinkParameters, null for a component type that no longer exists.
+        TVector<CStruct*> InputStructs;
+
+        // What the last link could not resolve, hashed, so the same problems are logged once rather than per relink.
+        uint64 ReportedLinkProblems = 0;
+
+        // Input.Field.Field reads an input component, and any other path a field of the parameter struct. OutError says why one fails.
+        bool ResolveParameterPath(FName Path, bool bWantObject, FAnimGraphParamBinding& Out, FString* OutError = nullptr, const FProperty** OutLeaf = nullptr) const;
+
+        int32 FindInput(FName Name) const;
+
+        // Lets distant characters run this graph's crowd plan, posed on the GPU, which skips IK, look-at, bone edits, additive and masked layers.
+        PROPERTY(Editable, Category = "Crowd", DisplayName = "GPU Crowd")
+        bool bGpuCrowd = true;
+
         // Referenced by BlendMasked opcodes.
         TVector<FAnimGraphBoneMask> BoneMasks;
 
@@ -465,6 +542,12 @@ namespace Lumina
 
         // Instruction stream consumed by FAnimationGraphVM.
         TVector<uint8> Bytecode;
+
+        // Bytecode decoded for the update, never serialized and rebuilt whenever the bytecode is.
+        FAnimGraphPlan Plan;
+
+        // The same graph without its overlays, for characters far enough away that only the base motion reads.
+        FAnimGraphPlan CrowdPlan;
 
         uint16 NumObjectRegisters = 0;
         uint16 NumScalarRegisters = 0;

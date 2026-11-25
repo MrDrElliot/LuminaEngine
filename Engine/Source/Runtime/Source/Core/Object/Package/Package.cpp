@@ -5,6 +5,7 @@
 #include <utility>
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Core/Object/Class.h"
+#include "Core/Object/ObjectArray.h"
 #include "Core/Object/ObjectHash.h"
 #include "Core/Object/ObjectIterator.h"
 #include "Core/Object/ObjectReferenceReplacer.h"
@@ -647,22 +648,37 @@ namespace Lumina
         return true;
     }
 
+    namespace PackageInternal
+    {
+        bool ReadCheckedHeader(const TVector<uint8>& Binary, FStringView Path, FPackageHeader& OutHeader)
+        {
+            if (static_cast<size_t>(Binary.Num()) < sizeof(FPackageHeader))
+            {
+                LOG_ERROR("{} is too small to be a valid package", Path);
+                return false;
+            }
+
+            FMemoryReader Reader(Binary);
+            Reader << OutHeader;
+            return CPackage::IsReadableHeader(OutHeader, Path, Binary.Num());
+        }
+    }
+
     bool CPackage::ReadPackageContainer(FStringView Path, TVector<uint8>& OutBinary, FPackageHeader& OutHeader, FBulkRegion* OutBulkRegion)
     {
-        if (!ReadPackageFile(Path, OutBinary, OutBulkRegion))
+        return ReadPackageFile(Path, OutBinary, OutBulkRegion) && ReadCheckedHeader(OutBinary, Path, OutHeader);
+    }
+
+    bool CPackage::DecodePackageFile(TVector<uint8>&& FileBytes, FStringView Path, TVector<uint8>& OutBinary, FPackageHeader& OutHeader)
+    {
+        // The bulk region and its trailer sit after the compressed container, so only the container is inflated.
+        FBulkRegion Region;
+        if (ParseBulkTrailer(FileBytes.GetData(), FileBytes.Num(), (uint64)FileBytes.Num(), Region))
         {
-            return false;
+            FileBytes.SetNum(IntCastChecked<int32>(Region.FileOffset));
         }
 
-        if (static_cast<size_t>(OutBinary.Num()) < sizeof(FPackageHeader))
-        {
-            LOG_ERROR("{} is too small to be a valid package", Path);
-            return false;
-        }
-
-        FMemoryReader Reader(OutBinary);
-        Reader << OutHeader;
-        return IsReadableHeader(OutHeader, Path, OutBinary.Num());
+        return DecompressPackageBinary(FileBytes, OutBinary) && ReadCheckedHeader(OutBinary, Path, OutHeader);
     }
 
     bool CPackage::ReadBulkData(const FBulkDataRef& Ref, TVector<uint8>& OutBytes, uint32 ExpectedGeneration) const
@@ -775,7 +791,65 @@ namespace Lumina
 
     void CPackage::OnDestroy()
     {
-        
+        // The shutdown sweep frees everything anyway, and a walk of every object per package would stall it.
+        if (Object::Internal::IsShuttingDown())
+        {
+            return;
+        }
+
+        ClearDirty();
+
+        // An export a holder keeps alive would otherwise point at this package after it is freed.
+        TVector<CObject*> Survivors;
+        GetObjectsWithPackage(this, Survivors);
+        for (CObject* Survivor : Survivors)
+        {
+            Survivor->ClearPackage();
+        }
+    }
+
+    void CPackage::ClearDirty()
+    {
+        TVector<TStrongObjectPtr<CObject>> Released;
+        {
+            FScopeLock Lock(UnsavedExportsMutex);
+            bDirty.store(false, std::memory_order_release);
+            Released = Move(UnsavedExports);
+            UnsavedExports.Reset();
+        }
+
+        // Released outside the lock, since each release asks RetainUnsavedExport, which takes it.
+        Released.Reset();
+    }
+
+    bool CPackage::RetainUnsavedExport(CObjectBase* Object)
+    {
+        // Checked before the package is touched, since a destroyed package's survivors are flagged or detached first.
+        if (Object == nullptr || Object->HasAnyFlag(OF_MarkedDestroy | OF_Transient) || Object->LoaderIndex <= 0)
+        {
+            return false;
+        }
+
+        CPackage* Package = Object->GetPackage();
+        if (Package == nullptr || Package->IsTransientPackage())
+        {
+            return false;
+        }
+
+        FScopeLock Lock(Package->UnsavedExportsMutex);
+        if (!Package->bDirty.load(std::memory_order_acquire))
+        {
+            return false;
+        }
+
+        // Null when a destroy already claimed it, which then frees it as usual.
+        TStrongObjectPtr<CObject> Kept(static_cast<CObject*>(Object));
+        if (!Kept)
+        {
+            return false;
+        }
+        Package->UnsavedExports.Add(Move(Kept));
+        return true;
     }
 
     bool CPackage::Rename(const FName& NewName, CPackage* NewPackage)
@@ -827,14 +901,36 @@ namespace Lumina
         }
 
         FFixedString ObjectName = SanitizeObjectName(Path);
-        if (FindObject<CPackage>(ObjectName) != nullptr)
+        if (CPackage* Existing = FindObject<CPackage>(ObjectName))
         {
-            LOG_ERROR("CreatePackage: package {} already exists", Path);
-            return nullptr;
+            // A package whose load failed holds nothing, so the new asset takes it over.
+            TVector<CObject*> Held;
+            GetObjectsWithPackage(Existing, Held);
+            ELoadState Failed = ELoadState::Failed;
+            if (!Held.IsEmpty() || !Existing->LoadState.compare_exchange_strong(Failed, ELoadState::Loaded, std::memory_order_acq_rel))
+            {
+                LOG_ERROR("CreatePackage: package {} already exists", Path);
+                return nullptr;
+            }
+
+            Existing->ImportTable.Reset();
+            Existing->ExportTable.Reset();
+            Existing->SetBulkSource(FBulkRegion{}, FStringView());
+            {
+                FScopeLock Lock(Existing->LoaderBytesMutex);
+                Existing->LoaderBytes.reset();
+                Existing->LoaderNames.reset();
+            }
+            Existing->MarkDirty();
+            LOG_INFO("Created Package: \"{}\" over one that failed to load", Path);
+            return Existing;
         }
 
         CPackage* Package = NewObject<CPackage>(nullptr, ObjectName);
         Package->AddToRoot();
+
+        // Everything it holds lives in memory, so a load of this path must not read a file that may not exist yet.
+        Package->LoadState.store(ELoadState::Loaded, std::memory_order_release);
 
         LOG_INFO("Created Package: \"{}\"", Path);
 
@@ -1016,6 +1112,9 @@ namespace Lumina
         // Flagged first, so a later load or create at this path makes a new package instead of finding this one.
         SetFlag(OF_MarkedDestroy);
 
+        // Unloading abandons unsaved edits, and an export kept for the save would survive the destroy below.
+        ClearDirty();
+
         // Gathered now rather than earlier, since a caller's reference sweep may have freed objects an older list held.
         TVector<CObject*> SurvivingExports;
         SurvivingExports.Reserve(20);
@@ -1157,11 +1256,21 @@ namespace Lumina
 
         ELoadState Expected = ELoadState::Unloaded;
         bool bIsLoaderThread = Package->LoadState.compare_exchange_strong(
-            Expected, 
+            Expected,
             ELoadState::Loading,
             std::memory_order_acquire,
             std::memory_order_acquire);
-        
+
+        // A failed load is tried again, since the file may have been written or repaired since.
+        if (!bIsLoaderThread && Expected == ELoadState::Failed)
+        {
+            bIsLoaderThread = Package->LoadState.compare_exchange_strong(
+                Expected,
+                ELoadState::Loading,
+                std::memory_order_acquire,
+                std::memory_order_acquire);
+        }
+
         if (!bIsLoaderThread)
         {
             // Distinguished before the spin, since an already-loaded package never enters it.
@@ -1214,7 +1323,7 @@ namespace Lumina
             TSharedPtr<FPackageFileBytes> Bytes;
             {
                 LUMINA_PROFILE_SECTION("Create Package Loader");
-                Bytes = Package->CreateLoader(FileBinary);
+                Bytes = Package->CreateLoader(Move(FileBinary));
             }
 
             FPackageLoader Reader(Bytes, Package);
@@ -1328,15 +1437,13 @@ namespace Lumina
 
     namespace
     {
-        // Clears then repopulates the export and import tables so back-to-back saves stay consistent.
+        // Clears then repopulates the export and import tables, so the caller fully loads the package first and keeps the old layout to restore.
         bool BuildPackageBytes(CPackage* Package, bool bCooking,
                                TVector<uint8>& OutUncompressed,
                                TVector<uint8>& OutCompressed,
                                CPackage::FBulkRegion& OutBulkRegion,
                                const TFunction<bool(const CObject*)>& ExcludeExport = {})
         {
-            (void)Package->FullyLoad();
-
             Package->ExportTable.Reset();
             Package->ImportTable.Reset();
 
@@ -1432,6 +1539,34 @@ namespace Lumina
         }
     }
 
+    CPackage::FLayoutSnapshot CPackage::SnapshotLayout() const
+    {
+        return FLayoutSnapshot{ ImportTable, ExportTable };
+    }
+
+    void CPackage::RestoreLayout(FLayoutSnapshot&& Snapshot)
+    {
+        // An object only the discarded layout numbered has no export in the restored one.
+        for (const FObjectExport& Export : ExportTable)
+        {
+            if (CObject* Object = Export.Object.Get())
+            {
+                Object->LoaderIndex = 0;
+            }
+        }
+
+        ImportTable = Move(Snapshot.Imports);
+        ExportTable = Move(Snapshot.Exports);
+        for (int32 i = 0; i < ExportTable.Num(); ++i)
+        {
+            if (CObject* Object = ExportTable[i].Object.Get())
+            {
+                Object->LoaderIndex = FObjectPackageIndex::FromExport(i).GetRaw();
+            }
+        }
+        ResidentExportScan.store(0, std::memory_order_relaxed);
+    }
+
     bool CPackage::SavePackage(CPackage* Package, FStringView Path)
     {
         LUMINA_PROFILE_SCOPE();
@@ -1449,6 +1584,10 @@ namespace Lumina
         TVector<uint8> DiskBinary;
         FBulkRegion    NewBulkRegion;
 
+        // Every export resident first, so the snapshot names the objects a failed save hands the old layout back to.
+        (void)Package->FullyLoad();
+        FLayoutSnapshot Previous = Package->SnapshotLayout();
+
         // Region-relative offsets make the copy legal, and a dirty package may not match what is on disk.
         const bool bSplice = Package->CanSpliceBulkRegion();
 
@@ -1461,6 +1600,7 @@ namespace Lumina
 
         if (!bBuilt)
         {
+            Package->RestoreLayout(Move(Previous));
             LOG_ERROR("Failed to compress package: {}", Path);
             return false;
         }
@@ -1490,7 +1630,7 @@ namespace Lumina
                 // The spliced region is byte-identical, so an in-flight read gets the same answer either way.
                 Package->SetBulkSource(NewBulkRegion, Path);
 
-                Package->CreateLoader(FileBinary);
+                Package->CreateLoader(Move(FileBinary));
                 Package->ConditionalDropLoader();
 
                 LOG_INFO("Saved Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{:.2f}] KiB container + "
@@ -1518,6 +1658,7 @@ namespace Lumina
             Package->bBulkDataUnresolved = false;
             if (!BuildPackageBytes(Package, /*bCooking*/ false, FileBinary, DiskBinary, NewBulkRegion))
             {
+                Package->RestoreLayout(Move(Previous));
                 LOG_ERROR("Failed to compress package: {}", Path);
                 return false;
             }
@@ -1527,6 +1668,7 @@ namespace Lumina
         if (Package->bBulkDataUnresolved)
         {
             Package->bBulkDataUnresolved = false;
+            Package->RestoreLayout(Move(Previous));
             LOG_ERROR("SavePackage: refusing to write {} -- an export's bulk data could not be read back and "
                       "would be saved as empty. The file on disk is unchanged; see the errors above for "
                       "which payload failed.", Path);
@@ -1536,6 +1678,7 @@ namespace Lumina
         if (!VFS::AtomicWriteFile(Path, DiskBinary))
         {
             // The atomic write failed, so disk is unchanged and the package stays dirty for retry.
+            Package->RestoreLayout(Move(Previous));
             LOG_ERROR("Failed to save package: {}", Path);
             return false;
         }
@@ -1544,7 +1687,8 @@ namespace Lumina
         Package->SetBulkSource(NewBulkRegion, Path);
 
         // Dropped again when the save left every export resident, since the bytes are then dead weight.
-        Package->CreateLoader(FileBinary);
+        const int64 UncompressedBytes = FileBinary.Num();
+        Package->CreateLoader(Move(FileBinary));
         Package->ConditionalDropLoader();
 
         LOG_INFO("Saved Package: \"{}\" - ( [{}] Exports | [{}] Imports | [{:.2f}] KiB on disk, [{:.2f}] KiB uncompressed)",
@@ -1552,7 +1696,7 @@ namespace Lumina
             Package->ExportTable.Num(),
             Package->ImportTable.Num(),
             static_cast<double>(DiskBinary.Num()) / 1024.0,
-            static_cast<double>(FileBinary.Num()) / 1024.0);
+            static_cast<double>(UncompressedBytes) / 1024.0);
 
         Package->ClearDirty();
 
@@ -1575,8 +1719,14 @@ namespace Lumina
         TVector<uint8> FileBinary;
         FBulkRegion    CookedBulkRegion;
 
+        // The cooked tables describe bytes this package never holds, so an export reloaded later must still find its editor layout.
+        (void)Package->FullyLoad();
+        FLayoutSnapshot EditorLayout = Package->SnapshotLayout();
+
         Package->bBulkDataUnresolved = false;
-        if (!BuildPackageBytes(Package, /*bCooking*/ true, FileBinary, OutCompressed, CookedBulkRegion, ExcludeExport))
+        const bool bBuilt = BuildPackageBytes(Package, /*bCooking*/ true, FileBinary, OutCompressed, CookedBulkRegion, ExcludeExport);
+        Package->RestoreLayout(Move(EditorLayout));
+        if (!bBuilt)
         {
             return false;
         }
@@ -1636,16 +1786,16 @@ namespace Lumina
         return CompressPackageBinary(Binary, OutCompressed, kZstdLevelCook);
     }
 
-    TSharedPtr<FPackageFileBytes> CPackage::CreateLoader(const TVector<uint8>& FileBinary)
+    TSharedPtr<FPackageFileBytes> CPackage::CreateLoader(TVector<uint8>&& FileBinary)
     {
-        void* HeapData = Memory::Malloc(FileBinary.Num());
-        Memory::Memcpy(HeapData, FileBinary.GetData(), FileBinary.Num());
-
-        TSharedPtr<FPackageFileBytes> NewBytes = MakeShared<FPackageFileBytes>(HeapData, FileBinary.Num());
+        TSharedPtr<FPackageFileBytes> NewBytes = MakeShared<FPackageFileBytes>(Move(FileBinary));
 
         // Publication only; a reader already walking the old bytes keeps them alive through its own reference.
         FScopeLock Lock(LoaderBytesMutex);
         LoaderBytes = NewBytes;
+
+        // These bytes may be a different layout, so which exports are resident is asked again from the start.
+        ResidentExportScan.store(0, std::memory_order_relaxed);
 
         // whatever version the save stamped, overwritten by a caller that parsed an older header
         LoaderFileVersion = (GForcedSaveVersion != 0) ? GForcedSaveVersion : Global::GPackageFileLuminaVersion.FileVersion;
@@ -1690,7 +1840,7 @@ namespace Lumina
             }
 
             SetBulkSource(ReopenedRegion, Path);
-            Bytes = CreateLoader(FileBinary);
+            Bytes = CreateLoader(Move(FileBinary));
         }
 
         FPackageLoader Reader(Bytes, this);
@@ -1756,7 +1906,7 @@ namespace Lumina
         // Read through the lock because another thread's save or load can be mid SetBulkSource.
         FBulkRegion Region;
         const FFixedString SourcePath = GetBulkSource(&Region);
-        return !bDirty
+        return !IsDirty()
             && Region.IsValid()
             && !SourcePath.IsEmpty()
             && VFS::Exists(SourcePath);
@@ -1773,11 +1923,13 @@ namespace Lumina
         }
 
         // A null export pointer is treated conservatively, so bytes are reclaimed only when fully resident.
-        for (const FObjectExport& Export : ExportTable)
+        int32 Scan = ResidentExportScan.load(std::memory_order_relaxed);
+        for (; Scan < ExportTable.Num(); ++Scan)
         {
-            const CObject* Obj = Export.Object.Get();
+            const CObject* Obj = ExportTable[Scan].Object.Get();
             if (Obj == nullptr || Obj->HasAnyFlag(OF_NeedsLoad))
             {
+                ResidentExportScan.store(Scan, std::memory_order_relaxed);
                 return;
             }
         }
@@ -1958,6 +2110,12 @@ namespace Lumina
 
     CObject* CPackage::CreateExportShell(int32 ExportIndex)
     {
+        // Every reference to a resident export lands here, and the weak pointer answers without the lock or the hash.
+        if (CObject* Resident = ExportTable[ExportIndex].Object.Get(); Resident != nullptr && Resident->GetGUID() == ExportTable[ExportIndex].ObjectGUID)
+        {
+            return Resident;
+        }
+
         TScopeLock<FRecursiveMutex> Lock(ExportShellMutex);
         FObjectExport& Export = ExportTable[ExportIndex];
 
@@ -2037,23 +2195,23 @@ namespace Lumina
     {
         for (int32 i = 0; i < ExportTable.Num(); ++i)
         {
-            FObjectExport& Export = ExportTable[i];
-
-            if (Export.ObjectGUID == GUID)
+            if (ExportTable[i].ObjectGUID == GUID)
             {
-                CObject* Object = CreateExportShell(static_cast<int32>(i));
-                if (Object == nullptr)
-                {
-                    return nullptr;
-                }
-
-                LoadObject(Object, Request);
-
-                return Object;
+                return LoadExport(i, Request);
             }
         }
 
         return nullptr;
+    }
+
+    CObject* CPackage::LoadExport(int32 ExportIndex, FLoadRequest& Request)
+    {
+        CObject* Object = CreateExportShell(ExportIndex);
+        if (Object != nullptr)
+        {
+            LoadObject(Object, Request);
+        }
+        return Object;
     }
 
     CObject* CPackage::LoadObjectByName(const FName& Name)
@@ -2286,9 +2444,10 @@ namespace Lumina
     bool CPackage::FullyLoad()
     {
         bool bAllOk = true;
-        for (const FObjectExport& Export : ExportTable)
+        for (int32 i = 0; i < ExportTable.Num(); ++i)
         {
-            if (LoadObject(Export.ObjectGUID) == nullptr)
+            FLoadRequest Request;
+            if (LoadExport(i, Request) == nullptr)
             {
                 bAllOk = false;
             }
@@ -2349,9 +2508,16 @@ namespace Lumina
             }
 
             FObjectImport& Import = ImportTable[ArrayIndex];
-            Import.Object = LoadImport(Import.ObjectGUID, Request);
-            
-            return ImportTable[ArrayIndex].Object.Get();
+
+            // A package referenced many times resolves once, and the rest read the pointer instead of the hash.
+            if (CObject* Resolved = Import.Object.Get(); Resolved != nullptr && Resolved->GetGUID() == Import.ObjectGUID)
+            {
+                return Resolved;
+            }
+
+            CObject* Loaded = LoadImport(Import.ObjectGUID, Request);
+            Import.Object = Loaded;
+            return Loaded;
         }
 
         if (Index.IsExport())
@@ -2363,7 +2529,7 @@ namespace Lumina
                 return nullptr;
             }
 
-            return LoadObject(ExportTable[ArrayIndex].ObjectGUID, Request);
+            return LoadExport(ArrayIndex, Request);
         }
 
         return nullptr;

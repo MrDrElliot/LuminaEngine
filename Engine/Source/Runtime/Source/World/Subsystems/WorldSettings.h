@@ -53,6 +53,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Physics")
         bool bEnablePhysicsInterpolation = true;
 
+        // Plays distant graph-driven characters from their graph's crowd plan, posed on the GPU, for graphs that allow it.
+        PROPERTY(Editable, Category = "Animation", DisplayName = "GPU Crowd Animation")
+        bool bGpuCrowdAnimation = true;
+
+        // How far a character must be, in multiples of its bounding radius, before the GPU crowd tier takes it, so nearby characters keep their full graph.
+        PROPERTY(Editable, Category = "Animation", ClampMin = 0.0f, DisplayName = "GPU Crowd Min Distance")
+        float GpuCrowdMinDistanceOverRadius = 30.0f;
+
         /** Max rigid bodies the scene pre-allocates for. Drives up-front physics memory; exceeding it at runtime drops new bodies, so raise it for dense worlds. */
         PROPERTY(Editable, Category = "Physics")
         uint32 MaxPhysicsBodies = 65536;
@@ -176,5 +184,11 @@ namespace Lumina
 
         PROPERTY(Hidden)
         bool bAnimatesWhilePaused = true;
+
+        PROPERTY(Hidden)
+        bool bGpuCrowdAnimation = true;
+
+        PROPERTY(Hidden)
+        float GpuCrowdMinDistanceOverRadius = 30.0f;
     };
 }
