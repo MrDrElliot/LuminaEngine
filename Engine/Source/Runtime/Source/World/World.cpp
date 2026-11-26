@@ -227,6 +227,20 @@ namespace Lumina
         }
         #endif
     }
+
+    void FWorldDebugInterface::DrawWorldText(FStringView Text, FVector3 Location, TOptional<FVector4> Color, float Scale)
+    {
+        #if !defined(LE_SHIPPING)
+        if (World != nullptr && !World->IsSuspended())
+        {
+            FDebugTextLine& Line = World->DebugTextLines.EmplaceGetRef();
+            Line.Text = FString(Text);
+            Line.Color = Color.Get(FVector4(1.0f));
+            Line.Location = Location;
+            Line.Scale = Scale;
+        }
+        #endif
+    }
     void FWorldDebugInterface::DrawLine(FVector3 Start, FVector3 End, FVector4 Color, TOptional<float> Thickness, TOptional<bool> bDepthTest, TOptional<float> Duration)
     {
         #if !defined(LE_SHIPPING)

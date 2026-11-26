@@ -69,11 +69,14 @@ namespace Lumina
     struct SDefaultWorldSettings;
     struct SSceneFolderComponent;
 
-    // One screen-space debug text line, drained by the render scene each frame.
+    // One debug text line, drained by the render scene each frame; stacked in the corner unless it has a Location.
     struct FDebugTextLine
     {
-        FString  Text;
-        FVector4 Color = FVector4(1.0f);
+        FString              Text;
+        FVector4             Color = FVector4(1.0f);
+        TOptional<FVector3>  Location;
+        // Multiplies a located line's distance-scaled size.
+        float                Scale = 1.0f;
     };
 
     // One system as scheduled in a stage, as the Gameplay Insights tool shows it. Reads and Writes are component type ids.
