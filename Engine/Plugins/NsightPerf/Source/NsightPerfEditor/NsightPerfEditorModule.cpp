@@ -4,7 +4,7 @@
 #include "Log/Log.h"
 
 // Vulkan lives only in this plugin, and RHINative hands out opaque handles reinterpreted here.
-#include <volk/volk.h>
+#include <vulkan/vulkan.h>
 #include "Renderer/RHINative.h"
 
 // Nsight Perf SDK (header-only utility layer over nvperf_grfx_host).

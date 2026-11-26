@@ -214,7 +214,7 @@ namespace Lumina
             float BaseHeight = Fog.FogBaseHeight;
             if (const STransformComponent* Transform = Transforms.TryGet(Entity))
             {
-                BaseHeight += Transform->GetWorldLocationCached().y;
+                BaseHeight += Transform->GetWorldLocation().y;
             }
 
             FExponentialHeightFogParams& P = Frame.Volumetrics.FogParams;
@@ -287,7 +287,7 @@ namespace Lumina
             const float Density = FogContrastThreshold / Math::Max(Volume.VisibilityDistance, 1.0f);
 
             FGPUFogVolume& Item = Frame.Volumetrics.FogVolumes.EmplaceGetRef();
-            Item.WorldToVolume = Math::Inverse(Math::Scale(Transforms.Get(Entity).GetWorldMatrixCached(), Extent));
+            Item.WorldToVolume = Math::Inverse(Math::Scale(Transforms.Get(Entity).GetWorldMatrix(), Extent));
             Item.Albedo        = FVector4(Volume.Albedo, Density);
             Item.Emissive      = FVector4(Volume.EmissiveColor * Math::Max(Volume.EmissiveIntensity, 0.0f), 0.0f);
             Item.Params        = FVector4(Volume.bSphere ? 1.0f : 0.0f,

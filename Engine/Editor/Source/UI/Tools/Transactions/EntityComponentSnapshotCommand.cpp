@@ -215,7 +215,7 @@ namespace Lumina
 
                     if (bTransformRestored)
                     {
-                        Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+                        ECS::Utils::MarkTransformDirty(Registry, Entity);
                     }
 
                     if (Index < Overrides.Num())

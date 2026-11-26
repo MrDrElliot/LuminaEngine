@@ -60,6 +60,15 @@ namespace Lumina
         float       Mass = 70.0f;
         int32       MaxCollisionIterations = 8;
         bool        bCollideWithCharacters = true;
+        bool        bLODRelevanceSource = false;
+
+        // Off for a character far from everything that needs it, which leaves rigid bodies and queries out there blind to it.
+        bool        bProxyEnabled = true;
+        // Fixed steps the last move spanned and steps held since, which interpolation spreads the move across.
+        uint8       LODInterval = 1;
+        uint8       LODStepsHeld = 0;
+        // The step an awake rigid body last came near, zero for never, so the proxy outlasts a passing crate.
+        uint64      NearBodyStep = 0;
 
         // ECharacterNetDrive, which decides whether the physics loop steps this character at all.
         uint8       NetDrive = 0;

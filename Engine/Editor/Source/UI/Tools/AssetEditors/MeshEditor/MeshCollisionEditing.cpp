@@ -152,7 +152,7 @@ namespace Lumina
     }
 
     FMeshCollisionEditing::FMeshCollisionEditing(FTransactionManager& InTransactions)
-        : Transactions(InTransactions)
+        : Transactions(&InTransactions)
     {
         const auto WireTable = [this](FPropertyTable& Table)
         {
@@ -334,13 +334,13 @@ namespace Lumina
         {
             return;
         }
-        Transactions.BeginTransaction(Name);
-        Transactions.Record(MakeUnique<FMeshCollisionSnapshotCommand>(Mesh.Get(), Name));
+        Transactions->BeginTransaction(Name);
+        Transactions->Record(MakeUnique<FMeshCollisionSnapshotCommand>(Mesh.Get(), Name));
     }
 
     void FMeshCollisionEditing::EndTransaction()
     {
-        Transactions.CommitTransaction();
+        Transactions->CommitTransaction();
     }
 
     void FMeshCollisionEditing::CloseOpenDragTransaction()

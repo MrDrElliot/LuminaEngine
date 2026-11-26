@@ -102,14 +102,14 @@ namespace Lumina::Jobs
 
         struct FJoinAwaiter
         {
-            FFrame& Frame;
+            FFrame* Frame;
 
-            bool await_ready() const noexcept { return Frame.Steals == 0; }
-            bool await_suspend(std::coroutine_handle<>) noexcept { return SuspendAtJoin(Frame); }
+            bool await_ready() const noexcept { return Frame->Steals == 0; }
+            bool await_suspend(std::coroutine_handle<>) noexcept { return SuspendAtJoin(*Frame); }
             void await_resume() noexcept
             {
-                Frame.Joins.store(FFrame::kJoinInit, std::memory_order_relaxed);
-                Frame.Steals = 0;
+                Frame->Joins.store(FFrame::kJoinInit, std::memory_order_relaxed);
+                Frame->Steals = 0;
             }
         };
 
@@ -147,7 +147,7 @@ namespace Lumina::Jobs
             ForkDetail::FFinalAwaiter final_suspend() const noexcept { return {}; }
             void unhandled_exception() const noexcept { std::terminate(); }
 
-            ForkDetail::FJoinAwaiter await_transform(ForkDetail::FJoinTag) noexcept { return { *this }; }
+            ForkDetail::FJoinAwaiter await_transform(ForkDetail::FJoinTag) noexcept { return { this }; }
 
             template<typename TAwaitable>
             TAwaitable&& await_transform(TAwaitable&& Awaitable) const noexcept { return Forward<TAwaitable>(Awaitable); }
@@ -421,17 +421,17 @@ namespace Lumina::Jobs
 
         struct FAwaiter
         {
-            FTaskEvent& Event;
+            FTaskEvent* Event;
 
-            bool await_ready() const noexcept { return Event.IsSignaled(); }
+            bool await_ready() const noexcept { return Event->IsSignaled(); }
 
             template<typename TPromise>
-            bool await_suspend(std::coroutine_handle<TPromise> Handle) noexcept { return Event.Enqueue(Handle.promise()); }
+            bool await_suspend(std::coroutine_handle<TPromise> Handle) noexcept { return Event->Enqueue(Handle.promise()); }
 
             void await_resume() const noexcept {}
         };
 
-        FAwaiter operator co_await() noexcept { return { *this }; }
+        FAwaiter operator co_await() noexcept { return { this }; }
 
     private:
 

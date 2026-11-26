@@ -178,7 +178,7 @@ namespace Lumina::SkeletalUtils
             return false;
         }
 
-        OutTransform = Transform->GetWorldMatrix() * ComponentTransform;
+        OutTransform = Transform->ComputeWorldTransform().GetMatrix() * ComponentTransform;
         return true;
     }
 
@@ -203,7 +203,7 @@ namespace Lumina::SkeletalUtils
         }
 
         // Compared in component space, one inverse instead of a matrix multiply per bone.
-        const FMatrix4 WorldToComponent = Math::Inverse(Transform->GetWorldMatrix());
+        const FMatrix4 WorldToComponent = Math::Inverse(Transform->ComputeWorldTransform().GetMatrix());
         const FVector3 LocalPoint = FVector3(WorldToComponent * FVector4(WorldPoint, 1.0f));
 
         const bool bLivePose = Mesh->BoneTransforms.Num() == Skeleton->GetNumBones();

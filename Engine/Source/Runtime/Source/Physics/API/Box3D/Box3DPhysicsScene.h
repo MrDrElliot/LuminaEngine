@@ -5,6 +5,7 @@
 
 #include <box3d/box3d.h>
 
+#include "AI/Avoidance/AvoidanceGrid.h"
 #include "Box3DTaskBridge.h"
 #include "Containers/HashTable.h"
 #include "World/ECS/EntityMap.h"
@@ -153,6 +154,62 @@ namespace Lumina::Physics
         SCharacterPhysicsComponent*     Physics;
         SCharacterMovementComponent*    Movement;
         ECS::FEntity                    Entity = ECS::NullEntity;
+        uint32                          ContactIndex = 0;
+        // A character stepped on its own has no contact pass, so it meets other characters through their proxies instead.
+        bool                            bProxyCharacterContacts = false;
+        // Longer than a fixed step for a character past the LOD distance, which moves once for the steps it held.
+        float                           StepDt = 0.0f;
+    };
+
+    // A character as the contact pass sees it, posed after the mover so every pair reads the same snapshot.
+    struct FCharacterContactBody
+    {
+        FPhysicsCharacterHandle*        Character = nullptr;
+        SCollisionProfile               Profile{};
+        ECS::FEntity                    Entity = ECS::NullEntity;
+        float                           Bottom = 0.0f;
+        float                           Top = 0.0f;
+        float                           Radius = 0.0f;
+        float                           InvMass = 0.0f;
+        // A bound on how far the step can carry it, so a pair is bounded whenever either side could close the gap.
+        float                           Reach = 0.0f;
+        // Only a character stepped this substep yields, the rest hold still like a wall.
+        bool                            bMovable = false;
+        bool                            bCollides = false;
+    };
+
+    inline constexpr int32 kMaxCharacterPlanes = 16;
+
+    // What a substep owes one character, decided in parallel and finished serially only where Box3D gets written.
+    enum class ECharacterPrep : uint8
+    {
+        Skip,
+        Hold,
+        Rest,
+        Step,
+        Serial,
+    };
+
+    // Counts for one run of the dense character pool, so the parallel fill knows where each run writes.
+    struct FCharacterPrepChunk
+    {
+        uint32  ContactStart = 0;
+        uint32  WorkStart = 0;
+        uint32  Contacts = 0;
+        uint32  Works = 0;
+        uint32  Resting = 0;
+        uint32  Sources = 0;
+        float   MaxRadius = 0.0f;
+        float   MaxReach = 0.0f;
+    };
+
+    // The neighbors bounding one step, each a plane fixed where the step began.
+    struct FCharacterPlanes
+    {
+        b3Vec3  Normals[kMaxCharacterPlanes];
+        // How far toward the neighbor this step may close, negative when it starts overlapped and has to back out.
+        float   Allowed[kMaxCharacterPlanes];
+        int32   Count = 0;
     };
 
     struct FPendingCharacterPush
@@ -169,12 +226,36 @@ namespace Lumina::Physics
         TVector<SCharacterLandedEvent>  Landings;
         TVector<SCharacterJumpedEvent>  Jumps;
 
+        // Resting characters a stepped one leaned on, woken after the fan-out since another thread owns them.
+        TVector<FPhysicsCharacterHandle*> Wakes;
         void Clear()
         {
             Pushes.Reset();
             Landings.Reset();
             Jumps.Reset();
+            Wakes.Reset();
         }
+    };
+
+    // Wall time of the last Update's phases summed over its fixed steps, which benchmarks and the character budget read.
+    struct FPhysicsUpdateTimings
+    {
+        double SyncMs           = 0.0;
+        double InterpMs         = 0.0;
+        double LatchMs          = 0.0;
+        double WorldStepMs      = 0.0;
+        double DrainMs          = 0.0;
+        double CharacterPrepMs  = 0.0;
+        double CharacterStepMs  = 0.0;
+        double CharacterContactMs = 0.0;
+        double CharacterApplyMs = 0.0;
+        // Box3D's own stage times for the last step.
+        b3Profile LastStepProfile{};
+        uint32 Steps               = 0;
+        // Steps the frame owed but could not afford, which the scene dropped instead of spiraling.
+        uint32 DroppedSteps        = 0;
+        uint32 SteppedCharacters   = 0;
+        uint32 RestingCharacters   = 0;
     };
 
     class RUNTIME_API FBox3DPhysicsScene : public IPhysicsScene
@@ -212,6 +293,10 @@ namespace Lumina::Physics
                          const FVector3& WorldUp, float Gravity, float Dt);
         void PoseVehicleWheels();
         void StepCharacter(const FCharacterWork& Work, float FixedDt, uint32 ThreadSlot);
+        // Poses every character for the step and buckets them, so a mover can find its neighbors without touching Box3D.
+        void BuildCharacterContacts();
+        // Each side of a pair closes its inverse-mass share of the gap, so two stepped characters can at most meet.
+        void GatherCharacterPlanes(const FCharacterWork& Work, float Reach, FCharacterPlanes& Out, uint32 ThreadSlot);
         void LatchCharacterInput();
 
         bool GetCharacterNetState(ECS::FEntity Entity, FCharacterNetState& Out) const override;
@@ -221,6 +306,10 @@ namespace Lumina::Physics
 
         // Teleports and ground seating, shared by the loop and an isolated step. False means no collide-and-solve is owed.
         bool ResolveCharacterPreStep(ECS::FEntity Entity, SCharacterPhysicsComponent& Physics, SCharacterMovementComponent& Movement);
+
+        // Serial returns before anything that writes Box3D unless bMayWriteBox3D, so the same call finishes the job on one thread.
+        ECharacterPrep PrepareCharacter(ECS::FRegistry& Registry, ECS::FEntity Entity, SCharacterPhysicsComponent& Physics,
+            SCharacterMovementComponent& Movement, float FixedDt, bool bMayWriteBox3D);
 
         // Sends the landings and jumps a step recorded, which turn readable at the next sync point.
         void DeliverCharacterEvents(const FCharacterPushBucket& Bucket);
@@ -322,12 +411,15 @@ namespace Lumina::Physics
         void SetSurfaceVelocity(ECS::FEntity Entity, const FVector3& Linear, const FVector3& Angular) override;
 
         b3WorldId GetWorldId() const { return WorldId; }
+        const FPhysicsUpdateTimings& GetLastUpdateTimings() const { return LastUpdateTimings; }
+        // Out of line, since a caller linking its own Box3D cannot read this world through it.
+        b3Counters GetWorldCounters() const;
 
         // Handle table translating the engine's opaque uint32 body id to Box3D's generational b3BodyId.
         b3BodyId ResolveBody(uint32 BodyID) const;
         uint32 RegisterBody(b3BodyId BodyId);
         void UnregisterBody(uint32 BodyID);
-        // False when Count more bodies would pass MaxBodies, warning once per scene.
+        // False when Count more rigid, ragdoll or anchor bodies would pass MaxBodies, warning once per scene.
         bool HasBodyCapacity(uint32 Count);
 
         const b3HullData* GetOrCreateBoxHull(const FVector3& HalfExtent);
@@ -611,6 +703,31 @@ namespace Lumina::Physics
 
         TVector<FCharacterWork>                 CharacterWorkScratch;
         TVector<FCharacterPushBucket>           CharacterPushScratch;
+        TVector<ECharacterPrep>                 CharacterPrepStates;
+        TVector<SCharacterMovementComponent*>   CharacterPrepMovements;
+        TVector<FCharacterPrepChunk>            CharacterPrepChunks;
+        // Set per work item whose sleeping proxy has to follow, woken in work order after the fan-out since that moves solver sets.
+        TVector<uint8>                          CharacterProxyWakes;
+        TVector<FCharacterContactBody>          CharacterContacts;
+        TVector<float>                          CharacterContactX;
+        TVector<float>                          CharacterContactZ;
+        Avoidance::FAvoidanceGrid               CharacterContactGrid;
+        float                                   CharacterContactMaxRadius = 0.0f;
+        float                                   CharacterContactMaxReach = 0.0f;
+
+        // The camera and last step's relevance sources, within CharacterLODRangeSq of which characters stay exact.
+        TVector<FVector3>                       CharacterRelevancePoints;
+        TVector<FVector3>                       CharacterRelevanceSources;
+        float                                   CharacterLODRangeSq = 0.0f;
+        uint32                                  CharacterLODInterval = 1;
+        // Bodies the last drain saw moving as center and reach, which keep characters near them exact.
+        TVector<FVector4>                       AwakeBodyReach;
+
+        FPhysicsUpdateTimings                   LastUpdateTimings;
+        // Roots each worker moved, queued in bulk once the parallel write-back is done.
+        TVector<TVector<ECS::FEntity>>          InterpQueuedRoots;
+        // Smoothed wall time of one fixed step, which decides how many steps a frame can afford.
+        double                                  AverageStepSeconds = 0.0;
 
 
         TVector<FRigidBodyBuildResult>          BatchBuildScratch;

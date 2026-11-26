@@ -35,8 +35,7 @@ namespace Lumina::EditorEntityUtils
             || TypeHash == ECS::GetComponentTypeID<FHideInSceneOutliner>()
             || TypeHash == ECS::GetComponentTypeID<FEditorComponent>()
             || TypeHash == ECS::GetComponentTypeID<FLastSelectedTag>()
-            || TypeHash == ECS::GetComponentTypeID<FCopiedTag>()
-            || TypeHash == ECS::GetComponentTypeID<FNeedsTransformUpdate>();
+            || TypeHash == ECS::GetComponentTypeID<FCopiedTag>();
     }
 
     bool DefaultDuplicateFilter(const ECS::FComponentTypeInfo& Type)
@@ -107,7 +106,7 @@ namespace Lumina::EditorEntityUtils
         {
             if (STransformComponent* ParentTransform = Registry.TryGet<STransformComponent>(Parent))
             {
-                LocalMatrix = Math::Inverse(ParentTransform->GetWorldMatrix()) * WorldMatrix;
+                LocalMatrix = Math::Inverse(ParentTransform->ComputeWorldTransform().GetMatrix()) * WorldMatrix;
             }
         }
 
@@ -157,7 +156,7 @@ namespace Lumina::EditorEntityUtils
                 return;
             }
 
-            const FMatrix4 WorldMatrix = Transform->GetWorldMatrix();
+            const FMatrix4 WorldMatrix = Transform->ComputeWorldTransform().GetMatrix();
 
             if (const SStaticMeshComponent* Mesh = Registry.TryGet<SStaticMeshComponent>(E))
             {
@@ -183,7 +182,7 @@ namespace Lumina::EditorEntityUtils
                 }
             }
 
-            const FVector3 Loc = Transform->GetWorldLocation();
+            const FVector3 Loc = Transform->ComputeWorldTransform().GetLocation();
             Min = Math::Min(Min, Loc);
             Max = Math::Max(Max, Loc);
             bAny = true;
@@ -218,8 +217,8 @@ namespace Lumina::EditorEntityUtils
             return false;
         }
 
-        OutRotation = Transform->GetWorldRotation();
-        const FVector3 WorldScale = Transform->GetWorldScale();
+        OutRotation = Transform->ComputeWorldTransform().GetRotation();
+        const FVector3 WorldScale = Transform->ComputeWorldTransform().GetScale();
 
         // Each contributor scales on its own basis, so they are unioned in the entity's rotated frame.
         auto VMin = [](const FVector3& A, const FVector3& B) { return FVector3(Math::Min(A.x, B.x), Math::Min(A.y, B.y), Math::Min(A.z, B.z)); };
@@ -288,13 +287,13 @@ namespace Lumina::EditorEntityUtils
             const FVector3 LocalCenter = (Min + Max) * 0.5f;
             const FVector3 LocalHalf   = (Max - Min) * 0.5f;
 
-            OutCenter      = Transform->GetWorldLocation() + (OutRotation * LocalCenter);
+            OutCenter      = Transform->ComputeWorldTransform().GetLocation() + (OutRotation * LocalCenter);
             OutHalfExtents = LocalHalf * Padding;
         }
         else
         {
             // With no mesh or text bounds, a unit box scaled by the transform stands in.
-            OutCenter      = Transform->GetWorldLocation();
+            OutCenter      = Transform->ComputeWorldTransform().GetLocation();
             OutHalfExtents = WorldScale;
         }
 

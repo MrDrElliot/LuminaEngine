@@ -49,7 +49,7 @@ namespace Lumina
         FDynamicMeshRenderData(const FDynamicMeshRenderData& Other);
         FDynamicMeshRenderData& operator = (const FDynamicMeshRenderData&) = delete;
         TSharedPtr<FMeshResource>   SharedResource;
-        FMeshResource&              Resource;
+        FMeshResource*              Resource;
         TVector<FResolvedSurface>   Surfaces;
         // The sphere circumscribes the box, so a box rebuilt from the radius would inflate every axis by up to sqrt(3).
         FVector3                    LocalMin             = FVector3(0.0f);

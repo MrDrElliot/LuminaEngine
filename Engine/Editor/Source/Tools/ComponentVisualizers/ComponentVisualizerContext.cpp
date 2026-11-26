@@ -164,7 +164,7 @@ namespace Lumina
     }
 
     FComponentVisualizerContext::FComponentVisualizerContext(FVisualizerInteractionState& InState, IComponentVisualizerHost* InHost)
-        : State(InState)
+        : State(&InState)
         , Host(InHost)
     {
     }
@@ -350,62 +350,62 @@ namespace Lumina
 
     bool FComponentVisualizerContext::IsSubElementSelected(int32 SubElement) const
     {
-        return State.SelectedEntity == Entity
-            && State.SelectedComponentType == ComponentType
-            && State.SelectedSubElement == SubElement;
+        return State->SelectedEntity == Entity
+            && State->SelectedComponentType == ComponentType
+            && State->SelectedSubElement == SubElement;
     }
 
     int32 FComponentVisualizerContext::GetSelectedSubElement() const
     {
-        if (State.SelectedEntity != Entity || State.SelectedComponentType != ComponentType)
+        if (State->SelectedEntity != Entity || State->SelectedComponentType != ComponentType)
         {
             return Constants::kIndexNone;
         }
 
-        return State.SelectedSubElement;
+        return State->SelectedSubElement;
     }
 
     void FComponentVisualizerContext::SelectSubElement(int32 SubElement)
     {
-        State.SelectedEntity = Entity;
-        State.SelectedComponentType = ComponentType;
-        State.SelectedSubElement = SubElement;
+        State->SelectedEntity = Entity;
+        State->SelectedComponentType = ComponentType;
+        State->SelectedSubElement = SubElement;
     }
 
     void FComponentVisualizerContext::ClearSubElementSelection()
     {
-        State.SelectedEntity = ECS::NullEntity;
-        State.SelectedComponentType = nullptr;
-        State.SelectedSubElement = Constants::kIndexNone;
+        State->SelectedEntity = ECS::NullEntity;
+        State->SelectedComponentType = nullptr;
+        State->SelectedSubElement = Constants::kIndexNone;
     }
 
     void FComponentVisualizerContext::NameEdit(FName Label)
     {
-        State.EditLabel = Label;
+        State->EditLabel = Label;
     }
 
     void FComponentVisualizerContext::BeginEdit(FName Label)
     {
-        if (Host == nullptr || State.bTransactionOpen)
+        if (Host == nullptr || State->bTransactionOpen)
         {
             return;
         }
 
         Host->BeginVisualizerTransaction(Entity, ComponentType);
-        State.bTransactionOpen = true;
-        State.EditLabel = Label;
+        State->bTransactionOpen = true;
+        State->EditLabel = Label;
     }
 
     void FComponentVisualizerContext::EndEdit()
     {
-        if (Host == nullptr || !State.bTransactionOpen || State.IsDragging())
+        if (Host == nullptr || !State->bTransactionOpen || State->IsDragging())
         {
             return;
         }
 
-        Host->EndVisualizerTransaction(State.EditLabel.IsNone() ? FName("Edit Component") : State.EditLabel);
-        State.bTransactionOpen = false;
-        State.EditLabel = FName();
+        Host->EndVisualizerTransaction(State->EditLabel.IsNone() ? FName("Edit Component") : State->EditLabel);
+        State->bTransactionOpen = false;
+        State->EditLabel = FName();
     }
 
     void FComponentVisualizerContext::MarkDirty()
@@ -427,19 +427,19 @@ namespace Lumina
             {
                 // The captured axis, not the live one, so orbiting mid-drag cannot re-aim the constraint.
                 float AlongAxis = 0.0f;
-                if (!ShapeHandles::ClosestParamOnAxisToRay(State.GrabAnchor, State.GrabAxis, RayOrigin, RayDirection, AlongAxis))
+                if (!ShapeHandles::ClosestParamOnAxisToRay(State->GrabAnchor, State->GrabAxis, RayOrigin, RayDirection, AlongAxis))
                 {
                     return false;
                 }
 
-                OutPosition = State.GrabAnchor + State.GrabAxis * AlongAxis;
+                OutPosition = State->GrabAnchor + State->GrabAxis * AlongAxis;
                 return true;
             }
 
         case EHandleConstraint::Plane:
             {
                 float Distance = 0.0f;
-                if (!IntersectPlane(RayOrigin, RayDirection, State.GrabAnchor, State.GrabPlaneNormal, Distance))
+                if (!IntersectPlane(RayOrigin, RayDirection, State->GrabAnchor, State->GrabPlaneNormal, Distance))
                 {
                     return false;
                 }
@@ -451,7 +451,7 @@ namespace Lumina
         default:
             {
                 float Distance = 0.0f;
-                if (!IntersectPlane(RayOrigin, RayDirection, State.GrabAnchor, -View.CameraForward, Distance))
+                if (!IntersectPlane(RayOrigin, RayDirection, State->GrabAnchor, -View.CameraForward, Distance))
                 {
                     return false;
                 }
@@ -464,50 +464,50 @@ namespace Lumina
 
     void FComponentVisualizerContext::OfferHover(uint64 Key, int32 Priority, float Score) const
     {
-        if (Priority < State.PendingHoveredPriority)
+        if (Priority < State->PendingHoveredPriority)
         {
             return;
         }
 
-        if (Priority == State.PendingHoveredPriority && State.PendingHoveredKey != 0 && Score >= State.PendingHoveredScore)
+        if (Priority == State->PendingHoveredPriority && State->PendingHoveredKey != 0 && Score >= State->PendingHoveredScore)
         {
             return;
         }
 
-        State.PendingHoveredKey = Key;
-        State.PendingHoveredPriority = Priority;
-        State.PendingHoveredScore = Score;
+        State->PendingHoveredKey = Key;
+        State->PendingHoveredPriority = Priority;
+        State->PendingHoveredScore = Score;
     }
 
     void FComponentVisualizerContext::BeginDrag(const FHandleDesc& Desc, uint64 Key)
     {
-        State.ActiveKey = Key;
-        State.ActiveEntity = Entity;
-        State.ActiveComponentType = ComponentType;
-        State.GrabAnchor = Desc.Position;
-        State.GrabAxis = (Desc.Constraint == EHandleConstraint::Axis) ? Math::Normalize(Desc.Axis) : FVector3(0.0f);
-        State.GrabPlaneNormal = (Desc.Constraint == EHandleConstraint::Plane) ? Math::Normalize(Desc.Normal) : -View.CameraForward;
-        State.LastPosition = Desc.Position;
-        State.GrabOffset = FVector3(0.0f);
-        State.LastPosition = Desc.Position;
-        State.EditLabel = FName();
+        State->ActiveKey = Key;
+        State->ActiveEntity = Entity;
+        State->ActiveComponentType = ComponentType;
+        State->GrabAnchor = Desc.Position;
+        State->GrabAxis = (Desc.Constraint == EHandleConstraint::Axis) ? Math::Normalize(Desc.Axis) : FVector3(0.0f);
+        State->GrabPlaneNormal = (Desc.Constraint == EHandleConstraint::Plane) ? Math::Normalize(Desc.Normal) : -View.CameraForward;
+        State->LastPosition = Desc.Position;
+        State->GrabOffset = FVector3(0.0f);
+        State->LastPosition = Desc.Position;
+        State->EditLabel = FName();
 
         FVector3 Raw;
         if (SolveConstraint(Desc, Raw))
         {
-            State.GrabOffset = Desc.Position - Raw;
+            State->GrabOffset = Desc.Position - Raw;
         }
 
     }
 
     void FComponentVisualizerContext::EndDrag()
     {
-        if (Host != nullptr && State.bTransactionOpen)
+        if (Host != nullptr && State->bTransactionOpen)
         {
-            Host->EndVisualizerTransaction(State.EditLabel.IsNone() ? FName("Edit Component") : State.EditLabel);
+            Host->EndVisualizerTransaction(State->EditLabel.IsNone() ? FName("Edit Component") : State->EditLabel);
         }
 
-        State.ResetDrag();
+        State->ResetDrag();
     }
 
     void FComponentVisualizerContext::DrawHandleGlyph(const FHandleDesc& Desc, const ImVec2& Screen, const FVector4& Color) const
@@ -587,7 +587,7 @@ namespace Lumina
 
         const FVisualizerHandleStyle& Style = *Desc.Style;
         const uint64 Key = MakeKey(Desc.ID, Desc.Salt);
-        const bool bWasActive = (State.ActiveKey == Key);
+        const bool bWasActive = (State->ActiveKey == Key);
 
         // A face pointing away from the camera offers neither a surface nor a grab dot.
         const bool bCulled = Desc.bFaceSurface && !bWasActive
@@ -596,32 +596,32 @@ namespace Lumina
         if (bWasActive)
         {
             Result.bActive = true;
-            State.bCapturedInput = true;
-            State.bActiveHandleSeen = true;
+            State->bCapturedInput = true;
+            State->bActiveHandleSeen = true;
 
             FVector3 Raw;
             if (SolveConstraint(Desc, Raw))
             {
-                const FVector3 Solved = Raw + State.GrabOffset;
+                const FVector3 Solved = Raw + State->GrabOffset;
 
                 Result.Position = Solved;
-                Result.Delta = Solved - State.LastPosition;
-                Result.TotalDelta = Solved - State.GrabAnchor;
+                Result.Delta = Solved - State->LastPosition;
+                Result.TotalDelta = Solved - State->GrabAnchor;
                 Result.bChanged = Math::LengthSquared(Result.Delta) > 0.0f;
 
                 if (Desc.Constraint == EHandleConstraint::Axis)
                 {
-                    Result.ScalarDelta = Math::Dot(Result.Delta, State.GrabAxis);
-                    Result.TotalScalar = Math::Dot(Result.TotalDelta, State.GrabAxis);
+                    Result.ScalarDelta = Math::Dot(Result.Delta, State->GrabAxis);
+                    Result.TotalScalar = Math::Dot(Result.TotalDelta, State->GrabAxis);
                 }
 
-                State.LastPosition = Solved;
+                State->LastPosition = Solved;
 
                 // Opened on the first frame that actually moves, so a click that only selects records nothing.
-                if (Result.bChanged && Host != nullptr && !State.bTransactionOpen)
+                if (Result.bChanged && Host != nullptr && !State->bTransactionOpen)
                 {
                     Host->BeginVisualizerTransaction(Entity, ComponentType);
-                    State.bTransactionOpen = true;
+                    State->bTransactionOpen = true;
                 }
             }
 
@@ -634,9 +634,9 @@ namespace Lumina
         }
         else
         {
-            Result.bHovered = (State.HoveredKey == Key);
+            Result.bHovered = (State->HoveredKey == Key);
 
-            if (bInputEnabled && bViewportHovered && !State.IsDragging() && !bCulled)
+            if (bInputEnabled && bViewportHovered && !State->IsDragging() && !bCulled)
             {
                 ImVec2 Screen;
                 if (View.WorldToScreen(Desc.Position, Screen))
@@ -654,7 +654,7 @@ namespace Lumina
 
             if (Result.bHovered)
             {
-                State.bCapturedInput = true;
+                State->bCapturedInput = true;
 
                 if (Style.Tooltip != nullptr)
                 {
@@ -750,18 +750,18 @@ namespace Lumina
     void FComponentVisualizerContext::FinishPass()
     {
         // A drag outlives its visualizer, so release it here rather than stranding the transaction.
-        if (State.IsDragging() && (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || !State.bActiveHandleSeen))
+        if (State->IsDragging() && (!ImGui::IsMouseDown(ImGuiMouseButton_Left) || !State->bActiveHandleSeen))
         {
             EndDrag();
         }
 
         // Same for a panel widget whose transaction never saw its deactivate frame.
-        if (State.bTransactionOpen && !State.IsDragging() && !ImGui::IsAnyItemActive())
+        if (State->bTransactionOpen && !State->IsDragging() && !ImGui::IsAnyItemActive())
         {
             EndEdit();
         }
 
-        State.EndPass();
+        State->EndPass();
     }
 
     FVisualizerHandleResult FComponentVisualizerContext::TranslateHandle(uint32 ID, const FVector3& WorldPos, const FVisualizerHandleStyle& Style)
@@ -835,7 +835,7 @@ namespace Lumina
 
     bool FComponentVisualizerContext::IsInteracting() const
     {
-        return State.bCapturedInput;
+        return State->bCapturedInput;
     }
 
     bool FComponentVisualizerContext::BeginPanel(const char* ID, const FVector3& WorldAnchor, ImVec2 PixelOffset)
@@ -877,7 +877,7 @@ namespace Lumina
         // Widgets in the panel must not fall through to picking or the gizmo underneath it.
         if (bPanelHovered)
         {
-            State.bCapturedInput = true;
+            State->bCapturedInput = true;
         }
     }
 }

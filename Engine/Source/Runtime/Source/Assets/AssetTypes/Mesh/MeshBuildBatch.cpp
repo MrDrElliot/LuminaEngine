@@ -73,7 +73,7 @@ namespace Lumina
     }
 
     FMeshBuildBatchScope::FMeshBuildBatchScope(ECS::FRegistry& InRegistry)
-        : Registry(InRegistry)
+        : Registry(&InRegistry)
     {
         ++GBatchDepth;
     }
@@ -82,7 +82,7 @@ namespace Lumina
     {
         // Closed first, so a build that finishing triggers runs at once rather than joining a batch nobody will flush.
         --GBatchDepth;
-        FinishDynamicMeshes(Registry);
+        FinishDynamicMeshes(*Registry);
         if (GBatchDepth == 0)
         {
             FinishStaticMeshes();

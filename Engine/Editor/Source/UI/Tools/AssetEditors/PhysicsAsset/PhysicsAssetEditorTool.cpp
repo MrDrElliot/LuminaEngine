@@ -418,7 +418,7 @@ namespace Lumina
         STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
         STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
-        const FQuat LookAt = Math::FindLookAtRotation(MeshTransform.GetWorldLocation() + FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocalLocation());
+        const FQuat LookAt = Math::FindLookAtRotation(MeshTransform.ComputeWorldTransform().GetLocation() + FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocalLocation());
         EditorTransform.SetLocalRotation(LookAt);
     }
 
@@ -524,7 +524,7 @@ namespace Lumina
         FMatrix4 EntityMatrix = FMatrix4(1.0f);
         if (MeshEntity != ECS::NullEntity)
         {
-            EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).GetWorldMatrix();
+            EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).ComputeWorldTransform().GetMatrix();
         }
 
         BoneWorldTransforms.SetNum(Resource->GetNumBones());
@@ -676,7 +676,7 @@ namespace Lumina
 
     float FPhysicsAssetEditorTool::GetPreviewScale()
     {
-        return MeshEntity != ECS::NullEntity ? World->GetComponent<STransformComponent>(MeshEntity).GetWorldMaxScaleCached() : 1.0f;
+        return MeshEntity != ECS::NullEntity ? World->GetComponent<STransformComponent>(MeshEntity).GetWorldMaxScale() : 1.0f;
     }
 
     void FPhysicsAssetEditorTool::DrawConstraints()
@@ -1433,7 +1433,7 @@ namespace Lumina
             return;
         }
 
-        const FMatrix4 EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).GetWorldMatrix();
+        const FMatrix4 EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).ComputeWorldTransform().GetMatrix();
 
         for (int32 i = 0; i < Resource->GetNumBones(); ++i)
         {

@@ -139,15 +139,15 @@ TEST(ECSTests, ComputeWorldTransform_GrandchildFollowsRootMoveWithoutWriting)
     Registry.AttachChild(B, A);
     Registry.AttachChild(C, B);
 
-    Registry.Emplace<FNeedsTransformUpdate>(A);
-    Registry.Emplace<FNeedsTransformUpdate>(B);
-    Registry.Emplace<FNeedsTransformUpdate>(C);
+    ECS::Utils::MarkTransformDirty(Registry, A);
+    ECS::Utils::MarkTransformDirty(Registry, B);
+    ECS::Utils::MarkTransformDirty(Registry, C);
     ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
     EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(C).WorldTransform.GetLocation().x, 17.f);
 
     Registry.Get<STransformComponent>(A).LocalTransform.SetLocation(FVector3(20.f, 0.f, 0.f));
-    Registry.EmplaceOrReplace<FNeedsTransformUpdate>(A);
+    ECS::Utils::MarkTransformDirty(Registry, A);
 
     // The compute must walk up to the dirty A rather than serving C's stale matrix.
     EXPECT_FLOAT_EQ(ECS::Utils::ComputeWorldTransform(Registry, A).GetLocation().x, 20.f);
@@ -199,14 +199,14 @@ TEST(ECSTests, ComputeWorldTransform_SiblingOfAMovedChainIsCurrent)
     Registry.AttachChild(C, B);
     Registry.AttachChild(D, A);
 
-    Registry.Emplace<FNeedsTransformUpdate>(A);
-    Registry.Emplace<FNeedsTransformUpdate>(B);
-    Registry.Emplace<FNeedsTransformUpdate>(C);
-    Registry.Emplace<FNeedsTransformUpdate>(D);
+    ECS::Utils::MarkTransformDirty(Registry, A);
+    ECS::Utils::MarkTransformDirty(Registry, B);
+    ECS::Utils::MarkTransformDirty(Registry, C);
+    ECS::Utils::MarkTransformDirty(Registry, D);
     ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
     Registry.Get<STransformComponent>(A).LocalTransform.SetLocation(FVector3(20.f, 0.f, 0.f));
-    Registry.EmplaceOrReplace<FNeedsTransformUpdate>(A);
+    ECS::Utils::MarkTransformDirty(Registry, A);
 
     // D is not dirty itself, but its parent is, so its computed world must include the move.
     const FTransform WorldD = ECS::Utils::ComputeWorldTransform(Registry, D);
@@ -235,14 +235,14 @@ TEST(ECSTests, ComputeWorldTransform_MatchesThePropagationAcrossADeepRotatedChai
         {
             Registry.AttachChild(E, Chain.Last());
         }
-        Registry.Emplace<FNeedsTransformUpdate>(E);
+        ECS::Utils::MarkTransformDirty(Registry, E);
         Chain.Add(E);
     }
     ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
     // A move halfway down leaves everything above it clean, which is the base the compute must start from.
     Registry.Get<STransformComponent>(Chain[Depth / 2]).LocalTransform.SetLocation(FVector3(3.0f, -2.0f, 1.0f));
-    Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Chain[Depth / 2]);
+    ECS::Utils::MarkTransformDirty(Registry, Chain[Depth / 2]);
 
     TVector<FVector3> Computed;
     for (ECS::FEntity E : Chain)
@@ -296,16 +296,16 @@ TEST(ECSTests, LazyResolve_AfterCleanPhase_SeesUpdatedWorld)
     Registry.Get<STransformComponent>(Child).Bind(Registry, Child);
 
     // Clean phase resolves everything, arming the lock-free fast path.
-    Registry.Emplace<FNeedsTransformUpdate>(Parent);
-    Registry.Emplace<FNeedsTransformUpdate>(Child);
+    ECS::Utils::MarkTransformDirty(Registry, Parent);
+    ECS::Utils::MarkTransformDirty(Registry, Child);
     ECS::Utils::ResolveAllDirtyTransforms(Registry);
-    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Child).GetWorldLocation().x, 15.f);
+    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Child).ComputeWorldTransform().GetLocation().x, 15.f);
 
     // Gameplay move through the normal setter -> MarkTransformDirty -> hook re-arms bAnyDirty.
     Registry.Get<STransformComponent>(Parent).SetLocalLocation(FVector3(20.f, 0.f, 0.f));
 
     // The child isn't dirty itself; the read must still walk up, see the dirty parent, and resolve.
-    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Child).GetWorldLocation().x, 25.f);
+    EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Child).ComputeWorldTransform().GetLocation().x, 25.f);
 }
 
 // The toggles save with the world's entities, and the debug views and game view override do not.
@@ -560,15 +560,15 @@ TEST(ECSTests, Resolve_DirtyChildUnderDirtyParentComposesWithTheNewParent)
     Registry.AttachChild(Child, Root);
     Registry.AttachChild(Grandchild, Child);
 
-    Registry.Emplace<FNeedsTransformUpdate>(Root);
+    ECS::Utils::MarkTransformDirty(Registry, Root);
     ECS::Utils::ResolveAllDirtyTransforms(Registry);
     EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Grandchild).WorldTransform.GetLocation().x, 2.f);
 
     // Both ends move, and the grandchild must compose with the root's new world rather than its cached one.
     Registry.Get<STransformComponent>(Grandchild).LocalTransform.SetLocation(FVector3(3.f, 0.f, 0.f));
-    Registry.Emplace<FNeedsTransformUpdate>(Grandchild);
+    ECS::Utils::MarkTransformDirty(Registry, Grandchild);
     Registry.Get<STransformComponent>(Root).LocalTransform.SetLocation(FVector3(100.f, 0.f, 0.f));
-    Registry.Emplace<FNeedsTransformUpdate>(Root);
+    ECS::Utils::MarkTransformDirty(Registry, Root);
     ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
     EXPECT_FLOAT_EQ(Registry.Get<STransformComponent>(Child).WorldTransform.GetLocation().x, 101.f);
@@ -707,8 +707,8 @@ TEST(ECSTests, FilteredMovedConsumerSeesOnlyItsEntities)
     Registry.Emplace<STransformComponent>(Ignored).LocalTransform.SetLocation(FVector3(2.f, 0.f, 0.f));
     ECS::Utils::SetMovedTransformInterest(Registry, Filtered, Watched, true);
 
-    Registry.Emplace<FNeedsTransformUpdate>(Watched);
-    Registry.Emplace<FNeedsTransformUpdate>(Ignored);
+    ECS::Utils::MarkTransformDirty(Registry, Watched);
+    ECS::Utils::MarkTransformDirty(Registry, Ignored);
     ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
     TVector<ECS::FEntity> All;
@@ -723,7 +723,7 @@ TEST(ECSTests, FilteredMovedConsumerSeesOnlyItsEntities)
     // Dropping interest stops the next move from reaching it.
     ECS::Utils::SetMovedTransformInterest(Registry, Filtered, Watched, false);
     Registry.Get<STransformComponent>(Watched).LocalTransform.SetLocation(FVector3(3.f, 0.f, 0.f));
-    Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Watched);
+    ECS::Utils::MarkTransformDirty(Registry, Watched);
     ECS::Utils::ResolveAllDirtyTransforms(Registry);
     Some.Reset();
     ECS::Utils::DrainMovedTransforms(Registry, Filtered, Some);
@@ -758,7 +758,7 @@ TEST(ECSTests, MovedTransformsPastTheConsumerCapWarnOnceAndStayInert)
     const ECS::FEntity Entity = Registry.Create();
     Registry.Emplace<STransformComponent>(Entity).LocalTransform.SetLocation(FVector3(1.f, 0.f, 0.f));
     Refused.Watch(Entity, true);
-    Registry.Emplace<FNeedsTransformUpdate>(Entity);
+    ECS::Utils::MarkTransformDirty(Registry, Entity);
     ECS::Utils::ResolveAllDirtyTransforms(Registry);
 
     TVector<ECS::FEntity> Out;

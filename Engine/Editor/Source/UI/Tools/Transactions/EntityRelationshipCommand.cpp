@@ -115,7 +115,7 @@ namespace Lumina
             // The parent chain moved, so every restored entity owes a world-matrix recompute.
             if (Registry.HasAll<STransformComponent>(Entity))
             {
-                Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+                ECS::Utils::MarkTransformDirty(Registry, Entity);
             }
         }
         Links.Apply(Registry);

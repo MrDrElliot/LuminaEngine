@@ -152,7 +152,7 @@ namespace Lumina
 
     void FSaveGameArchive::SerializeEntityId(uint32& PackedEntity)
     {
-        InnerArchive.SerializeEntityId(PackedEntity);
+        InnerArchive->SerializeEntityId(PackedEntity);
         if (IsReading() && TranslateEntity)
         {
             const ECS::FEntity Saved = ECS::FEntity::FromPacked(PackedEntity);

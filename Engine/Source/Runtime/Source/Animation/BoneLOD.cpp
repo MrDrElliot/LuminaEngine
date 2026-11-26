@@ -43,15 +43,15 @@ namespace Lumina::BoneLOD
         public:
 
             FVertexErrorAccumulator(const FSkeletonResource& InSkeleton, TVector<float>& InErrors)
-                : Skeleton(InSkeleton)
-                , Errors(InErrors)
+                : Skeleton(&InSkeleton)
+                , Errors(&InErrors)
                 , NumBones(InSkeleton.GetNumBones())
                 , Chord(SwingChord())
             {
                 Joints.SetNum(NumBones);
                 for (int32 Bone = 0; Bone < NumBones; ++Bone)
                 {
-                    Joints[Bone] = JointPosition(Skeleton, Bone);
+                    Joints[Bone] = JointPosition(*Skeleton, Bone);
                 }
                 SubtreeWeight.Init(0.0f, NumBones);
             }
@@ -65,7 +65,7 @@ namespace Lumina::BoneLOD
                     {
                         continue;
                     }
-                    for (int32 Bone = Joint[Influence]; Bone >= 0; Bone = Skeleton.GetBone(Bone).ParentIndex)
+                    for (int32 Bone = Joint[Influence]; Bone >= 0; Bone = Skeleton->GetBone(Bone).ParentIndex)
                     {
                         if (SubtreeWeight[Bone] == 0.0f)
                         {
@@ -78,7 +78,7 @@ namespace Lumina::BoneLOD
                 for (int32 Bone : Touched)
                 {
                     const float Displacement = SubtreeWeight[Bone] * Math::Length(Position - Joints[Bone]) * Chord;
-                    Errors[Bone] = Math::Max(Errors[Bone], Displacement);
+                    (*Errors)[Bone] = Math::Max((*Errors)[Bone], Displacement);
                     SubtreeWeight[Bone] = 0.0f;
                 }
                 Touched.Reset();
@@ -88,8 +88,8 @@ namespace Lumina::BoneLOD
 
         private:
 
-            const FSkeletonResource& Skeleton;
-            TVector<float>&          Errors;
+            const FSkeletonResource* Skeleton;
+            TVector<float>*          Errors;
             TVector<FVector3>        Joints;
             TVector<float>           SubtreeWeight;
             TVector<int32>           Touched;

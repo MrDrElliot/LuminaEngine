@@ -19,7 +19,7 @@ namespace Lumina
             {
                 SetTransform(InRegistry.EmplaceOrReplace<STransformComponent>(Entity));
                 InRegistry.EmplaceOrReplace<SNameComponent>(Entity, EntityName);
-                InRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+                ECS::Utils::MarkTransformDirty(InRegistry, Entity);
             };
 
             if (ECS::FCommandBus::ShouldDefer())

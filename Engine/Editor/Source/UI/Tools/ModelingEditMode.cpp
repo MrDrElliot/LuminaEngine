@@ -168,7 +168,7 @@ namespace Lumina
             FVector3 TerrainOrigin(0.0f);
             if (const STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
             {
-                TerrainOrigin = Transform->GetWorldLocation();
+                TerrainOrigin = Transform->ComputeWorldTransform().GetLocation();
             }
 
             FVector3 Hit;
@@ -192,7 +192,7 @@ namespace Lumina
 
             // A camera sitting inside a shape reports distance zero, which would win every trace.
             float Distance = 0.0f;
-            if (RaycastLocalBox(RayOrigin, RayDir, Transform.GetWorldMatrix(), LocalMin, LocalMax, Distance)
+            if (RaycastLocalBox(RayOrigin, RayDir, Transform.ComputeWorldTransform().GetMatrix(), LocalMin, LocalMax, Distance)
                 && Distance > kMinimumTraceDistance && Distance < BestDistance)
             {
                 BestDistance = Distance;

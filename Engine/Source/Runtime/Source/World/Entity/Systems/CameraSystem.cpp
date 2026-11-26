@@ -141,8 +141,8 @@ namespace Lumina
         static void StampResolvedView(const SCameraGlobalState& CameraState, SCameraComponent& Camera, const STransformComponent& CameraTransform,
                                       FVector3& OutPosition, FQuat& OutRotation, float& OutFOV)
         {
-            OutPosition = CameraTransform.GetWorldLocation();
-            OutRotation = CameraTransform.GetWorldRotation();
+            OutPosition = CameraTransform.ComputeWorldTransform().GetLocation();
+            OutRotation = CameraTransform.ComputeWorldTransform().GetRotation();
             OutFOV      = Camera.FOV;
 
             const SCameraGlobalState::FBlendState& Blend = CameraState.Blend;
@@ -204,15 +204,15 @@ namespace Lumina
         }
 
         const STransformComponent& CameraTransform = *CameraTransformPtr;
-        (void)CameraTransform.GetWorldMatrix();
+        (void)CameraTransform.ComputeWorldTransform().GetMatrix();
 
         SCameraComponent& Camera = *CameraPtr;
 
         // Live pose of the active camera; the blend (if any) eases toward this.
         FVector3 TargetPosition;
         FQuat TargetRotation;
-        TargetPosition = CameraTransform.GetWorldLocation();
-        TargetRotation = CameraTransform.GetWorldRotation();
+        TargetPosition = CameraTransform.ComputeWorldTransform().GetLocation();
+        TargetRotation = CameraTransform.ComputeWorldTransform().GetRotation();
         const float TargetFOV           = Camera.FOV;
 
         const FVector3 CameraWorldPos = TargetPosition;
@@ -243,7 +243,7 @@ namespace Lumina
             float Outside = 0.0f;
             if (!Volume.bInfiniteExtent)
             {
-                const FMatrix4 InvWorld = Math::Inverse(VolXform.GetWorldMatrix());
+                const FMatrix4 InvWorld = Math::Inverse(VolXform.ComputeWorldTransform().GetMatrix());
                 const FVector3 LocalCam = FVector3(InvWorld * FVector4(CameraWorldPos, 1.0f));
                 const FVector3 D = Math::Abs(LocalCam) - Volume.BoxExtent;
                 Outside = Math::Max(D.x, Math::Max(D.y, D.z));

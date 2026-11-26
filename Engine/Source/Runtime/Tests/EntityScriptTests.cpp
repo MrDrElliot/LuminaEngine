@@ -45,7 +45,7 @@ namespace
     public:
 
         explicit FLocalRegistryReferenceProvider(ECS::FRegistry& InRegistry)
-            : Registry(InRegistry)
+            : Registry(&InRegistry)
         {
         }
 
@@ -53,7 +53,7 @@ namespace
 
         void VisitObjectReferences(FObjectReferenceVisitor::FSlotFunc Func) override
         {
-            for (ECS::FSparseSet* Storage : Registry.GetActiveStorages())
+            for (ECS::FSparseSet* Storage : Registry->GetActiveStorages())
             {
                 CStruct* const Struct = Storage != nullptr ? Storage->GetStruct() : nullptr;
                 if (Struct == nullptr)
@@ -75,7 +75,7 @@ namespace
 
     private:
 
-        ECS::FRegistry& Registry;
+        ECS::FRegistry* Registry;
     };
 }
 

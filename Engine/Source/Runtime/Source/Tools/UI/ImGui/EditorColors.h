@@ -32,6 +32,7 @@ namespace Lumina::EditorColors
     inline ImVec4 RowBgHovered()  { return ToImVec4(Palette().RowBgHovered); }
     inline ImVec4 RowBgActive()   { return ToImVec4(Palette().RowBgActive); }
     inline ImVec4 ComponentHeader() { return ToImVec4(Palette().ComponentHeader); }
+    inline ImVec4 PropertyCategoryBorder() { return ToImVec4(Palette().PropertyCategoryBorder); }
 
     // Derivations.
     inline float  Clamp01(float V)                    { return V < 0.0f ? 0.0f : (V > 1.0f ? 1.0f : V); }

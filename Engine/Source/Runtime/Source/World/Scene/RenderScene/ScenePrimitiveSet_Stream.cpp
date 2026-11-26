@@ -30,6 +30,18 @@ namespace Lumina
                 }
             }
         }
+
+        void AddStreamedBlocks(TVector<uint32>& Blocks, uint32 FirstSlot, uint32 Span)
+        {
+            const uint32 Last = (FirstSlot + Span - 1u) / kInstanceCullBlockSize;
+            for (uint32 Block = FirstSlot / kInstanceCullBlockSize; Block <= Last; ++Block)
+            {
+                if (Blocks.IsEmpty() || Blocks.Last() != Block)
+                {
+                    Blocks.Add(Block);
+                }
+            }
+        }
     }
 
     void FScenePrimitiveSet::ApplyMovedTransforms(const FSyncPools& Pools, TSpan<const ECS::FEntity> Moved)
@@ -144,23 +156,20 @@ namespace Lumina
             return true;
         }
 
-        WriteStreamRecord(*Stamp, Record, Transform->GetWorldMatrixCached());
+        WriteStreamRecord(*Stamp, Record, Transform->GetWorldMatrix());
         Stamp->MoveFrame  = StreamFrame;
         Stamp->MoveRecord = Record;
         Bucket.Streamed.Add(Entity);
-        const uint32 Block = Stamp->StreamSlot / kInstanceCullBlockSize;
-        if (Bucket.StreamedBlocks.IsEmpty() || Bucket.StreamedBlocks.Last() != Block)
-        {
-            Bucket.StreamedBlocks.Add(Block);
-        }
+        ScenePrimitiveSetStreamInternal::AddStreamedBlocks(Bucket.StreamedBlocks, Stamp->StreamSlot, Stamp->StreamSpan);
         return true;
     }
 
-    // One instance slot of a mesh in place streams, since several sources or surfaces, or a foreground remap, need the CPU path.
+    // A mesh in place streams, since several sources or a foreground remap need the CPU path.
     void FScenePrimitiveSet::BuildStreamCacheEntry(FEntityRecord& Record) const
     {
         Record.StreamGeneration = StreamCacheGeneration;
         Record.StreamSlot       = kNoStreamSlot;
+        Record.StreamSpan       = 1;
         Record.bStreamDFCaster  = false;
 
         uint32 Index = Constants::kIndexNoneU32;
@@ -181,21 +190,30 @@ namespace Lumina
             return;
         }
         const FScenePrimitive& Prim = Primitives[Index];
-        if (Prim.SurfaceCount != 1u || IsRemappedForeground(Prim))
-        {
-            return;
-        }
-        const uint32 Slot = Bindings[Prim.BindingBase].InstanceSlot;
-        if (Slot >= (uint32)RetainedCullEntries.Num())
+        const uint32 Span = Prim.SurfaceCount;
+        if (Span == 0u || Span > TRANSFORM_STREAM_MAX_SPAN || IsRemappedForeground(Prim))
         {
             return;
         }
 
-        Record.StreamSlot   = Slot;
-        Record.StreamCenter = Prim.LocalCenter;
-        Record.StreamRadius = Prim.LocalRadius * Math::Max(Prim.BoundsScale, 1.0f);
-        const EInstanceFlags Flags = (EInstanceFlags)((RetainedCullEntries[Slot].DrawIDAndFlags >> 16u) & 0xFFFFu);
-        Record.bStreamDFCaster = bStreamDistanceFieldSpheres && EnumHasAnyFlags(Flags, EInstanceFlags::HasDistanceField);
+        // The head slot is the one RefreshInstances gave the transform, which a single surface or a slot run starts at.
+        const uint32 First = Bindings[Prim.BindingBase].InstanceSlot;
+        if ((Span > 1u && !HasSlotRun(Prim)) || First >= (uint32)RetainedCullEntries.Num() || First + Span - 1u > TRANSFORM_STREAM_SLOT_MASK)
+        {
+            return;
+        }
+        bool bDFCaster = false;
+        for (uint32 Slot = First; Slot < First + Span; ++Slot)
+        {
+            const EInstanceFlags Flags = (EInstanceFlags)((RetainedCullEntries[Slot].DrawIDAndFlags >> 16u) & 0xFFFFu);
+            bDFCaster |= EnumHasAnyFlags(Flags, EInstanceFlags::HasDistanceField);
+        }
+
+        Record.StreamSlot      = First;
+        Record.StreamSpan      = (uint8)Span;
+        Record.StreamCenter    = Prim.LocalCenter;
+        Record.StreamRadius    = Prim.LocalRadius * Math::Max(Prim.BoundsScale, 1.0f);
+        Record.bStreamDFCaster = bStreamDistanceFieldSpheres && bDFCaster;
     }
 
     FScenePrimitiveSet::FEntityRecord* FScenePrimitiveSet::FindStreamRecord(ECS::FEntity Entity)
@@ -218,10 +236,13 @@ namespace Lumina
 
         const FTransformStreamRecord Out = MakeStreamRecord(Matrix, Stamp.StreamCenter, Stamp.StreamRadius);
         StreamRecord(StreamTarget.Records[Record], Out);
-        StreamTarget.Slots[Record] = Stamp.StreamSlot;
+        StreamTarget.Slots[Record] = Stamp.StreamSlot | ((uint32)(Stamp.StreamSpan - 1u) << TRANSFORM_STREAM_SPAN_SHIFT);
         if (Stamp.bStreamDFCaster)
         {
-            RetainedCullEntries[Stamp.StreamSlot].SphereBounds = Out.SphereBounds;
+            for (uint32 Slot = Stamp.StreamSlot; Slot < Stamp.StreamSlot + Stamp.StreamSpan; ++Slot)
+            {
+                RetainedCullEntries[Slot].SphereBounds = Out.SphereBounds;
+            }
         }
 
         // A streamed entity owns one primitive, and only a skeletal one is read back on the CPU, by the skinned gather.
@@ -342,11 +363,7 @@ namespace Lumina
         Stamp->MoveFrame  = StreamFrame;
         Stamp->MoveRecord = Record;
         Lane.Streamed.Add(Entity);
-        const uint32 Block = Stamp->StreamSlot / kInstanceCullBlockSize;
-        if (Lane.Blocks.IsEmpty() || Lane.Blocks.Last() != Block)
-        {
-            Lane.Blocks.Add(Block);
-        }
+        ScenePrimitiveSetStreamInternal::AddStreamedBlocks(Lane.Blocks, Stamp->StreamSlot, Stamp->StreamSpan);
         return true;
     }
 
@@ -392,7 +409,7 @@ namespace Lumina
                     const STransformComponent* Transform = Pools.Transform->TryGet(Entity);
                     if (Transform != nullptr && Stamp.MoveRecord < Used)
                     {
-                        WriteStreamRecord(Stamp, Stamp.MoveRecord, Transform->GetWorldMatrixCached());
+                        WriteStreamRecord(Stamp, Stamp.MoveRecord, Transform->GetWorldMatrix());
                     }
                 }
                 Lane.Rewrites.Reset();

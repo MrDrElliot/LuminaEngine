@@ -88,14 +88,14 @@ namespace Lumina
     class FBuiltInTemporalAA final : public IUpscaler
     {
     public:
-        explicit FBuiltInTemporalAA(FDefaultSceneRenderer& InRenderer) : Renderer(InRenderer) {}
+        explicit FBuiltInTemporalAA(FDefaultSceneRenderer& InRenderer) : Renderer(&InRenderer) {}
 
         EAntiAliasingMethod GetMethod() const override;
         bool IsSupported() const override { return true; }
         void Evaluate(RHI::FCmdListH CL, const FUpscaleInputs& Inputs) override;
 
     private:
-        FDefaultSceneRenderer& Renderer;
+        FDefaultSceneRenderer* Renderer;
     };
 
     // One frame's distance-field casters and the cells they are binned into, sized by what the last frames asked for.
@@ -2036,6 +2036,8 @@ namespace Lumina
         FSceneBuffer SkinnedSlotListBuffer { "Skinning.SlotList", 1.5f };
         TVector<uint64>                                     SkinnedSlotBits;
         TVector<FUIntVector2>                               SkinnedRunScratch;
+        // Per chunk of the gathered skinned list, its meshlets, longest range and listed slots, then the bases the layout starts each chunk at.
+        TVector<FUIntVector3>                               SkinnedLayoutChunks;
         uint32                                              CurrentSkinnedFrameTag = 0;
         // Per-frame posed meshlet spheres, so the cull can reject skinned geometry per meshlet.
         FSceneBuffer SkinnedMeshletBoundsBuffer { "Skinning.MeshletBounds", 1.25f };

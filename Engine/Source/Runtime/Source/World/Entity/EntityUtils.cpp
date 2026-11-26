@@ -659,7 +659,7 @@ namespace Lumina::ECS::Utils
                     continue;
                 }
 
-                Registry.EmplaceOrReplace<FNeedsTransformUpdate>(NewEntity);
+                MarkTransformDirty(Registry, NewEntity);
 
                 int64 PostEntityPos = Ar.Tell();
                 int64 ActualBytesRead = PostEntityPos - PreEntityPos;
@@ -800,9 +800,9 @@ namespace Lumina::ECS::Utils
         FTransform NewLocalTransform;
         if (bPreserveWorld)
         {
-            const FMatrix4 ChildWorldMatrix  = ChildTransform.GetWorldMatrix();
+            const FMatrix4 ChildWorldMatrix  = ChildTransform.ComputeWorldTransform().GetMatrix();
             const FMatrix4 ParentWorldMatrix = (Parent != ECS::NullEntity)
-                ? Registry.Get<STransformComponent>(Parent).GetWorldMatrix() : FMatrix4(1.0f);
+                ? Registry.Get<STransformComponent>(Parent).ComputeWorldTransform().GetMatrix() : FMatrix4(1.0f);
             const FMatrix4 NewLocalMatrix = Math::Inverse(ParentWorldMatrix) * ChildWorldMatrix;
 
             FVector3 Translation, Scale, Skew;
@@ -840,7 +840,7 @@ namespace Lumina::ECS::Utils
         else
         {
             // Keep the replicated local; recompose world under the new parent next resolve.
-            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Child);
+            MarkTransformDirty(Registry, Child);
         }
 
         // An attachment change may have to reach clients, which is the netcode's business.
@@ -893,7 +893,7 @@ namespace Lumina::ECS::Utils
         bool bHasTransform = false;
         if (STransformComponent* TransformComponent = Registry.TryGet<STransformComponent>(Child))
         {
-            WorldSnapshot = TransformComponent->GetWorldTransform();
+            WorldSnapshot = TransformComponent->ComputeWorldTransform();
             bHasTransform = true;
         }
 
@@ -1123,32 +1123,10 @@ namespace Lumina::ECS::Utils
         }
     };
     
-    static void OnTransformDirtied(FTransformDirtyState* State, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    // The rebind inside re-derives bIsFlat, both ways.
+    static void OnHierarchyChanged(FTransformDirtyState*, ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        if (STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
-        {
-            if (!Transform->bWorldDirty)
-            {
-                Transform->bWorldDirty = true;
-                State->DirtyTransforms.Enqueue(Entity);
-            }
-            
-            if (!Transform->bBodyDirtyQueued && Registry.HasAny<SRigidBodyComponent, SCharacterPhysicsComponent>(Entity))
-            {
-                Transform->bBodyDirtyQueued = true;
-                State->DirtyBodies.Enqueue(Entity);
-            }
-        }
-        State->bAnyDirty.store(true, std::memory_order_release);
-    }
-
-    static void OnHierarchyChanged(FTransformDirtyState* State, ECS::FRegistry& Registry, ECS::FEntity Entity)
-    {
-        if (STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
-        {
-            Transform->bIsFlat = IsEntityTransformFlat(Registry, Entity);
-        }
-        OnTransformDirtied(State, Registry, Entity);
+        MarkTransformDirty(Registry, Entity);
     }
 
     FTransformDirtyState* EnsureTransformDirtyState(ECS::FRegistry& Registry)
@@ -1159,7 +1137,6 @@ namespace Lumina::ECS::Utils
         }
 
         FTransformDirtyState& State = *Registry.Ctx().Emplace<TUniquePtr<FTransformDirtyState>>(MakeUnique<FTransformDirtyState>());
-        Registry.GetSignals<FNeedsTransformUpdate>().OnConstruct.Connect<&OnTransformDirtied>(&State);
         Registry.OnHierarchyChanged().Connect<&OnHierarchyChanged>(&State);
 
         // A load links children before this state exists, so they raised no signal and would keep a never-resolved world transform.
@@ -1242,6 +1219,21 @@ namespace Lumina::ECS::Utils
             State->DirtyBodies.Enqueue(Entity);
         }
         // Read before writing, since parallel writers storing to one line every call serialize on it.
+        if (!State->bAnyDirty.load(std::memory_order_relaxed))
+        {
+            State->bAnyDirty.store(true, std::memory_order_relaxed);
+        }
+    }
+
+    void QueueDirtyTransforms(FTransformDirtyGate* Gate, const ECS::FEntity* Entities, uint32 Count)
+    {
+        if (Gate == nullptr || Count == 0)
+        {
+            return;
+        }
+
+        FTransformDirtyState* State = static_cast<FTransformDirtyState*>(Gate);
+        State->DirtyTransforms.EnqueueBulk(Entities, Count);
         if (!State->bAnyDirty.load(std::memory_order_relaxed))
         {
             State->bAnyDirty.store(true, std::memory_order_relaxed);
@@ -1332,13 +1324,13 @@ namespace Lumina::ECS::Utils
 
         if (TopmostDirty < 0)
         {
-            return XFormStorage.Get(Entity).GetWorldTransformCached();
+            return XFormStorage.Get(Entity).GetWorldTransform();
         }
 
         FTransform World = XFormStorage.Get(Chain[TopmostDirty]).LocalTransform;
         if (TopmostDirty + 1 < Chain.Num())
         {
-            World = XFormStorage.Get(Chain[TopmostDirty + 1]).GetWorldTransformCached() * World;
+            World = XFormStorage.Get(Chain[TopmostDirty + 1]).GetWorldTransform() * World;
         }
         for (int32 i = TopmostDirty - 1; i >= 0; --i)
         {
@@ -1408,22 +1400,6 @@ namespace Lumina::ECS::Utils
 
         auto TransformStorage = Registry.GetStorage<STransformComponent>();
         const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
-
-        // Fold external FNeedsTransformUpdate tags into the queue; bWorldDirty dedups already-queued.
-        for (ECS::FEntity Tagged : Registry.View<FNeedsTransformUpdate>())
-        {
-            if (STransformComponent* Found = TransformStorage.TryGet(Tagged))
-            {
-                STransformComponent& Xf = *Found;
-                if (!Xf.bWorldDirty)
-                {
-                    Xf.bWorldDirty = true;
-                    DirtyState.DirtyTransforms.Enqueue(Tagged);
-                    DirtyState.bAnyDirty.store(true, std::memory_order_relaxed);  // ensure the drain runs
-                }
-            }
-        }
-        Registry.ClearComponent<FNeedsTransformUpdate>();
 
         if (!DirtyState.bAnyDirty.load(std::memory_order_acquire))
         {
@@ -1608,7 +1584,7 @@ namespace Lumina::ECS::Utils
                 const FTransform* ParentWorld = nullptr;
                 if (Slot == Begin)
                 {
-                    ParentWorld = HeadParentTransform != nullptr ? &HeadParentTransform->GetWorldTransformCached() : nullptr;
+                    ParentWorld = HeadParentTransform != nullptr ? &HeadParentTransform->GetWorldTransform() : nullptr;
                 }
                 else if (const STransformComponent* InRange = SlotTransforms[ParentSlots[Slot]])
                 {
@@ -1667,13 +1643,13 @@ namespace Lumina::ECS::Utils
     FQuat GetEntityRotation(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         auto* Transform = Registry.TryGet<STransformComponent>(Entity);
-        return Transform ? Transform->GetWorldRotation() : FQuat{};
+        return Transform ? Transform->ComputeWorldTransform().GetRotation() : FQuat{};
     }
 
     FVector3 GetEntityScale(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
         auto* Transform = Registry.TryGet<STransformComponent>(Entity);
-        return Transform ? Transform->GetWorldScale() : FVector3{};
+        return Transform ? Transform->ComputeWorldTransform().GetScale() : FVector3{};
     }
 
     void SetEntityScale(ECS::FRegistry& Registry, ECS::FEntity Entity, const FVector3& Scale)
@@ -1855,7 +1831,7 @@ namespace Lumina::ECS::Utils
         ForEachEntityRefOnEntity(Registry, Entity, Visit);
     }
 
-    void SetEntityWorldRotationCached(ECS::FRegistry& Registry, ECS::FEntity Entity, const FQuat& WorldRotation)
+    void SetEntityWorldRotation(ECS::FRegistry& Registry, ECS::FEntity Entity, const FQuat& WorldRotation)
     {
         ValidateSystemAccess(static_cast<uint32>(ECS::GetComponentTypeID<STransformComponent>()), true, "Write<STransformComponent>");
 
@@ -1898,7 +1874,7 @@ namespace Lumina::ECS::Utils
         {
             if (const STransformComponent* ParentTransform = Registry.TryGet<STransformComponent>(Parent))
             {
-                ParentWorldMatrix = ParentTransform->GetWorldMatrix();
+                ParentWorldMatrix = ParentTransform->ComputeWorldTransform().GetMatrix();
             }
         }
 
@@ -1949,20 +1925,27 @@ namespace Lumina::ECS::Utils
         Registry.EmplaceOrReplace<FNeedsPhysicsBodyUpdate>(Entity);
     }
 
-    // Tag a body for the physics sync to reposition it. Single-threaded path (bodies aren't mass-moved).
-    void MarkPhysicsBodyDirtyIfBodied(ECS::FRegistry& Registry, ECS::FEntity Entity)
-    {
-        if (Registry.HasAny<SRigidBodyComponent, SCharacterPhysicsComponent>(Entity))
-        {
-            Registry.EmplaceOrReplace<FNeedsPhysicsBodyUpdate>(Entity);
-        }
-    }
-
-    // External (non-setter) dirtying. The tag flows through OnTransformDirtied to set the flag. Single-threaded.
     void MarkTransformDirty(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
-        MarkPhysicsBodyDirtyIfBodied(Registry, Entity);
+        STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity);
+        if (Transform == nullptr)
+        {
+            return;
+        }
+
+        // A bit-copied component points at its source registry and carries that entity's guards, which would swallow the mark.
+        Transform->Bind(Registry, Entity);
+        Transform->ResetDirtyState();
+
+        FTransformDirtyState& State = *EnsureTransformDirtyState(Registry);
+        Transform->bWorldDirty = true;
+        State.DirtyTransforms.Enqueue(Entity);
+        if (Registry.HasAny<SRigidBodyComponent, SCharacterPhysicsComponent>(Entity))
+        {
+            Transform->bBodyDirtyQueued = true;
+            State.DirtyBodies.Enqueue(Entity);
+        }
+        State.bAnyDirty.store(true, std::memory_order_release);
     }
 }
 

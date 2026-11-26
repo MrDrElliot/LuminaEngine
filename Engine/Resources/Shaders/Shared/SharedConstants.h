@@ -243,8 +243,14 @@
 #define GPU_INSTANCE_SHADOW_CACHED_BIT  0x40000u
 // Skinned, or still settling after a move the sun's cache saw, so views that only want moving bodies keep it.
 #define GPU_INSTANCE_MOVER_BIT          0x80000u
+// Above these bits a compacted instance's custom depth word holds FInstanceStatic::TransformOffset.
+#define GPU_INSTANCE_TRANSFORM_OFFSET_SHIFT 20u
 // Retained slots per instance cull workgroup, which is also the span one FInstanceBlockBounds covers.
 #define INSTANCE_CULL_BLOCK_SIZE        64u
+// A transform stream slot word names the head of a mover's surface slots, which holds its transform, with their count less one above this shift.
+#define TRANSFORM_STREAM_SPAN_SHIFT     26u
+#define TRANSFORM_STREAM_SLOT_MASK      0x3FFFFFFu
+#define TRANSFORM_STREAM_MAX_SPAN       64u
 
 // An impostor point's type for a plant that draws nothing.
 #define IMPOSTOR_TYPE_NONE              0xFFFFFFFFu

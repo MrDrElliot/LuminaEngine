@@ -863,6 +863,8 @@ namespace Lumina
 
     void FScenePrimitiveSet::ReleaseBindingSpan(uint32 Base, uint32 Count, TVector<FUIntVector3>* DeferredBatchReleases)
     {
+        const uint32 First = Count > 0u ? Bindings[Base].InstanceSlot : 0u;
+        bool bRun = Count > 1u;
         for (uint32 s = 0; s < Count; ++s)
         {
             const FSurfaceBinding& Binding = Bindings[Base + s];
@@ -874,8 +876,20 @@ namespace Lumina
             {
                 Batches.ReleaseBatchRef(Binding.BatchIndex, Binding.bSkinned);
             }
-            FreeInstanceSlot(Binding.InstanceSlot);
             FreeSkinnedIndex(Binding.SkinnedIndex);
+            bRun = bRun && Binding.InstanceSlot == First + s;
+        }
+
+        if (bRun)
+        {
+            FreeInstanceSlotRun(First, Count);
+        }
+        else
+        {
+            for (uint32 s = 0; s < Count; ++s)
+            {
+                FreeInstanceSlot(Bindings[Base + s].InstanceSlot);
+            }
         }
         DeadBindings += Count;
     }
@@ -892,10 +906,11 @@ namespace Lumina
     uint32 FScenePrimitiveSet::AppendBindingSpan(const FBindingMemo& Memo, bool bSkinned, bool bAssignSkinnedIndex)
     {
         const uint32 Base = (uint32)Bindings.Num();
+        uint32 NextSlot = Memo.Protos.IsEmpty() ? 0u : AllocateInstanceSlotRun((uint32)Memo.Protos.Num());
         for (const FSurfaceBinding& Proto : Memo.Protos)
         {
             FSurfaceBinding& Binding = Bindings.EmplaceGetRef(Proto);
-            Binding.InstanceSlot = AllocateInstanceSlot();
+            Binding.InstanceSlot = NextSlot++;
             Binding.bSkinned     = bSkinned;
             Binding.SkinnedIndex = (bSkinned && bAssignSkinnedIndex) ? AllocateSkinnedIndex() : kNoSkinnedIndex;
 
@@ -1025,13 +1040,14 @@ namespace Lumina
         else
         {
             Prim.BindingBase = (uint32)Bindings.Num();
+            uint32 NextSlot = AllocateInstanceSlotRun(Prim.SurfaceCount);
             for (const FResolvedSurface& Surface : Surfaces)
             {
                 const uint32 BatchIndex = Batches.FindOrAddBatch(Surface);
                 Batches.AddBatchRef(BatchIndex, bSkinned);
 
                 FSurfaceBinding& Binding = Bindings.EmplaceGetRef(ScenePrimitiveSetInternal::MakeSurfaceProto(Surface, BatchIndex, InternSurfaceDesc(Surface)));
-                Binding.InstanceSlot = AllocateInstanceSlot();
+                Binding.InstanceSlot = NextSlot++;
                 Binding.bSkinned     = bSkinned;
                 Binding.SkinnedIndex = bSkinned ? AllocateSkinnedIndex() : kNoSkinnedIndex;
             }
@@ -1069,6 +1085,76 @@ namespace Lumina
             return Slot;
         }
 
+        // Split off the shortest freed run, marked like a block slot since a bulk foliage fill only marks what the free list did not give.
+        for (uint32 Length = 2; Length < (uint32)FreeSlotRuns.Num(); ++Length)
+        {
+            if (FreeSlotRuns[Length].IsEmpty())
+            {
+                continue;
+            }
+            const uint32 Slot = FreeSlotRuns[Length].Last();
+            FreeSlotRuns[Length].Pop();
+            AddFreeSlotRun(Slot + 1u, Length - 1u);
+            MarkInstanceDirty(Slot);
+            MarkStaticDirty(Slot);
+            return Slot;
+        }
+
+        return GrowInstanceSlot();
+    }
+
+    uint32 FScenePrimitiveSet::AllocateInstanceSlotRun(uint32 Count)
+    {
+        if (Count <= 1u)
+        {
+            return AllocateInstanceSlot();
+        }
+
+        // The shortest freed run that fits, with the rest filed again as a shorter one.
+        for (uint32 Length = Count; Length < (uint32)FreeSlotRuns.Num(); ++Length)
+        {
+            if (FreeSlotRuns[Length].IsEmpty())
+            {
+                continue;
+            }
+            const uint32 First = FreeSlotRuns[Length].Last();
+            FreeSlotRuns[Length].Pop();
+            AddFreeSlotRun(First + Count, Length - Count);
+            return First;
+        }
+
+        for (int32 Index = 0; Index < FreeSlotBlocks.Num(); ++Index)
+        {
+            FUIntVector2& Block = FreeSlotBlocks[Index];
+            if (Block.y < Count)
+            {
+                continue;
+            }
+            const uint32 First = Block.x;
+            Block.x += Count;
+            Block.y -= Count;
+            if (Block.y == 0u)
+            {
+                FreeSlotBlocks.RemoveAt(Index);
+            }
+            for (uint32 Slot = First; Slot < First + Count; ++Slot)
+            {
+                MarkInstanceDirty(Slot);
+                MarkStaticDirty(Slot);
+            }
+            return First;
+        }
+
+        const uint32 First = GrowInstanceSlot();
+        for (uint32 Grown = 1; Grown < Count; ++Grown)
+        {
+            GrowInstanceSlot();
+        }
+        return First;
+    }
+
+    uint32 FScenePrimitiveSet::GrowInstanceSlot()
+    {
         const uint32 Slot = (uint32)RetainedCullEntries.Num();
 
         RetainedCullEntries.Emplace();
@@ -1132,6 +1218,58 @@ namespace Lumina
         InstanceFreeSlots.Add(Slot);
     }
 
+    void FScenePrimitiveSet::FreeInstanceSlotRun(uint32 First, uint32 Count)
+    {
+        if (First + Count > (uint32)RetainedCullEntries.Num())
+        {
+            return;
+        }
+        for (uint32 Slot = First; Slot < First + Count; ++Slot)
+        {
+            DeactivateInstanceSlot(Slot);
+        }
+        AddFreeSlotRun(First, Count);
+    }
+
+    void FScenePrimitiveSet::AddFreeSlotRun(uint32 First, uint32 Count)
+    {
+        using namespace ScenePrimitiveSetInternal;
+
+        if (Count == 1u)
+        {
+            InstanceFreeSlots.Add(First);
+        }
+        else if (Count > kMaxListedSlotRun)
+        {
+            AddFreeSlotBlock(First, Count);
+        }
+        else if (Count > 1u)
+        {
+            if (FreeSlotRuns.IsEmpty())
+            {
+                FreeSlotRuns.SetNum(kMaxListedSlotRun + 1u);
+            }
+            FreeSlotRuns[Count].Add(First);
+        }
+    }
+
+    bool FScenePrimitiveSet::HasSlotRun(const FScenePrimitive& Prim) const
+    {
+        if (Prim.SurfaceCount < 2u || Prim.SurfaceCount > ScenePrimitiveSetInternal::kMaxSharedTransformRun)
+        {
+            return false;
+        }
+        const uint32 First = Bindings[Prim.BindingBase].InstanceSlot;
+        for (uint32 s = 1; s < Prim.SurfaceCount; ++s)
+        {
+            if (Bindings[Prim.BindingBase + s].InstanceSlot != First + s)
+            {
+                return false;
+            }
+        }
+        return First + Prim.SurfaceCount <= (uint32)RetainedCullEntries.Num();
+    }
+
     void FScenePrimitiveSet::TrimRetainedTail()
     {
         constexpr uint32 kMinTrimSlots       = 65536;
@@ -1142,6 +1280,10 @@ namespace Lumina
         for (const FUIntVector2& Block : FreeSlotBlocks)
         {
             FreeSlots += Block.y;
+        }
+        for (uint32 Length = 2; Length < (uint32)FreeSlotRuns.Num(); ++Length)
+        {
+            FreeSlots += (uint64)Length * FreeSlotRuns[Length].Num();
         }
         // The free list sort below is only worth it once a quarter of the slots are free, and then not every frame.
         if (SlotCount < kMinTrimSlots || FreeSlots * 4u < SlotCount)
@@ -1158,14 +1300,31 @@ namespace Lumina
         // Highest first, so the tail run sits at the front and the allocator's pop from the back reuses the lowest slots.
         Algo::Sort(InstanceFreeSlots, [](uint32 A, uint32 B) { return A > B; });
 
+        // Freed runs as (first, length), highest first, so the walk below can drop the ones touching the tail.
+        TVector<FUIntVector2> Runs;
+        for (uint32 Length = 2; Length < (uint32)FreeSlotRuns.Num(); ++Length)
+        {
+            for (const uint32 First : FreeSlotRuns[Length])
+            {
+                Runs.Emplace(First, Length);
+            }
+        }
+        Algo::Sort(Runs, [](const FUIntVector2& A, const FUIntVector2& B) { return A.x > B.x; });
+
         uint32 NewCount = SlotCount;
         int32  TailFree = 0;
+        int32  TailRuns = 0;
         for (;;)
         {
             if (!FreeSlotBlocks.IsEmpty() && FreeSlotBlocks.Last().x + FreeSlotBlocks.Last().y == NewCount)
             {
                 NewCount = FreeSlotBlocks.Last().x;
                 FreeSlotBlocks.Pop();
+            }
+            else if (TailRuns < Runs.Num() && Runs[TailRuns].x + Runs[TailRuns].y == NewCount)
+            {
+                NewCount = Runs[TailRuns].x;
+                ++TailRuns;
             }
             else if (TailFree < InstanceFreeSlots.Num() && InstanceFreeSlots[TailFree] + 1u == NewCount)
             {
@@ -1183,6 +1342,17 @@ namespace Lumina
         }
 
         InstanceFreeSlots.RemoveAt(0, TailFree);
+        if (TailRuns > 0)
+        {
+            for (TVector<uint32>& List : FreeSlotRuns)
+            {
+                List.Reset();
+            }
+            for (int32 Run = TailRuns; Run < Runs.Num(); ++Run)
+            {
+                FreeSlotRuns[Runs[Run].y].Add(Runs[Run].x);
+            }
+        }
         const auto Trim = [NewCount](auto& Array)
         {
             if ((uint32)Array.Num() > NewCount)
@@ -1471,6 +1641,7 @@ namespace Lumina
         const bool                bActive      = Prim.Surfaces != nullptr && !(Prim.Source == EPrimitiveSource::SkeletalMesh && Prim.BoneCount == 0u);
         const bool                bHasGeometry = Prim.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot;
         const FTransform3x4       NewTransform = PackTransform3x4(InstanceTransformOf(Prim, Transform));
+        const bool                bSharedTransform = HasSlotRun(Prim);
         for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
         {
             const FSurfaceBinding& Binding = Bindings[Prim.BindingBase + s];
@@ -1510,10 +1681,11 @@ namespace Lumina
             NewStatic.MeshletVisibilityBase = RetainedStatic[Slot].MeshletVisibilityBase;
             NewStatic.RenderLayers          = Prim.RenderLayers;
             NewStatic.WPODisableDistance    = Prim.WPODisableDistance;
+            NewStatic.TransformOffset       = bSharedTransform ? s : 0u;
 
             // A resolve bump onto identical values must not dirty the slot, or every instance re-uploads.
             const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);
-            const bool bTransformChanged = StoreIfChanged(RetainedTransforms[Slot], NewTransform);
+            const bool bTransformChanged = (s == 0u || !bSharedTransform) && StoreIfChanged(RetainedTransforms[Slot], NewTransform);
             if (bCullChanged || bTransformChanged)
             {
                 if (Sink != nullptr)
@@ -1554,6 +1726,7 @@ namespace Lumina
         const FScenePrimitive& Prim   = Primitives[Index];
         const FVector4         Sphere = InstanceSphereOf(Prim, WorldSphere);
         const FTransform3x4    Packed = PackTransform3x4(InstanceTransformOf(Prim, Transform));
+        const bool             bSharedTransform = HasSlotRun(Prim);
 
         for (uint32 s = 0; s < Prim.SurfaceCount; ++s)
         {
@@ -1564,7 +1737,7 @@ namespace Lumina
             }
 
             const bool bBoundsChanged    = StoreIfChanged(RetainedCullEntries[Slot].SphereBounds, Sphere);
-            const bool bTransformChanged = StoreIfChanged(RetainedTransforms[Slot], Packed);
+            const bool bTransformChanged = (s == 0u || !bSharedTransform) && StoreIfChanged(RetainedTransforms[Slot], Packed);
             if (!bBoundsChanged && !bTransformChanged)
             {
                 continue;
@@ -1683,7 +1856,7 @@ namespace Lumina
             {
                 continue;
             }
-            const FMatrix4 Matrix = Transform->GetWorldMatrixCached();
+            const FMatrix4 Matrix = Transform->GetWorldMatrix();
             const FVector4 Sphere = RebuildWorldBounds(Index, Matrix);
             if (bFull)
             {

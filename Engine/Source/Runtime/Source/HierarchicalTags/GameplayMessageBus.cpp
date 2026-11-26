@@ -113,16 +113,16 @@ namespace Lumina
     }
 
     FGameplayMessageBus::FGameplayMessageBus(ECS::FRegistry& InRegistry, ECS::FCommandBus& InCommands)
-        : Registry(InRegistry)
-        , Commands(InCommands)
+        : Registry(&InRegistry)
+        , Commands(&InCommands)
     {
         ScriptReloadHandle = FCoreDelegates::OnScriptsWillReload.AddLambda([this] { RemoveManagedListeners(); });
-        Registry.OnEntityDestroyed().Connect<&FGameplayMessageBus::UnsubscribeAll>(this);
+        Registry->OnEntityDestroyed().Connect<&FGameplayMessageBus::UnsubscribeAll>(this);
     }
 
     FGameplayMessageBus::~FGameplayMessageBus()
     {
-        Registry.OnEntityDestroyed().Disconnect<&FGameplayMessageBus::UnsubscribeAll>(this);
+        Registry->OnEntityDestroyed().Disconnect<&FGameplayMessageBus::UnsubscribeAll>(this);
         FCoreDelegates::OnScriptsWillReload.Remove(ScriptReloadHandle);
         Clear();
     }
@@ -291,7 +291,7 @@ namespace Lumina
             return;
         }
 
-        Commands.Enqueue([this, Route, Entity, Channel, bIncludeSelf, Copy = FDeferredPayload(Payload)]() mutable
+        Commands->Enqueue([this, Route, Entity, Channel, bIncludeSelf, Copy = FDeferredPayload(Payload)]() mutable
         {
             Deliver(Route, Entity, Channel, Copy.Ref, bIncludeSelf);
         });
@@ -333,7 +333,7 @@ namespace Lumina
         else
         {
             TInlineVector<ECS::FEntity, 32> Nodes;
-            const ECS::FHierarchy& Hierarchy = Registry.GetHierarchy();
+            const ECS::FHierarchy& Hierarchy = Registry->GetHierarchy();
             if (Route == EGameplayMessageRoute::Up)
             {
                 for (ECS::FEntity Node = Entity; !Node.IsNull(); Node = Hierarchy.GetParent(Node))

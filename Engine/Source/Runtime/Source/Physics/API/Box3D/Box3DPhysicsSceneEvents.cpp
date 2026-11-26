@@ -300,6 +300,11 @@ namespace Lumina::Physics
 
     void FBox3DPhysicsScene::OnRigidBodyComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
+        // Cleared here too, or a setter keeps queueing body re-syncs for an entity that no longer has a body.
+        if (STransformComponent* Transform = Registry.TryGet<STransformComponent>(Entity))
+        {
+            Transform->SetHasPhysicsBody(false);
+        }
         if (const FBodyRecord* Record = RigidBodies.Find(Entity))
         {
             if (Record->Handle != InvalidBodyHandle)

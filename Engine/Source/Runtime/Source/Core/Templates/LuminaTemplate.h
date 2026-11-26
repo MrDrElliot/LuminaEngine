@@ -12,14 +12,14 @@ namespace Lumina
 	struct TGuardValue : private INonCopyable
 	{
 		NODISCARD TGuardValue(RefType& ReferenceValue, const AssignedType& NewValue)
-		: RefValue(ReferenceValue), OriginalValue(ReferenceValue)
+		: RefValue(&ReferenceValue), OriginalValue(ReferenceValue)
 		{
-			RefValue = NewValue;
+			*RefValue = NewValue;
 		}
     	
 		~TGuardValue()
 		{
-			RefValue = OriginalValue;
+			*RefValue = OriginalValue;
 		}
 		TGuardValue(const TGuardValue&) = delete;
 		TGuardValue& operator=(const TGuardValue&) = delete;
@@ -32,7 +32,7 @@ namespace Lumina
 		}
 	
 	private:
-		RefType& RefValue;
+		RefType* RefValue;
 		AssignedType OriginalValue;
 	};
 
@@ -42,15 +42,15 @@ namespace Lumina
 	struct TGuardAtomicValue : private INonCopyable
 	{
 	    NODISCARD TGuardAtomicValue(std::atomic<AtomicType>& InAtomic, AtomicType NewValue)
-	        : AtomicRef(InAtomic)
+	        : AtomicRef(&InAtomic)
 	        , OriginalValue(InAtomic.load(std::memory_order_relaxed))
 	    {
-	        AtomicRef.store(NewValue, std::memory_order_relaxed);
+	        AtomicRef->store(NewValue, std::memory_order_relaxed);
 	    }
 	
 	    ~TGuardAtomicValue()
 	    {
-	        AtomicRef.store(OriginalValue, std::memory_order_relaxed);
+	        AtomicRef->store(OriginalValue, std::memory_order_relaxed);
 	    }
 	    TGuardAtomicValue(const TGuardAtomicValue&) = delete;
 	    TGuardAtomicValue& operator=(const TGuardAtomicValue&) = delete;
@@ -63,7 +63,7 @@ namespace Lumina
 	    }
 	
 	private:
-	    std::atomic<AtomicType>& AtomicRef;
+	    std::atomic<AtomicType>* AtomicRef;
 	    AtomicType OriginalValue;
 	};
 
@@ -71,18 +71,18 @@ namespace Lumina
 	requires(std::is_integral_v<T> && std::atomic<T>::is_always_lock_free)
 	struct TAtomicScopeGuard : private INonCopyable
 	{
-	    std::atomic<T>& Ref;
+	    std::atomic<T>* Ref;
 	    T Delta;
 	
 	    explicit TAtomicScopeGuard(std::atomic<T>& InRef, T InDelta)
-	        : Ref(InRef), Delta(InDelta)
+	        : Ref(&InRef), Delta(InDelta)
 	    {
-	        Ref.fetch_add(Delta, std::memory_order_relaxed);
+	        Ref->fetch_add(Delta, std::memory_order_relaxed);
 	    }
 	
 	    ~TAtomicScopeGuard()
 	    {
-	        Ref.fetch_sub(Delta, std::memory_order_acq_rel);
+	        Ref->fetch_sub(Delta, std::memory_order_acq_rel);
 	    }
 	    TAtomicScopeGuard(const TAtomicScopeGuard&) = delete;
 	    TAtomicScopeGuard& operator=(const TAtomicScopeGuard&) = delete;

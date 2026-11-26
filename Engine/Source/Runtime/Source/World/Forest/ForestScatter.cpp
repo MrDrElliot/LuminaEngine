@@ -51,22 +51,22 @@ namespace Lumina::Forest
         // Remembers the last chunk, since neighboring candidates nearly always share one.
         struct FPaintLookup
         {
-            const FRules&      Rules;
+            const FRules*      Rules;
             uint64             Key   = ~0ull;
             const FPaintChunk* Chunk = nullptr;
 
             // From -1 where the species is cleared to 1 where it is filled in, 0 where the rules alone decide.
             float Weight(uint32 Species, float X, float Z)
             {
-                const float LocalX = (X - Rules.Center.x) / SForestPaintChunk::kSize;
-                const float LocalZ = (Z - Rules.Center.z) / SForestPaintChunk::kSize;
+                const float LocalX = (X - Rules->Center.x) / SForestPaintChunk::kSize;
+                const float LocalZ = (Z - Rules->Center.z) / SForestPaintChunk::kSize;
                 const int32 CX = (int32)Math::Floor(LocalX);
                 const int32 CZ = (int32)Math::Floor(LocalZ);
                 const uint64 Packed = FPaint::PackChunk(CX, CZ);
                 if (Packed != Key)
                 {
                     Key   = Packed;
-                    Chunk = Rules.Paint->Chunks.Find(Packed);
+                    Chunk = Rules->Paint->Chunks.Find(Packed);
                 }
                 if (Chunk == nullptr || Species >= (uint32)Chunk->Weights.Num() || Chunk->Weights[Species].IsEmpty())
                 {
@@ -320,7 +320,7 @@ namespace Lumina::Forest
         const bool bFollowTerrain = !Rules.Terrains.IsEmpty();
         const bool bPainted = Rules.Paint && !Rules.Paint->Chunks.IsEmpty();
         const FVector3 Up(0.0f, 1.0f, 0.0f);
-        FPaintLookup Lookup{ Rules };
+        FPaintLookup Lookup{ &Rules };
 
         // Painted chunks clipped to the region, which a species the rules leave out entirely grows in alone.
         TVector<TPair<uint64, FArea>> PaintAreas;

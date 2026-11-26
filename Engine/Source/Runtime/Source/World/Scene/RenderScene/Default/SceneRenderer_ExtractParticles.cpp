@@ -14,8 +14,8 @@ namespace Lumina
         // Rigid, so the axes stay unit length and the entity's scale moves into the extent.
         FParticleShapeGPU MakeParticleShape(const STransformComponent& Transform, EParticleShapeType Shape, const FVector3& Extent)
         {
-            const FMatrix4 World = Transform.GetWorldMatrixCached();
-            const FVector3 Scale = Transform.GetWorldScaleCached();
+            const FMatrix4 World = Transform.GetWorldMatrix();
+            const FVector3 Scale = Transform.GetWorldScale();
 
             FParticleShapeGPU Out;
             Out.Center = FVector4(FVector3(World[3]), (float)Shape);
@@ -121,7 +121,7 @@ namespace Lumina
                 const FParticleSystemWork& Work = ParticleSystemWork[Index];
                 if (Work.Asset >= 0)
                 {
-                    FillParticleSystemExtracts(Frame, Work, Transforms.Get(Work.Entity).GetWorldMatrixCached());
+                    FillParticleSystemExtracts(Frame, Work, Transforms.Get(Work.Entity).GetWorldMatrix());
                 }
             }
         }, ParticleSystemGrain);

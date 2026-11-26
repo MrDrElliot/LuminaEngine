@@ -1477,20 +1477,20 @@ namespace
     // The GPU crowd kernel's math on the CPU, from baked clips to skinning matrices, so its output compares against the executor's.
     struct FGpuPoseEmulator
     {
-        FSkeletonResource& Skeleton;
+        FSkeletonResource* Skeleton;
         THashMap<const CAnimation*, FAnimGpuClip> Baked;
         TVector<int32> DepthOrder;
 
-        explicit FGpuPoseEmulator(FSkeletonResource& InSkeleton) : Skeleton(InSkeleton)
+        explicit FGpuPoseEmulator(FSkeletonResource& InSkeleton) : Skeleton(&InSkeleton)
         {
-            const int32 NumBones = Skeleton.GetNumBones();
+            const int32 NumBones = Skeleton->GetNumBones();
             TVector<int32> Depth;
             Depth.Init(0, NumBones);
             for (int32 Pass = 0; Pass < NumBones; ++Pass)
             {
                 for (int32 b = 0; b < NumBones; ++b)
                 {
-                    const int32 Parent = Skeleton.Bones[b].ParentIndex;
+                    const int32 Parent = Skeleton->Bones[b].ParentIndex;
                     Depth[b] = Parent < 0 ? 0 : Depth[Parent] + 1;
                 }
             }
@@ -1533,13 +1533,13 @@ namespace
 
         void Evaluate(TSpan<const FAnimWeightedSample> Samples, int32 RootLockBone, TVector<FMatrix4>& OutSkinning)
         {
-            const int32 NumBones = Skeleton.GetNumBones();
+            const int32 NumBones = Skeleton->GetNumBones();
             // Every clip is baked before any address is taken, since adding to the map can move its entries.
             for (const FAnimWeightedSample& Sample : Samples)
             {
                 if (Sample.Clip != nullptr && !Baked.Contains(Sample.Clip))
                 {
-                    Anim::BakeGpuClip(*Sample.Clip, Skeleton, Baked.FindOrAdd(Sample.Clip));
+                    Anim::BakeGpuClip(*Sample.Clip, *Skeleton, Baked.FindOrAdd(Sample.Clip));
                 }
             }
             TVector<const FAnimGpuClip*> Clips;
@@ -1556,11 +1556,11 @@ namespace
             {
                 FQuat Q(0.0f, 0.0f, 0.0f, 0.0f);
                 FVector3 T(0.0f);
-                FQuat Reference = Skeleton.BindLocalRotations[b];
+                FQuat Reference = Skeleton->BindLocalRotations[b];
                 for (int32 s = 0; s < Samples.Num(); ++s)
                 {
-                    FQuat QS = Skeleton.BindLocalRotations[b];
-                    FVector3 TS = Skeleton.BindLocalTranslations[b];
+                    FQuat QS = Skeleton->BindLocalRotations[b];
+                    FVector3 TS = Skeleton->BindLocalTranslations[b];
                     if (Clips[s] != nullptr && b != RootLockBone)
                     {
                         SampleBone(*Clips[s], Samples[s].Time, b, QS, TS);
@@ -1574,9 +1574,9 @@ namespace
                     T = T + TS * Samples[s].Weight;
                 }
                 const FMatrix4 Local = AnimPose::ComposeTRS(T, Math::Normalize(Q), FVector3(1.0f));
-                const int32 Parent = Skeleton.Bones[b].ParentIndex;
+                const int32 Parent = Skeleton->Bones[b].ParentIndex;
                 World[b] = Parent < 0 ? Local : World[Parent] * Local;
-                OutSkinning[b] = World[b] * Skeleton.Bones[b].InvBindMatrix;
+                OutSkinning[b] = World[b] * Skeleton->Bones[b].InvBindMatrix;
             }
         }
     };

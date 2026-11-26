@@ -106,8 +106,8 @@ namespace Lumina
     {
     public:
 
-        explicit TScopeLock(TLockable& InLockable) noexcept : Lockable(InLockable) { Lockable.Lock(); }
-        ~TScopeLock() { Lockable.Unlock(); }
+        explicit TScopeLock(TLockable& InLockable) noexcept : Lockable(&InLockable) { Lockable->Lock(); }
+        ~TScopeLock() { Lockable->Unlock(); }
 
         TScopeLock(const TScopeLock&) = delete;
         TScopeLock& operator=(const TScopeLock&) = delete;
@@ -116,7 +116,7 @@ namespace Lumina
 
     private:
 
-        TLockable& Lockable;
+        TLockable* Lockable;
     };
 
     struct FTryLock
@@ -130,10 +130,10 @@ namespace Lumina
     {
     public:
 
-        explicit FReadScopeLock(FSharedMutex& InMutex) noexcept : Mutex(InMutex) { Mutex.LockShared(); }
+        explicit FReadScopeLock(FSharedMutex& InMutex) noexcept : Mutex(&InMutex) { Mutex->LockShared(); }
 
         FReadScopeLock(FSharedMutex& InMutex, FTryLock) noexcept
-            : Mutex(InMutex), bOwns(InMutex.TryLockShared())
+            : Mutex(&InMutex), bOwns(InMutex.TryLockShared())
         {
         }
 
@@ -141,7 +141,7 @@ namespace Lumina
         {
             if (bOwns)
             {
-                Mutex.UnlockShared();
+                Mutex->UnlockShared();
             }
         }
 
@@ -154,7 +154,7 @@ namespace Lumina
 
     private:
 
-        FSharedMutex& Mutex;
+        FSharedMutex* Mutex;
         bool          bOwns = true;
     };
 

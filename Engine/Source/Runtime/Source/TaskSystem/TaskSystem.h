@@ -99,6 +99,34 @@ namespace Lumina::Jobs
         ParallelDetail::InvokeRange(Func, 0, Num, GetThreadSlot());
     }
 
+    // Copies the items Keep accepts into Out in their original order, deciding in parallel so Keep may only read, with Mask as scratch the caller keeps.
+    template<typename TItems, typename TOut, typename TMask, typename TPred>
+    void ParallelFilter(const TItems& Items, TOut& Out, TMask& Mask, TPred&& Keep, uint32 MinNumToSplit = 4096)
+    {
+        Out.Reset();
+        const uint32 Num = static_cast<uint32>(Items.Num());
+        if (Num < MinNumToSplit)
+        {
+            for (uint32 Index = 0; Index < Num; ++Index)
+            {
+                if (Keep(Items[Index]))
+                {
+                    Out.Add(Items[Index]);
+                }
+            }
+            return;
+        }
+        Mask.SetNum(Num);
+        ParallelFor(Num, [&](uint32 Index) { Mask[Index] = Keep(Items[Index]) ? 1 : 0; }, 1024);
+        for (uint32 Index = 0; Index < Num; ++Index)
+        {
+            if (Mask[Index] != 0)
+            {
+                Out.Add(Items[Index]);
+            }
+        }
+    }
+
     template<typename TIterator, typename TFunc>
         requires std::random_access_iterator<TIterator>
     void ParallelForEach(TIterator Begin, TIterator End, TFunc&& Func, EJobPriority Band = EJobPriority::Normal)

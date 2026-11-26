@@ -19,7 +19,6 @@ public class Runtime : LuminaModuleRules
             "GLFW_INCLUDE_NONE",
             "GLFW_STATIC",
             "LUMINA_RENDERER_VULKAN",
-            "VK_NO_PROTOTYPES",
             "LUMINA_RPMALLOC",
             "LUMINA_HAS_RECAST",
         });
@@ -38,8 +37,6 @@ public class Runtime : LuminaModuleRules
             "RmlUi",
 
             "Vulkan",
-            "Volk",
-            "VMA",
             "SLang",
 
             "Recast",

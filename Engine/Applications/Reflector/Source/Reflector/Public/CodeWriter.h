@@ -90,14 +90,14 @@ namespace Lumina::Reflection
     public:
 
         explicit FScopedIndent(FCodeWriter& InWriter)
-            : Writer(InWriter)
+            : Writer(&InWriter)
         {
-            Writer.PushIndent();
+            Writer->PushIndent();
         }
 
         ~FScopedIndent()
         {
-            Writer.PopIndent();
+            Writer->PopIndent();
         }
 
         FScopedIndent(const FScopedIndent&) = delete;
@@ -107,7 +107,7 @@ namespace Lumina::Reflection
 
     private:
 
-        FCodeWriter& Writer;
+        FCodeWriter* Writer;
     };
 
     class FScopedBlock
@@ -115,21 +115,21 @@ namespace Lumina::Reflection
     public:
 
         explicit FScopedBlock(FCodeWriter& InWriter, bool bInSemicolon = false)
-            : Writer(InWriter)
+            : Writer(&InWriter)
             , bSemicolon(bInSemicolon)
         {
-            Writer.BeginBlock();
+            Writer->BeginBlock();
         }
 
         ~FScopedBlock()
         {
             if (bSemicolon)
             {
-                Writer.EndBlockSemi();
+                Writer->EndBlockSemi();
             }
             else
             {
-                Writer.EndBlock();
+                Writer->EndBlock();
             }
         }
 
@@ -140,7 +140,7 @@ namespace Lumina::Reflection
 
     private:
 
-        FCodeWriter& Writer;
+        FCodeWriter* Writer;
         bool bSemicolon;
     };
 }

@@ -286,6 +286,7 @@ namespace Lumina
             SceneGlobalData.CullData.VirtualGeometryFlags     = bProxies ? VG_FLAG_PROXIES : 0u;
             SceneGlobalData.CullData.ProxyTransitionPixels    = Renderer != nullptr ? Math::Clamp(Renderer->ProxyTransitionPixels, 0.0f, 16.0f) : 2.0f;
             SceneGlobalData.CullData.ImpostorTransitionPixels = Renderer != nullptr ? Math::Clamp(Renderer->ImpostorTransitionPixels, 0.0f, 1024.0f) : 96.0f;
+            SceneGlobalData.CullData.ShadowSwayDistance       = Renderer != nullptr ? Math::Max(Renderer->ShadowSwayDistance, 0.0f) : 0.0f;
         }
         ShadowMinTexels                                 = 0.0f;
         // Built here because the skinned gather picks against it on workers before the cull views exist.

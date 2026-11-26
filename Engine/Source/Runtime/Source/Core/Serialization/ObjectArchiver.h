@@ -66,7 +66,7 @@ namespace Lumina
 
         FObjectRemapArchiver(FArchive& InInnerAr, const THashMap<CObject*, CObject*>& InRemap)
             : FObjectProxyArchiver(InInnerAr, /*bLoadIfFindFails*/ true)
-            , Remap(InRemap)
+            , Remap(&InRemap)
         {
         }
 
@@ -80,10 +80,10 @@ namespace Lumina
 
         CObject* Remapped(CObject* Source) const
         {
-            const auto Itr = Remap.Find(Source);
+            const auto Itr = Remap->Find(Source);
             return Itr != nullptr ? (*Itr) : Source;
         }
 
-        const THashMap<CObject*, CObject*>& Remap;
+        const THashMap<CObject*, CObject*>* Remap;
     };
 }

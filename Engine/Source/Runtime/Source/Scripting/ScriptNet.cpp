@@ -163,16 +163,16 @@ namespace Lumina
         struct FValueBuffer
         {
             explicit FValueBuffer(const FProperty& InField)
-                : Field(InField)
+                : Field(&InField)
                 , Storage(Memory::MallocOrThrow(InField.GetElementSize(), FFunction::kFrameAlignment))
             {
-                Memory::Memzero(Storage, Field.GetElementSize());
-                Field.ConstructValue(Storage);
+                Memory::Memzero(Storage, Field->GetElementSize());
+                Field->ConstructValue(Storage);
             }
 
             ~FValueBuffer()
             {
-                Field.DestructValue(Storage);
+                Field->DestructValue(Storage);
                 Memory::Free(Storage);
             }
 
@@ -180,7 +180,7 @@ namespace Lumina
 
             void* Data() const { return Storage; }
 
-            const FProperty& Field;
+            const FProperty* Field;
             void* Storage;
         };
 

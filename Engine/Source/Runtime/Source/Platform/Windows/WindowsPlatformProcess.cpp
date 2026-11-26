@@ -873,6 +873,18 @@ namespace Lumina::Platform
         }
     }
 
+    double GetProcessCPUSeconds()
+    {
+        FILETIME Creation, Exit, Kernel, User;
+        if (!GetProcessTimes(GetCurrentProcess(), &Creation, &Exit, &Kernel, &User))
+        {
+            return 0.0;
+        }
+        const auto Ticks = [](const FILETIME& Time) { return (uint64(Time.dwHighDateTime) << 32) | uint64(Time.dwLowDateTime); };
+        // FILETIME counts 100 ns intervals.
+        return double(Ticks(Kernel) + Ticks(User)) * 1e-7;
+    }
+
     size_t GetProcessMemoryUsageMegaBytes()
     {
         PROCESS_MEMORY_COUNTERS_EX pmc;

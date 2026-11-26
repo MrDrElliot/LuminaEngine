@@ -72,7 +72,7 @@ namespace Lumina
 
         FVector3 WorldPointFromLocal(const STransformComponent& Transform, const FVector3& LocalOffset)
         {
-            return Transform.GetWorldLocationCached() + Transform.GetWorldRotationCached() * (LocalOffset * Transform.GetWorldScaleCached());
+            return Transform.GetWorldLocation() + Transform.GetWorldRotation() * (LocalOffset * Transform.GetWorldScale());
         }
 
         struct FBoxFace
@@ -422,7 +422,7 @@ namespace Lumina
         const SPointLightComponent& PointLight = Registry.Get<ECS::Read<SPointLightComponent>>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
         
-        PDI->DrawSphere(Transform.GetWorldLocationCached(), PointLight.Attenuation, 
+        PDI->DrawSphere(Transform.GetWorldLocation(), PointLight.Attenuation, 
             FVector4(PointLight.LightColor, 1.0f), 32, 1.0f, true, 0.0f);
     }
 
@@ -431,7 +431,7 @@ namespace Lumina
         SPointLightComponent& Light = Context.Get<SPointLightComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
 
-        const FVector3 Center = Transform.GetWorldLocationCached();
+        const FVector3 Center = Transform.GetWorldLocation();
         const FVector4 Color(Light.LightColor, 1.0f);
         const FVector3 Axis = ScreenRightAt(Context.View, Center);
 
@@ -466,8 +466,8 @@ namespace Lumina
     {
         const SAreaLightComponent& Light     = Registry.Get<ECS::Read<SAreaLightComponent>>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
-        const FQuat    Rotation = Transform.GetWorldRotationCached();
-        const FVector3 Center   = Transform.GetWorldLocationCached();
+        const FQuat    Rotation = Transform.GetWorldRotation();
+        const FVector3 Center   = Transform.GetWorldLocation();
         const FVector3 Right    = Rotation * FViewVolume::RightAxis * (Light.Width * 0.5f);
         const FVector3 Up       = Rotation * FViewVolume::UpAxis * (Light.Height * 0.5f);
         const FVector3 Forward  = Rotation * FViewVolume::ForwardAxis;
@@ -491,11 +491,11 @@ namespace Lumina
     {
         const SSpotLightComponent& SpotLight    = Registry.Get<ECS::Read<SSpotLightComponent>>(Entity);
         const STransformComponent& Transform    = Registry.Get<STransformComponent>(Entity);
-        FVector3 Forward                       = Transform.GetWorldRotationCached() * FViewVolume::ForwardAxis;
+        FVector3 Forward                       = Transform.GetWorldRotation() * FViewVolume::ForwardAxis;
 
         // The cone opens along the transform forward, which is the direction it lights.
-        PDI->DrawCone(Transform.GetWorldLocationCached(), Forward, Math::Radians(SpotLight.OuterConeAngle), SpotLight.Attenuation, FVector4(SpotLight.LightColor, 1.0f));
-        PDI->DrawCone(Transform.GetWorldLocationCached(), Forward, Math::Radians(SpotLight.InnerConeAngle), SpotLight.Attenuation, FVector4(SpotLight.LightColor, 1.0f));
+        PDI->DrawCone(Transform.GetWorldLocation(), Forward, Math::Radians(SpotLight.OuterConeAngle), SpotLight.Attenuation, FVector4(SpotLight.LightColor, 1.0f));
+        PDI->DrawCone(Transform.GetWorldLocation(), Forward, Math::Radians(SpotLight.InnerConeAngle), SpotLight.Attenuation, FVector4(SpotLight.LightColor, 1.0f));
     }
 
     void CComponentVisualizer_SpotLight::DrawVisualization(FComponentVisualizerContext& Context)
@@ -503,8 +503,8 @@ namespace Lumina
         SSpotLightComponent& Light = Context.Get<SSpotLightComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
 
-        const FVector3 Apex = Transform.GetWorldLocationCached();
-        const FVector3 Forward = Transform.GetWorldRotationCached() * FViewVolume::ForwardAxis;
+        const FVector3 Apex = Transform.GetWorldLocation();
+        const FVector3 Forward = Transform.GetWorldRotation() * FViewVolume::ForwardAxis;
         const FVector4 Color(Light.LightColor, 1.0f);
 
         FVector3 Side = Math::Cross(Forward, Context.View.DirectionToCamera(Apex));
@@ -581,7 +581,7 @@ namespace Lumina
         const auto& Light       = Registry.Get<ECS::Read<SDirectionalLightComponent>>(Entity);
         const auto& Transform   = Registry.Get<STransformComponent>(Entity);
         
-        PDI->DrawArrow(Transform.GetWorldLocationCached(), -Light.Direction, 1.5f, FColor::Yellow, 4.0f);
+        PDI->DrawArrow(Transform.GetWorldLocation(), -Light.Direction, 1.5f, FColor::Yellow, 4.0f);
     }
 
     CStruct* CComponentVisualizer_SphereCollider::GetSupportedComponentType() const
@@ -596,7 +596,7 @@ namespace Lumina
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 Center = WorldPointFromLocal(Transform, Sphere.TranslationOffset);
-        PDI->DrawSphere(Center, Sphere.Radius * Transform.GetWorldMaxScaleCached(), ColliderColor(Sphere.bIsTrigger), 8, 3.5f, true, 0.0f);
+        PDI->DrawSphere(Center, Sphere.Radius * Transform.GetWorldMaxScale(), ColliderColor(Sphere.bIsTrigger), 8, 3.5f, true, 0.0f);
     }
 
     void CComponentVisualizer_SphereCollider::DrawVisualization(FComponentVisualizerContext& Context)
@@ -604,7 +604,7 @@ namespace Lumina
         SSphereColliderComponent& Sphere = Context.Get<SSphereColliderComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
 
-        const float Scale = Math::Max(Transform.GetWorldMaxScaleCached(), 1e-4f);
+        const float Scale = Math::Max(Transform.GetWorldMaxScale(), 1e-4f);
         const FVector3 Center = WorldPointFromLocal(Transform, Sphere.TranslationOffset);
         const FVector3 Axis = ScreenRightAt(Context.View, Center);
 
@@ -637,8 +637,8 @@ namespace Lumina
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         const FVector3 Center  = WorldPointFromLocal(Transform, Box.TranslationOffset);
-        const FQuat    WorldRot = Transform.GetWorldRotationCached() * FQuat(Box.RotationOffset);
-        PDI->DrawBox(Center, Box.HalfExtent * Transform.GetWorldScaleCached(), WorldRot, ColliderColor(Box.bIsTrigger), 3.5f, true, 0.0f);
+        const FQuat    WorldRot = Transform.GetWorldRotation() * FQuat(Box.RotationOffset);
+        PDI->DrawBox(Center, Box.HalfExtent * Transform.GetWorldScale(), WorldRot, ColliderColor(Box.bIsTrigger), 3.5f, true, 0.0f);
     }
 
     void CComponentVisualizer_BoxCollider::DrawVisualization(FComponentVisualizerContext& Context)
@@ -646,9 +646,9 @@ namespace Lumina
         SBoxColliderComponent& Box = Context.Get<SBoxColliderComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
 
-        const FQuat EntityRotation = Transform.GetWorldRotationCached();
+        const FQuat EntityRotation = Transform.GetWorldRotation();
         const FQuat LocalRotation = FQuat(Box.RotationOffset);
-        const FVector3 Scale = Transform.GetWorldScaleCached();
+        const FVector3 Scale = Transform.GetWorldScale();
         const FVector3 Center = WorldPointFromLocal(Transform, Box.TranslationOffset);
 
         FBoxFace Faces[6];
@@ -763,8 +763,8 @@ namespace Lumina
         const STransformComponent& Transform     = Registry.Get<STransformComponent>(Entity);
 
         // DrawCapsule wants the two cylinder-axis endpoints (caps tangent there), Y-aligned in local space.
-        const float Scale     = Transform.GetWorldMaxScaleCached();
-        const FQuat WorldRot  = Transform.GetWorldRotationCached() * FQuat(Capsule.RotationOffset);
+        const float Scale     = Transform.GetWorldMaxScale();
+        const FQuat WorldRot  = Transform.GetWorldRotation() * FQuat(Capsule.RotationOffset);
         const FVector3 Center = WorldPointFromLocal(Transform, Capsule.TranslationOffset);
         const FVector3 Axis   = WorldRot * FVector3(0.0f, Capsule.HalfHeight * Scale, 0.0f);
 
@@ -776,8 +776,8 @@ namespace Lumina
         SCapsuleColliderComponent& Capsule = Context.Get<SCapsuleColliderComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
 
-        const float Scale = Math::Max(Transform.GetWorldMaxScaleCached(), 1e-4f);
-        const FQuat EntityRotation = Transform.GetWorldRotationCached();
+        const float Scale = Math::Max(Transform.GetWorldMaxScale(), 1e-4f);
+        const FQuat EntityRotation = Transform.GetWorldRotation();
         const FQuat LocalRotation = FQuat(Capsule.RotationOffset);
         const FQuat WorldRotation = EntityRotation * LocalRotation;
 
@@ -843,8 +843,8 @@ namespace Lumina
         const SCylinderColliderComponent& Cyl = Registry.Get<SCylinderColliderComponent>(Entity);
         const STransformComponent& Transform  = Registry.Get<STransformComponent>(Entity);
 
-        const float Scale     = Transform.GetWorldMaxScaleCached();
-        const FQuat WorldRot  = Transform.GetWorldRotationCached() * FQuat(Cyl.RotationOffset);
+        const float Scale     = Transform.GetWorldMaxScale();
+        const FQuat WorldRot  = Transform.GetWorldRotation() * FQuat(Cyl.RotationOffset);
         const FVector3 Center = WorldPointFromLocal(Transform, Cyl.TranslationOffset);
         const float Radius    = Cyl.Radius * Scale;
 
@@ -866,8 +866,8 @@ namespace Lumina
         float CenterDrop = 0.0f;
         Character.GetActiveCapsule(Registry.TryGet<SCharacterMovementComponent>(Entity), HalfHeight, CenterDrop);
 
-        const FQuat Rotation = Transform.GetWorldRotationCached();
-        const FVector3 Center = Transform.GetWorldLocationCached() + Rotation * (Character.TranslationOffset - FVector3(0.0f, CenterDrop, 0.0f));
+        const FQuat Rotation = Transform.GetWorldRotation();
+        const FVector3 Center = Transform.GetWorldLocation() + Rotation * (Character.TranslationOffset - FVector3(0.0f, CenterDrop, 0.0f));
         const FVector3 Axis = Rotation * FVector3(0.0f, HalfHeight, 0.0f);
 
         PDI->DrawCapsule(Center - Axis, Center + Axis, Character.Radius, FColor::Blue, 12, 2.0f, true, 0.0f);
@@ -891,7 +891,7 @@ namespace Lumina
         const FVector3 WorldCOM = WorldPointFromLocal(Transform, Body.CenterOfMassOffset);
 
         PDI->DrawSphere(WorldCOM, 0.08f, FVector4(1.0f, 0.0f, 1.0f, 1.0f), 12, 2.0f, false, 0.0f);
-        PDI->DrawLine(Transform.GetWorldLocationCached(), WorldCOM, FVector4(1.0f, 0.0f, 1.0f, 1.0f), 2.0f, false, 0.0f);
+        PDI->DrawLine(Transform.GetWorldLocation(), WorldCOM, FVector4(1.0f, 0.0f, 1.0f, 1.0f), 2.0f, false, 0.0f);
     }
 
     CStruct* CComponentVisualizer_Camera::GetSupportedComponentType() const
@@ -906,8 +906,8 @@ namespace Lumina
 
         // The cached ViewVolume only refreshes at runtime, so rebuild the view-projection from the transform.
         constexpr float GizmoFar = 25.0f;
-        const FVector3 Location = Transform.GetWorldLocationCached();
-        const FQuat    Rotation = Transform.GetWorldRotationCached();
+        const FVector3 Location = Transform.GetWorldLocation();
+        const FQuat    Rotation = Transform.GetWorldRotation();
         const FVector3 Forward  = Rotation * FViewVolume::ForwardAxis;
         const FVector3 Up       = Rotation * FViewVolume::UpAxis;
 
@@ -929,9 +929,9 @@ namespace Lumina
         const SDecalComponent& Decal         = Registry.Get<ECS::Read<SDecalComponent>>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-        const FVector3 Location  = Transform.GetWorldLocationCached();
-        const FQuat    Rotation  = Transform.GetWorldRotationCached();
-        const FVector3 HalfExtent = Decal.Size * 0.5f * Transform.GetWorldScaleCached();
+        const FVector3 Location  = Transform.GetWorldLocation();
+        const FQuat    Rotation  = Transform.GetWorldRotation();
+        const FVector3 HalfExtent = Decal.Size * 0.5f * Transform.GetWorldScale();
 
         // Projection volume + the -Z axis the material projects along.
         const FVector4 BoxColor(1.0f, 0.2f, 0.8f, 1.0f);
@@ -946,9 +946,9 @@ namespace Lumina
         SDecalComponent& Decal = Context.Get<SDecalComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
 
-        const FVector3 Scale = Transform.GetWorldScaleCached();
-        const FVector3 Center = Transform.GetWorldLocationCached();
-        const FQuat Rotation = Transform.GetWorldRotationCached();
+        const FVector3 Scale = Transform.GetWorldScale();
+        const FVector3 Center = Transform.GetWorldLocation();
+        const FQuat Rotation = Transform.GetWorldRotation();
 
         FBoxFace Faces[6];
         BuildBoxFaces(Center, Rotation, Decal.Size * 0.5f * Scale, Faces);
@@ -1000,10 +1000,10 @@ namespace Lumina
         const SReflectionProbeComponent& Probe = Registry.Get<ECS::Read<SReflectionProbeComponent>>(Entity);
         const STransformComponent& Transform   = Registry.Get<STransformComponent>(Entity);
 
-        const FVector3 Location = Transform.GetWorldLocationCached();
-        const FQuat    Rotation = Transform.GetWorldRotationCached();
-        const FVector3 Scale    = Transform.GetWorldScaleCached();
-        const float    MaxScale = Transform.GetWorldMaxScaleCached();
+        const FVector3 Location = Transform.GetWorldLocation();
+        const FQuat    Rotation = Transform.GetWorldRotation();
+        const FVector3 Scale    = Transform.GetWorldScale();
+        const float    MaxScale = Transform.GetWorldMaxScale();
 
         // Dimmed when switched off, so a disabled probe shows where it sits without reading as active.
         const float Alpha = Probe.bEnabled ? 1.0f : 0.35f;
@@ -1063,8 +1063,8 @@ namespace Lumina
         const STaperedCapsuleColliderComponent& TC = Registry.Get<STaperedCapsuleColliderComponent>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-        const float Scale     = Transform.GetWorldMaxScaleCached();
-        const FQuat WorldRot  = Transform.GetWorldRotationCached() * FQuat(TC.RotationOffset);
+        const float Scale     = Transform.GetWorldMaxScale();
+        const FQuat WorldRot  = Transform.GetWorldRotation() * FQuat(TC.RotationOffset);
         const FVector3 Center = WorldPointFromLocal(Transform, TC.TranslationOffset);
         const float TopR  = TC.TopRadius * Scale;
         const float BotR  = TC.BottomRadius * Scale;
@@ -1087,8 +1087,8 @@ namespace Lumina
         const STaperedCylinderColliderComponent& TC = Registry.Get<STaperedCylinderColliderComponent>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-        const float Scale     = Transform.GetWorldMaxScaleCached();
-        const FQuat WorldRot  = Transform.GetWorldRotationCached() * FQuat(TC.RotationOffset);
+        const float Scale     = Transform.GetWorldMaxScale();
+        const FQuat WorldRot  = Transform.GetWorldRotation() * FQuat(TC.RotationOffset);
         const FVector3 Center = WorldPointFromLocal(Transform, TC.TranslationOffset);
 
         DrawWireCylinder(PDI, Center, WorldRot, TC.TopRadius * Scale, TC.BottomRadius * Scale, TC.HalfHeight * Scale, ColliderColor(TC.bIsTrigger), 3.5f);
@@ -1104,8 +1104,8 @@ namespace Lumina
         const SPlaneColliderComponent& Plane = Registry.Get<SPlaneColliderComponent>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-        const FVector3 Center = Transform.GetWorldLocationCached();
-        const FQuat    Rot    = Transform.GetWorldRotationCached();
+        const FVector3 Center = Transform.GetWorldLocation();
+        const FQuat    Rot    = Transform.GetWorldRotation();
         const FVector3 Right  = Rot * FVector3(1.0f, 0.0f, 0.0f);
         const FVector3 Fwd    = Rot * FVector3(0.0f, 0.0f, 1.0f);
         const FVector3 Up     = Rot * FVector3(0.0f, 1.0f, 0.0f);
@@ -1139,9 +1139,9 @@ namespace Lumina
         const SCompoundColliderComponent& Comp = Registry.Get<SCompoundColliderComponent>(Entity);
         const STransformComponent& Transform   = Registry.Get<STransformComponent>(Entity);
 
-        const FVector3 WorldLoc = Transform.GetWorldLocationCached();
-        const FQuat    WorldRot = Transform.GetWorldRotationCached();
-        const float    Scale    = Transform.GetWorldMaxScaleCached();
+        const FVector3 WorldLoc = Transform.GetWorldLocation();
+        const FQuat    WorldRot = Transform.GetWorldRotation();
+        const float    Scale    = Transform.GetWorldMaxScale();
         const FVector4 Color    = ColliderColor(Comp.bIsTrigger);
 
         // Draw each child at its local offset/rotation so designers can see the merged shape they're building.
@@ -1181,7 +1181,7 @@ namespace Lumina
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
         // SurfaceVelocity is world space; draw it as an arrow whose length scales (clamped) with speed.
-        const FVector3 Center = Transform.GetWorldLocationCached();
+        const FVector3 Center = Transform.GetWorldLocation();
         const float Speed = Math::Length(Conveyor.SurfaceVelocity);
         if (Speed > 1.0e-3f)
         {
@@ -1201,8 +1201,8 @@ namespace Lumina
         const SPhysicsConstraintComponent& Con = Registry.Get<SPhysicsConstraintComponent>(Entity);
         const STransformComponent& Transform   = Registry.Get<STransformComponent>(Entity);
 
-        const FVector3 WorldLoc = Transform.GetWorldLocationCached();
-        const FQuat    WorldRot = Transform.GetWorldRotationCached();
+        const FVector3 WorldLoc = Transform.GetWorldLocation();
+        const FQuat    WorldRot = Transform.GetWorldRotation();
         const FVector3 Pivot    = WorldLoc + WorldRot * Con.PivotOffset;
 
         // Pivot marker.
@@ -1229,7 +1229,7 @@ namespace Lumina
                 Registry.IsValid(Target) ? Registry.TryGet<STransformComponent>(Target) : nullptr;
             if (TargetTransform != nullptr)
             {
-                const FVector3 TargetLoc = TargetTransform->GetWorldLocationCached();
+                const FVector3 TargetLoc = TargetTransform->GetWorldLocation();
                 PDI->DrawLine(Pivot, TargetLoc, FVector4(1.0f, 0.4f, 0.4f, 1.0f), 2.0f, false, 0.0f);
             }
         }
@@ -1245,9 +1245,9 @@ namespace Lumina
         const SPerceptionComponent& Perception = Registry.Get<SPerceptionComponent>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-        const FVector3 Location = Transform.GetWorldLocationCached();
+        const FVector3 Location = Transform.GetWorldLocation();
         const FVector3 Eye      = Location + Perception.EyeOffset;
-        const FVector3 Forward  = Transform.GetWorldRotationCached() * FViewVolume::ForwardAxis;
+        const FVector3 Forward  = Transform.GetWorldRotation() * FViewVolume::ForwardAxis;
 
         if (Perception.bSightEnabled)
         {
@@ -1276,7 +1276,7 @@ namespace Lumina
             return;
         }
 
-        const FMatrix4 LocalToWorld = Transform.GetWorldMatrix();
+        const FMatrix4 LocalToWorld = Transform.ComputeWorldTransform().GetMatrix();
         auto ToWorld = [&](const FVector3& Local) { return FVector3(LocalToWorld * FVector4(Local, 1.0f)); };
 
         const FVector4 CurveColor(1.0f, 0.55f, 0.15f, 1.0f);
@@ -1339,7 +1339,7 @@ namespace Lumina
         const SAudioSourceComponent& Source = Registry.Get<SAudioSourceComponent>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-        DrawAudioAttenuation(PDI, Transform.GetWorldLocationCached(), Transform.GetWorldRotationCached(),
+        DrawAudioAttenuation(PDI, Transform.GetWorldLocation(), Transform.GetWorldRotation(),
             Source.Attenuation.Resolve(), Source.bSpatialized, Source.bPlaying);
     }
 
@@ -1348,9 +1348,9 @@ namespace Lumina
         SAudioSourceComponent& Source = Context.Get<SAudioSourceComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
 
-        const FVector3 Center = Transform.GetWorldLocationCached();
+        const FVector3 Center = Transform.GetWorldLocation();
 
-        DrawAudioAttenuationHandles(Context, Source.Attenuation, Center, Transform.GetWorldRotationCached(),
+        DrawAudioAttenuationHandles(Context, Source.Attenuation, Center, Transform.GetWorldRotation(),
             Source.bSpatialized, "Edit Audio Attenuation");
 
         const FString SoundName = Source.Sound.IsValid() ? Source.Sound->GetName().ToString() : FString("No Sound");
@@ -1366,26 +1366,26 @@ namespace Lumina
     {
         const SAudioVolumeComponent& Volume = Registry.Get<SAudioVolumeComponent>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
-        const FVector3 Scale = Math::Abs(Transform.GetWorldScale());
+        const FVector3 Scale = Math::Abs(Transform.ComputeWorldTransform().GetScale());
         const FVector4 Color = Volume.bListenerInside ? kAudioActive : kAudioFlat;
 
         if (Volume.Shape == EAudioVolumeShape::Sphere)
         {
             const float Radius = Volume.Radius * Math::Max(Scale.x, Math::Max(Scale.y, Scale.z));
-            PDI->DrawSphere(Transform.GetWorldLocationCached(), Radius, Color, 32, 1.0f, true);
+            PDI->DrawSphere(Transform.GetWorldLocation(), Radius, Color, 32, 1.0f, true);
             if (Volume.BlendDistance > 0.0f && Volume.BlendDistance < Radius)
             {
-                PDI->DrawSphere(Transform.GetWorldLocationCached(), Radius - Volume.BlendDistance, Color * 0.6f, 24, 1.0f, true);
+                PDI->DrawSphere(Transform.GetWorldLocation(), Radius - Volume.BlendDistance, Color * 0.6f, 24, 1.0f, true);
             }
             return;
         }
 
         const FVector3 Half = Volume.Extent * Scale;
-        PDI->DrawBox(Transform.GetWorldLocationCached(), Half, Transform.GetWorldRotationCached(), Color, 1.0f, true);
+        PDI->DrawBox(Transform.GetWorldLocation(), Half, Transform.GetWorldRotation(), Color, 1.0f, true);
         const FVector3 Inner = Half - FVector3(Volume.BlendDistance);
         if (Volume.BlendDistance > 0.0f && Inner.x > 0.0f && Inner.y > 0.0f && Inner.z > 0.0f)
         {
-            PDI->DrawBox(Transform.GetWorldLocationCached(), Inner, Transform.GetWorldRotationCached(), Color * 0.6f, 1.0f, true);
+            PDI->DrawBox(Transform.GetWorldLocation(), Inner, Transform.GetWorldRotation(), Color * 0.6f, 1.0f, true);
         }
     }
 
@@ -1394,7 +1394,7 @@ namespace Lumina
         const SAudioVolumeComponent& Volume = Context.Get<SAudioVolumeComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
         const FString SoundName = Volume.Sound.IsValid() ? Volume.Sound->GetName().ToString() : FString("No Sound");
-        LabelAudioEmitter(Context, Transform.GetWorldLocationCached(), *SoundName, Volume.Bus, Volume.Volume * Volume.Gain, false, Volume.bPlaying);
+        LabelAudioEmitter(Context, Transform.GetWorldLocation(), *SoundName, Volume.Bus, Volume.Volume * Volume.Gain, false, Volume.bPlaying);
     }
 
     CStruct* CComponentVisualizer_ProceduralAudio::GetSupportedComponentType() const
@@ -1407,7 +1407,7 @@ namespace Lumina
         const SProceduralAudioComponent& Source = Registry.Get<SProceduralAudioComponent>(Entity);
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-        DrawAudioAttenuation(PDI, Transform.GetWorldLocationCached(), Transform.GetWorldRotationCached(),
+        DrawAudioAttenuation(PDI, Transform.GetWorldLocation(), Transform.GetWorldRotation(),
             Source.Attenuation.Resolve(), Source.bSpatialized, Source.bPlaying);
     }
 
@@ -1416,9 +1416,9 @@ namespace Lumina
         SProceduralAudioComponent& Source = Context.Get<SProceduralAudioComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
 
-        const FVector3 Center = Transform.GetWorldLocationCached();
+        const FVector3 Center = Transform.GetWorldLocation();
 
-        DrawAudioAttenuationHandles(Context, Source.Attenuation, Center, Transform.GetWorldRotationCached(),
+        DrawAudioAttenuationHandles(Context, Source.Attenuation, Center, Transform.GetWorldRotation(),
             Source.bSpatialized, "Edit Audio Attenuation");
 
         const FFixedString Name = FormatAs<FFixedString>("Procedural {} Hz", Source.SampleRate);
@@ -1434,8 +1434,8 @@ namespace Lumina
     {
         const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
 
-        const FVector3 Location = Transform.GetWorldLocationCached();
-        const FQuat    Rotation = Transform.GetWorldRotationCached();
+        const FVector3 Location = Transform.GetWorldLocation();
+        const FQuat    Rotation = Transform.GetWorldRotation();
         const FVector3 Forward  = Rotation * FViewVolume::ForwardAxis;
         const FVector3 Right    = Rotation * FViewVolume::RightAxis;
 
@@ -1453,7 +1453,7 @@ namespace Lumina
         const SAudioListenerComponent& Listener = Context.Get<SAudioListenerComponent>();
         const STransformComponent& Transform = Context.Get<STransformComponent>();
 
-        const FVector3 Center = Transform.GetWorldLocationCached();
+        const FVector3 Center = Transform.GetWorldLocation();
         const FVector3 Anchor = Center + Context.View.CameraUp * (Context.View.WorldPerPixelAt(Center) * 30.0f);
 
         // Two components on one slot means the second silently wins, which is worth flagging in place.
@@ -1625,7 +1625,7 @@ namespace Lumina
             return;
         }
 
-        const FMatrix4 LocalToWorld = Transform.GetWorldMatrix();
+        const FMatrix4 LocalToWorld = Transform.ComputeWorldTransform().GetMatrix();
         const FMatrix4 WorldToLocal = Math::Inverse(LocalToWorld);
 
         auto ToWorld = [&](const FVector3& Local) { return FVector3(LocalToWorld * FVector4(Local, 1.0f)); };
@@ -1646,7 +1646,7 @@ namespace Lumina
 
         if (NumPoints == 0)
         {
-            DrawPointPanel(Context, Spline, Transform.GetWorldLocationCached(), Constants::kIndexNone);
+            DrawPointPanel(Context, Spline, Transform.GetWorldLocation(), Constants::kIndexNone);
             return;
         }
 

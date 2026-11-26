@@ -149,7 +149,7 @@ namespace Lumina
         bHasHeader    = false;
         bHasExpandBar = false;
 
-        Editor.BeginNode(NodeID, InOutPosition);
+        Editor->BeginNode(NodeID, InOutPosition);
         NodePosition = InOutPosition;
 
         SetStage(EStage::Begin);
@@ -158,12 +158,12 @@ namespace Lumina
     void FGraphNodeBuilder::End(bool bWantsTitlebar)
     {
         SetStage(EStage::End);
-        Editor.EndNode();
+        Editor->EndNode();
 
-        const ImVec2 NodeMax = NodePosition + Editor.GetNodeSize(NodeID);
+        const ImVec2 NodeMax = NodePosition + Editor->GetNodeSize(NodeID);
         if (bHasExpandBar && ImGui::IsItemVisible())
         {
-            DrawExpandBar(Editor.GetNodeBackgroundDrawList(NodeID), NodeMax);
+            DrawExpandBar(Editor->GetNodeBackgroundDrawList(NodeID), NodeMax);
         }
 
         if (bWantsTitlebar && ImGui::IsItemVisible())
@@ -179,7 +179,7 @@ namespace Lumina
             const ImU32  Lead     = EditorColors::U32(ImLerp(Category, Body, kHeaderLeadFade));
             const ImU32  Trail    = EditorColors::U32(ImLerp(Category, Body, kHeaderTrailFade));
 
-            ImDrawList* DrawList    = Editor.GetNodeBackgroundDrawList(NodeID);
+            ImDrawList* DrawList    = Editor->GetNodeBackgroundDrawList(NodeID);
             const int32 FirstVertex = DrawList->VtxBuffer.Size;
             DrawList->AddRectFilled(Min, Max, ImGui::GetColorU32(HeaderColor), Style.Rounding, ImDrawFlags_RoundCornersTop);
             ImGui::ShadeVertsLinearColorGradientKeepAlpha(DrawList, FirstVertex, DrawList->VtxBuffer.Size, Min, Max, Lead, Trail);
@@ -215,14 +215,14 @@ namespace Lumina
             ImGui::Spring(0);
         }
 
-        Editor.BeginPin(PinID, EGraphPinKind::Input, Color);
+        Editor->BeginPin(PinID, EGraphPinKind::Input, Color);
         ImGui::BeginHorizontal((const void*)(uintptr_t)PinID);
     }
 
     void FGraphNodeBuilder::EndInput()
     {
         ImGui::EndHorizontal();
-        Editor.EndPin();
+        Editor->EndPin();
     }
 
     void FGraphNodeBuilder::Middle()
@@ -248,14 +248,14 @@ namespace Lumina
             ImGui::Spring(0);
         }
 
-        Editor.BeginPin(PinID, EGraphPinKind::Output, Color);
+        Editor->BeginPin(PinID, EGraphPinKind::Output, Color);
         ImGui::BeginHorizontal((const void*)(uintptr_t)PinID);
     }
 
     void FGraphNodeBuilder::EndOutput()
     {
         ImGui::EndHorizontal();
-        Editor.EndPin();
+        Editor->EndPin();
     }
 
     void FGraphNodeBuilder::Footer()
@@ -273,7 +273,7 @@ namespace Lumina
         ExpandBarTop  = ImGui::GetCursorScreenPos().y;
         ImGui::Dummy(ImVec2(0.0f, kExpandBarHeight));
 
-        const float  Width = Editor.GetNodeSize(NodeID).x;
+        const float  Width = Editor->GetNodeSize(NodeID).x;
         const ImRect Bar(ImVec2(NodePosition.x, ExpandBarTop), ImVec2(NodePosition.x + Width, ExpandBarTop + kExpandBarHeight + Style.Padding.w));
         const ImGuiID ID = ImGui::GetID("##ExpandToggle");
 

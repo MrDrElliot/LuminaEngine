@@ -58,7 +58,7 @@ namespace Lumina
         for (ECS::FEntity Entity : World->View<STerrainComponent, STransformComponent>())
         {
             const STerrainComponent& Terrain = World->GetComponent<STerrainComponent>(Entity);
-            Ground.Add({ &Terrain, World->GetComponent<STransformComponent>(Entity).GetWorldLocation(), Terrain.TileWorldSize / (float)Math::Max(Terrain.Resolution - 1, 1) });
+            Ground.Add({ &Terrain, World->GetComponent<STransformComponent>(Entity).ComputeWorldTransform().GetLocation(), Terrain.TileWorldSize / (float)Math::Max(Terrain.Resolution - 1, 1) });
         }
         Algo::Sort(Ground, [](const FGround& A, const FGround& B) { return A.Spacing < B.Spacing; });
         return Ground;
@@ -105,7 +105,7 @@ namespace Lumina
         FTarget First;
         for (ECS::FEntity Entity : World->View<SForestComponent, STransformComponent>())
         {
-            FTarget Target{ &World->GetComponent<SForestComponent>(Entity), World->GetComponent<STransformComponent>(Entity).GetWorldLocation() };
+            FTarget Target{ &World->GetComponent<SForestComponent>(Entity), World->GetComponent<STransformComponent>(Entity).ComputeWorldTransform().GetLocation() };
             const float Half = Target.Forest->Extent * 0.5f;
             if (Math::Abs(Near.x - Target.Center.x) <= Half && Math::Abs(Near.z - Target.Center.z) <= Half)
             {

@@ -109,6 +109,10 @@ namespace Lumina
         /** When false, the mover passes through the capsules of other characters instead of being blocked. */
         PROPERTY(Editable, Category = "Physics")
         bool bCollideWithCharacters = true;
+
+        // Characters within the world's CharacterLODDistance of this one stay exact, so mark players and whatever gameplay queries around.
+        PROPERTY(Editable, Category = "Physics")
+        bool bLODRelevanceSource = false;
     };
 
     // A character touched down, queued for systems and fanned out to its movement component's OnLanded.

@@ -5,192 +5,192 @@ namespace Lumina
 {
     FArchiveRecord FArchiveSlot::EnterRecord()
     {
-        int32 ElementIdx = StructuredArchive.EnterSlotAsType(*this, StructuredArchive::EElementType::Record);
-        StructuredArchive.EnterRecord();
-        return FArchiveRecord(StructuredArchive, Depth + 1, StructuredArchive.CurrentScope[ElementIdx].ID);
+        int32 ElementIdx = StructuredArchive->EnterSlotAsType(*this, StructuredArchive::EElementType::Record);
+        StructuredArchive->EnterRecord();
+        return FArchiveRecord(*StructuredArchive, Depth + 1, StructuredArchive->CurrentScope[ElementIdx].ID);
     }
 
     FArchiveArray FArchiveSlot::EnterArray(int32& NumElements)
     {
-        int32 ElementIdx = StructuredArchive.EnterSlotAsType(*this, StructuredArchive::EElementType::Array);
-        StructuredArchive.EnterArray(NumElements);
-        return FArchiveArray(StructuredArchive, Depth + 1, StructuredArchive.CurrentScope[ElementIdx].ID);
+        int32 ElementIdx = StructuredArchive->EnterSlotAsType(*this, StructuredArchive::EElementType::Array);
+        StructuredArchive->EnterArray(NumElements);
+        return FArchiveArray(*StructuredArchive, Depth + 1, StructuredArchive->CurrentScope[ElementIdx].ID);
     }
 
     FArchiveStream FArchiveSlot::EnterStream()
     {
-        int32 ElementIdx = StructuredArchive.EnterSlotAsType(*this, StructuredArchive::EElementType::Stream);
-        StructuredArchive.EnterStream();
-        return FArchiveStream(StructuredArchive, Depth + 1, StructuredArchive.CurrentScope[ElementIdx].ID);
+        int32 ElementIdx = StructuredArchive->EnterSlotAsType(*this, StructuredArchive::EElementType::Stream);
+        StructuredArchive->EnterStream();
+        return FArchiveStream(*StructuredArchive, Depth + 1, StructuredArchive->CurrentScope[ElementIdx].ID);
     }
 
     FArchiveMap FArchiveSlot::EnterMap(int32& NumElements)
     {
-        int32 ElementIdx = StructuredArchive.EnterSlotAsType(*this, StructuredArchive::EElementType::Map);
-        StructuredArchive.EnterMap(NumElements);
-        return FArchiveMap(StructuredArchive, Depth + 1, StructuredArchive.CurrentScope[ElementIdx].ID);
+        int32 ElementIdx = StructuredArchive->EnterSlotAsType(*this, StructuredArchive::EElementType::Map);
+        StructuredArchive->EnterMap(NumElements);
+        return FArchiveMap(*StructuredArchive, Depth + 1, StructuredArchive->CurrentScope[ElementIdx].ID);
     }
 
     void FArchiveSlot::Serialize(uint8& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(uint16& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(uint32& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(uint64& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(int8& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(int16& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(int32& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(int64& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(float& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(double& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(bool& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(FString& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(FName& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(CObject*& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(FObjectHandle& Value)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr << Value;
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        *StructuredArchive->InnerAr << Value;
+        StructuredArchive->LeaveSlot();
     }
 
     void FArchiveSlot::Serialize(void* Data, uint64 DataSize)
     {
-        StructuredArchive.EnterSlot(*this);
-        StructuredArchive.InnerAr.Serialize(Data, (int64)DataSize);
-        StructuredArchive.LeaveSlot();
+        StructuredArchive->EnterSlot(*this);
+        StructuredArchive->InnerAr->Serialize(Data, (int64)DataSize);
+        StructuredArchive->LeaveSlot();
     }
 
     FArchive& FArchiveSlot::GetArchiver() const
     {
-        return StructuredArchive.GetInnerAr();
+        return StructuredArchive->GetInnerAr();
     }
 
     FArchiveRecord::~FArchiveRecord()
     {
-        StructuredArchive.LeaveRecord();
+        StructuredArchive->LeaveRecord();
     }
 
     FArchiveSlot FArchiveRecord::EnterField(FName FieldName)
     {
-        return StructuredArchive.EnterField(FieldName);
+        return StructuredArchive->EnterField(FieldName);
     }
 
     FArchiveArray::~FArchiveArray()
     {
-        StructuredArchive.LeaveArray();
+        StructuredArchive->LeaveArray();
     }
 
     FArchiveSlot FArchiveArray::EnterElement()
     {
-        return StructuredArchive.EnterArrayElement();
+        return StructuredArchive->EnterArrayElement();
     }
 
     FArchiveStream::~FArchiveStream()
     {
-        StructuredArchive.LeaveStream();
+        StructuredArchive->LeaveStream();
     }
 
     FArchiveSlot FArchiveStream::EnterElement()
     {
-        return StructuredArchive.EnterStreamElement();
+        return StructuredArchive->EnterStreamElement();
     }
 
     FArchiveMap::~FArchiveMap()
     {
-        StructuredArchive.LeaveMap();
+        StructuredArchive->LeaveMap();
     }
 
     FArchiveSlot FArchiveMap::EnterKey()
     {
-        return StructuredArchive.EnterMapKey();
+        return StructuredArchive->EnterMapKey();
     }
 
     FArchiveSlot FArchiveMap::EnterValue()
     {
-        return StructuredArchive.EnterMapValue();
+        return StructuredArchive->EnterMapValue();
     }
 
     FArchiveSlot IStructuredArchive::Open()
@@ -292,12 +292,12 @@ namespace Lumina
     {
         if (IsSaving())
         {
-            InnerAr << FieldName;
+            *InnerAr << FieldName;
         }
         else if (IsLoading())
         {
             FName ReadFieldName;
-            InnerAr << ReadFieldName;
+            *InnerAr << ReadFieldName;
             ASSERT(ReadFieldName == FieldName);
         }
 
@@ -313,7 +313,7 @@ namespace Lumina
 
     void FBinaryStructuredArchive::EnterArray(int32& NumElements)
     {
-        InnerAr << NumElements;
+        *InnerAr << NumElements;
         
         if (IsLoading())
         {
@@ -359,7 +359,7 @@ namespace Lumina
 
     void FBinaryStructuredArchive::EnterMap(int32& NumElements)
     {
-        InnerAr << NumElements;
+        *InnerAr << NumElements;
         
         if (IsLoading())
         {

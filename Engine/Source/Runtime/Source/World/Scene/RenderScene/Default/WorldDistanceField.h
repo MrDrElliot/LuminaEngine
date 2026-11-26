@@ -106,6 +106,7 @@ namespace Lumina
         void MaskBox(uint32 Level, const FVector3& Min, const FVector3& Max, uint64* Mask) const;
         // Queues the spheres a slot's change uncovers, its old one and its new one, and records the new one as merged.
         void Retrack(uint32 Slot, TSpan<const FInstanceCullEntry> Entries, bool bMoveOnly);
+        void SetMerged(uint32 Slot, const FVector4& Sphere);
         // Marks the queued spheres' bricks stale, chunks of them in parallel into masks that are then merged.
         void ApplyTouches();
         uint32 PickCompositeLevel();
@@ -113,8 +114,13 @@ namespace Lumina
         TArray<FLevel, kLevels> Levels;
         // The sphere each retained slot was last merged at, radius zero for a slot that is not a caster.
         TVector<FVector4>       MergedSpheres;
+        // How many slots of each instance cull block are merged as casters, so a moved block without one is skipped whole.
+        TVector<uint8>          MergedPerBlock;
         // Bricks waiting to sample their casters, keyed by distance to the camera.
         TVector<uint64>         Candidates;
+        // The moved slots that are or were casters, filtered in parallel each update.
+        TVector<uint32>         RetrackScratch;
+        TVector<uint8>          RetrackMask;
         // This update's spheres whose bricks go stale, and each chunk's per-level slot masks while they are marked.
         TVector<FVector4>       Touches;
         TVector<uint64>         TouchMasks;

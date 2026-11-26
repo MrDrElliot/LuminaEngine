@@ -96,8 +96,8 @@ namespace Lumina
             LE_NO_COPYMOVE(TBatchedAppend);
 
             TBatchedAppend(TAtomic<uint32>& InCursor, TVector<T>& InDest)
-                : Cursor(InCursor)
-                , Dest(InDest)
+                : Cursor(&InCursor)
+                , Dest(&InDest)
             {}
 
             ~TBatchedAppend()
@@ -121,19 +121,19 @@ namespace Lumina
                 {
                     return;
                 }
-                const uint32 Base     = Cursor.fetch_add(NumPending, std::memory_order_relaxed);
-                const uint32 Capacity = (uint32)Dest.Num();
+                const uint32 Base     = Cursor->fetch_add(NumPending, std::memory_order_relaxed);
+                const uint32 Capacity = (uint32)Dest->Num();
                 for (uint32 i = 0; i < NumPending && Base + i < Capacity; ++i)
                 {
-                    Dest[Base + i] = Pending[i];
+                    (*Dest)[Base + i] = Pending[i];
                 }
                 NumPending = 0;
             }
 
             static constexpr uint32 kBatch = 64;
 
-            TAtomic<uint32>& Cursor;
-            TVector<T>&      Dest;
+            TAtomic<uint32>* Cursor;
+            TVector<T>*      Dest;
             T                Pending[kBatch];
             uint32           NumPending = 0;
         };

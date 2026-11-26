@@ -40,7 +40,7 @@ float3 PrevObjectPosition(FMeshletRef Ref, uint LocalVertIdx, FVertexData Curren
 
 float4x4 PrevModelMatrixOf(FGPUInstance* Inst, float4x4 Fallback)
 {
-    const uint Slot = Inst.RetainedSlot;
+    const uint Slot = Inst.TransformSlot;
     if (!PrevRetainedTransforms().Contains(Slot))
     {
         return Fallback;

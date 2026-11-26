@@ -92,7 +92,7 @@ namespace Lumina
             SWidgetComponent& WidgetComponent = WidgetComponentMut.BypassChangeDetection();
             FWidgetRuntime& Runtime = WidgetComponent.Runtime;
 
-            const FMatrix4 WorldMatrix = Transforms.Get(Entity).GetWorldMatrixCached();
+            const FMatrix4 WorldMatrix = Transforms.Get(Entity).GetWorldMatrix();
             const FVector3 Center = FVector3(WorldMatrix[3]);
             const float ScaleXY = Math::Max(Math::Length(FVector3(WorldMatrix[0])), Math::Length(FVector3(WorldMatrix[1])));
             const float Radius  = 0.5f * Math::Length(WidgetComponent.WorldSize) * Math::Max(1.0f, ScaleXY);
@@ -155,7 +155,7 @@ namespace Lumina
                 return;
             }
 
-            const FMatrix4 WorldMatrix = Transforms.Get(Entity).GetWorldMatrixCached();
+            const FMatrix4 WorldMatrix = Transforms.Get(Entity).GetWorldMatrix();
             const FVector3 Origin = FVector3(WorldMatrix[3]);
 
             const float HAlign = (TextComponent.HorizontalAlign == ETextHorizontalAlign::Left)   ? 0.0f
@@ -350,7 +350,7 @@ namespace Lumina
                 const float SwapV = V0; V0 = V1; V1 = SwapV;
             }
 
-            const FMatrix4 WorldMatrix = Transforms.Get(Entity).GetWorldMatrixCached();
+            const FMatrix4 WorldMatrix = Transforms.Get(Entity).GetWorldMatrix();
             const FVector3 Origin      = FVector3(WorldMatrix[3]);
 
             const float ScaleX = Math::Length(FVector3(WorldMatrix[0]));
@@ -514,7 +514,7 @@ namespace Lumina
 
             FBillboardInstance& Billboard   = BillboardInstances.EmplaceGetRef();
             Billboard.TextureIndex          = BillboardComponent.Texture->GetResourceID();
-            Billboard.Position              = Transforms.Get(Entity).GetWorldLocationCached();
+            Billboard.Position              = Transforms.Get(Entity).GetWorldLocation();
             Billboard.Size                  = BillboardComponent.Scale;
             Billboard.EntityID              = Entity.Value;
         });
@@ -540,7 +540,7 @@ namespace Lumina
 
         auto EmplaceAt = [&](ECS::FEntity Entity, ENamedImage Icon, const FVector4& Color)
         {
-            EmplaceVisualizer(Entity, Transforms.Get(Entity).GetWorldLocationCached(), Icon, Color);
+            EmplaceVisualizer(Entity, Transforms.Get(Entity).GetWorldLocation(), Icon, Color);
         };
 
         // The light pass recorded each light's icon; its chunks run back to front to match a whole-pool walk.
@@ -759,7 +759,7 @@ namespace Lumina
             }
 
             // Transforms carry no change ticks, so the cheap key is checked every frame and only the inverse is cached.
-            const FTransform& WorldTransform = Transforms.Get(Entity).GetWorldTransformCached();
+            const FTransform& WorldTransform = Transforms.Get(Entity).GetWorldTransform();
             const uint64      Key            = DecalBoxKey(WorldTransform, Decal.Size);
             if (!Cache.bValid || Cache.Key != Key)
             {
@@ -845,7 +845,7 @@ namespace Lumina
             const STransformComponent& Transform = Transforms.Get(Entity);
 
             FGPUWater Item    = {};
-            Item.WaterToWorld = WaterToWorld(Water, Transform.GetWorldMatrixCached());
+            Item.WaterToWorld = WaterToWorld(Water, Transform.GetWorldMatrix());
             Item.WorldToWater = Math::Inverse(Item.WaterToWorld);
 
             Item.ShallowColor = FVector4(Water.ShallowColor, 1.0f);
@@ -894,7 +894,7 @@ namespace Lumina
             {
                 BestUnderwaterLocalY = LocalCam.y;
 
-                const FVector3 SurfaceCenter = Transform.GetWorldLocationCached();
+                const FVector3 SurfaceCenter = Transform.GetWorldLocation();
                 Frame.Water.bUnderwaterActive = true;
                 Frame.Water.Underwater.PlaneNormalAndHeight = FVector4(0.0f, 1.0f, 0.0f, SurfaceCenter.y);
                 Frame.Water.Underwater.FogColorDensity      = FVector4(Water.UnderwaterFogColor, Math::Max(Water.UnderwaterFogDensity, 0.0f));

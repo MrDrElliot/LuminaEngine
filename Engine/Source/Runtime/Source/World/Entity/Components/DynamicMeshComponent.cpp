@@ -171,12 +171,12 @@ namespace Lumina
 
     FDynamicMeshRenderData::FDynamicMeshRenderData()
         : SharedResource(MakeShared<FMeshResource>())
-        , Resource(*SharedResource)
+        , Resource(SharedResource.Get())
     {}
 
     FDynamicMeshRenderData::FDynamicMeshRenderData(const FDynamicMeshRenderData& Other)
         : SharedResource(Other.SharedResource)
-        , Resource(*SharedResource)
+        , Resource(SharedResource.Get())
         , Surfaces(Other.Surfaces)
         , LocalMin(Other.LocalMin)
         , LocalMax(Other.LocalMax)
@@ -212,7 +212,7 @@ namespace Lumina
     void SDynamicMeshComponent::ResolveMaterialsInto(FDynamicMeshRenderData& Data) const
     {
         bool bAllReady = true;
-        const TVector<FGeometrySurface>& Geometry = Data.Resource.GeometrySurfaces;
+        const TVector<FGeometrySurface>& Geometry = Data.Resource->GeometrySurfaces;
 
         for (int32 i = 0; i < Data.Surfaces.Num() && i < Geometry.Num(); ++i)
         {
@@ -249,18 +249,18 @@ namespace Lumina
         }
 
         const TSharedPtr<FDynamicMeshRenderData> Current = LoadRenderData();
-        if (!Current || Current->MeshletHeaderSlot != 0 || Current->Resource.MeshletData.IsEmpty())
+        if (!Current || Current->MeshletHeaderSlot != 0 || Current->Resource->MeshletData.IsEmpty())
         {
             return;
         }
 
         // A copy, so the sync waits on its batch instead of drawing the slot the moment it is written.
         TSharedPtr<FDynamicMeshRenderData> Shown = MakeShared<FDynamicMeshRenderData>(*Current);
-        MeshBuffers::CreateForResource(Shown->Resource);
-        Shown->MeshletHeaderSlot = Shown->Resource.MeshBuffers.MeshletHeaderSlot;
+        MeshBuffers::CreateForResource(*Shown->Resource);
+        Shown->MeshletHeaderSlot = Shown->Resource->MeshBuffers.MeshletHeaderSlot;
         if (!bKeepCPUMeshletData)
         {
-            Shown->Resource.MeshletData.ClearAndShrink();
+            Shown->Resource->MeshletData.ClearAndShrink();
         }
         StoreRenderData(Move(Shown));
     }
@@ -525,7 +525,7 @@ namespace Lumina
         NewData->LocalRadius = Math::Length(Max - NewData->LocalCenter);
 
         Import::Mesh::GenerateMeshlets(*Resource);
-        NewData->Resource = Move(*Resource);
+        *NewData->Resource = Move(*Resource);
         PublishBuilt(Move(NewData));
 
         // Staging is consumed; the next edit re-stages from scratch.
@@ -539,12 +539,12 @@ namespace Lumina
         const bool bUpload = RenderLayers.Bits != 0;
         if (bUpload)
         {
-            MeshBuffers::CreateForResource(NewData->Resource);
-            NewData->MeshletHeaderSlot = NewData->Resource.MeshBuffers.MeshletHeaderSlot;
+            MeshBuffers::CreateForResource(*NewData->Resource);
+            NewData->MeshletHeaderSlot = NewData->Resource->MeshBuffers.MeshletHeaderSlot;
         }
 
         // Geometry half of each surface, straight off the built resource; the material half follows.
-        const TVector<FGeometrySurface>& Geometry = NewData->Resource.GeometrySurfaces;
+        const TVector<FGeometrySurface>& Geometry = NewData->Resource->GeometrySurfaces;
         NewData->Surfaces.SetNum(Geometry.Num());
         for (int32 i = 0; i < Geometry.Num(); ++i)
         {
@@ -564,13 +564,13 @@ namespace Lumina
         
         ResolveMaterialsInto(*NewData);
 
-        NewData->Resource.ClearVertices();
-        NewData->Resource.Indices.Reset();
-        NewData->Resource.Indices.Shrink();
+        NewData->Resource->ClearVertices();
+        NewData->Resource->Indices.Reset();
+        NewData->Resource->Indices.Shrink();
 
         if (bUpload && !bKeepCPUMeshletData)
         {
-            NewData->Resource.MeshletData.ClearAndShrink();
+            NewData->Resource->MeshletData.ClearAndShrink();
         }
 
         // Single publish point. The extract later this tick already reads the new addresses

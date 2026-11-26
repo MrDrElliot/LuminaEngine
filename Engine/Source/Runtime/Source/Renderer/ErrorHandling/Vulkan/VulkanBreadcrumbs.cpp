@@ -6,6 +6,7 @@
 #include "Log/Log.h"
 #include "Memory/Memcpy.h"
 #include "Renderer/API/Vulkan/VulkanAllocator.h"
+#include "Renderer/API/Vulkan/VulkanLoader.h"
 
 namespace Lumina::RHI
 {
@@ -17,7 +18,7 @@ namespace Lumina::RHI
         uint32 FindHostMemoryType(VkPhysicalDevice PhysicalDevice, uint32 TypeBits)
         {
             VkPhysicalDeviceMemoryProperties MemProps{};
-            vkGetPhysicalDeviceMemoryProperties(PhysicalDevice, &MemProps);
+            Vulkan::GetApi().GetPhysicalDeviceMemoryProperties(PhysicalDevice, &MemProps);
 
             constexpr VkMemoryPropertyFlags Required =
                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -44,7 +45,7 @@ namespace Lumina::RHI
 
     bool FGpuBreadcrumbs::Initialize(VkDevice InDevice, VkPhysicalDevice InPhysicalDevice)
     {
-        if (vkCmdWriteBufferMarkerAMD == nullptr)
+        if (Vulkan::GetApi().CmdWriteBufferMarkerAMD == nullptr)
         {
             LOG_WARN("GPU breadcrumbs unavailable: VK_AMD_buffer_marker is not supported by this driver. "
                      "A device loss will not be able to say which pass was executing.");
@@ -57,14 +58,14 @@ namespace Lumina::RHI
         BufferInfo.usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         BufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        if (vkCreateBuffer(InDevice, &BufferInfo, Vulkan::HostAllocator(), &Buffer) != VK_SUCCESS)
+        if (Vulkan::GetApi().CreateBuffer(InDevice, &BufferInfo, Vulkan::HostAllocator(), &Buffer) != VK_SUCCESS)
         {
             LOG_WARN("GPU breadcrumbs disabled: buffer creation failed.");
             return false;
         }
 
         VkMemoryRequirements Requirements{};
-        vkGetBufferMemoryRequirements(InDevice, Buffer, &Requirements);
+        Vulkan::GetApi().GetBufferMemoryRequirements(InDevice, Buffer, &Requirements);
 
         const uint32 MemoryType = FindHostMemoryType(InPhysicalDevice, Requirements.memoryTypeBits);
         if (MemoryType == Constants::kIndexNoneU32)
@@ -79,14 +80,14 @@ namespace Lumina::RHI
         AllocInfo.allocationSize  = Requirements.size;
         AllocInfo.memoryTypeIndex = MemoryType;
 
-        if (vkAllocateMemory(InDevice, &AllocInfo, Vulkan::HostAllocator(), &Memory) != VK_SUCCESS)
+        if (Vulkan::GetApi().AllocateMemory(InDevice, &AllocInfo, Vulkan::HostAllocator(), &Memory) != VK_SUCCESS)
         {
             LOG_WARN("GPU breadcrumbs disabled: host memory allocation failed.");
             Shutdown(InDevice);
             return false;
         }
 
-        if (vkBindBufferMemory(InDevice, Buffer, Memory, 0) != VK_SUCCESS)
+        if (Vulkan::GetApi().BindBufferMemory(InDevice, Buffer, Memory, 0) != VK_SUCCESS)
         {
             LOG_WARN("GPU breadcrumbs disabled: buffer bind failed.");
             Shutdown(InDevice);
@@ -94,7 +95,7 @@ namespace Lumina::RHI
         }
 
         void* Address = nullptr;
-        if (vkMapMemory(InDevice, Memory, 0, VK_WHOLE_SIZE, 0, &Address) != VK_SUCCESS)
+        if (Vulkan::GetApi().MapMemory(InDevice, Memory, 0, VK_WHOLE_SIZE, 0, &Address) != VK_SUCCESS)
         {
             LOG_WARN("GPU breadcrumbs disabled: memory map failed.");
             Shutdown(InDevice);
@@ -114,14 +115,14 @@ namespace Lumina::RHI
 
         if (Memory != VK_NULL_HANDLE)
         {
-            vkUnmapMemory(InDevice, Memory);
-            vkFreeMemory(InDevice, Memory, Vulkan::HostAllocator());
+            Vulkan::GetApi().UnmapMemory(InDevice, Memory);
+            Vulkan::GetApi().FreeMemory(InDevice, Memory, Vulkan::HostAllocator());
             Memory = VK_NULL_HANDLE;
         }
 
         if (Buffer != VK_NULL_HANDLE)
         {
-            vkDestroyBuffer(InDevice, Buffer, Vulkan::HostAllocator());
+            Vulkan::GetApi().DestroyBuffer(InDevice, Buffer, Vulkan::HostAllocator());
             Buffer = VK_NULL_HANDLE;
         }
     }
@@ -147,7 +148,7 @@ namespace Lumina::RHI
         Entry.MarkerId = MarkerId;
 
         // At top of pipe the write lands as the pass is entered, before any of its work runs.
-        vkCmdWriteBufferMarkerAMD(Cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, Buffer,
+        Vulkan::GetApi().CmdWriteBufferMarkerAMD(Cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, Buffer,
             static_cast<VkDeviceSize>(Index) * 2 * sizeof(uint32), MarkerId);
 
         return Index;
@@ -160,7 +161,7 @@ namespace Lumina::RHI
             return;
         }
 
-        vkCmdWriteBufferMarkerAMD(Cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, Buffer,
+        Vulkan::GetApi().CmdWriteBufferMarkerAMD(Cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, Buffer,
             (static_cast<VkDeviceSize>(Index) * 2 + 1) * sizeof(uint32), Entries[Index].MarkerId);
     }
 

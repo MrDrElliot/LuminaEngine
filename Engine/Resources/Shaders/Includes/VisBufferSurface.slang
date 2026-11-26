@@ -110,7 +110,7 @@ FVisProxy LoadProxyEntry(uint Entry)
     }
     Out.Proxy  = RetainedProxies().GetAligned(Entry);
     Out.Static = RetainedStatic().GetAligned(Entry);
-    Out.Model  = RetainedTransforms().Get(Entry).ToMatrix();
+    Out.Model  = RetainedTransforms().Get(Entry - Out.Static.TransformOffset).ToMatrix();
     Out.bValid = true;
     return Out;
 }

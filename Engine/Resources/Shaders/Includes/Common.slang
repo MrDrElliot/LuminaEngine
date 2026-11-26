@@ -495,7 +495,8 @@ struct FMeshletHeader
     float           ImpostorCenterX, ImpostorCenterY, ImpostorCenterZ;
     float           ImpostorRadius;
     uint            ImpostorFrameSize;
-    uint            _Pad0;
+    // Multiplies the renderer's impostor threshold for this mesh.
+    float           ImpostorTransitionScale;
 
     property bool bClusterLOD { get { return (Flags & MESH_HEADER_FLAG_CLUSTER_LOD) != 0u; } }
 
@@ -564,7 +565,8 @@ struct FInstanceStatic
     uint            RenderLayers;
     // Past this camera distance the material's world position offset is skipped in every pass, 0 never.
     float           WPODisableDistance;
-    uint            Reserved0;
+    // Slots back to the one holding this instance's transform, since a mesh's surfaces share the first surface's.
+    uint            TransformOffset;
     uint            Reserved1;
     uint            Reserved2;
 }
@@ -817,6 +819,9 @@ struct FGPUInstance
     property bool bApplyShadowWPO { get { return (CustomDepthStencil & (GPU_INSTANCE_NO_WPO_BIT | GPU_INSTANCE_NO_SHADOW_WPO_BIT)) == 0u; } }
     property bool bShadowCached   { get { return (CustomDepthStencil & GPU_INSTANCE_SHADOW_CACHED_BIT) != 0u; } }
     property bool bMover          { get { return (CustomDepthStencil & GPU_INSTANCE_MOVER_BIT) != 0u; } }
+
+    // The retained slot whose transform, current and previous, this instance draws with.
+    property uint TransformSlot   { get { return RetainedSlot - (CustomDepthStencil >> GPU_INSTANCE_TRANSFORM_OFFSET_SHIFT); } }
 
     // Matches Lumina::PackDrawIDAndFlags, DrawID in the low 16 bits and flags in the high 16.
     bool HasFlag(EInstanceFlags Flag)
@@ -1092,7 +1097,8 @@ struct FCullData
     float    CameraLODErrorScale;
     // Projected diameter in pixels under which an instance whose mesh has an impostor swaps to it.
     float    ImpostorTransitionPixels;
-    uint     _Pad2;
+    // Camera distance past which a caster's shadow drops its sway, 0 for never.
+    float    ShadowSwayDistance;
     float4   CameraLODOriginAndFlags;
 };
 

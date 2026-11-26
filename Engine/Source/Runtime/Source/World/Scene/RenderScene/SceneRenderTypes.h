@@ -1242,7 +1242,9 @@ namespace Lumina
         uint32      RenderLayers;
         // Past this camera distance the material's world position offset is skipped in every pass, 0 never.
         float       WPODisableDistance;
-        uint32      Reserved[3];
+        // Slots back to the one holding this instance's transform, since a mesh's surfaces share the first surface's.
+        uint32      TransformOffset;
+        uint32      Reserved[2];
     };
     // Word 0 is never handed out, so a zeroed payload reads as an instance with no meshlet visibility.
     constexpr uint32 kNoMeshletVisibility = 0u;
@@ -1420,7 +1422,8 @@ namespace Lumina
         float  CameraLODErrorScale = 0.0f;
         // Projected diameter in pixels under which an instance whose mesh has an impostor swaps to it.
         float  ImpostorTransitionPixels = 0.0f;
-        uint32 _Pad2 = 0;
+        // Camera distance past which a caster's shadow drops its sway, 0 for never.
+        float  ShadowSwayDistance = 0.0f;
         FVector4 CameraLODOriginAndFlags = FVector4(0.0f);
     };
 

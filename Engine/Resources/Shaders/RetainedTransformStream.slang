@@ -33,13 +33,24 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
         return;
     }
 
-    const uint Slot = Pass().Slots.Get(Record);
-    if (Slot == kNoStreamSlot || !Pass().RetainedTransforms.Contains(Slot) || !Pass().RetainedCullEntries.Contains(Slot))
+    const uint Word = Pass().Slots.Get(Record);
+    if (Word == kNoStreamSlot)
     {
         return;
     }
 
     const FTransformStreamRecord Moved = Pass().Records.Get(Record);
-    Pass().RetainedTransforms.Set(Slot, Moved.Transform);
-    Pass().RetainedCullEntries.At(Slot).SphereBounds = Moved.SphereBounds;
+    const uint Head = Word & TRANSFORM_STREAM_SLOT_MASK;
+    const uint End  = Head + (Word >> TRANSFORM_STREAM_SPAN_SHIFT) + 1u;
+    if (!Pass().RetainedTransforms.Contains(Head))
+    {
+        return;
+    }
+
+    // Every surface culls on its own sphere, and all of them draw with the head's transform.
+    Pass().RetainedTransforms.Set(Head, Moved.Transform);
+    for (uint Slot = Head; Slot < End && Pass().RetainedCullEntries.Contains(Slot); ++Slot)
+    {
+        Pass().RetainedCullEntries.At(Slot).SphereBounds = Moved.SphereBounds;
+    }
 }

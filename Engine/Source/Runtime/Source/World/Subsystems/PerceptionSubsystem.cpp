@@ -101,8 +101,8 @@ namespace Lumina
             return false;
         }
 
-        FVector3 Start = FromXf->GetWorldLocation();
-        FVector3 End = ToXf->GetWorldLocation();
+        FVector3 Start = FromXf->ComputeWorldTransform().GetLocation();
+        FVector3 End = ToXf->ComputeWorldTransform().GetLocation();
         if (const SPerceptionComponent* Comp = Registry.TryGet<ECS::Read<SPerceptionComponent>>(From))
         {
             Start = Start + Comp->EyeOffset;

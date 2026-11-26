@@ -572,9 +572,9 @@ namespace Lumina::MCP
                 return Agent::FToolResult::Error("The world has no live camera.");
             }
 
-            const FVector3 Location = Transform->GetWorldLocation();
-            const FVector3 Rotation = Math::Degrees(Math::YawFirstEulerAngles(Transform->GetWorldRotation()));
-            FVector3 Forward = Transform->GetWorldRotation() * FVector3(0.0f, 0.0f, -1.0f);
+            const FVector3 Location = Transform->ComputeWorldTransform().GetLocation();
+            const FVector3 Rotation = Math::Degrees(Math::YawFirstEulerAngles(Transform->ComputeWorldTransform().GetRotation()));
+            FVector3 Forward = Transform->ComputeWorldTransform().GetRotation() * FVector3(0.0f, 0.0f, -1.0f);
             Out.FOV = 90.0f;
             if (const SCameraComponent* Component = World->TryGetComponent<SCameraComponent>(Camera))
             {

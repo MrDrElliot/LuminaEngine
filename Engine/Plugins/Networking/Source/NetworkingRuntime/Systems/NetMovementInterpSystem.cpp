@@ -94,8 +94,8 @@ namespace Lumina
             {
                 return;
             }
-            Transform->SetRaw(Pos, Rot, Scale);
-            Context.Emplace<FNeedsTransformUpdate>(Entity);
+            Transform->SetLocalLocationAndRotation(Pos, Rot);
+            Transform->SetLocalScale(Scale);
         }, 16u);
     }
 }

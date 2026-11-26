@@ -22,7 +22,7 @@ namespace
         STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
         Transform.Bind(Registry, Entity);
         Transform.ResetDirtyState();
-        Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+        ECS::Utils::MarkTransformDirty(Registry, Entity);
     }
 
     // A bare world skips InitializeWorld, so its transforms are bound by hand the way the world's construct hook binds them.
@@ -89,8 +89,8 @@ TEST(WorldApi, ComponentWorldSettersLandInWorldSpace)
     STransformComponent* Transform = World->TryGetComponent<STransformComponent>(Child);
     Transform->SetWorldLocation(FVector3(1.0f, 0.0f, 0.0f));
 
-    EXPECT_NEAR(Transform->GetWorldLocation().x, 1.0f, 1e-4f);
-    EXPECT_NEAR(Transform->GetWorldLocation().z, 0.0f, 1e-4f);
+    EXPECT_NEAR(Transform->ComputeWorldTransform().GetLocation().x, 1.0f, 1e-4f);
+    EXPECT_NEAR(Transform->ComputeWorldTransform().GetLocation().z, 0.0f, 1e-4f);
     EXPECT_NEAR(Transform->GetLocalLocation().z, -5.0f, 1e-4f);
 }
 

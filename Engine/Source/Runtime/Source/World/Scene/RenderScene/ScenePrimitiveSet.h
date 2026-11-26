@@ -527,10 +527,18 @@ namespace Lumina
         //~ Retained instance slots
 
         uint32  AllocateInstanceSlot();
+        // Count contiguous slots, so every surface of a mesh finds the transform its first surface holds at a fixed offset.
+        uint32  AllocateInstanceSlotRun(uint32 Count);
         // Contiguous run at the end of the retained arrays, bypassing the free list so the block is dense.
         uint32  AllocateInstanceSlotBlock(uint32 Count);
+        uint32  GrowInstanceSlot();
         void    DeactivateInstanceSlot(uint32 Slot);
         void    FreeInstanceSlot(uint32 Slot);
+        void    FreeInstanceSlotRun(uint32 First, uint32 Count);
+        // Files free slots by run length, so the next mesh with as many surfaces takes them back whole.
+        void    AddFreeSlotRun(uint32 First, uint32 Count);
+        // True when the primitive's surfaces hold consecutive slots in surface order, so only the first carries the transform.
+        bool    HasSlotRun(const FScenePrimitive& Prim) const;
         uint32  AllocateSkinnedIndex();
         void    FreeSkinnedIndex(uint32 Index);
         void    MarkInstanceDirty(uint32 Slot);
@@ -550,6 +558,8 @@ namespace Lumina
         TVector<FInstanceProxy>             RetainedProxies;
 
         TVector<uint32>                     InstanceFreeSlots;
+        // First slots of freed runs, indexed by run length; longer runs join FreeSlotBlocks.
+        TVector<TVector<uint32>>            FreeSlotRuns;
         // Cull entry and transform.
         TVector<uint32>                     DirtyInstanceSlots;
         // Freed, so only the active bit changes.
@@ -616,6 +626,8 @@ namespace Lumina
             FVector3    StreamCenter = FVector3(0.0f);
             // The slot feeds the world distance field, which reads a mover's sphere from its CPU entry, so the stream keeps that one current.
             bool        bStreamDFCaster = false;
+            // How many contiguous slots from StreamSlot the primitive's surfaces fill, all sharing one transform.
+            uint8       StreamSpan = 1;
         };
         static_assert(sizeof(FEntityRecord) == 64, "One entity per cache line, so movers on different threads never share one.");
         static_assert(kLinkedSources == 3, "FEntityRecord::Links initializer must match kLinkedSources.");

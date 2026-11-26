@@ -1,5 +1,6 @@
 #include "Includes/AppendBuffer.slang"
 #include "Includes/Culling.slang"
+#include "Includes/Impostor.slang"
 
 // The reject set and the LOD pick must match BuildMeshletBlocks exactly.
 
@@ -44,6 +45,9 @@ struct FCullInstancesArgs
 };
 FCullInstancesArgs* Pass() { return GetPassArgs<FCullInstancesArgs>(); }
 
+// A smaller slice skins inline, since a few tiny far meshlets cost more as latency-bound pre-skin groups than in the few views that draw them.
+static const uint kMinPreSkinVertices = 256u;
+
 // Must reject the same blocks as Skinning.slang's per-workgroup skip, or the draw path reads unwritten pre-skin memory.
 uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletCount, uint MeshletTotal)
 {
@@ -62,7 +66,7 @@ uint ClaimPreSkinSlice(FMeshletHeader* Header, uint MeshletOffset, uint MeshletC
     const FMeshlet Last    = loadAligned<16>(Header.Meshlets + (MeshletOffset + MeshletCount - 1u));
     const uint EndVertex   = Last.VertexOffset + Last.VertexCount;
 
-    if (EndVertex <= FirstVertex)
+    if (EndVertex <= FirstVertex || EndVertex - FirstVertex < kMinPreSkinVertices)
     {
         return kNoPreSkinBase;
     }
@@ -187,7 +191,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     const float Keep = bNoCull ? 1.0 : ThinningKeep(DistSq, Cull.ThinningStartDistance);
     if (Keep < 1.0)
     {
-        // Hashed on the pivot, the one position the proxy pass rebuilds bit for bit from the same transform.
+        // Hashed on the pivot, the one position the proxy pass rebuilds bit for bit from the same transform. Only foliage thins, and it holds its own.
         Transform = Pass().RetainedTransforms.Get(SlotIdx);
         bHasTransform = true;
         const float3 Pivot = float3(Transform.Row0.w, Transform.Row1.w, Transform.Row2.w);
@@ -218,15 +222,16 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         // Every surface measures the mesh's whole sphere and hashes the pivot, so the instance swaps to its one impostor at once.
         if (!bHasTransform)
         {
-            Transform = Pass().RetainedTransforms.Get(SlotIdx);
+            Transform = Pass().RetainedTransforms.Get(SlotIdx - Pass().RetainedStatic.At(SlotIdx).TransformOffset);
             bHasTransform = true;
         }
         const FInstanceProxy Proxy = Pass().RetainedProxies.GetAligned(SlotIdx);
         ProxyCenter = mul(Transform.ToMatrix(), float4(Proxy.LocalCenter, 1.0)).xyz;
         ProxyRadius = abs(Proxy.SplatHalfSize) * TransformMaxScale(Transform);
         bDrawsProxy = Proxy.SplatHalfSize > 0.0;
-        bProxied    = Scene().CullData.ImpostorTransitionPixels > 0.0
-                   && IsProxySized(ProxyCenter, ProxyRadius, float3(Transform.Row0.w, Transform.Row1.w, Transform.Row2.w), Scene().CullData.ImpostorTransitionPixels);
+        const float TransitionPixels = ImpostorTransitionPixels(Pass().RetainedStatic.At(SlotIdx).MeshletHeader, Scene().CullData.ImpostorTransitionPixels);
+        bProxied    = TransitionPixels > 0.0
+                   && IsProxySized(ProxyCenter, ProxyRadius, float3(Transform.Row0.w, Transform.Row1.w, Transform.Row2.w), TransitionPixels);
     }
     else if (bProxyCandidate && Scene().CullData.ProxyTransitionPixels > 0.0)
     {
@@ -328,9 +333,10 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     // Bounded by the header's own count, since a run no mesh can back becomes BuildMeshletBlocks' trip count and hangs the GPU.
     const uint MeshletTotal = min(LODMeshletTotal, Static.MeshletHeader.MeshletCount);
 
+    const uint TransformOffset = Static.TransformOffset;
     if (!bHasTransform)
     {
-        Transform = Pass().RetainedTransforms.Get(SlotIdx);
+        Transform = Pass().RetainedTransforms.Get(SlotIdx - TransformOffset);
     }
     const float MaxScale = TransformMaxScale(Transform);
 
@@ -453,7 +459,13 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     {
         FrameBits |= GPU_INSTANCE_NO_WPO_BIT;
     }
-    Inst.CustomDepthStencil      = CustomDepthStencil | FrameBits;
+    // FSunShadowCache holds a swaying caster from the same distance, so its cached shadow is the still one drawn here.
+    const float ShadowSwayDistance = Scene().CullData.ShadowSwayDistance;
+    if (ShadowSwayDistance > 0.0 && DistSq > ShadowSwayDistance * ShadowSwayDistance)
+    {
+        FrameBits |= GPU_INSTANCE_NO_SHADOW_WPO_BIT;
+    }
+    Inst.CustomDepthStencil      = CustomDepthStencil | FrameBits | (TransformOffset << GPU_INSTANCE_TRANSFORM_OFFSET_SHIFT);
 
     Pass().OutInstances.Set(OutSlot, Inst);
 }

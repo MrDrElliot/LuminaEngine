@@ -473,42 +473,42 @@ namespace Lumina
     }
 
     FNavMesh::FQueryScope::FQueryScope(const FNavMesh& InMesh)
-        : Mesh(InMesh)
+        : Mesh(&InMesh)
     {
-        Mesh.WaitForSwaps();
-        Mesh.TopologyLock.LockShared();
+        Mesh->WaitForSwaps();
+        Mesh->TopologyLock.LockShared();
     }
 
     FNavMesh::FQueryScope::~FQueryScope()
     {
-        Mesh.TopologyLock.UnlockShared();
+        Mesh->TopologyLock.UnlockShared();
     }
 
     bool FNavMesh::FQueryScope::YieldToSwap(uint64 Epoch) const
     {
-        if (Mesh.PendingSwaps.load(std::memory_order_acquire) == 0)
+        if (Mesh->PendingSwaps.load(std::memory_order_acquire) == 0)
         {
             return false;
         }
-        Mesh.TopologyLock.UnlockShared();
-        Mesh.WaitForSwaps();
-        Mesh.TopologyLock.LockShared();
-        return Mesh.TopologyEpoch.load(std::memory_order_acquire) != Epoch;
+        Mesh->TopologyLock.UnlockShared();
+        Mesh->WaitForSwaps();
+        Mesh->TopologyLock.LockShared();
+        return Mesh->TopologyEpoch.load(std::memory_order_acquire) != Epoch;
     }
 
     FNavMesh::FSwapScope::FSwapScope(FNavMesh& InMesh)
-        : Mesh(InMesh)
+        : Mesh(&InMesh)
     {
-        Mesh.PendingSwaps.fetch_add(1, std::memory_order_acq_rel);
-        Mesh.TopologyLock.Lock();
+        Mesh->PendingSwaps.fetch_add(1, std::memory_order_acq_rel);
+        Mesh->TopologyLock.Lock();
     }
 
     FNavMesh::FSwapScope::~FSwapScope()
     {
-        Mesh.TopologyLock.Unlock();
-        if (Mesh.PendingSwaps.fetch_sub(1, std::memory_order_acq_rel) == 1)
+        Mesh->TopologyLock.Unlock();
+        if (Mesh->PendingSwaps.fetch_sub(1, std::memory_order_acq_rel) == 1)
         {
-            Threading::WakeAllOnAddress32(reinterpret_cast<const volatile uint32*>(&Mesh.PendingSwaps));
+            Threading::WakeAllOnAddress32(reinterpret_cast<const volatile uint32*>(&Mesh->PendingSwaps));
         }
     }
 

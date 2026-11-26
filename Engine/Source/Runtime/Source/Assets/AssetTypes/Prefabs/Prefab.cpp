@@ -47,7 +47,6 @@ namespace Lumina
             // The ledger lives on the instance root and is absent from the prefab, so it must survive every refresh.
             if (ID == ECS::GetComponentTypeID<SPrefabOverrideComponent>()) return true;
             if (ID == ECS::GetComponentTypeID<SRigidBodyComponent>())      return true;
-            if (ID == ECS::GetComponentTypeID<FNeedsTransformUpdate>())    return true;
             if (ID == ECS::GetComponentTypeID<FNeedsPhysicsBodyUpdate>())  return true;
             return false;
         }
@@ -385,10 +384,10 @@ namespace Lumina
             {
                 return;
             }
-            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Root);
+            ECS::Utils::MarkTransformDirty(Registry, Root);
             Registry.GetHierarchy().ForEachDescendant(Root, [&](ECS::FEntity Desc)
             {
-                Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Desc);
+                ECS::Utils::MarkTransformDirty(Registry, Desc);
             });
         }
     }

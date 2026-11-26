@@ -184,7 +184,7 @@ namespace Lumina::ECS
 
         static void FreeBlocks(FSlot& Slot);
 
-        FRegistry&      Registry;
+        FRegistry*      Registry;
         TVector<FSlot>  Slots;
 
         // One per slot, beside it rather than in it because a mutex cannot move with the vector.

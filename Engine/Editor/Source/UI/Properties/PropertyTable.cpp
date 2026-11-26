@@ -409,6 +409,7 @@ namespace Lumina::PropertyTableInternal
         bool IsCategory() const override { return true; }
 
         const FName& GetCategoryName() const { return Category; }
+        void DrawContainment(float TopY, float Offset) const;
 
     private:
 
@@ -481,7 +482,21 @@ namespace Lumina::PropertyTableInternal
         }
     }
 
-    ImU32 CategoryBgColor() { return EditorColors::U32(EditorColors::RowBg()); }
+    ImU32 CategoryBgColor() { return EditorColors::U32(EditorColors::Lighten(EditorColors::RowBg(), 0.025f)); }
+    ImU32 CategoryBorderColor() { return EditorColors::U32(EditorColors::PropertyCategoryBorder()); }
+    constexpr float CategoryBoxInset = 2.5f;
+    constexpr float CategoryBoxRounding = 3.0f;
+    constexpr float CategoryBoxThickness = 3.0f;
+    constexpr float CategoryGap = 6.0f;
+
+    // An empty row in the panel color, so neighboring category boxes do not share an edge.
+    void DrawCategoryGap()
+    {
+        ImGui::TableNextRow(ImGuiTableRowFlags_None, CategoryGap);
+        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, EditorColors::U32(EditorColors::PanelBg()));
+        // A row with no open cell leaves CurrentColumn at -1, which TablePopBackgroundChannel indexes.
+        ImGui::TableNextColumn();
+    }
 
     // Caller passes explicit Y bounds; the table row's bottom isn't queryable until after row finalization.
     void DrawModifiedMarker(float RowTopY, float RowBottomY)
@@ -1558,6 +1573,7 @@ namespace Lumina::PropertyTableInternal
 
         ImGui::PushID(this);
         ImGui::TableNextRow();
+        const float HeaderTopY = ImGui::GetCurrentTable()->RowPosY1;
 
         // An offscreen row holds its measured height, so the scroll range and every row below stay where drawing would put them.
         ImGuiTable* Table = ImGui::GetCurrentTable();
@@ -1584,6 +1600,11 @@ namespace Lumina::PropertyTableInternal
                 ImGui::EndDisabled();
             }
         }
+
+        if (IsCategory())
+        {
+            static_cast<const FCategoryPropertyRow*>(this)->DrawContainment(HeaderTopY, Offset);
+        }
     }
 
     void FPropertyRow::DrawCells(float Offset, const FPropertyDrawArgs& Args, FRowDrawState& State)
@@ -1599,8 +1620,12 @@ namespace Lumina::PropertyTableInternal
         DrawHeader(Args);
         DrawNameCellActions(State);
 
-        ImGui::TableNextColumn();
-        DrawValueCell(Args, State);
+        // A category header spans the row by itself, so it has no value cell.
+        if (!IsCategory())
+        {
+            ImGui::TableNextColumn();
+            DrawValueCell(Args, State);
+        }
 
         // Fetched again, since a table first seen inside this row can grow ImGui's table pool and move the one above.
         if (const ImGuiTable* RowTable = ImGui::GetCurrentTable())
@@ -1743,13 +1768,19 @@ namespace Lumina::PropertyTableInternal
 
     void FPropertyRow::DrawChildren(float ChildOffset, const FPropertyDrawArgs& Args)
     {
+        bool bDrewRow = false;
         for (const TUniquePtr<FPropertyRow>& Row : Children)
         {
             if (!Row->PassesFilter() || !Row->IsVisible())
             {
                 continue;
             }
+            if (bDrewRow && Row->IsCategory())
+            {
+                DrawCategoryGap();
+            }
             Row->DrawRow(ChildOffset, Args);
+            bDrewRow = true;
         }
     }
 
@@ -2939,23 +2970,64 @@ namespace Lumina::PropertyTableInternal
 
     void FCategoryPropertyRow::DrawHeader(const FPropertyDrawArgs& Args)
     {
-        // A darker background reads as a section break independent of the row-bg alternation.
         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, CategoryBgColor());
         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, CategoryBgColor());
+
+        const ImGuiStyle& Style = ImGui::GetStyle();
+        const float LabelX = ImGui::GetCursorScreenPos().x + ImGui::GetFontSize() + Style.FramePadding.x * 3.0f;
 
         ImGui::SetNextItemOpen(bExpanded);
         ImGui::PushStyleColor(ImGuiCol_Header, 0);
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, EditorColors::U32(EditorColors::RowBgActive()));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, EditorColors::U32(EditorColors::RowBgHovered()));
         ImGui::PushStyleColor(ImGuiCol_Text, EditorColors::TextPrimary());
-        bool bClipped = false;
-        bExpanded = CollapsingHeaderEllipsis(*Category, ImGuiTreeNodeFlags_DefaultOpen, bClipped);
-        ImGui::PopStyleColor(4);
+        bExpanded = ImGui::CollapsingHeader("##Category", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAllColumns);
+        ImGui::PopStyleColor(3);
 
-        if (bClipped && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+        // The label is drawn across the whole row, since the header's own label would clip at the first column.
+        const ImVec2 Min = ImGui::GetItemRectMin();
+        const ImVec2 Max = ImGui::GetItemRectMax();
+        const ImVec2 TextSize = ImGui::CalcTextSize(*Category);
+        const ImVec2 TextMin(LabelX, Min.y + Style.FramePadding.y);
+        const ImVec2 TextMax(Max.x - Style.FramePadding.x, Max.y);
+        ImRect LabelClip(Min, Max);
+        LabelClip.ClipWith(ImGui::GetCurrentTable()->BgClipRect);
+        ImGui::PushClipRect(LabelClip.Min, LabelClip.Max, false);
+        ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), TextMin, TextMax, TextMax.x, *Category, nullptr, &TextSize);
+        ImGui::PopClipRect();
+        ImGui::PopStyleColor();
+
+        if (TextMin.x + TextSize.x > TextMax.x && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
         {
             ImGuiX::WrappedTooltip_Internal(FStringView(*Category));
         }
+    }
+
+    void FCategoryPropertyRow::DrawContainment(float TopY, float Offset) const
+    {
+        ImGuiTable* Table = ImGui::GetCurrentTable();
+        if (Table == nullptr)
+        {
+            return;
+        }
+
+        // An open category gets a padding row, so the outline sits below its last row instead of over it.
+        float BottomY = 0.0f;
+        if (bExpanded)
+        {
+            DrawCategoryGap();
+            BottomY = Table->RowPosY1 + CategoryGap;
+        }
+        else
+        {
+            BottomY = ImMax(Table->RowPosY2, ImGui::GetCurrentWindow()->DC.CursorMaxPos.y + Table->RowCellPaddingY);
+        }
+        const ImVec2 Min(Table->WorkRect.Min.x + Offset + CategoryBoxInset, TopY + CategoryBoxInset);
+        const ImVec2 Max(Table->WorkRect.Max.x - CategoryBoxInset, BottomY - CategoryBoxInset);
+
+        ImGui::TablePushBackgroundChannel();
+        ImGui::GetWindowDrawList()->AddRect(Min, Max, CategoryBorderColor(), CategoryBoxRounding, CategoryBoxThickness);
+        ImGui::TablePopBackgroundChannel();
     }
 
     float FCategoryPropertyRow::GetMeasuredHeaderTextWidth() const
@@ -3063,6 +3135,7 @@ namespace Lumina
             ImGui::TableSetupColumn("##Editor", ImGuiTableColumnFlags_WidthStretch);
 
             const bool bFoldSoleCategory = Categories.Num() == 1 && !OwnerHeading.IsNone() && Categories[0]->GetCategoryName() == OwnerHeading;
+            bool bDrewCategory = false;
             for (const TUniquePtr<PropertyTableInternal::FCategoryPropertyRow>& Row : Categories)
             {
                 // UpdateRow drains queued array mutations, so skipping it strands an edit made before the search.
@@ -3078,7 +3151,12 @@ namespace Lumina
                 }
                 else
                 {
+                    if (bDrewCategory)
+                    {
+                        PropertyTableInternal::DrawCategoryGap();
+                    }
                     Row->DrawRow(0.0f, Args);
+                    bDrewCategory = true;
                 }
             }
 

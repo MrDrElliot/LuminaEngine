@@ -5,6 +5,42 @@
 
 // One camera-facing quad per retained slot or impostor point the cull listed as too small for its meshlets, stamped into the VisBuffer with the proxy bit.
 
+// The rect in the camera plane through Center that holds the perspective image of the mesh's box, grown by Margin and kept inside the sphere's square.
+bool ImpostorSilhouetteRect(FMeshletHeader* Header, float4x4 Model, float3 Center, float HalfSize, float Margin, out float2 Min, out float2 Max)
+{
+    const float3 Eye        = GetCameraPosition();
+    const float3 Forward    = GetCameraForward();
+    const bool   bOrtho     = IsCameraOrthographic();
+    const float  PlaneDepth = dot(Center - Eye, Forward);
+    const float3 BoxMin     = Header.LocalBoundsMin;
+    const float3 BoxMax     = Header.LocalBoundsMax;
+    if (any(BoxMax <= BoxMin))
+    {
+        return false;
+    }
+
+    Min = float2(1.0e30, 1.0e30);
+    Max = float2(-1.0e30, -1.0e30);
+    [unroll]
+    for (uint i = 0u; i < 8u; ++i)
+    {
+        const float3 Local = float3((i & 1u) != 0u ? BoxMax.x : BoxMin.x, (i & 2u) != 0u ? BoxMax.y : BoxMin.y, (i & 4u) != 0u ? BoxMax.z : BoxMin.z);
+        const float3 World = mul(Model, float4(Local, 1.0)).xyz;
+        const float  Depth = dot(World - Eye, Forward);
+        if (!bOrtho && Depth <= 1.0e-3)
+        {
+            return false;
+        }
+        const float3 OnPlane = bOrtho ? World - Forward * (Depth - PlaneDepth) : Eye + (World - Eye) * (PlaneDepth / Depth);
+        const float2 P       = float2(dot(OnPlane - Center, GetCameraRight()), dot(OnPlane - Center, GetCameraUp()));
+        Min = min(Min, P);
+        Max = max(Max, P);
+    }
+    Min = max(Min - Margin, -HalfSize);
+    Max = min(Max + Margin, HalfSize);
+    return all(Min < Max);
+}
+
 [shader("vertex")]
 FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex : SV_VulkanInstanceID)
 {
@@ -87,6 +123,19 @@ FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instanc
 
     if (bImpostor)
     {
+        const float WorldRadius = Header.ImpostorRadius * MatrixMaxScale(P.Model);
+        Out.Mip = ImpostorMipLevel(Header, Center, WorldRadius);
+
+        // A plant fills a tenth of its sphere's square, and every pixel of the rest would still run the view taps, so the quad hugs the box.
+        const float TexelMargin = 2.0 * WorldRadius * exp2(Out.Mip) / float(Header.ImpostorFrameSize);
+        float2 RectMin, RectMax;
+        if (ImpostorSilhouetteRect(Header, Model, Center, HalfSize * max(GroundWiden.x, max(GroundWiden.y, GroundWiden.z)), TexelMargin, RectMin, RectMax))
+        {
+            const float2 Corner = lerp(RectMin, RectMax, C * 0.5 + 0.5);
+            Out.WorldPos = Center + GetCameraRight() * Corner.x + GetCameraUp() * Corner.y;
+            Out.Position = WorldToClip(Out.WorldPos);
+        }
+
         // Constant across the quad, so it runs for four corners here rather than for every pixel it covers.
         const float4x4 WorldToLocal = MakeInstanceWorldToLocal(Model);
         const bool     bOrtho       = IsCameraOrthographic();
@@ -95,7 +144,6 @@ FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instanc
 
         const float3 ToEye = bOrtho ? -normalize(Out.LocalDir) : normalize(mul(WorldToLocal, float4(GetCameraPosition(), 1.0)).xyz - Header.ImpostorCenter);
         PackImpostorViews(SelectImpostorViews(ToEye, Header.ImpostorFrames), Out.ViewFrames, Out.ViewWeights);
-        Out.Mip = ImpostorMipLevel(Header, Center, Header.ImpostorRadius * MatrixMaxScale(P.Model));
     }
     return Out;
 }

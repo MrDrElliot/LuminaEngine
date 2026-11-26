@@ -49,7 +49,7 @@ namespace Lumina
             FTerrainDirty& D = Dirties[NumTerrains++];
             D.Entity  = Entity;
             D.Terrain = &Terrain;
-            D.Origin  = Transform.GetWorldLocation();
+            D.Origin  = Transform.ComputeWorldTransform().GetLocation();
 
             if (Terrain.Resolution > 1)
             {

@@ -25,6 +25,6 @@ namespace Lumina
 
     private:
 
-        ECS::FRegistry& Registry;
+        ECS::FRegistry* Registry;
     };
 }

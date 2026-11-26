@@ -99,7 +99,7 @@ namespace Lumina
                 return;
             }
 
-            const VTransform World = Xform->GetWorldTransformCached();
+            const VTransform World = Xform->GetWorldTransform();
             const FVector3 Location = World.GetLocation();
 
             const SMeshComponent* Mesh = StaticMeshes.TryGet<SStaticMeshComponent>(Entity);

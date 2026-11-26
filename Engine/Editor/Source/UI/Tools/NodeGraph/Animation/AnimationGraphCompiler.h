@@ -194,11 +194,11 @@ namespace Lumina
         class FNodeScope
         {
         public:
-            FNodeScope(FAnimationGraphCompiler& InCompiler, const CEdGraphNode* Node) : Compiler(InCompiler) { Compiler.NodeStack.Add(Node); }
-            ~FNodeScope() { Compiler.NodeStack.Pop(); }
+            FNodeScope(FAnimationGraphCompiler& InCompiler, const CEdGraphNode* Node) : Compiler(&InCompiler) { Compiler->NodeStack.Add(Node); }
+            ~FNodeScope() { Compiler->NodeStack.Pop(); }
 
         private:
-            FAnimationGraphCompiler& Compiler;
+            FAnimationGraphCompiler* Compiler;
         };
 
         // The node that wrote the op at this bytecode offset, or null for ops the compiler adds itself.

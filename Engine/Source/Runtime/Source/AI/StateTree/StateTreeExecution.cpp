@@ -29,24 +29,24 @@ namespace Lumina
 
     void FStateTreeExecutionContext::RequestWakeAt(double WakeTime) const
     {
-        Instance.TaskWakeTime = Math::Min(Instance.TaskWakeTime, WakeTime);
+        Instance->TaskWakeTime = Math::Min(Instance->TaskWakeTime, WakeTime);
     }
 
     bool FStateTreeExecutionContext::SendEvent(uint32 EventTag) const
     {
-        return Instance.SendEvent(EventTag);
+        return Instance->SendEvent(EventTag);
     }
 
     FRandomStream& FStateTreeExecutionContext::GetRandom() const
     {
-        return Instance.Random;
+        return Instance->Random;
     }
 
     void* FStateTreeExecutionContext::GetParameters(const CStruct*& OutType) const
     {
-        const FStateTreeParameters& Parameters = Instance.Runtime->Parameters[NodeScope];
+        const FStateTreeParameters& Parameters = Instance->Runtime->Parameters[NodeScope];
         OutType = Parameters.Defaults.GetScriptStruct();
-        return OutType != nullptr ? Instance.Block + Parameters.Offset : nullptr;
+        return OutType != nullptr ? Instance->Block + Parameters.Offset : nullptr;
     }
 
     int32 FStateTreeExecutionContext::CallScript(EStateTreeScriptOp Op, int32 Default, uint32 EventTag) const
@@ -56,7 +56,7 @@ namespace Lumina
             return Default;
         }
         StateTreeScript::FCall Call = { this, World, NodeData, Time, (uint32)Owner, DeltaTime, EventTag, Default };
-        return StateTreeScript::Invoke(Instance.Runtime->ScriptDispatch, NodeDataType, Op, Call);
+        return StateTreeScript::Invoke(Instance->Runtime->ScriptDispatch, NodeDataType, Op, Call);
     }
 
     EStateTreeRunStatus SStateTreeTaskBase::EnterState(FStateTreeExecutionContext& Context) const

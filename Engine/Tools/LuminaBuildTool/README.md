@@ -152,7 +152,7 @@ public class Renderer : LuminaModuleRules
         PublicDependencyModuleNames.Add("Runtime");
 
         // Implementation only; stops here.
-        PrivateDependencyModuleNames.AddRange(new[] { "Volk", "VMA" });
+        PrivateDependencyModuleNames.AddRange(new[] { "Vulkan", "SLang" });
 
         PublicIncludePaths.Add("Public");
         PrivateDefinitions.Add("LUMINA_RENDERER_VULKAN");

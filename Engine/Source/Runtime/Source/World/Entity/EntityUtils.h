@@ -137,6 +137,9 @@ namespace Lumina::ECS::Utils
 	// Lock-free from any thread. The resolve and body queues are deduped by the caller's own guards, and bodiless entities pass bQueueBody false.
 	RUNTIME_API void QueueDirtyTransform(FTransformDirtyGate* Gate, ECS::FEntity Entity, bool bQueueTransform, bool bQueueBody);
 
+	// One queue lock for a batch a parallel writer gathered, since an enqueue per entity from many threads contends on the queue.
+	RUNTIME_API void QueueDirtyTransforms(FTransformDirtyGate* Gate, const ECS::FEntity* Entities, uint32 Count);
+
 
 	inline constexpr uint32 kMaxMovedTransformConsumers = 4;
 
@@ -153,13 +156,10 @@ namespace Lumina::ECS::Utils
 	// Reports an entity whose drawn pose changed while its transform did not.
 	RUNTIME_API void PublishMovedTransform(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
-	// Tag the entity's body (if any) for the physics sync. Single-threaded; for external (non-setter) paths.
-	RUNTIME_API void MarkPhysicsBodyDirtyIfBodied(ECS::FRegistry& Registry, ECS::FEntity Entity);
-
 	// Call once at the physics boundary, just before the body sync consumes the tags.
 	RUNTIME_API void FlushDirtyPhysicsBodies(ECS::FRegistry& Registry);
 
-	// External dirtying for single-threaded paths, since per-frame gameplay uses the component setters.
+	// For a load, a raw store into LocalTransform or a bit-copied component, which raised none of a setter's signals. Game thread only.
 	RUNTIME_API void MarkTransformDirty(ECS::FRegistry& Registry, ECS::FEntity Entity);
 
 	RUNTIME_API FQuat    GetEntityRotation(ECS::FRegistry& Registry, ECS::FEntity Entity);
@@ -170,7 +170,7 @@ namespace Lumina::ECS::Utils
 	RUNTIME_API void SetEntityWorldTransform(ECS::FRegistry& Registry, ECS::FEntity Entity, const FTransform& WorldTransform);
 
 	// Rotates in world space against the parent's current world rotation, computed without a lock so parallel writers of disjoint entities may call it.
-	RUNTIME_API void SetEntityWorldRotationCached(ECS::FRegistry& Registry, ECS::FEntity Entity, const FQuat& WorldRotation);
+	RUNTIME_API void SetEntityWorldRotation(ECS::FRegistry& Registry, ECS::FEntity Entity, const FQuat& WorldRotation);
 
 	RUNTIME_API bool EntityHasTag(const FName& Tag, ECS::FRegistry& Registry, ECS::FEntity Entity);
 

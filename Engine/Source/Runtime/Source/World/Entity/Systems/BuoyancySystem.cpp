@@ -60,7 +60,7 @@ namespace Lumina
                 LOG_WARN_ONCE("CBuoyancySystem: more than 16 buoyant water volumes in one update, entity {} and later are dropped and will not float anything.", Entity.Value);
                 return;
             }
-            FVector3 C = T.GetWorldLocation();
+            FVector3 C = T.ComputeWorldTransform().GetLocation();
             Planes[NumPlanes++] = { &W, C.x, C.z, W.Extent.x * 0.5f, W.Extent.y * 0.5f, C.y };
         });
 

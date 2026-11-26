@@ -55,6 +55,9 @@ namespace Lumina
 
         bool HasImpostor() const;
 
+        // The projected diameter this mesh swaps to its impostor under, given the renderer's threshold, so a dense mesh swaps sooner than a sparse one.
+        float GetImpostorTransitionPixels(float BasePixels) const;
+
         // Replaces the baked impostor and publishes it on the live header. Leaves the package clean for the caller to dirty.
         void SetImpostor(FMeshImpostor&& Impostor);
 

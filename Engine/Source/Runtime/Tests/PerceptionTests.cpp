@@ -75,7 +75,7 @@ namespace
 
         FVector3 Forward() const
         {
-            return Registry().Get<STransformComponent>(Guard).GetWorldTransformCached().GetForward();
+            return Registry().Get<STransformComponent>(Guard).GetWorldTransform().GetForward();
         }
 
         void PlaceTarget(const FVector3& Location)

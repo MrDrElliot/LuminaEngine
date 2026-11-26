@@ -1409,7 +1409,7 @@ namespace Lumina
             // The same bypass as the focus instance, since the copy above is a raw property store.
             if (bTransformEdited)
             {
-                Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+                ECS::Utils::MarkTransformDirty(Registry, Entity);
             }
 
             // A back-to-prefab edit leaves zero divergent leaves, which clears the override record.
@@ -3416,7 +3416,7 @@ namespace Lumina
             ImGui::PopStyleColor();
             ImGui::SameLine();
             ImGuiX::TextTooltip("Translation (Location)");
-            FVector3 CameraLocation = CameraTransform.GetWorldLocation();
+            FVector3 CameraLocation = CameraTransform.ComputeWorldTransform().GetLocation();
             if (ImGui::DragFloat3("T", Math::ValuePtr(CameraLocation), 0.01f))
             {
                 CameraTransform.SetLocalLocation(CameraLocation);
@@ -3688,10 +3688,10 @@ namespace Lumina
         // A non-active camera has no resolved ViewVolume, so the view is built from its transform.
         const SCameraComponent& Camera = Registry.Get<SCameraComponent>(Selected);
         STransformComponent& Transform = Registry.Get<STransformComponent>(Selected);
-        (void)Transform.GetWorldMatrix();   // ensure the world transform is current
+        (void)Transform.ComputeWorldTransform().GetMatrix();   // ensure the world transform is current
 
-        const FVector3 Position = Transform.GetWorldLocation();
-        const FQuat Rotation = Transform.GetWorldRotation();
+        const FVector3 Position = Transform.ComputeWorldTransform().GetLocation();
+        const FQuat Rotation = Transform.ComputeWorldTransform().GetRotation();
         const FVector3 Forward  = Rotation * FVector3(0.0f, 0.0f, 1.0f);
         const FVector3 Up       = Rotation * FVector3(0.0f, 1.0f, 0.0f);
 

@@ -3211,7 +3211,7 @@ namespace Lumina::Reflection
             const std::string Stamp = LayoutStampContents(Module);
             std::string Current;
             bStaleBindings = !ReadWholeFile(StampPath, Current) || Current != Stamp;
-            Context.Outputs.Open(StampPath).Append(Stamp);
+            Context.Outputs->Open(StampPath).Append(Stamp);
             if (!bRouteTypes)
             {
                 Expected.insert(GeneratedFiles::LayoutStampFileName(Module));
@@ -3245,35 +3245,35 @@ namespace Lumina::Reflection
             }
         }
 
-        Context.Run.Workers.ParallelFor(Jobs.size(), [&](size_t Index)
+        Context.Run->Workers->ParallelFor(Jobs.size(), [&](size_t Index)
         {
             const FJob& Job = Jobs[Index];
             const std::string Path = GeneratedFiles::CSharpPath(Job.Header, Job.bRoutable);
             FCodeWriter Writer;
             if (WriteCSharpContent(Writer, Job.Header))
             {
-                Context.Outputs.Open(Path).Append(Writer.String());
+                Context.Outputs->Open(Path).Append(Writer.String());
             }
             else
             {
                 // The header contributes no C#-exposed types, so a stale .cs must not linger in the build.
-                Context.Outputs.Remove(Path);
+                Context.Outputs->Remove(Path);
             }
 
             if (Job.Header.IsDirty())
             {
-                WriteNativeContent(Context.Outputs.Open(GeneratedFiles::SourcePath(Job.Header)), Job.Header);
+                WriteNativeContent(Context.Outputs->Open(GeneratedFiles::SourcePath(Job.Header)), Job.Header);
             }
         });
 
-        GeneratedFiles::SweepOrphans(Context.Outputs, GeneratedFiles::DefaultCSharpDir(Module), Expected, { ".generated.cs" });
+        GeneratedFiles::SweepOrphans(*Context.Outputs, GeneratedFiles::DefaultCSharpDir(Module), Expected, { ".generated.cs" });
     }
 
     void FCSharpBindingGenerator::EndRun(const FRunContext& Context, FGeneratedOutputs& Outputs)
     {
         // Keyed by directory rather than module, since plugin modules share one and would sweep each other away.
         std::unordered_map<std::string, std::unordered_set<std::string>> Routed;
-        for (const FModuleView Module : Context.Model.Modules())
+        for (const FModuleView Module : Context.Model->Modules())
         {
             if (Module.IsReferenceOnly())
             {
@@ -3296,7 +3296,7 @@ namespace Lumina::Reflection
         }
 
         std::unordered_set<std::string> Swept;
-        for (const FModuleView Module : Context.Model.Modules())
+        for (const FModuleView Module : Context.Model->Modules())
         {
             const std::string& Dir = Module.CSharpBindingsDir();
             if (!Module.IsReferenceOnly() && !Dir.empty() && Swept.insert(Dir).second)

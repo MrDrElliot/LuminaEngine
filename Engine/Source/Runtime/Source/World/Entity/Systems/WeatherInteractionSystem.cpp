@@ -239,7 +239,7 @@ namespace Lumina
                 LOG_WARN_ONCE("CWeatherInteractionSystem: more than {} interactive water bodies in one update, entity {} and later are dropped.", kMaxWaterBodies, Entity.Value);
                 return;
             }
-            Waters.Emplace(&Water, Math::Inverse(WaterToWorld(Water, Transform.GetWorldMatrix())), Transform.GetWorldLocation().y);
+            Waters.Emplace(&Water, Math::Inverse(WaterToWorld(Water, Transform.ComputeWorldTransform().GetMatrix())), Transform.ComputeWorldTransform().GetLocation().y);
         });
 
         Physics::IPhysicsQueries* Physics = Context.GetPhysics();
@@ -266,10 +266,10 @@ namespace Lumina
                 ResolveContacts(Entity, Interactor, Skeletal, Skeleton, Static);
             }
 
-            const FMatrix4 EntityWorld = Transform.GetWorldMatrix();
+            const FMatrix4 EntityWorld = Transform.ComputeWorldTransform().GetMatrix();
             const float    Scale       = MaxAxisScale(EntityWorld);
-            const float    RootY       = Transform.GetWorldLocation().y;
-            const bool     bNearCamera = !bHasCamera || Math::Distance(Transform.GetWorldLocation(), Camera) < kMaxContactDistance;
+            const float    RootY       = Transform.ComputeWorldTransform().GetLocation().y;
+            const bool     bNearCamera = !bHasCamera || Math::Distance(Transform.ComputeWorldTransform().GetLocation(), Camera) < kMaxContactDistance;
 
             // The ray from a foot must pass through the body carrying it, so its own entity and every ancestor are ignored.
             SRayCastSettings Ray;
@@ -413,7 +413,7 @@ namespace Lumina
             {
                 Interactor.ExposureCountdown = kExposureIntervalFrames - 1u + (Entity.Value % 3u);
                 SRayCastSettings Cover = Ray;
-                Cover.Start = Transform.GetWorldLocation() + FVector3(0.0f, 1.5f * Scale, 0.0f);
+                Cover.Start = Transform.ComputeWorldTransform().GetLocation() + FVector3(0.0f, 1.5f * Scale, 0.0f);
                 Cover.End   = Cover.Start - FallDirection * kExposureRayLength;
                 const TOptional<SRayResult> Roof = Physics->CastRay(Cover);
                 Interactor.RainExposure = Roof.IsSet() && Roof->bHit ? 0.0f : 1.0f;

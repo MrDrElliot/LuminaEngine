@@ -23,7 +23,7 @@ namespace Lumina
             auto View = Registry.View<ECS::Read<STerrainComponent>, ECS::Read<STransformComponent>>();
             for (auto [Entity, Terrain, Transform] : View.Each())
             {
-                const FVector3 Origin = Transform.GetWorldLocationCached();
+                const FVector3 Origin = Transform.GetWorldLocation();
                 float Height = 0.0f;
                 if (FTerrainSculptSystem::SampleHeight(Terrain, Origin, X, Z, Height))
                 {

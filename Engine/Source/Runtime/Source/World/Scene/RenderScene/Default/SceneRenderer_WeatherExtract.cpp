@@ -348,12 +348,12 @@ namespace Lumina
                 return;
             }
             const STransformComponent& Transform = Transforms.Get(Entity);
-            const FMatrix4 WorldToWater = Math::Inverse(WaterToWorld(Water, Transform.GetWorldMatrix()));
+            const FMatrix4 WorldToWater = Math::Inverse(WaterToWorld(Water, Transform.ComputeWorldTransform().GetMatrix()));
 
             FWeatherWaterBodyGPU& Body = Out.WaterBodies.EmplaceGetRef();
             Body.WorldToWaterX = MatrixRow(WorldToWater, 0);
             Body.WorldToWaterZ = MatrixRow(WorldToWater, 2);
-            Body.Params        = FVector4(Transform.GetWorldLocation().y,
+            Body.Params        = FVector4(Transform.ComputeWorldTransform().GetLocation().y,
                                           Water.bInteractive ? Water.InteractionRippleScale : 0.0f,
                                           Water.bInteractive ? Water.InteractionFoamScale : 0.0f,
                                           Water.RainRippleScale);

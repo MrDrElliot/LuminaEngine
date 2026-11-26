@@ -13,18 +13,18 @@ namespace Lumina
             if (Obj)
             {
                 FGuid GUID = Obj->GetGUID();
-                InnerArchive << GUID;
+                *InnerArchive << GUID;
             }
             else
             {
                 FGuid GUID = FGuid::Invalid();
-                InnerArchive << GUID;
+                *InnerArchive << GUID;
             }
         }
         else if (IsReading())
         {
             FGuid GUID;
-            InnerArchive << GUID;
+            *InnerArchive << GUID;
 
             if (!GUID.IsValid())
             {
@@ -80,18 +80,18 @@ namespace Lumina
                 CObject* ResolvedObject = Value.Resolve();
                 
                 FGuid GUID = ResolvedObject->GetGUID();
-                InnerArchive << GUID;
+                *InnerArchive << GUID;
             }
             else
             {
                 FGuid GUID = FGuid::Invalid();
-                InnerArchive << GUID;
+                *InnerArchive << GUID;
             }
         }
         else if (IsReading())
         {
             FGuid GUID;
-            InnerArchive << GUID;
+            *InnerArchive << GUID;
             
             if (!GUID.IsValid())
             {

@@ -48,6 +48,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Physics")
         uint8 MaxPhysicsSteps = 8;
 
+        // Characters farther than this from the camera and every LOD relevance source move less often and drop their proxy body, and 0 keeps every character exact.
+        PROPERTY(Editable, ClampMin = 0.0f, Category = "Physics", Units = "m")
+        float CharacterLODDistance = 0.0f;
+
+        // Fixed steps a character past the LOD distance waits between moves, where above 1 each move spans them and contacts grow looser.
+        PROPERTY(Editable, ClampMin = 1, ClampMax = 8, Category = "Physics")
+        uint32 CharacterLODStepInterval = 1;
+
         /** Interpolate rigid body positions between fixed steps for smoother visuals.
         Disable for debugging or when PhysicsHz matches render rate. */
         PROPERTY(Editable, Category = "Physics")

@@ -20,8 +20,8 @@ public class NsightPerfEditor : LuminaModuleRules
         {
             "ImGui",
             "RPMalloc",
-            "Volk",
             "NsightPerf",
+            "Vulkan",
         });
 
         // Carries the rapidyaml implementation, so it cannot share a translation unit with anything else.

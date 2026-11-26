@@ -42,7 +42,7 @@ namespace Lumina
         std::atomic<int32> Next{ 0 };
         Hitboxes.ParallelForEach([&](ECS::FEntity Entity, const SLagCompensationComponent& Hitbox, const STransformComponent& Transform)
         {
-            const FTransform World = Transform.GetWorldTransform();
+            const FTransform World = Transform.ComputeWorldTransform();
             const FVector3 Up      = World.GetRotation() * FVector3(0.0f, 1.0f, 0.0f);
             const FVector3 Scale   = World.GetScale();
             const FVector3 Center  = World.GetLocation() + World.GetRotation() * (Hitbox.Center * Scale);

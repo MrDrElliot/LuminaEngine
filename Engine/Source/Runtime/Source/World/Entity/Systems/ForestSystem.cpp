@@ -58,13 +58,15 @@ namespace Lumina
 
             const float    FieldOfView = Camera->GetFieldOfView();
             const FVector2 Viewport    = Camera->GetViewportSize();
+            // Radius over each mesh's share of the threshold, since the band starts where the latest swapping type has swapped.
             float Radius = 0.0f;
             for (const SFoliageType& Type : State.Types)
             {
                 const CStaticMesh* Mesh = Type.Mesh.Get();
                 if (Mesh != nullptr && Mesh->HasImpostor())
                 {
-                    Radius = Math::Max(Radius, Math::Length(Mesh->GetAABB().GetSize()) * 0.5f * Type.ScaleMax);
+                    const float Share = Mesh->GetImpostorTransitionPixels(Renderer->ImpostorTransitionPixels) / Renderer->ImpostorTransitionPixels;
+                    Radius = Math::Max(Radius, Math::Length(Mesh->GetAABB().GetSize()) * 0.5f * Type.ScaleMax / Share);
                 }
             }
             if (FieldOfView <= 0.0f || Viewport.x <= 0.0f || Viewport.y <= 0.0f || Radius <= 0.0f)
@@ -213,7 +215,7 @@ namespace Lumina
         for (ECS::FEntity Entity : World.View<STerrainComponent, STransformComponent>())
         {
             const STerrainComponent& Terrain = World.GetComponent<STerrainComponent>(Entity);
-            const FVector3 Origin = World.GetComponent<STransformComponent>(Entity).GetWorldLocation();
+            const FVector3 Origin = World.GetComponent<STransformComponent>(Entity).ComputeWorldTransform().GetLocation();
             const float Reach = Terrain.TileWorldSize * 0.5f + ForestHalf;
             if (Math::Abs(Center.x - Origin.x) > Reach || Math::Abs(Center.z - Origin.z) > Reach)
             {
@@ -344,7 +346,7 @@ namespace Lumina
         LUMINA_PROFILE_SCOPE();
         using namespace ForestSystemInternal;
 
-        const FVector3 Center = World.GetComponent<STransformComponent>(Entity).GetWorldLocation();
+        const FVector3 Center = World.GetComponent<STransformComponent>(Entity).ComputeWorldTransform().GetLocation();
         RefreshState(World, Forest, Center, bWritten, State);
         if (State.Rules->Species.IsEmpty())
         {

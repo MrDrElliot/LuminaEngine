@@ -1,7 +1,7 @@
 #include "NsightPerfTool.h"
 
 // Vulkan lives only in this plugin, and RHINative hands out opaque handles reinterpreted below.
-#include <volk/volk.h>
+#include <vulkan/vulkan.h>
 #include "Renderer/RHINative.h"
 
 // The ImPlot renderer draws into the engine-owned ImPlot and ImGui context.
@@ -161,7 +161,7 @@ namespace Lumina
             return;
         }
 
-        // volk builds with no prototypes, so the proc-address getters have to be passed in.
+        // Vulkan builds with no prototypes, so the proc-address getters have to be passed in.
         const VkInstance       Instance       = static_cast<VkInstance>(H.Instance);
         const VkPhysicalDevice PhysicalDevice = static_cast<VkPhysicalDevice>(H.PhysicalDevice);
         const VkDevice         Device         = static_cast<VkDevice>(H.Device);

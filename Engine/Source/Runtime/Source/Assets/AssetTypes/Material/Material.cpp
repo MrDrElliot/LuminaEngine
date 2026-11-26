@@ -239,7 +239,7 @@ namespace Lumina
         struct FTemplateToken
         {
             const char*    Token;
-            const FString& Replacement;
+            const FString* Replacement;
         };
 
         // Reads a material template and splices every token, false after logging what was missing.
@@ -258,7 +258,7 @@ namespace Lumina
                     LOG_ERROR("'{}' is missing [{}]; built-in material '{}' cannot build that stage.", Path, Token.Token, Owner);
                     return false;
                 }
-                ReplaceAllTokens(OutSource, Token.Token, Token.Replacement);
+                ReplaceAllTokens(OutSource, Token.Token, *Token.Replacement);
             }
             return true;
         }
@@ -1368,22 +1368,22 @@ namespace Lumina
         // A built-in material moves no vertices, so its world position offset is a no-op.
         const FString NoOffset = "\tMaterial.WorldPositionOffset = float3(0.0, 0.0, 0.0);\n";
 
-        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::MeshShadow,          "MeshletMesh.slang",      nullptr,                      { { kVertexInputsToken, NoOffset } });
-        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::MeshBase,            "MeshletMesh.slang",      "MESHLET_MESH_BASE",          { { kVertexInputsToken, NoOffset } });
-        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::VisBufferMesh,       "MeshletVisBuffer.slang", nullptr,                      { { kVertexInputsToken, NoOffset } });
-        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::VisBufferMeshMasked, "MeshletVisBuffer.slang", "VISBUFFER_MASKED_GEOM",      { { kVertexInputsToken, NoOffset } });
-        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::MeshShadowMasked,    "MeshletMesh.slang",      "MESHLET_MESH_MASKED_SHADOW", { { kVertexInputsToken, NoOffset } });
-        CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::Pixel,               "BasePixelPass.slang",    nullptr,                      { { kPixelInputsToken, PixelInputs } });
+        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::MeshShadow,          "MeshletMesh.slang",      nullptr,                      { { kVertexInputsToken, &NoOffset } });
+        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::MeshBase,            "MeshletMesh.slang",      "MESHLET_MESH_BASE",          { { kVertexInputsToken, &NoOffset } });
+        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::VisBufferMesh,       "MeshletVisBuffer.slang", nullptr,                      { { kVertexInputsToken, &NoOffset } });
+        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::VisBufferMeshMasked, "MeshletVisBuffer.slang", "VISBUFFER_MASKED_GEOM",      { { kVertexInputsToken, &NoOffset } });
+        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::MeshShadowMasked,    "MeshletMesh.slang",      "MESHLET_MESH_MASKED_SHADOW", { { kVertexInputsToken, &NoOffset } });
+        CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::Pixel,               "BasePixelPass.slang",    nullptr,                      { { kPixelInputsToken, &PixelInputs } });
         if (InBlendMode == EBlendMode::Masked)
         {
-            CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::MaskedVisBufferPixel,       "VisBufferMaskedPixel.slang", nullptr,               { { kPixelInputsToken, PixelInputs } });
-            CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::MaskedVisBufferPixelVertex, "VisBufferMaskedPixel.slang", "MESHLET_VERTEX_PATH", { { kPixelInputsToken, PixelInputs } });
-            CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::ShadowMaskedPixel,          "ShadowMaskedPixel.slang",    nullptr,               { { kPixelInputsToken, PixelInputs } });
+            CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::MaskedVisBufferPixel,       "VisBufferMaskedPixel.slang", nullptr,               { { kPixelInputsToken, &PixelInputs } });
+            CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::MaskedVisBufferPixelVertex, "VisBufferMaskedPixel.slang", "MESHLET_VERTEX_PATH", { { kPixelInputsToken, &PixelInputs } });
+            CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::ShadowMaskedPixel,          "ShadowMaskedPixel.slang",    nullptr,               { { kPixelInputsToken, &PixelInputs } });
         }
 
         // The deferred compute shader carries both graphs, the offset reconstruction and the pixel inputs.
         CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::Deferred, "DeferredMaterial.slang", nullptr,
-                            { { kVertexInputsToken, NoOffset }, { kPixelInputsToken, PixelInputs } });
+                            { { kVertexInputsToken, &NoOffset }, { kPixelInputsToken, &PixelInputs } });
 
         Compiler->Flush();
         Material->PostLoad();
@@ -1415,9 +1415,9 @@ namespace Lumina
 
         const FString NoOffset = "Material.WorldPositionOffset = float3(0.0);\n";
 
-        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::VisBufferMesh, "TerrainVisBuffer.slang", nullptr, { { kVertexInputsToken, NoOffset } });
+        CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::VisBufferMesh, "TerrainVisBuffer.slang", nullptr, { { kVertexInputsToken, &NoOffset } });
         CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::Deferred, "TerrainDeferredMaterial.slang", nullptr,
-                            { { kVertexInputsToken, NoOffset }, { kPixelInputsToken, PixelInputs } });
+                            { { kVertexInputsToken, &NoOffset }, { kPixelInputsToken, &PixelInputs } });
 
         Compiler->Flush();
         Material->PostLoad();

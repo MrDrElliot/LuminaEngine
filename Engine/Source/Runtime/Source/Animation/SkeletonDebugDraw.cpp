@@ -380,7 +380,7 @@ namespace Lumina::SkeletonDebugDraw
                 }
 
                 FSkeletonJob Job;
-                Job.MeshWorld = View.Get<STransformComponent>(Entity).GetWorldMatrix();
+                Job.MeshWorld = View.Get<STransformComponent>(Entity).ComputeWorldTransform().GetMatrix();
                 Job.Skeleton  = Skeleton;
                 Job.Pose      = ((int32)Mesh.BoneTransforms.Num() == Skeleton->GetNumBones()) ? &Mesh.BoneTransforms : nullptr;
 

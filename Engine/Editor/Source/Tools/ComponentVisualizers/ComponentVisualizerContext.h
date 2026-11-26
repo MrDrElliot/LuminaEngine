@@ -265,7 +265,7 @@ namespace Lumina
 
         void OfferHover(uint64 Key, int32 Priority, float Score) const;
 
-        FVisualizerInteractionState& State;
+        FVisualizerInteractionState* State;
         IComponentVisualizerHost*    Host = nullptr;
 
         ECS::FEntity Entity = ECS::NullEntity;

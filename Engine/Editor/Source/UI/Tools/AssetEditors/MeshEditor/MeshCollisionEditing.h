@@ -102,7 +102,7 @@ namespace Lumina
             TVector<uint32>   SolidIndices;
         };
 
-        FTransactionManager&           Transactions;
+        FTransactionManager*           Transactions;
         TWeakObjectPtr<CStaticMesh>    Mesh;
         TUniquePtr<FPropertyTable>     DetailsTable;
         TUniquePtr<FPropertyTable>     SettingsTable;

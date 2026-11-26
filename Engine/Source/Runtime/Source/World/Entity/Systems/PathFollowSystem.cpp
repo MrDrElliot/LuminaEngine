@@ -71,7 +71,7 @@ namespace Lumina
                 }
                 if (const STransformComponent* T = Transforms.template TryGet<STransformComponent>(Comp.TargetEntity))
                 {
-                    Comp.TargetLocation = T->GetWorldLocationCached();
+                    Comp.TargetLocation = T->GetWorldLocation();
                 }
             }
             OutGoal = Comp.TargetLocation;
@@ -215,7 +215,7 @@ namespace Lumina
                 return false;
             }
 
-            const FVector3 AgentPos = Xform.GetWorldLocationCached();
+            const FVector3 AgentPos = Xform.GetWorldLocation();
 
             const bool bMovedTarget = Math::Length(Goal - Comp.PathSourceTarget) > Comp.RepathDistance;
             const float RepathInterval = Significance::ScaleInterval(Scores, Entity, Comp.RepathInterval);
@@ -377,7 +377,7 @@ namespace Lumina
                 {
                     const FVector3 Final = Comp.PathCorners[Comp.CornerCount - 1] - AgentPos;
                     const float GoalDistance = Comp.bPathTruncated ? FLT_MAX : Math::Length(FVector3(Final.x, 0.0f, Final.z));
-                    PathFollowSystemInternal::DriveVehicle(Comp, *Vehicle, Xform.GetWorldTransformCached().GetForward(), Flat / Len, GoalDistance, DeltaTime);
+                    PathFollowSystemInternal::DriveVehicle(Comp, *Vehicle, Xform.GetWorldTransform().GetForward(), Flat / Len, GoalDistance, DeltaTime);
                 }
                 // An avoidance agent consumes the desired velocity instead, and drives the controller itself.
                 else if (Avoidance != nullptr)

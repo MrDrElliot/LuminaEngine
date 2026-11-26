@@ -18,8 +18,8 @@ public class DLSSRuntime : LuminaModuleRules
         PrivateDependencyModuleNames.AddRange(new[]
         {
             "RPMalloc",
-            "Volk",
             "DLSS",
+            "Vulkan",
         });
 
         // Force-included because this module has no engine PCH to prime the ECS headers.

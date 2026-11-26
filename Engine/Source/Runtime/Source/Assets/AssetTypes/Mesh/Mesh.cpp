@@ -296,6 +296,7 @@ namespace Lumina
             Header.ImpostorCenterZ          = Impostor.Center.z;
             Header.ImpostorRadius           = Impostor.Radius;
             Header.ImpostorFrameSize        = Impostor.FrameSize;
+            Header.ImpostorTransitionScale  = Lumina::Impostor::TransitionScale(Resource.GetSourceTriangleCount());
             return Header;
         }
 
@@ -1035,6 +1036,16 @@ namespace Lumina
     bool CMesh::HasImpostor() const
     {
         return MeshResources != nullptr && MeshResources->Impostor.IsValid();
+    }
+
+    float CMesh::GetImpostorTransitionPixels(float BasePixels) const
+    {
+        if (MeshResources == nullptr)
+        {
+            return BasePixels;
+        }
+        const float Scale = Lumina::Impostor::TransitionScale(MeshResources->GetSourceTriangleCount());
+        return Lumina::Impostor::TransitionPixels(BasePixels, Scale, MeshResources->Impostor.FrameSize);
     }
 
     void CMesh::SetImpostor(FMeshImpostor&& Impostor)

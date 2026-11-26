@@ -60,7 +60,7 @@ namespace Lumina
     }
 
     FSimulation::FSimulation(CWorld& InWorld)
-        : World(InWorld)
+        : World(&InWorld)
     {
     }
 
@@ -316,7 +316,7 @@ namespace Lumina
 
     ECS::FEntity FSimulation::Spawn()
     {
-        ECS::FRegistry& Registry = World.GetEntityRegistry();
+        ECS::FRegistry& Registry = World->GetEntityRegistry();
         const ECS::FEntity Entity = Registry.Create();
         SSimEntity& Sim = Registry.Emplace<SSimEntity>(Entity);
         Sim.SimId     = NextSimId++;
@@ -327,7 +327,7 @@ namespace Lumina
 
     void FSimulation::Destroy(ECS::FEntity Entity)
     {
-        ECS::FRegistry& Registry = World.GetEntityRegistry();
+        ECS::FRegistry& Registry = World->GetEntityRegistry();
         const SSimEntity* Sim = Registry.IsValid(Entity) ? Registry.TryGet<SSimEntity>(Entity) : nullptr;
         if (Sim == nullptr || Registry.TryGet<SSimPendingDestroy>(Entity) != nullptr)
         {
@@ -363,7 +363,7 @@ namespace Lumina
 
     void FSimulation::GetEntities(TVector<ECS::FEntity>& Out) const
     {
-        ECS::FRegistry& Registry = World.GetEntityRegistry();
+        ECS::FRegistry& Registry = World->GetEntityRegistry();
         TVector<TPair<uint32, ECS::FEntity>> Alive;
         Registry.View<SSimEntity>().ForEach([&](ECS::FEntity Entity, const SSimEntity& Sim)
         {
@@ -452,7 +452,7 @@ namespace Lumina
         }
 
         BindInputsFor(Tick);
-        World.RunSimulationStage(TickSeconds, Tick);
+        World->RunSimulationStage(TickSeconds, Tick);
         bResimulating = false;
     }
 
@@ -490,7 +490,7 @@ namespace Lumina
 
     void FSimulation::Capture(FSnapshot& Snapshot, uint32 Tick)
     {
-        ECS::FRegistry& Registry = World.GetEntityRegistry();
+        ECS::FRegistry& Registry = World->GetEntityRegistry();
 
         // Values are destroyed but their buffers kept, so a steady population captures without allocating.
         for (int32 C = 0; C < Snapshot.ColumnValues.Num(); ++C)
@@ -560,7 +560,7 @@ namespace Lumina
 
     void FSimulation::Restore(const FSnapshot& Snapshot)
     {
-        ECS::FRegistry& Registry = World.GetEntityRegistry();
+        ECS::FRegistry& Registry = World->GetEntityRegistry();
 
         THashSet<uint32> AliveThen;
         for (uint32 SimId : Snapshot.AliveSimIds)
@@ -649,7 +649,7 @@ namespace Lumina
 
     void FSimulation::FinalizeDestroys()
     {
-        ECS::FRegistry& Registry = World.GetEntityRegistry();
+        ECS::FRegistry& Registry = World->GetEntityRegistry();
         TVector<ECS::FEntity> Final;
         Registry.View<SSimPendingDestroy>().ForEach([&](ECS::FEntity Entity, const SSimPendingDestroy& Pending)
         {

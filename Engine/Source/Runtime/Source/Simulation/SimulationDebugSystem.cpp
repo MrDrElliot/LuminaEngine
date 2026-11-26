@@ -64,7 +64,7 @@ namespace Lumina
                               : bRolledBack ? FVector4(1.0f, 0.55f, 0.1f, 1.0f) : FVector4(0.3f, 0.9f, 1.0f, 1.0f);
         Context.GetRegistry().View<SSimEntity, STransformComponent>().ForEach([&](ECS::FEntity, const SSimEntity&, const STransformComponent& Transform)
         {
-            Draw->DrawPoint(Transform.GetWorldLocationCached(), 0.25f, Marker, 2.0f, -1.0f, false);
+            Draw->DrawPoint(Transform.GetWorldLocation(), 0.25f, Marker, 2.0f, -1.0f, false);
         });
     }
 }

@@ -470,7 +470,10 @@ namespace Lumina::Physics
 
     bool FBox3DPhysicsScene::HasBodyCapacity(uint32 Count)
     {
-        if (GetBodyCount() + Count <= MaxBodies)
+        // Character proxies are left out, since a crowd past the cap would otherwise refuse the ground it walks on.
+        const uint32 Bodies  = GetBodyCount();
+        const uint32 Proxies = Math::Min(Bodies, (uint32)CharacterBodies.Num());
+        if (Bodies - Proxies + Count <= MaxBodies)
         {
             return true;
         }

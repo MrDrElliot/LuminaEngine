@@ -62,10 +62,12 @@ namespace Lumina::GraphAlgorithms
             }
         }
 
+        // Seeded in the graph's node order rather than the map's, whose pointer keys reorder every launch and with them the emitted code.
         TQueue<CEdGraphNode*> ReadyQueue;
-        for (auto& [Node, Degree] : InDegree)
+        for (const auto& NodeRef : Nodes)
         {
-            if (Degree == 0)
+            CEdGraphNode* Node = NodeRef.Get();
+            if (const uint32* Degree = InDegree.Find(Node); Degree != nullptr && *Degree == 0)
             {
                 ReadyQueue.Enqueue(Node);
             }
@@ -111,11 +113,13 @@ namespace Lumina::GraphAlgorithms
 
         if (ProcessedNodeCount != static_cast<uint32>(ReachableNodes.Num()))
         {
-            const auto Cyclic = Algo::FindIf(InDegree, [](const auto& Pair) { return Pair.Value > 0; });
-            if (Cyclic != InDegree.end())
+            for (const auto& NodeRef : Nodes)
             {
-                SortedNodes.Reset();
-                return Cyclic->Key;
+                if (const uint32* Degree = InDegree.Find(NodeRef.Get()); Degree != nullptr && *Degree > 0)
+                {
+                    SortedNodes.Reset();
+                    return NodeRef.Get();
+                }
             }
         }
 

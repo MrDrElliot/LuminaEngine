@@ -8,9 +8,9 @@ namespace Lumina
 {
 	float SAudioVolumeComponent::ListenerWeight(const STransformComponent& Transform, const FVector3& Listener) const
 	{
-		const FMatrix4 InvWorld = Math::Inverse(Transform.GetWorldMatrix());
+		const FMatrix4 InvWorld = Math::Inverse(Transform.ComputeWorldTransform().GetMatrix());
 		const FVector3 Local = FVector3(InvWorld * FVector4(Listener, 1.0f));
-		const FVector3 Scale = Math::Abs(Transform.GetWorldScale());
+		const FVector3 Scale = Math::Abs(Transform.ComputeWorldTransform().GetScale());
 
 		float Depth = 0.0f;
 		if (Shape == EAudioVolumeShape::Sphere)

@@ -158,10 +158,10 @@ namespace Lumina
 		class FDeviceRouter final : public IAudioRenderCallback
 		{
 		public:
-			explicit FDeviceRouter(FAudioMixer& InMixer) : Mixer(InMixer) {}
+			explicit FDeviceRouter(FAudioMixer& InMixer) : Mixer(&InMixer) {}
 			void RenderAudio(float* OutInterleaved, uint32 FrameCount) override;
 
-			FAudioMixer&    Mixer;
+			FAudioMixer*    Mixer;
 			TAtomic<bool>   bOffline{false};
 			TAtomic<uint32> InsideRender{0};
 		};

@@ -621,7 +621,7 @@ namespace Lumina
 
         // The renderer centers on the entity transform, so sculpting needs that origin to match.
         const STransformComponent& TerrainTransform = World->GetComponent<STransformComponent>(TerrainEntity);
-        const FVector3 TerrainOrigin = TerrainTransform.GetWorldLocation();
+        const FVector3 TerrainOrigin = TerrainTransform.ComputeWorldTransform().GetLocation();
 
         if (BrushUI::HandleBrushKeys(Brush.Radius, kMaxRadius, Brush.Strength))
         {
@@ -765,7 +765,7 @@ namespace Lumina
 
         const ECS::FEntity TerrainEntity = FindPreferredTerrain(World);
         const STerrainComponent* Terrain = TerrainEntity != ECS::NullEntity ? World->TryGetComponent<STerrainComponent>(TerrainEntity) : nullptr;
-        const FVector3 TerrainOrigin     = Terrain != nullptr ? World->GetComponent<STransformComponent>(TerrainEntity).GetWorldLocation() : FVector3(0.0f);
+        const FVector3 TerrainOrigin     = Terrain != nullptr ? World->GetComponent<STransformComponent>(TerrainEntity).ComputeWorldTransform().GetLocation() : FVector3(0.0f);
         auto OnGround = [&](FVector3& P)
         {
             if (Terrain != nullptr)

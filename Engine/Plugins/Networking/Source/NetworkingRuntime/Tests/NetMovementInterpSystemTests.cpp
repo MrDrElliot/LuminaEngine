@@ -3,7 +3,7 @@
 #include "Config/NetworkSettings.h"
 #include "Core/Object/ObjectCore.h"
 #include "Systems/NetMovementInterpSystem.h"
-#include "World/Entity/Components/DirtyComponent.h"
+#include "Containers/Algorithm.h"
 #include "World/World.h"
 #include "WorldTestAccess.h"
 
@@ -20,6 +20,7 @@ namespace
     {
         TStrongObjectPtr<CWorld> World;
         ECS::FEntity             Proxy;
+        uint32                   MovedConsumer = Constants::kIndexNoneU32;
 
         explicit FInterpWorld(ENetRole Role = ENetRole::SimulatedProxy)
         {
@@ -31,9 +32,11 @@ namespace
             Clock().bNetworked = true;
 
             Proxy = Registry().Create();
-            Registry().Emplace<STransformComponent>(Proxy);
+            // Bound by hand, since a world whose systems never started has no construct hook to do it.
+            Registry().Emplace<STransformComponent>(Proxy).Bind(Registry(), Proxy);
             Registry().Emplace<SNetworkComponent>(Proxy).LocalRole = Role;
             Registry().Emplace<FRepTransform>(Proxy).Ring.Push(0.0, ProxyLocation, FQuat(1.0f, 0.0f, 0.0f, 0.0f));
+            MovedConsumer = ECS::Utils::AddMovedTransformConsumer(Registry());
         }
 
         ECS::FRegistry& Registry() const { return World->GetEntityRegistry(); }
@@ -46,7 +49,12 @@ namespace
         }
 
         FVector3 ProxyLocalLocation() const { return Registry().Get<STransformComponent>(Proxy).GetLocalLocation(); }
-        bool ProxyNeedsTransformUpdate() const { return Registry().HasAll<FNeedsTransformUpdate>(Proxy); }
+        bool ProxyMoved() const
+        {
+            TVector<ECS::FEntity> Moved;
+            ECS::Utils::DrainMovedTransforms(Registry(), MovedConsumer, Moved);
+            return Algo::Contains(Moved, Proxy);
+        }
     };
 }
 
@@ -83,17 +91,16 @@ TEST(NetMovementInterpSystem, LargeServerJumpResyncsInsteadOfEasing)
     EXPECT_LT(Fixture.Tick(), 2.1) << "a jump under half a second eases in";
 }
 
-TEST(NetMovementInterpSystem, SettledProxyIsNotMarkedForTransformUpdateAgain)
+TEST(NetMovementInterpSystem, SettledProxyIsNotMovedAgain)
 {
     FInterpWorld Fixture;
 
     Fixture.Tick();
     EXPECT_EQ(Fixture.ProxyLocalLocation(), ProxyLocation);
-    ASSERT_TRUE(Fixture.ProxyNeedsTransformUpdate());
+    ASSERT_TRUE(Fixture.ProxyMoved());
 
-    Fixture.Registry().Remove<FNeedsTransformUpdate>(Fixture.Proxy);
     Fixture.Tick();
-    EXPECT_FALSE(Fixture.ProxyNeedsTransformUpdate());
+    EXPECT_FALSE(Fixture.ProxyMoved());
 }
 
 TEST(NetMovementInterpSystem, AutonomousProxyIsSkipped)
@@ -102,7 +109,7 @@ TEST(NetMovementInterpSystem, AutonomousProxyIsSkipped)
 
     Fixture.Tick();
     EXPECT_EQ(Fixture.ProxyLocalLocation(), FVector3(0.0f));
-    EXPECT_FALSE(Fixture.ProxyNeedsTransformUpdate());
+    EXPECT_FALSE(Fixture.ProxyMoved());
 }
 
 TEST(NetMovementInterpSystem, NullFallbackConstantsMatchSettingsDefaults)

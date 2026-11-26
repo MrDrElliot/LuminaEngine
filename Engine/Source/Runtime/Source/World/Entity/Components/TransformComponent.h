@@ -15,7 +15,7 @@ namespace Lumina
 {
     struct FPropertyChangedEvent;
 
-    // Every accessor names its space, Local relative to the parent and World in the world. Only LocalTransform is stored, so GetWorld* computes the current value while GetWorld*Cached lags a moved child by a frame.
+    // Gameplay writes Local, relative to the parent. GetWorld* reads what the last propagation wrote, and ComputeWorldTransform walks the chain for the current value.
     REFLECT(Component, HideInComponentList, ScriptFastCalls)
     struct RUNTIME_API CACHE_ALIGN STransformComponent
     {
@@ -108,26 +108,40 @@ namespace Lumina
         }
 
         FUNCTION()
-        void AddRoll(float Degrees)
-        {
-            LocalTransform.AddRollRadians(Math::Radians(Degrees));
-            MarkDirty();
-        }
-
-        FUNCTION()
         void SetLocalScale(const FVector3& InScale)
         {
             LocalTransform.SetScale(InScale);
             MarkDirty();
         }
 
-        // Derived, not stored: bIsFlat means world == local, so WorldTransform is left stale for those.
-        FORCEINLINE const FTransform& GetWorldTransformCached() const
+        // What the last propagation wrote, a frame behind for a child whose ancestor moved since. A flat entity's is its local transform.
+        FORCEINLINE const FTransform& GetWorldTransform() const
         {
             return bIsFlat ? LocalTransform : WorldTransform;
         }
 
-        // Writes nothing and takes no lock, so any thread may read a world transform between propagations.
+        FUNCTION()
+        FVector3 GetWorldLocation() const { return GetWorldTransform().GetLocation(); }
+
+        FUNCTION()
+        FQuat GetWorldRotation() const { return GetWorldTransform().GetRotation(); }
+
+        FUNCTION()
+        FVector3 GetWorldScale() const { return GetWorldTransform().GetScale(); }
+
+        // Composed on demand because storing the matrix cost 64 bytes on every entity, paid by every pass striding this pool.
+        FUNCTION()
+        FMatrix4 GetWorldMatrix() const { return GetWorldTransform().GetMatrix(); }
+
+        // The largest world scale axis, which is what physics sizes a sphere, capsule or cylinder by.
+        float GetWorldMaxScale() const
+        {
+            const FVector3 S = GetWorldScale();
+            return Math::Max(S.x, Math::Max(S.y, S.z));
+        }
+
+        // The current world transform, walking up to the highest ancestor moved since the last propagation. Writes nothing and takes no lock.
+        FUNCTION(NoSuppressGCTransition)
         FTransform ComputeWorldTransform() const
         {
             // A transform never bound to a registry has no hierarchy, so its world transform is its local one.
@@ -136,64 +150,13 @@ namespace Lumina
                 return LocalTransform;
             }
 
-            // Nothing has moved since the last propagation in the common case, so the cached value is exact.
+            // Nothing has moved since the last propagation in the common case, so the propagated value is exact.
             if (DirtyState != nullptr && !DirtyState->bAnyDirty.load(std::memory_order_acquire))
             {
                 return WorldTransform;
             }
 
             return ECS::Utils::ComputeWorldTransform(*Registry, Entity);
-        }
-
-        // World getters opt out of SuppressGCTransition: a dirty-chain resolve can exceed the ~1us budget.
-        FUNCTION(NoSuppressGCTransition)
-        FVector3 GetWorldLocation() const
-        {
-            return ComputeWorldTransform().GetLocation();
-        }
-
-        FUNCTION(NoSuppressGCTransition)
-        FQuat GetWorldRotation() const
-        {
-            return ComputeWorldTransform().GetRotation();
-        }
-
-        FUNCTION(NoSuppressGCTransition)
-        FVector3 GetWorldScale() const
-        {
-            return ComputeWorldTransform().GetScale();
-        }
-
-        FUNCTION(NoSuppressGCTransition)
-        FVector3 GetWorldRotationAsEuler() const
-        {
-            return Math::Degrees(Math::EulerAngles(ComputeWorldTransform().GetRotation()));
-        }
-
-        // Composed on demand because storing the matrix cost 64 bytes on every entity, paid by every pass striding this pool.
-        FUNCTION(NoSuppressGCTransition)
-        FMatrix4 GetWorldMatrix() const
-        {
-            return ComputeWorldTransform().GetMatrix();
-        }
-
-        FUNCTION(NoSuppressGCTransition)
-        FTransform GetWorldTransform() const
-        {
-            return ComputeWorldTransform();
-        }
-
-        // The world transform as of the last propagation, which a child moved since then has not caught up with.
-        FVector3 GetWorldLocationCached() const { return GetWorldTransformCached().GetLocation(); }
-        FQuat    GetWorldRotationCached() const { return GetWorldTransformCached().GetRotation(); }
-        FVector3 GetWorldScaleCached()    const { return GetWorldTransformCached().GetScale(); }
-        FMatrix4 GetWorldMatrixCached()   const { return GetWorldTransformCached().GetMatrix(); }
-
-        // The largest world scale axis, which is what physics sizes a sphere, capsule or cylinder by.
-        float GetWorldMaxScaleCached() const
-        {
-            const FVector3 S = GetWorldScaleCached();
-            return Math::Max(S.x, Math::Max(S.y, S.z));
         }
 
         // A transform with no parent is its own world transform, so only a parented one pays for the parent's inverse.
@@ -225,20 +188,16 @@ namespace Lumina
             SetWorldTransform(World);
         }
 
+        // Rotation against the parent's current world rotation, which leaves the origin in place, so no lock and no decompose.
         FUNCTION(NoSuppressGCTransition)
         void SetWorldRotation(const FQuat& InRotation)
         {
-            FTransform World = ComputeWorldTransform();
-            World.SetRotation(InRotation);
-            SetWorldTransform(World);
-        }
-
-        FUNCTION(NoSuppressGCTransition)
-        void SetWorldRotationFromEuler(const FVector3& EulerDegrees)
-        {
-            FTransform World = ComputeWorldTransform();
-            World.SetRotationFromEuler(EulerDegrees);
-            SetWorldTransform(World);
+            if (bIsFlat || Registry == nullptr)
+            {
+                SetLocalRotation(InRotation);
+                return;
+            }
+            ECS::Utils::SetEntityWorldRotation(*Registry, Entity, InRotation);
         }
 
         FUNCTION(NoSuppressGCTransition)
@@ -249,16 +208,6 @@ namespace Lumina
             SetWorldTransform(World);
         }
 
-        // World rotation against the parent's current world rotation, computed without a lock so parallel writers of disjoint entities may call it.
-        FUNCTION()
-        void SetWorldRotationCached(const FQuat& InRotation)
-        {
-            if (Registry)
-            {
-                ECS::Utils::SetEntityWorldRotationCached(*Registry, Entity, InRotation);
-            }
-        }
-        
         FUNCTION()
         void SetLocalTransform(const FTransform& InTransform)
         {
@@ -275,7 +224,7 @@ namespace Lumina
             }
         }
     
-        // Relative to the parent, like every Local getter; GetWorldForward is the direction in the world.
+        // Relative to the parent, like every Local getter.
         FUNCTION()
         FVector3 GetLocalForward() const
         {
@@ -294,30 +243,6 @@ namespace Lumina
             return LocalTransform.GetUp();
         }
 
-        FUNCTION(NoSuppressGCTransition)
-        FVector3 GetWorldForward() const
-        {
-            return ComputeWorldTransform().GetForward();
-        }
-
-        FUNCTION(NoSuppressGCTransition)
-        FVector3 GetWorldRight() const
-        {
-            return ComputeWorldTransform().GetRight();
-        }
-
-        FUNCTION(NoSuppressGCTransition)
-        FVector3 GetWorldUp() const
-        {
-            return ComputeWorldTransform().GetUp();
-        }
-    
-        FUNCTION()
-        float GetLocalMaxScale() const
-        {
-            const FVector3 S = LocalTransform.GetScale();
-            return Math::Max(S.x, Math::Max(S.y, S.z));
-        }
 
         // Rewires the self-referential pointers after duplication or post-load.
         void Bind(ECS::FRegistry& InRegistry, ECS::FEntity InEntity)
@@ -330,12 +255,6 @@ namespace Lumina
             bIsFlat = ECS::Utils::IsEntityTransformFlat(InRegistry, InEntity);
         }
         
-        void SetRaw(const FVector3& Location, const FQuat& Rotation)
-        {
-            LocalTransform.SetLocation(Location);
-            LocalTransform.SetRotation(Rotation);
-        }
-
         // The simulated pose coming back from the solver. The body is already there, so it is not re-queued.
         void SetFromPhysics(const FVector3& Location, const FQuat& Rotation)
         {
@@ -344,12 +263,17 @@ namespace Lumina
             MarkMoved(false);
         }
 
-        void SetRaw(const FVector3& Location, const FQuat& Rotation, const FVector3& Scale)
+        // A parented pose written in parallel, true when the caller owes the entity to QueueDirtyTransforms.
+        NODISCARD bool SetFromPhysicsUnqueued(const FVector3& Location, const FQuat& Rotation)
         {
             LocalTransform.SetLocation(Location);
             LocalTransform.SetRotation(Rotation);
-            LocalTransform.SetScale(Scale);
+            const bool bQueue = !bWorldDirty;
+            bWorldDirty = true;
+            return bQueue && DirtyState != nullptr;
         }
+
+        ECS::Utils::FTransformDirtyGate* GetDirtyGate() const { return DirtyState; }
 
     public:
 
@@ -357,7 +281,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Transform")
         FTransform LocalTransform;
 
-        // Never read directly; a flat entity leaves it stale. See GetWorldTransformCached.
+        // Never read directly; a flat entity leaves it stale. See GetWorldTransform.
         FTransform WorldTransform;
 
         // Do not move the fields below onto LocalTransform's cache line; measured at +7ns/setter if you do.
@@ -399,7 +323,7 @@ namespace Lumina
             // Flat fast path, since deferring world = local to the resolve cost more than doing it here.
             if (bIsFlat)
             {
-                // No world write: GetWorldTransformCached derives it from LocalTransform while bIsFlat holds.
+                // Writes no world transform, since GetWorldTransform derives it from LocalTransform while bIsFlat holds.
                 const uint32 Epoch   = (DirtyState != nullptr)
                                      ? DirtyState->PublishEpoch.load(std::memory_order_relaxed) : 0u;
                 const bool bPublish  = (LastPublishEpoch != Epoch);

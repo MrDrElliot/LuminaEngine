@@ -87,14 +87,14 @@ namespace Lumina
 
             const STransformComponent& Xform = XformMut.Get();
             SCameraFollowComponent& Follow = FollowMut.GetMut();
-            const FVector3 TargetPos = TargetXform->GetWorldLocation();
-            const FQuat TargetRot = TargetXform->GetWorldRotation();
+            const FVector3 TargetPos = TargetXform->ComputeWorldTransform().GetLocation();
+            const FQuat TargetRot = TargetXform->ComputeWorldTransform().GetRotation();
 
             const FVector3 DesiredPos = Follow.bWorldSpaceOffset
                 ? TargetPos + Follow.Offset
                 : TargetPos + TargetRot * Follow.Offset;
 
-            FQuat DesiredRot = Xform.GetWorldRotation();
+            FQuat DesiredRot = Xform.ComputeWorldTransform().GetRotation();
             if (Follow.bLookAtTarget)
             {
                 const FVector3 LookPoint = TargetPos + Follow.LookAtOffset;
@@ -145,13 +145,13 @@ namespace Lumina
             FQuat ControlRot;
             if (bHasTarget)
             {
-                PivotBase  = TargetXform->GetWorldLocation();
-                ControlRot = Arm.bUseControlRotation ? Xform.GetWorldRotation() : TargetXform->GetWorldRotation();
+                PivotBase  = TargetXform->ComputeWorldTransform().GetLocation();
+                ControlRot = Arm.bUseControlRotation ? Xform.ComputeWorldTransform().GetRotation() : TargetXform->ComputeWorldTransform().GetRotation();
             }
             else
             {
-                PivotBase  = Xform.GetWorldLocation();
-                ControlRot = Xform.GetWorldRotation();
+                PivotBase  = Xform.ComputeWorldTransform().GetLocation();
+                ControlRot = Xform.ComputeWorldTransform().GetRotation();
             }
 
             const FVector3 Pivot = PivotBase + Arm.TargetOffset;

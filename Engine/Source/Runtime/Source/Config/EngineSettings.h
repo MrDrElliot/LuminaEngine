@@ -230,6 +230,9 @@ namespace Lumina
         PROPERTY(Editable, Color, Category = "Surfaces")
         FVector4 RowBgActive = FVector4(0.160f, 0.175f, 0.215f, 1.00f);
 
+        PROPERTY(Editable, Color, Category = "Surfaces", ToolTip = "Outline drawn around each property category in the details panel.")
+        FVector4 PropertyCategoryBorder = FVector4(0.30f, 0.33f, 0.41f, 1.00f);
+
         // Kept last, since the style refresh hashes the run of colors from Accent through this one.
         PROPERTY(Editable, Color, Category = "Surfaces", ToolTip = "Component and script header bars in the details panel. Hover and pressed shades derive from it.")
         FVector4 ComponentHeader = FVector4(0.175f, 0.190f, 0.235f, 1.00f);
@@ -432,6 +435,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Shadows")
         EShadowQuality ShadowQuality = EShadowQuality::High;
 
+        // Past this camera distance a caster's sun shadow drops its material's sway and joins the shadow cache, though the camera still sees it sway. 0 keeps every shadow swaying.
+        PROPERTY(Editable, Category = "Shadows", ClampMin = 0.0f, Units = "m")
+        float ShadowSwayDistance = 40.0f;
+
         // Small opaque sun shadow casters rasterize in compute, where tiny triangles cost far less than in the hardware rasterizer.
         PROPERTY(Editable, Category = "Shadows")
         bool bVirtualShadowComputeRaster = true;
@@ -580,7 +587,7 @@ namespace Lumina
 
         // Slices and steps per pixel, 0 low to 3 ultra. Below ultra the trace runs at half resolution and upsamples.
         PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0, ClampMax = 3)
-        int32 GTAOQualityLevel = 2;
+        int32 GTAOQualityLevel = 3;
 
         /** Edge-aware denoise passes. 0 disabled, 1 sharp, 2 medium, 3 soft. */
         PROPERTY(Editable, Category = "Ambient Occlusion", ClampMin = 0, ClampMax = 3)

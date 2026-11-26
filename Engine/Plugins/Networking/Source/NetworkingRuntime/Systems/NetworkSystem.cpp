@@ -586,7 +586,8 @@ namespace Lumina
 
             if (STransformComponent* T = Registry.TryGet<ECS::Write<STransformComponent>>(Entity))
             {
-                T->SetRaw(QPos.ToVector(), QRot.ToQuat(), QScale.ToVector(NetQuantize::ScaleQuantum));
+                T->SetLocalLocationAndRotation(QPos.ToVector(), QRot.ToQuat());
+                T->SetLocalScale(QScale.ToVector(NetQuantize::ScaleQuantum));
             }
 
             // A spawned tag arrives as the component alone, and lookups read the per-tag storage it belongs in.
@@ -604,7 +605,7 @@ namespace Lumina
             Net.NetGUID            = SNetGUID{ Guid };
             Net.OwningConnectionId = Owner;
             State.GuidTable.Register(Net.NetGUID, Entity);
-            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+            ECS::Utils::MarkTransformDirty(Registry, Entity);
             // Now that this entity's NetGUID is registered, reparent any children that were waiting on it.
             Net::DrainPendingAttach(Registry, State, Guid, Entity);
 
@@ -647,7 +648,7 @@ namespace Lumina
             }
             if (Registry.IsValid(Entity))
             {
-                Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+                ECS::Utils::MarkTransformDirty(Registry, Entity);
 
                 SNetReplicatedEvent Replicated;
                 Replicated.Entity = Entity;
@@ -790,7 +791,7 @@ namespace Lumina
 
             Registry.Remove<SNetworkComponent, FRepTransform, FComponentRepState, FNetDirty, FScriptSyncState, FNetPredictionClient,
                             FNetPredictionServer, FNetCharacterDrive, SNetProxyTag, SNetDrivenTransformTag>(Entity);
-            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+            ECS::Utils::MarkTransformDirty(Registry, Entity);
 
             SNetEntityTornOffEvent TornOff;
             TornOff.Entity = Entity;

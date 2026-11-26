@@ -187,20 +187,20 @@ namespace Lumina
     }
 
     FFunctionFrame::FFunctionFrame(const FFunction& InFunction)
-        : Function(InFunction)
+        : Function(&InFunction)
     {
-        const size_t Size = Function.GetParmsSize();
+        const size_t Size = Function->GetParmsSize();
 
         Memory = (Size <= kInlineBytes)
             ? static_cast<void*>(Inline)
             : Memory::Malloc(Size, FFunction::kFrameAlignment);
 
-        Function.InitializeFrame(Memory);
+        Function->InitializeFrame(Memory);
     }
 
     FFunctionFrame::~FFunctionFrame()
     {
-        Function.DestructFrame(Memory);
+        Function->DestructFrame(Memory);
 
         if (Memory != Inline)
         {
@@ -210,19 +210,19 @@ namespace Lumina
 
     void FFunctionFrame::Invoke(void* Context) const
     {
-        Function.Invoke(Context, Memory);
+        Function->Invoke(Context, Memory);
     }
 
     size_t FFunctionFrame::OffsetOf(int32 Index) const
     {
-        const TSpan<FProperty* const> Params = Function.GetParams();
+        const TSpan<FProperty* const> Params = Function->GetParams();
         DEBUG_ASSERT(Params.IsValidIndex(Index));
         return Params[Index]->Offset;
     }
 
     size_t FFunctionFrame::ReturnOffset() const
     {
-        const FProperty* Return = Function.GetReturnParam();
+        const FProperty* Return = Function->GetReturnParam();
         DEBUG_ASSERT(Return != nullptr);
         return Return->Offset;
     }

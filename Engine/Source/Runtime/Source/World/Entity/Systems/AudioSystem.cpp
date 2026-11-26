@@ -224,11 +224,11 @@ namespace Lumina
 				}
 
 				const STransformComponent& Transform = Transforms.Get<STransformComponent>(Ears);
-				const FVector3 Position = Transform.GetWorldLocation();
+				const FVector3 Position = Transform.ComputeWorldTransform().GetLocation();
 
 				const FVector3 Velocity = Kinematics.GetVelocity(Ears);
 
-				Audio::Context().UpdateListener(Index, Position, Transform.GetWorldRotation(),
+				Audio::Context().UpdateListener(Index, Position, Transform.ComputeWorldTransform().GetRotation(),
 					Listener.bApplyDoppler ? Velocity : FVector3(0.0f));
 
 				if (!bHasListener || Index == 0)
@@ -264,7 +264,7 @@ namespace Lumina
 			Sources.ForEach([&](ECS::FEntity Entity, ECS::TMut<SAudioSourceComponent> Source, const STransformComponent& Transform)
 			{
 				const SAudioSourceComponent& Audio = Source.Get();
-				const FVector3 Position = Transform.GetWorldLocation();
+				const FVector3 Position = Transform.ComputeWorldTransform().GetLocation();
 				Source.SetIfChanged(&SAudioSourceComponent::LastPosition, Position);
 
 				// The mixer may have retired the voice (one-shot ended, evicted by a higher priority).
@@ -407,7 +407,7 @@ namespace Lumina
 					if (Audio.bSpatialized && Transforms.Contains(Entity))
 					{
 						const STransformComponent& Transform = Transforms.Get<STransformComponent>(Entity);
-						Audio::Context().SetPosition(Audio.ActiveHandle, Transform.GetWorldLocation());
+						Audio::Context().SetPosition(Audio.ActiveHandle, Transform.ComputeWorldTransform().GetLocation());
 					}
 
 					if (Audio.bVolumeDirty)

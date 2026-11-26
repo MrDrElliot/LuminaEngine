@@ -65,7 +65,7 @@ namespace Lumina
             Transform.SetLocalTransform(In[i]);
 
             // The cached dirty signal can fail to raise bAnyDirty, leaving the render primitive pre-undo.
-            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+            ECS::Utils::MarkTransformDirty(Registry, Entity);
         }
     }
 

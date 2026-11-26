@@ -35,11 +35,11 @@ namespace
     class FTestEditorModeContext final : public IEditorModeContext
     {
     public:
-        explicit FTestEditorModeContext(FTerrainUndoTestSceneTool& InTool) : Tool(InTool) {}
+        explicit FTestEditorModeContext(FTerrainUndoTestSceneTool& InTool) : Tool(&InTool) {}
 
-        void BeginModeTransaction() override { Tool.BeginTransaction(); }
-        void EndModeTransaction(const char* Name) override { Tool.EndTransaction(FName(Name)); }
-        void BeginModeCreationTransaction() override { Tool.BeginCreationTransaction(); }
+        void BeginModeTransaction() override { Tool->BeginTransaction(); }
+        void EndModeTransaction(const char* Name) override { Tool->EndTransaction(FName(Name)); }
+        void BeginModeCreationTransaction() override { Tool->BeginCreationTransaction(); }
         void BeginModeObjectTransaction(CObject*, const FObjectSnapshotCommand::FSerializer&) override {}
         void RunModeObjectTransaction(const char*, CObject*, const FObjectSnapshotCommand::FSerializer&, const TFunction<void()>& Edit) override
         {
@@ -52,7 +52,7 @@ namespace
         void SetModeSelection(ECS::FEntity) override {}
 
     private:
-        FTerrainUndoTestSceneTool& Tool;
+        FTerrainUndoTestSceneTool* Tool;
     };
 }
 

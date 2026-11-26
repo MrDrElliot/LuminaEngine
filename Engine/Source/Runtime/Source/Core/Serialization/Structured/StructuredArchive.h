@@ -64,7 +64,7 @@ namespace Lumina
     public:
         FArchiveSlot(IStructuredArchive& InAr, uint32 InDepth, StructuredArchive::FSlotID InID)
             : FSlotPosition(InDepth, InID)
-            , StructuredArchive(InAr)
+            , StructuredArchive(&InAr)
         {}
 
         RUNTIME_API FArchiveRecord EnterRecord();
@@ -100,7 +100,7 @@ namespace Lumina
 
     protected:
         
-        IStructuredArchive& StructuredArchive;
+        IStructuredArchive* StructuredArchive;
     };
 
     class RUNTIME_API FArchiveRecord : protected FSlotPosition
@@ -111,7 +111,7 @@ namespace Lumina
     public:
         FArchiveRecord(IStructuredArchive& InAr, uint32 InDepth, StructuredArchive::FSlotID InID)
             : FSlotPosition(InDepth, InID)
-            , StructuredArchive(InAr)
+            , StructuredArchive(&InAr)
         {}
 
         // The destructor closes the scope, so a copy would close it twice and leave the backend's node stack short.
@@ -132,7 +132,7 @@ namespace Lumina
         }
 
     protected:
-        IStructuredArchive& StructuredArchive;
+        IStructuredArchive* StructuredArchive;
     };
 
     // Exported because modules outside Runtime that enter an array need its destructor and EnterElement.
@@ -143,7 +143,7 @@ namespace Lumina
     public:
         FArchiveArray(IStructuredArchive& InAr, uint32 InDepth, StructuredArchive::FSlotID InID)
             : FSlotPosition(InDepth, InID)
-            , StructuredArchive(InAr)
+            , StructuredArchive(&InAr)
         {}
 
         // Scope-closing destructor; see FArchiveRecord.
@@ -158,7 +158,7 @@ namespace Lumina
 
     protected:
         
-        IStructuredArchive& StructuredArchive;
+        IStructuredArchive* StructuredArchive;
     };
 
     class FArchiveStream : protected FSlotPosition
@@ -168,7 +168,7 @@ namespace Lumina
     public:
         FArchiveStream(IStructuredArchive& InAr, uint32 InDepth, StructuredArchive::FSlotID InID)
             : FSlotPosition(InDepth, InID)
-            , StructuredArchive(InAr)
+            , StructuredArchive(&InAr)
         {}
 
         // Scope-closing destructor; see FArchiveRecord.
@@ -182,7 +182,7 @@ namespace Lumina
         FArchiveSlot EnterElement();
 
     protected:
-        IStructuredArchive& StructuredArchive;
+        IStructuredArchive* StructuredArchive;
     };
 
     class FArchiveMap : protected FSlotPosition
@@ -192,7 +192,7 @@ namespace Lumina
     public:
         FArchiveMap(IStructuredArchive& InAr, uint32 InDepth, StructuredArchive::FSlotID InID)
             : FSlotPosition(InDepth, InID)
-            , StructuredArchive(InAr)
+            , StructuredArchive(&InAr)
         {}
 
         // Scope-closing destructor; see FArchiveRecord.
@@ -208,7 +208,7 @@ namespace Lumina
         RUNTIME_API FArchiveSlot EnterValue();
 
     protected:
-        IStructuredArchive& StructuredArchive;
+        IStructuredArchive* StructuredArchive;
     };
 
     class LUMINA_VISIBLE_TYPE IStructuredArchive
@@ -249,7 +249,7 @@ namespace Lumina
         IStructuredArchive(FArchive& InInnerAr)
             : RootElementID(0)
             , CurrentSlotID(0)
-            , InnerAr(InInnerAr)
+            , InnerAr(&InInnerAr)
         {}
 
         /** Begin writing at the root slot. */
@@ -282,16 +282,16 @@ namespace Lumina
         virtual FArchiveSlot EnterMapKey() = 0;
         virtual FArchiveSlot EnterMapValue() = 0;
 
-        FArchive& GetInnerAr() const { return InnerAr; }
-        NODISCARD bool IsLoading() const { return InnerAr.IsReading(); }
-        NODISCARD bool IsSaving() const { return InnerAr.IsWriting(); }
+        FArchive& GetInnerAr() const { return *InnerAr; }
+        NODISCARD bool IsLoading() const { return InnerAr->IsReading(); }
+        NODISCARD bool IsSaving() const { return InnerAr->IsWriting(); }
 
     protected:
         TInlineVector<FElement, 32>     CurrentScope;
         FIDGenerator                    IDGenerator;
         StructuredArchive::FSlotID      RootElementID;
         StructuredArchive::FSlotID      CurrentSlotID;
-        FArchive&                       InnerAr;
+        FArchive*                       InnerAr;
     };
 
     class FBinaryStructuredArchive final : public IStructuredArchive
@@ -345,7 +345,7 @@ namespace Lumina
         int32 NumElements = Value.Num();
         FArchiveArray Array = EnterArray(NumElements);
         
-        if (StructuredArchive.IsLoading())
+        if (StructuredArchive->IsLoading())
         {
             Value.SetNum(NumElements);
         }

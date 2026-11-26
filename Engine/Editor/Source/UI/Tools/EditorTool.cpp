@@ -1537,7 +1537,7 @@ namespace Lumina
         STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
         // Resolve to world space, local would mis-frame any entity parented under another.
-        const FVector3 EntityWorldLocation = EntityTransform.GetWorldLocation();
+        const FVector3 EntityWorldLocation = EntityTransform.ComputeWorldTransform().GetLocation();
         const float FocusDistance = (CameraState.Mode == EEditorCameraMode::Orbit) ? CameraState.OrbitDistance : 10.0f;
 
         // So a later Alt and left tumble picks a pivot at the distance the user last framed something at.
@@ -2696,7 +2696,7 @@ namespace Lumina
                 }
 
                 // Composed from the transform's own basis, which is what VTransform exposes.
-                const FTransform& WorldXform = Transform.GetWorldTransform();
+                const FTransform& WorldXform = Transform.ComputeWorldTransform();
                 const FVector3    Scale      = WorldXform.GetScale();
                 const FVector3    Local      = Mesh.CachedLocalCenter;
                 const FVector3    Center     = WorldXform.GetLocation()

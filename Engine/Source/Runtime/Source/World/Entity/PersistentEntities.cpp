@@ -163,7 +163,7 @@ namespace Lumina
         for (const auto& [Staged, Entity] : Arrived)
         {
             ArrivedSet.Add(Entity);
-            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+            ECS::Utils::MarkTransformDirty(Registry, Entity);
         }
 
         for (FCarriedScript& Carried : Scripts)

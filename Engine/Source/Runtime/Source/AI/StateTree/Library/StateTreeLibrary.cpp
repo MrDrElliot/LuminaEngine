@@ -44,7 +44,7 @@ namespace Lumina
                 return true;
             }
             const STransformComponent* Transform = TransformOf(Context, Entity);
-            OutTarget = Transform != nullptr ? Transform->GetWorldLocationCached() : Location;
+            OutTarget = Transform != nullptr ? Transform->GetWorldLocation() : Location;
             return Transform != nullptr;
         }
 
@@ -145,13 +145,13 @@ namespace Lumina
         {
             return EStateTreeRunStatus::Failed;
         }
-        const FVector3 ToTarget = Math::Flat(Target - Self->GetWorldLocationCached());
+        const FVector3 ToTarget = Math::Flat(Target - Self->GetWorldLocation());
         if (Math::Length(ToTarget) < 1e-3f)
         {
             return EStateTreeRunStatus::Succeeded;
         }
 
-        const float Current = Math::YawDegrees(Self->GetWorldTransformCached().GetForward());
+        const float Current = Math::YawDegrees(Self->GetWorldTransform().GetForward());
         const float Desired = Math::YawDegrees(ToTarget);
         const float Yaw = Math::MoveTowardsAngleDegrees(Current, Desired, Look.TurnRate > 0.0f ? Look.TurnRate * Context.GetDeltaTime() : 360.0f);
         if (Yaw != Current)
@@ -272,7 +272,7 @@ namespace Lumina
         const STransformComponent* Self = StateTreeLibraryInternal::TransformOf(Context, Context.GetOwner());
         FVector3 Target;
         return Self != nullptr && StateTreeLibraryInternal::ResolveTarget(Context, Distance.TargetEntity, Distance.TargetLocation, Target)
-            && Math::Length(Target - Self->GetWorldLocationCached()) <= Distance.Radius;
+            && Math::Length(Target - Self->GetWorldLocation()) <= Distance.Radius;
     }
 
     bool SStateTreePerceptionSensedCondition::TestCondition(FStateTreeExecutionContext& Context) const
@@ -339,7 +339,7 @@ namespace Lumina
         {
             return;
         }
-        const FVector3 Location = Transform->GetWorldLocationCached();
+        const FVector3 Location = Transform->GetWorldLocation();
         Out.Velocity = Context.GetDeltaTime() > 0.0f ? (Location - Out.Location) / Context.GetDeltaTime() : FVector3(0.0f);
         Out.Location = Location;
     }

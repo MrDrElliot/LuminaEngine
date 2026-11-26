@@ -125,7 +125,7 @@ namespace Lumina
         {
             if (bRecordLightIcons)
             {
-                DirectionalLightIcons.Emplace(Entity, Transforms.Get(Entity).GetWorldLocationCached(), Light.Color);
+                DirectionalLightIcons.Emplace(Entity, Transforms.Get(Entity).GetWorldLocation(), Light.Color);
             }
             if (Sun == nullptr && Math::Dot(Light.Direction, Light.Direction) > 0.0001f)
             {
@@ -415,7 +415,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ProcessPointLight(ECS::FEntity Entity, const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch)
     {
-        const FVector3 Position = TransformComponent.GetWorldLocationCached();
+        const FVector3 Position = TransformComponent.GetWorldLocation();
         if (bRecordLightIcons)
         {
             Batch.Icons[Batch.NumIcons++] = FLightIcon{ Entity, Position, PointLight.LightColor };
@@ -498,7 +498,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ProcessSpotLight(ECS::FEntity Entity, const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch)
     {
-        const FVector3 Position = TransformComponent.GetWorldLocationCached();
+        const FVector3 Position = TransformComponent.GetWorldLocation();
         if (bRecordLightIcons)
         {
             Batch.Icons[Batch.NumIcons++] = FLightIcon{ Entity, Position, SpotLight.LightColor };
@@ -525,7 +525,7 @@ namespace Lumina
 
         const uint32 Lights = Batch.NumLights;
 
-        const FQuat WorldRotation = TransformComponent.GetWorldRotation();
+        const FQuat WorldRotation = TransformComponent.ComputeWorldTransform().GetRotation();
         FVector3 UpdatedForward    = WorldRotation * FViewVolume::ForwardAxis;
         FVector3 UpdatedUp         = WorldRotation * FViewVolume::UpAxis;
 
@@ -595,7 +595,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ProcessAreaLight(ECS::FEntity Entity, const SAreaLightComponent& AreaLight, const STransformComponent& TransformComponent, FLightBatch& Batch)
     {
-        const FVector3 Position = TransformComponent.GetWorldLocationCached();
+        const FVector3 Position = TransformComponent.GetWorldLocation();
         if (bRecordLightIcons)
         {
             Batch.Icons[Batch.NumIcons++] = FLightIcon{ Entity, Position, AreaLight.LightColor };
@@ -614,7 +614,7 @@ namespace Lumina
             return;
         }
 
-        const FQuat    WorldRotation = TransformComponent.GetWorldRotation();
+        const FQuat    WorldRotation = TransformComponent.ComputeWorldTransform().GetRotation();
         const FVector3 Forward       = Math::Normalize(WorldRotation * FViewVolume::ForwardAxis);
         const FVector3 Right         = Math::Normalize(WorldRotation * FViewVolume::RightAxis);
 
@@ -705,6 +705,8 @@ namespace Lumina
         Virtual.LODTexels      = Math::Max(DirectionalLight.ShadowLODTexels, 0.25f);
 
         SunShadowCache.SetEnabled(DirectionalLight.bCacheStaticShadows && ShadowData != nullptr);
+        const CRendererSettings* Renderer = GetDefault<CRendererSettings>();
+        SunShadowCache.SetSwayDistance(Renderer != nullptr ? Math::Max(Renderer->ShadowSwayDistance, 0.0f) : 0.0f);
     }
 
     void FDefaultSceneRenderer::ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight, const FSkyLightInputs& Sky)

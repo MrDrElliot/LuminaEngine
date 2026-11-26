@@ -147,7 +147,7 @@ namespace Lumina
                 {
                     continue;
                 }
-                const FVector3 Ear = Xf->GetWorldLocationCached() + Comp->EyeOffset;
+                const FVector3 Ear = Xf->GetWorldLocation() + Comp->EyeOffset;
                 const float Radius = Comp->HearingRadius * (Stim.Strength > 0.0f ? Stim.Strength : 1.0f);
                 if (Math::Length(Stim.Location - Ear) > Radius)
                 {
@@ -222,7 +222,7 @@ namespace Lumina
         {
             FPerceptionSource PS;
             PS.Entity = Src;
-            PS.AimPoint = Xf.GetWorldLocationCached() + S.SightTargetOffset;
+            PS.AimPoint = Xf.GetWorldLocation() + S.SightTargetOffset;
             PS.AffiliationTags = &S.AffiliationTags;
             PS.RegisteredSenses = (uint8)S.RegisteredSenses;
             State.SourceGrid.Sources.Add(PS);
@@ -249,9 +249,9 @@ namespace Lumina
         Perceivers.ParallelForEach([&](ECS::FEntity E, ECS::TMut<SPerceptionComponent> CompMut, const STransformComponent& Xform)
         {
             SPerceptionComponent& Comp = CompMut.GetMut();
-            const FVector3 Loc = Xform.GetWorldLocationCached();
+            const FVector3 Loc = Xform.GetWorldLocation();
             const FVector3 Eye = Loc + Comp.EyeOffset;
-            const FVector3 Forward = Xform.GetWorldTransformCached().GetForward();
+            const FVector3 Forward = Xform.GetWorldTransform().GetForward();
             Comp.LastEyeLocation = Eye;
 
             if (bDebugAll || Comp.bDrawDebug)

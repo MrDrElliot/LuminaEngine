@@ -30,7 +30,7 @@ namespace Lumina::Reflection
     {
     public:
 
-        explicit FGeneratorDiagnostics(const FReflectionModel& InModel) : Model(InModel) {}
+        explicit FGeneratorDiagnostics(const FReflectionModel& InModel) : Model(&InModel) {}
 
         LRT_API void Error(FSourceLocation Location, const char* Fmt, ...) const;
         LRT_API void Warning(FSourceLocation Location, const char* Fmt, ...) const;
@@ -39,7 +39,7 @@ namespace Lumina::Reflection
 
         LRT_API void Report(bool bError, FSourceLocation Location, const char* Fmt, va_list Args) const;
 
-        const FReflectionModel& Model;
+        const FReflectionModel* Model;
         mutable std::mutex      Mutex;
     };
 
@@ -103,17 +103,17 @@ namespace Lumina::Reflection
 
     struct FRunContext
     {
-        const FReflectionModel&      Model;
-        const FSpecifierRegistry&    Specifiers;
-        const FGeneratorDiagnostics& Diagnostics;
-        FWorkerPool&                 Workers;
+        const FReflectionModel*      Model;
+        const FSpecifierRegistry*    Specifiers;
+        const FGeneratorDiagnostics* Diagnostics;
+        FWorkerPool*                 Workers;
     };
 
     struct FModuleContext
     {
-        const FRunContext& Run;
+        const FRunContext* Run;
         FModuleView        Module;
-        FGeneratedOutputs& Outputs;
+        FGeneratedOutputs* Outputs;
     };
 
     class IReflectionGenerator

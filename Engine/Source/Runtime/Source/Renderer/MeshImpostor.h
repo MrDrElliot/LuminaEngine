@@ -87,6 +87,26 @@ namespace Lumina
     // Twin of Includes/Impostor.slang, so the bake and the draw agree on every view.
     namespace Impostor
     {
+        // A mesh this dense swaps at exactly the renderer's impostor threshold.
+        inline constexpr float kReferenceTriangles   = 500.0f;
+        inline constexpr float kMinTransitionScale   = 0.5f;
+        inline constexpr float kMaxTransitionScale   = 4.0f;
+        // How far a view may be stretched on screen before a denser mesh stops swapping sooner, since past it the impostor blurs.
+        inline constexpr float kMaxMagnification     = 1.5f;
+
+        // Grows with the square root of the triangles, so every mesh swaps once it would put the same number of triangles on each pixel.
+        FORCEINLINE float TransitionScale(uint32 Triangles)
+        {
+            return Math::Clamp(Math::Sqrt((float)Triangles / kReferenceTriangles), kMinTransitionScale, kMaxTransitionScale);
+        }
+
+        // Mirrored by ImpostorTransitionPixels in Impostor.slang, which the cull swaps against.
+        FORCEINLINE float TransitionPixels(float BasePixels, float Scale, uint32 FrameSize)
+        {
+            const float Scaled = BasePixels * Scale;
+            return Scale > 1.0f ? Math::Min(Scaled, Math::Max(BasePixels, (float)FrameSize * kMaxMagnification)) : Scaled;
+        }
+
         // Turns an RGBA8 atlas into BC7 in place, dropping the mips smaller than a block per view.
         RUNTIME_API void Compress(FMeshImpostor& Impostor);
 

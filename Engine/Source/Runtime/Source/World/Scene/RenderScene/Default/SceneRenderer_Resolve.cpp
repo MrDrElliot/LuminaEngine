@@ -10,11 +10,11 @@ namespace Lumina
 
         struct FResolveContext
         {
-            FMeshResolveCache&              Cache;
-            FMeshResolveQueue&              Queue;
-            FRenderDirtyTracker&            Tracker;
-            TVector<CMaterialInterface*>&   OverrideScratch;
-            TVector<uint64>&                KeyScratch;
+            FMeshResolveCache*              Cache;
+            FMeshResolveQueue*              Queue;
+            FRenderDirtyTracker*            Tracker;
+            TVector<CMaterialInterface*>*   OverrideScratch;
+            TVector<uint64>*                KeyScratch;
             uint32                          Epoch;
         };
 
@@ -82,12 +82,12 @@ namespace Lumina
         {
             if (Handle == INVALID_MESH_RESOLVE_HANDLE)
             {
-                Context.Queue.Unwatch(Entity, Source);
+                Context.Queue->Unwatch(Entity, Source);
                 return;
             }
 
             const uint64 Key = FMeshResolveQueue::HandleKey(Handle);
-            Context.Queue.Watch(Entity, Source, TSpan<const uint64>(&Key, 1));
+            Context.Queue->Watch(Entity, Source, TSpan<const uint64>(&Key, 1));
         }
 
         void AddMaterialChainKeys(const CMaterialInterface* Material, TVector<uint64>& Keys)
@@ -163,15 +163,15 @@ namespace Lumina
         {
             using FTraits = TMeshSourceTraits<TComponent>;
 
-            Context.OverrideScratch.Reset();
+            Context.OverrideScratch->Reset();
             for (const TStrongObjectPtr<CMaterialInterface>& Override : Component.MaterialOverrides)
             {
-                Context.OverrideScratch.Add(Override.Get());
+                Context.OverrideScratch->Add(Override.Get());
             }
             Component.CachedMaterialHash = OverrideHash;
 
-            FMeshResolveCache& Cache = Context.Cache;
-            const uint32 Handle = Cache.Resolve(Mesh, Context.OverrideScratch);
+            FMeshResolveCache& Cache = *Context.Cache;
+            const uint32 Handle = Cache.Resolve(Mesh, *Context.OverrideScratch);
 
             // The new entry is the one whose completion matters, whether or not the component adopts it yet.
             OutWatchedHandle = Handle;
@@ -223,14 +223,14 @@ namespace Lumina
         {
             using FTraits = TMeshSourceTraits<TComponent>;
 
-            Component.ResolveBinding.Bind(Context.Queue, Entity, FTraits::ResolveSource);
+            Component.ResolveBinding.Bind(*Context.Queue, Entity, FTraits::ResolveSource);
 
             CMesh* Mesh = FTraits::GetMesh(Component);
             const uint32 OverrideHash = HashOverrides(Component);
 
             uint32 WatchedHandle = Component.ResolveHandle;
             bool bChanged = false;
-            if (!IsResolveCurrent(Component, Mesh, Context.Cache) || Component.CachedMaterialHash != OverrideHash)
+            if (!IsResolveCurrent(Component, Mesh, *Context.Cache) || Component.CachedMaterialHash != OverrideHash)
             {
                 bChanged = ResolveMeshComponent(Context, Component, Mesh, OverrideHash, WatchedHandle);
             }
@@ -241,7 +241,7 @@ namespace Lumina
             {
                 return 0u;
             }
-            Context.Tracker.Mark(Entity, FTraits::PrimitiveSource, EPrimitiveDirty::Data);
+            Context.Tracker->Mark(Entity, FTraits::PrimitiveSource, EPrimitiveDirty::Data);
             return 1u;
         }
 
@@ -250,8 +250,8 @@ namespace Lumina
             CStaticMesh* Mesh = Type.Mesh.Get();
 
             // Foliage types carry no material overrides.
-            Context.OverrideScratch.Reset();
-            const uint32 Handle = Context.Cache.Resolve(Mesh, Context.OverrideScratch);
+            Context.OverrideScratch->Reset();
+            const uint32 Handle = Context.Cache->Resolve(Mesh, *Context.OverrideScratch);
             Type.ResolveHandle = Handle;
             Type.CachedMeshKey = (const void*)Mesh;
 
@@ -263,19 +263,19 @@ namespace Lumina
                 return;
             }
 
-            const FResolvedMesh& Entry = Context.Cache.GetEntry(Handle);
+            const FResolvedMesh& Entry = Context.Cache->GetEntry(Handle);
             Type.CachedMeshletHeaderSlot = Entry.MeshletHeaderSlot;
             Type.CachedBaseFlags         = EInstanceFlags::Foliage | (Type.bReceiveShadow ? EInstanceFlags::ReceiveShadow : EInstanceFlags::None);
-            Type.CachedEntryState        = Context.Cache.GetEntryState(Handle);
+            Type.CachedEntryState        = Context.Cache->GetEntryState(Handle);
         }
 
         uint32 RefreshFoliage(FResolveContext& Context, ECS::FEntity Entity, SFoliageComponent& Foliage)
         {
             uint32 Refreshed = 0;
-            Context.KeyScratch.Reset();
+            Context.KeyScratch->Reset();
             for (SFoliageType& Type : Foliage.Types)
             {
-                if (!IsResolveCurrent(Type, Type.Mesh.Get(), Context.Cache))
+                if (!IsResolveCurrent(Type, Type.Mesh.Get(), *Context.Cache))
                 {
                     ResolveFoliageType(Context, Type);
                     ++Refreshed;
@@ -283,16 +283,16 @@ namespace Lumina
 
                 if (Type.ResolveHandle != INVALID_MESH_RESOLVE_HANDLE)
                 {
-                    Context.KeyScratch.AddUnique(FMeshResolveQueue::HandleKey(Type.ResolveHandle));
+                    Context.KeyScratch->AddUnique(FMeshResolveQueue::HandleKey(Type.ResolveHandle));
                 }
             }
 
-            Context.Queue.Watch(Entity, EMeshResolveSource::Foliage, Context.KeyScratch);
+            Context.Queue->Watch(Entity, EMeshResolveSource::Foliage, *Context.KeyScratch);
 
             // Every instance of a changed type re-binds, and an incomplete bake retries on the same mark.
             if (Refreshed != 0)
             {
-                Context.Tracker.Mark(Entity, EPrimitiveSource::Foliage, EPrimitiveDirty::Data);
+                Context.Tracker->Mark(Entity, EPrimitiveSource::Foliage, EPrimitiveDirty::Data);
             }
             return Refreshed;
         }
@@ -300,7 +300,7 @@ namespace Lumina
         // Dynamic meshes own no cache entry, so their materials are resolved per component and watched by material.
         uint32 RefreshDynamicMesh(FResolveContext& Context, ECS::FEntity Entity, SDynamicMeshComponent& Component)
         {
-            Component.ResolveBinding.Bind(Context.Queue, Entity, EMeshResolveSource::DynamicMesh);
+            Component.ResolveBinding.Bind(*Context.Queue, Entity, EMeshResolveSource::DynamicMesh);
 
             // Stale is what InvalidateRenderResolve leaves, so a script or editor write to the shared fields reaches the scene.
             bool bChanged = Component.CachedEntryState == MESH_RESOLVE_STATE_STALE;
@@ -327,14 +327,14 @@ namespace Lumina
             }
             Component.ResolvedRenderDataVersion = Component.LoadRenderDataVersion();
 
-            CollectDynamicMaterialKeys(Component, Data.get(), Context.KeyScratch);
-            Context.Queue.Watch(Entity, EMeshResolveSource::DynamicMesh, Context.KeyScratch);
+            CollectDynamicMaterialKeys(Component, Data.get(), *Context.KeyScratch);
+            Context.Queue->Watch(Entity, EMeshResolveSource::DynamicMesh, *Context.KeyScratch);
 
             if (!bChanged)
             {
                 return 0u;
             }
-            Context.Tracker.Mark(Entity, EPrimitiveSource::DynamicMesh, EPrimitiveDirty::Data);
+            Context.Tracker->Mark(Entity, EPrimitiveSource::DynamicMesh, EPrimitiveDirty::Data);
             return 1u;
         }
 
@@ -342,8 +342,8 @@ namespace Lumina
         uint32 ResolveSource(FResolveContext& Context, ECS::FRegistry& Registry, EMeshResolveSource Source,
                              TVector<ECS::FEntity>& DirtyScratch, TRefresh&& Refresh)
         {
-            Context.Queue.TakeDirty(Source, DirtyScratch);
-            const bool bSweep = Context.Queue.ConsumeFullSweep(Source);
+            Context.Queue->TakeDirty(Source, DirtyScratch);
+            const bool bSweep = Context.Queue->ConsumeFullSweep(Source);
 
             const ECS::TComponentStorage<TComponent> Storage = Registry.FindStorage<TComponent>();
             if (!Storage)
@@ -405,8 +405,8 @@ namespace Lumina
                     const CGrassType* Type = Output.GrassType.Get();
                     if (Type != nullptr && Type->Mesh != nullptr)
                     {
-                        Context.OverrideScratch.Reset();
-                        (void)Context.Cache.Resolve(Type->Mesh.Get(), Context.OverrideScratch);
+                        Context.OverrideScratch->Reset();
+                        (void)Context.Cache->Resolve(Type->Mesh.Get(), *Context.OverrideScratch);
                     }
                 }
             }
@@ -454,7 +454,7 @@ namespace Lumina
         FMeshResolveQueue& Queue = FMeshResolveQueue::Ensure(Registry);
         Queue.BeginFrame();
 
-        FResolveContext Context{ FMeshResolveCache::Get(), Queue, Tracker, ResolveOverrideScratch, ResolveKeyScratch, FMeshResolveCache::GetEpoch() };
+        FResolveContext Context{ &FMeshResolveCache::Get(), &Queue, &Tracker, &ResolveOverrideScratch, &ResolveKeyScratch, FMeshResolveCache::GetEpoch() };
 
         const uint32 Refreshed = ResolveSource<SDynamicMeshComponent>(Context, Registry, EMeshResolveSource::DynamicMesh, ResolveDirtyScratch,
             [](FResolveContext& InContext, ECS::FEntity Entity, SDynamicMeshComponent& Component)
@@ -476,7 +476,7 @@ namespace Lumina
         Queue.BeginFrame();
 
         FMeshResolveCache& Cache = FMeshResolveCache::Get();
-        FResolveContext Context{ Cache, Queue, FRenderDirtyTracker::Ensure(Registry), ResolveOverrideScratch, ResolveKeyScratch, FMeshResolveCache::GetEpoch() };
+        FResolveContext Context{ &Cache, &Queue, &FRenderDirtyTracker::Ensure(Registry), &ResolveOverrideScratch, &ResolveKeyScratch, FMeshResolveCache::GetEpoch() };
 
         const uint32 TableGenerationBefore = Cache.GetTableGeneration();
 

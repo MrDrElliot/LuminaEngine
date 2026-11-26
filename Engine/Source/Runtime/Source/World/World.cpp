@@ -931,7 +931,7 @@ namespace Lumina
             return false;
         }
 
-        FTransform OwnerTransform = EntityRegistry.Get<STransformComponent>(Entity).GetWorldTransform();
+        FTransform OwnerTransform = EntityRegistry.Get<STransformComponent>(Entity).ComputeWorldTransform();
         
         FVector3 InheritedVelocity(0.0f);
         if (PhysicsScene)
@@ -1058,7 +1058,7 @@ namespace Lumina
                 PieceTransform.SetScale(OwnerTransform.GetScale());
 
                 const ECS::FEntity Fragment = ConstructEntity("Fragment", PieceTransform);
-                EntityRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(Fragment);
+                ECS::Utils::MarkTransformDirty(EntityRegistry, Fragment);
 
                 EntityRegistry.Emplace<SStaticMeshComponent>(Fragment).SetStaticMesh(PieceMesh);
 
@@ -1101,7 +1101,7 @@ namespace Lumina
                 FragmentTransform.SetScale(FragScale);
 
                 const ECS::FEntity Fragment = ConstructEntity("Fragment", FragmentTransform);
-                EntityRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(Fragment);
+                ECS::Utils::MarkTransformDirty(EntityRegistry, Fragment);
 
                 SStaticMeshComponent& FragmentMeshComp = EntityRegistry.Emplace<SStaticMeshComponent>(Fragment);
                 FragmentMeshComp.SetStaticMesh(GridMesh);
@@ -1197,7 +1197,7 @@ namespace Lumina
                 NewTransform->Bind(EntityRegistry, NewEntity);
                 // The duplicate is in neither queue, so a copied dirty guard would suppress its enqueues.
                 NewTransform->ResetDirtyState();
-                EntityRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(NewEntity);
+                ECS::Utils::MarkTransformDirty(EntityRegistry, NewEntity);
             }
 
             // Remove auto-emplaced default first; emplace_or_replace would fire on_update (no-op), not on_construct.
@@ -1316,7 +1316,7 @@ namespace Lumina
     FTransform CWorld::GetEntityTransform(ECS::FEntity Entity)
     {
         const STransformComponent* Transform = FindScriptTransform(Entity, "GetEntityTransform");
-        return Transform != nullptr ? Transform->GetWorldTransform() : FTransform();
+        return Transform != nullptr ? Transform->ComputeWorldTransform() : FTransform();
     }
 
     // Scripts reach these by handle and can race teardown, so a missing transform is a no-op rather than a fatal assert.
@@ -1334,26 +1334,26 @@ namespace Lumina
     FVector3 CWorld::GetEntityLocation(ECS::FEntity Entity)
     {
         const STransformComponent* Transform = FindScriptTransform(Entity, "GetEntityLocation");
-        return Transform != nullptr ? Transform->GetWorldLocation() : FVector3(0.0f);
+        return Transform != nullptr ? Transform->ComputeWorldTransform().GetLocation() : FVector3(0.0f);
     }
 
     FQuat CWorld::GetEntityRotation(ECS::FEntity Entity)
     {
         const STransformComponent* Transform = FindScriptTransform(Entity, "GetEntityRotation");
-        return Transform != nullptr ? Transform->GetWorldRotation() : FQuat(1.0f, 0.0f, 0.0f, 0.0f);
+        return Transform != nullptr ? Transform->ComputeWorldTransform().GetRotation() : FQuat(1.0f, 0.0f, 0.0f, 0.0f);
     }
 
     FVector3 CWorld::GetEntityScale(ECS::FEntity Entity)
     {
         const STransformComponent* Transform = FindScriptTransform(Entity, "GetEntityScale");
-        return Transform != nullptr ? Transform->GetWorldScale() : FVector3(1.0f);
+        return Transform != nullptr ? Transform->ComputeWorldTransform().GetScale() : FVector3(1.0f);
     }
 
     void CWorld::SetEntityLocation(ECS::FEntity Entity, FVector3 Location)
     {
         // An unchanged write is skipped, since marking it dirty would re-sync the entity downstream for nothing.
         STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityLocation");
-        if (Transform != nullptr && Transform->GetWorldLocation() != Location)
+        if (Transform != nullptr && Transform->ComputeWorldTransform().GetLocation() != Location)
         {
             Transform->SetWorldLocation(Location);
         }
@@ -1362,7 +1362,7 @@ namespace Lumina
     void CWorld::SetEntityRotation(ECS::FEntity Entity, FQuat Rotation)
     {
         STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityRotation");
-        if (Transform != nullptr && !(Transform->GetWorldRotation() == Rotation))
+        if (Transform != nullptr && !(Transform->ComputeWorldTransform().GetRotation() == Rotation))
         {
             Transform->SetWorldRotation(Rotation);
         }
@@ -1371,7 +1371,7 @@ namespace Lumina
     void CWorld::SetEntityScale(ECS::FEntity Entity, FVector3 Scale)
     {
         STransformComponent* Transform = FindScriptTransform(Entity, "SetEntityScale");
-        if (Transform != nullptr && Transform->GetWorldScale() != Scale)
+        if (Transform != nullptr && Transform->ComputeWorldTransform().GetScale() != Scale)
         {
             Transform->SetWorldScale(Scale);
         }
@@ -1384,7 +1384,7 @@ namespace Lumina
         {
             return;
         }
-        const FTransform Current = Transform->GetWorldTransform();
+        const FTransform Current = Transform->ComputeWorldTransform();
         if (Current.GetLocation() != Location || !(Current.GetRotation() == Rotation))
         {
             Transform->SetWorldLocationAndRotation(Location, Rotation);
@@ -1417,7 +1417,7 @@ namespace Lumina
         {
             return FVector3(0.0f);
         }
-        const FVector3 Moved = Transform->GetWorldLocation() + Translation;
+        const FVector3 Moved = Transform->ComputeWorldTransform().GetLocation() + Translation;
         Transform->SetWorldLocation(Moved);
         return Moved;
     }
@@ -1686,18 +1686,8 @@ namespace Lumina
 
     void CWorld::OnTransformComponentConstruct(ECS::FRegistry& Registry, ECS::FEntity Entity)
     {
-        STransformComponent& TransformComponent = Registry.Get<STransformComponent>(Entity);
-        TransformComponent.Registry = &EntityRegistry;
-        TransformComponent.Entity = Entity;
-        TransformComponent.DirtyState = ECS::Utils::EnsureTransformDirtyGate(EntityRegistry);
-
-        // A copied component's guards describe its source's queue, and a set one would keep the tag below from ever enqueuing it.
-        TransformComponent.ResetDirtyState();
-
-        // Checked rather than assumed, since nothing orders the two components.
-        TransformComponent.bIsFlat = ECS::Utils::IsEntityTransformFlat(EntityRegistry, Entity);
-
-        Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+        // Binds, resets the copied guards and re-derives bIsFlat before marking, since nothing orders this with the hierarchy.
+        ECS::Utils::MarkTransformDirty(Registry, Entity);
     }
 
     void CWorld::OnWidgetComponentDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity)
@@ -2525,7 +2515,7 @@ namespace Lumina
             return;
         }
         EntityRegistry.Emplace<STransformComponent>(Entity, NewTransform);
-        EntityRegistry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+        ECS::Utils::MarkTransformDirty(EntityRegistry, Entity);
     }
 
     // Owned by RunSegment's frame, which outlives every task SyncWait runs over it.

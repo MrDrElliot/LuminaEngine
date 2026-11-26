@@ -141,7 +141,7 @@ namespace Lumina
 
         if (const STransformComponent* Transform = Pools.Transform->TryGet(Prim.Entity))
         {
-            RebuildWorldBounds(Work.Index, Transform->GetWorldMatrixCached());
+            RebuildWorldBounds(Work.Index, Transform->GetWorldMatrix());
         }
     }
 
@@ -240,7 +240,7 @@ namespace Lumina
         // A worker can publish after this frame's upload flush, so new data waits for its batch rather than draw an unwritten header.
         const uint32 Version = Component->LoadRenderDataVersion();
         TSharedPtr<FDynamicMeshRenderData> Latest = Component->LoadRenderData();
-        Work.bAwaitingUpload = Latest && Latest != Prim.DynamicRenderData && !RHI::Upload::IsBatchComplete(Latest->Resource.MeshBuffers.UploadBatch);
+        Work.bAwaitingUpload = Latest && Latest != Prim.DynamicRenderData && !RHI::Upload::IsBatchComplete(Latest->Resource->MeshBuffers.UploadBatch);
         if (!Work.bAwaitingUpload)
         {
             Component->SyncedRenderDataVersion = Version;
@@ -330,7 +330,7 @@ namespace Lumina
             }
             if (const STransformComponent* Transform = Pools.Transform->TryGet(Primitives[Work.Index].Entity))
             {
-                RefreshInstances(Work.Index, Transform->GetWorldMatrixCached(), Sink);
+                RefreshInstances(Work.Index, Transform->GetWorldMatrix(), Sink);
             }
         };
 
@@ -390,6 +390,7 @@ namespace Lumina
         RetainedStatic.Reset();
         RetainedProxies.Reset();
         InstanceFreeSlots.Reset();
+        FreeSlotRuns.Reset();
         DirtyInstanceSlots.Reset();
         DeactivatedSlots.Reset();
         DirtyStaticSlots.Reset();
@@ -802,7 +803,7 @@ namespace Lumina
         {
             return;
         }
-        const FMatrix4 Matrix = Transform->GetWorldMatrixCached();
+        const FMatrix4 Matrix = Transform->GetWorldMatrix();
 
         for (uint32 s = 0; s < kLinkedSources; ++s)
         {

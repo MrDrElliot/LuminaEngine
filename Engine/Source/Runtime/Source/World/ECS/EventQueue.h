@@ -81,7 +81,7 @@ namespace Lumina::ECS
         void RefreshLayout();
         NODISCARD uint8* At(const FBuffer& Buffer, uint32 Index) const { return Buffer.Data + (size_t)Index * Stride; }
 
-        const FComponentTypeInfo& Info;
+        const FComponentTypeInfo* Info;
         FComponentTypeID          TypeID;
         uint32                    Stride;
 
@@ -125,7 +125,7 @@ namespace Lumina::ECS
 
     private:
 
-        FRegistry&                                              Registry;
+        FRegistry*                                              Registry;
         TArray<TAtomic<FEventQueue*>, MaxComponentTypes>        ByTypeID;
         TArray<TAtomic<bool>, MaxComponentTypes>                Interest;
         TVector<TUniquePtr<FEventQueue>>                        Owned;

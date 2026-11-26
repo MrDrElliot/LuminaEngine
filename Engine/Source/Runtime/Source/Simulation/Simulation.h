@@ -188,7 +188,7 @@ namespace Lumina
         void CompareChecksums(uint32 Tick);
         FSimChecksum ChecksumOf(const FSnapshot& Snapshot) const;
 
-        CWorld&         World;
+        CWorld*         World;
         FSimSessionDesc Session;
         ESimulationMode Mode = ESimulationMode::Rollback;
         bool            bRunning = false;

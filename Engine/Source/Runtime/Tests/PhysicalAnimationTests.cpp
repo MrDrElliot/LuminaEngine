@@ -463,7 +463,7 @@ TEST_F(PhysicalAnimation, ScaledRagdollRestsOnShapesTheSizeOfItsMesh)
     Desc.Asset                = Asset;
     Desc.Skeleton             = &Skeleton;
     Desc.ComponentBoneGlobals = &BindGlobals;
-    Desc.EntityToWorld        = Transform.GetWorldMatrix();
+    Desc.EntityToWorld        = Transform.ComputeWorldTransform().GetMatrix();
     TSharedPtr<FPhysicsRagdollHandle> Handle = Scene->CreateRagdoll(Desc);
     ASSERT_TRUE(Handle);
     Limp.Ragdoll = Handle;

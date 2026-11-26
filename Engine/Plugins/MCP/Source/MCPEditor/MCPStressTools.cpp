@@ -100,7 +100,7 @@ namespace Lumina::MCP
             // Where the view meets the ground, or a fixed distance ahead when it looks at the sky.
             constexpr float FallbackDistance = 40.0f;
             constexpr float TraceDistance = 2000.0f;
-            const FVector3 Eye = Transform->GetWorldLocation();
+            const FVector3 Eye = Transform->ComputeWorldTransform().GetLocation();
             const FVector3 Forward = CameraComponent->GetForwardVector();
             const SRayResult Hit = World->GetPhysics()->Raycast(Eye, Eye + Forward * TraceDistance, ECS::NullEntity);
             const FVector3 Target = Hit.bHit ? Hit.Location : Eye + Forward * FallbackDistance;
@@ -187,7 +187,7 @@ namespace Lumina::MCP
             {
                 return {};
             }
-            const FVector3 Eye = Transform->GetWorldLocation();
+            const FVector3 Eye = Transform->ComputeWorldTransform().GetLocation();
             return FVector2(Eye.x, Eye.z);
         }
 

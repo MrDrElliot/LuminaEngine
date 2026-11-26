@@ -61,7 +61,7 @@ namespace Lumina
                 continue;
             }
 
-            const FTransform& WT = ModifierView.Get<STransformComponent>(Entity).GetWorldTransform();
+            const FTransform& WT = ModifierView.Get<STransformComponent>(Entity).ComputeWorldTransform();
             const FVector3 Scale = WT.GetScale();
             const FVector3 Center = WT.GetLocation() + Math::Rotate(WT.GetRotation(), Modifier.Offset * Scale);
             const FVector3 Half(Modifier.Extents.x * Math::Abs(Scale.x), Modifier.Extents.y * Math::Abs(Scale.y), Modifier.Extents.z * Math::Abs(Scale.z));
@@ -77,7 +77,7 @@ namespace Lumina
                 continue;
             }
 
-            const FMatrix4 World4 = LinkView.Get<STransformComponent>(Entity).GetWorldMatrix();
+            const FMatrix4 World4 = LinkView.Get<STransformComponent>(Entity).ComputeWorldTransform().GetMatrix();
             const FVector3 Start = FVector3(World4 * FVector4(Link.Start, 1.0f));
             const FVector3 End   = FVector3(World4 * FVector4(Link.End,   1.0f));
             World->GetDebugInterface()->DrawSphere(Start, Link.Radius, kLinkColor, 12, 1.5f, true, -1.0f);

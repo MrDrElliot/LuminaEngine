@@ -262,7 +262,7 @@ namespace Lumina
             return;
         }
 
-        const FMatrix4 EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).GetWorldMatrix();
+        const FMatrix4 EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).ComputeWorldTransform().GetMatrix();
         OutTransforms.SetNum(SkeletonResource->GetNumBones());
 
         // A playing clip leaves skinning matrices here, and skinning times the global bind is the posed bone.
@@ -978,7 +978,7 @@ namespace Lumina
 
         AdvancePreviewClip((float)UpdateContext.GetDeltaTime());
 
-        const FMatrix4 EntityMatrix = Transform.GetWorldMatrix();
+        const FMatrix4 EntityMatrix = Transform.ComputeWorldTransform().GetMatrix();
 
         if (bShowAABB)
         {

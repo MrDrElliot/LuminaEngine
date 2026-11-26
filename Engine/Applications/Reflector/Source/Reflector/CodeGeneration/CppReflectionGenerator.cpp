@@ -33,7 +33,7 @@ namespace Lumina::Reflection
         {
         public:
 
-            FCppEmitter(FCodeWriter& InWriter, const FSpecifierRegistry& InSpecifiers) : Writer(InWriter), Specifiers(InSpecifiers) {}
+            FCppEmitter(FCodeWriter& InWriter, const FSpecifierRegistry& InSpecifiers) : Writer(&InWriter), Specifiers(&InSpecifiers) {}
 
             void DefineInitialHeader(const FTypeView& Type, const std::string& FileID);
             void DefineSecondaryHeader(const FTypeView& Type, const std::string& FileID);
@@ -66,8 +66,8 @@ namespace Lumina::Reflection
             void OpenNamespace(const FTypeView& Type);
             void CloseNamespace(const FTypeView& Type);
 
-            FCodeWriter&              Writer;
-            const FSpecifierRegistry& Specifiers;
+            FCodeWriter*              Writer;
+            const FSpecifierRegistry* Specifiers;
         };
 
         // The runtime type that describes this one.
@@ -411,7 +411,7 @@ namespace Lumina::Reflection
         {
             for (const FMetadataView Pair : Metadata)
             {
-                if (!Pair.Key().empty() && Specifiers.GetStorage(Target, Pair.Key()) == Wanted)
+                if (!Pair.Key().empty() && Specifiers->GetStorage(Target, Pair.Key()) == Wanted)
                 {
                     Stored.push_back(Pair);
                 }
@@ -434,12 +434,12 @@ namespace Lumina::Reflection
             return;
         }
 
-        Writer.Linef("static constexpr Lumina::FMetadataEntry %.*s_Metadata[] = {", static_cast<int>(SymbolBase.size()), SymbolBase.data());
+        Writer->Linef("static constexpr Lumina::FMetadataEntry %.*s_Metadata[] = {", static_cast<int>(SymbolBase.size()), SymbolBase.data());
         for (const FMetadataView& Pair : Stored)
         {
-            Writer.Linef("\t{ \"%s\", \"%s\" },", Pair.Key().c_str(), Pair.Value().c_str());
+            Writer->Linef("\t{ \"%s\", \"%s\" },", Pair.Key().c_str(), Pair.Value().c_str());
         }
-        Writer.Line("};");
+        Writer->Line("};");
     }
 
     // The trailing LUMINA_METADATA field of a descriptor, or nothing when Target stores no metadata.
@@ -457,8 +457,8 @@ namespace Lumina::Reflection
     {
         if (!Type.Namespace().empty())
         {
-            Writer.Linef("namespace %s", Type.Namespace().c_str());
-            Writer.Line("{");
+            Writer->Linef("namespace %s", Type.Namespace().c_str());
+            Writer->Line("{");
         }
     }
 
@@ -466,9 +466,9 @@ namespace Lumina::Reflection
     {
         if (!Type.Namespace().empty())
         {
-            Writer.Line("}");
+            Writer->Line("}");
         }
-        Writer.Line();
+        Writer->Line();
     }
 
     // The type function and the accessor specialization that forwards to it. ExtraConstruction runs once, after the descriptor is built.
@@ -478,29 +478,29 @@ namespace Lumina::Reflection
         const std::string Api = Names::ProjectApiMacro(Type.Module().Name());
         const std::string Function = TypeFunctionName(Type);
 
-        Writer.Line("namespace Lumina::Generated");
-        Writer.Line("{");
-        Writer.Linef("	Lumina::%s* %s()", Kind, Function.c_str());
-        Writer.Line("	{");
-        Writer.Linef("		static Lumina::%s* Type = nullptr;", Kind);
-        Writer.Line("		if (Type == nullptr)");
-        Writer.Line("		{");
-        Writer.Linef("			Lumina::Construct%s(&Type, %s::Desc);", Kind, TypeInfoQualifiedName(Type).c_str());
+        Writer->Line("namespace Lumina::Generated");
+        Writer->Line("{");
+        Writer->Linef("	Lumina::%s* %s()", Kind, Function.c_str());
+        Writer->Line("	{");
+        Writer->Linef("		static Lumina::%s* Type = nullptr;", Kind);
+        Writer->Line("		if (Type == nullptr)");
+        Writer->Line("		{");
+        Writer->Linef("			Lumina::Construct%s(&Type, %s::Desc);", Kind, TypeInfoQualifiedName(Type).c_str());
         if (!ExtraConstruction.empty())
         {
-            Writer.Linef("			%s", ExtraConstruction.c_str());
+            Writer->Linef("			%s", ExtraConstruction.c_str());
         }
-        Writer.Line("		}");
-        Writer.Line("		return Type;");
-        Writer.Line("	}");
-        Writer.Line("}");
-        Writer.Line();
+        Writer->Line("		}");
+        Writer->Line("		return Type;");
+        Writer->Line("	}");
+        Writer->Line("}");
+        Writer->Line();
 
-        Writer.Linef("template<> %s Lumina::%s* Lumina::%s<%s>()", Api.c_str(), Kind, AccessorName(Type), Type.CppQualifiedName().c_str());
-        Writer.Line("{");
-        Writer.Linef("	return Lumina::Generated::%s();", Function.c_str());
-        Writer.Line("}");
-        Writer.Line();
+        Writer->Linef("template<> %s Lumina::%s* Lumina::%s<%s>()", Api.c_str(), Kind, AccessorName(Type), Type.CppQualifiedName().c_str());
+        Writer->Line("{");
+        Writer->Linef("	return Lumina::Generated::%s();", Function.c_str());
+        Writer->Line("}");
+        Writer->Line();
     }
 
     // One FPropertyDesc row, whose type the runtime's trait derives from the member itself.
@@ -529,7 +529,7 @@ namespace Lumina::Reflection
         std::string EditorFlags;
         for (const FMetadataView Pair : Property.Metadata())
         {
-            if (Specifiers.GetStorage(ESpecifierTarget::Property, Pair.Key()) == ESpecifierStorage::EditorFlag)
+            if (Specifiers->GetStorage(ESpecifierTarget::Property, Pair.Key()) == ESpecifierStorage::EditorFlag)
             {
                 EditorFlags += (EditorFlags.empty() ? "" : " | ") + std::string("Lumina::EPropertyEditorFlags::") + Pair.Key();
             }
@@ -539,7 +539,7 @@ namespace Lumina::Reflection
             Row += ", .EditorFlags = " + EditorFlags;
         }
 
-        Writer.Line((Row + " },").c_str());
+        Writer->Line((Row + " },").c_str());
     }
 
     void FCppEmitter::EmitMetadataArrays(const FTypeView& Type)
@@ -572,8 +572,8 @@ namespace Lumina::Reflection
             return;
         }
 
-        Writer.Linef("static const Lumina::FPropertyDesc Properties[%zu];", Count);
-        Writer.Line();
+        Writer->Linef("static const Lumina::FPropertyDesc Properties[%zu];", Count);
+        Writer->Line();
     }
 
     void FCppEmitter::DefinePropertyTable(const FTypeView& Type)
@@ -583,8 +583,8 @@ namespace Lumina::Reflection
             return;
         }
 
-        Writer.Linef("constexpr Lumina::FPropertyDesc %s::Properties[] =", TypeInfoName(Type).c_str());
-        Writer.BeginBlock();
+        Writer->Linef("constexpr Lumina::FPropertyDesc %s::Properties[] =", TypeInfoName(Type).c_str());
+        Writer->BeginBlock();
         for (const FPropertyView Property : Type.Properties())
         {
             if (!Property.IsInner())
@@ -592,9 +592,9 @@ namespace Lumina::Reflection
                 EmitDescriptor(Property);
             }
         }
-        Writer.PopIndent();
-        Writer.Line("};");
-        Writer.Line();
+        Writer->PopIndent();
+        Writer->Line("};");
+        Writer->Line();
     }
 
     // Holds the real compiler to the clang layout the C# bindings bake in as constants.
@@ -603,7 +603,7 @@ namespace Lumina::Reflection
         const std::string& DisplayName = Type.DisplayName();
         if (Type.NativeSize() > 0 && Type.Kind() != ETypeKind::Class)
         {
-            Writer.Linef("static_assert(sizeof(%s) == %lld, \"%s changed size since the reflector laid it out; rebuild so the C# bindings match.\");",
+            Writer->Linef("static_assert(sizeof(%s) == %lld, \"%s changed size since the reflector laid it out; rebuild so the C# bindings match.\");",
                 Type.CppQualifiedName().c_str(), (long long)Type.NativeSize(), DisplayName.c_str());
         }
 
@@ -613,7 +613,7 @@ namespace Lumina::Reflection
             {
                 continue;
             }
-            Writer.Linef("static_assert(offsetof(%s, %s) == %lld, \"%s::%s moved since the reflector laid it out; rebuild so the C# bindings match.\");",
+            Writer->Linef("static_assert(offsetof(%s, %s) == %lld, \"%s::%s moved since the reflector laid it out; rebuild so the C# bindings match.\");",
                 Property.Outer().c_str(), Property.Name().c_str(), (long long)Property.NativeOffset(), DisplayName.c_str(), Property.Name().c_str());
         }
     }
@@ -629,14 +629,14 @@ namespace Lumina::Reflection
             }
 
             const std::string Parms = Names::FunctionParmsStruct(Type.DisplayName(), Function.Name());
-            Writer.Linef("struct %s", Parms.c_str());
-            Writer.Line("{");
+            Writer->Linef("struct %s", Parms.c_str());
+            Writer->Line("{");
             for (const FParameterView Parameter : Function.Parameters())
             {
-                Writer.Linef("	%s %s;", Parameter.StorageType().c_str(), Parameter.Property().Name().c_str());
+                Writer->Linef("	%s %s;", Parameter.StorageType().c_str(), Parameter.Property().Name().c_str());
             }
-            Writer.Line("};");
-            Writer.Line();
+            Writer->Line("};");
+            Writer->Line();
         }
     }
 
@@ -688,33 +688,33 @@ namespace Lumina::Reflection
                 ? (Owner + "::" + Name + "(" + Arguments + ")")
                 : ("((" + Owner + "*)Context)->" + Name + "(" + Arguments + ")");
 
-            Writer.Linef("static void %s(const Lumina::FFunction&, void* Context, void* Frame)", Thunk.c_str());
-            Writer.Line("{");
+            Writer->Linef("static void %s(const Lumina::FFunction&, void* Context, void* Frame)", Thunk.c_str());
+            Writer->Line("{");
             if (!Parameters.empty())
             {
-                Writer.Linef("\t%s& P = *(%s*)Frame;", Parms.c_str(), Parms.c_str());
+                Writer->Linef("\t%s& P = *(%s*)Frame;", Parms.c_str(), Parms.c_str());
             }
             else
             {
-                Writer.Line("\t(void)Frame;");
+                Writer->Line("\t(void)Frame;");
             }
             if (Function.IsStatic())
             {
-                Writer.Line("\t(void)Context;");
+                Writer->Line("\t(void)Context;");
             }
             if (Function.ReturnIndex() >= 0)
             {
                 // An object return goes into a handle to CObject, spelled out where the class is only forward declared.
                 const FParameterView Return = Parameters[static_cast<size_t>(Function.ReturnIndex())];
                 const std::string Assigned = Return.ObjectCastType().empty() ? Call : ("(Lumina::CObject*)(" + Call + ")");
-                Writer.Linef("\tP.%s = %s;", Return.Property().Name().c_str(), Assigned.c_str());
+                Writer->Linef("\tP.%s = %s;", Return.Property().Name().c_str(), Assigned.c_str());
             }
             else
             {
-                Writer.Linef("\t%s;", Call.c_str());
+                Writer->Linef("\t%s;", Call.c_str());
             }
-            Writer.Line("}");
-            Writer.Line();
+            Writer->Line("}");
+            Writer->Line();
         }
     }
 
@@ -735,22 +735,22 @@ namespace Lumina::Reflection
             // Forwarding rather than a fixed signature, so an overload or a defaulted parameter resolves at the call as it would anywhere.
             if (Function.IsStatic())
             {
-                Writer.Linef("template<typename... TArgs> static decltype(auto) Call_%s(TArgs&&... Args) { return %s::%s(static_cast<TArgs&&>(Args)...); }",
+                Writer->Linef("template<typename... TArgs> static decltype(auto) Call_%s(TArgs&&... Args) { return %s::%s(static_cast<TArgs&&>(Args)...); }",
                     Name.c_str(), Owner.c_str(), Name.c_str());
                 continue;
             }
 
-            Writer.Linef("template<typename... TArgs> static decltype(auto) Call_%s(%s* Self, TArgs&&... Args) { return Self->%s(static_cast<TArgs&&>(Args)...); }",
+            Writer->Linef("template<typename... TArgs> static decltype(auto) Call_%s(%s* Self, TArgs&&... Args) { return Self->%s(static_cast<TArgs&&>(Args)...); }",
                 Name.c_str(), Owner.c_str(), Name.c_str());
             if (Function.IsVirtual())
             {
-                Writer.Linef("template<typename... TArgs> static decltype(auto) Base_%s(%s* Self, TArgs&&... Args) { return Self->%s::%s(static_cast<TArgs&&>(Args)...); }",
+                Writer->Linef("template<typename... TArgs> static decltype(auto) Base_%s(%s* Self, TArgs&&... Args) { return Self->%s::%s(static_cast<TArgs&&>(Args)...); }",
                     Name.c_str(), Owner.c_str(), Owner.c_str(), Name.c_str());
             }
         }
         if (!Emitted.empty())
         {
-            Writer.Line();
+            Writer->Line();
         }
     }
 
@@ -767,9 +767,9 @@ namespace Lumina::Reflection
         const std::string Shim = RpcShim::ShimName(Type);
 
         OpenNamespace(Type);
-        Writer.Linef("class %s : public %s", Shim.c_str(), Owner.c_str());
-        Writer.Line("{");
-        Writer.Line("public:");
+        Writer->Linef("class %s : public %s", Shim.c_str(), Owner.c_str());
+        Writer->Line("{");
+        Writer->Line("public:");
         for (const FFunctionView& Function : Rpcs)
         {
             const std::string& Name = Function.Name();
@@ -787,21 +787,21 @@ namespace Lumina::Reflection
 
             const char* Const = Function.IsConst() ? " const" : "";
             const std::string Self = Function.IsConst() ? ("const_cast<" + Shim + "&>(*this)") : std::string("*this");
-            Writer.Linef("	void %s(%s)%s override", Name.c_str(), Params.c_str(), Const);
-            Writer.Line("	{");
-            Writer.Linef("		const void* RpcValues[] = { %snullptr };", Values.c_str());
-            Writer.Linef("		if (::Lumina::ScriptNet::RouteRpc(%s, \"%s\", RpcValues, %zuu))", Self.c_str(), Name.c_str(), NumArguments);
-            Writer.Line("		{");
-            Writer.Line("			return;");
-            Writer.Line("		}");
-            Writer.Linef("		%s::%s(%s);", Owner.c_str(), Name.c_str(), Forwarded.c_str());
-            Writer.Line("	}");
+            Writer->Linef("	void %s(%s)%s override", Name.c_str(), Params.c_str(), Const);
+            Writer->Line("	{");
+            Writer->Linef("		const void* RpcValues[] = { %snullptr };", Values.c_str());
+            Writer->Linef("		if (::Lumina::ScriptNet::RouteRpc(%s, \"%s\", RpcValues, %zuu))", Self.c_str(), Name.c_str(), NumArguments);
+            Writer->Line("		{");
+            Writer->Line("			return;");
+            Writer->Line("		}");
+            Writer->Linef("		%s::%s(%s);", Owner.c_str(), Name.c_str(), Forwarded.c_str());
+            Writer->Line("	}");
         }
-        Writer.Line("};");
-        Writer.Linef("static_assert(sizeof(%s) == sizeof(%s), \"%s adds only overrides, so it has to stay the size the class was reflected at.\");",
+        Writer->Line("};");
+        Writer->Linef("static_assert(sizeof(%s) == sizeof(%s), \"%s adds only overrides, so it has to stay the size the class was reflected at.\");",
             Shim.c_str(), Owner.c_str(), Shim.c_str());
         CloseNamespace(Type);
-        Writer.Line();
+        Writer->Line();
         return true;
     }
 
@@ -822,13 +822,13 @@ namespace Lumina::Reflection
             ++Count;
             if (!Function.Parameters().empty())
             {
-                Writer.Linef("static const Lumina::FPropertyDesc %s[%zu];", Names::FunctionParamsTable(Function.Name()).c_str(), Function.Parameters().size());
-                Writer.Line();
+                Writer->Linef("static const Lumina::FPropertyDesc %s[%zu];", Names::FunctionParamsTable(Function.Name()).c_str(), Function.Parameters().size());
+                Writer->Line();
             }
         }
 
-        Writer.Linef("static const Lumina::FFunctionDesc Functions[%zu];", Count);
-        Writer.Line();
+        Writer->Linef("static const Lumina::FFunctionDesc Functions[%zu];", Count);
+        Writer->Line();
     }
 
     void FCppEmitter::DefineFunctionTable(const FTypeView& Type)
@@ -838,8 +838,8 @@ namespace Lumina::Reflection
             return;
         }
 
-        Writer.Linef("constexpr Lumina::FFunctionDesc %s::Functions[] =", TypeInfoName(Type).c_str());
-        Writer.BeginBlock();
+        Writer->Linef("constexpr Lumina::FFunctionDesc %s::Functions[] =", TypeInfoName(Type).c_str());
+        Writer->BeginBlock();
         for (const FFunctionView Function : Type.Functions())
         {
             if (!Function.ReflectsNatively())
@@ -876,15 +876,15 @@ namespace Lumina::Reflection
                 ? std::string()
                 : (", .Params = " + ParamsTable + ", .NumParams = (Lumina::uint16)std::size(" + ParamsTable + ")");
 
-            Writer.Linef("{ .Name = \"%s\", .Flags = %s%s, .ReturnIndex = %d, .FrameSize = (Lumina::uint16)sizeof(%s), .Thunk = &%s%s },",
+            Writer->Linef("{ .Name = \"%s\", .Flags = %s%s, .ReturnIndex = %d, .FrameSize = (Lumina::uint16)sizeof(%s), .Thunk = &%s%s },",
                 Name.c_str(), Flags.c_str(), Params.c_str(), Function.ReturnIndex(),
                 Names::FunctionParmsStruct(Type.DisplayName(), Name).c_str(),
                 Names::FunctionThunk(Type.DisplayName(), Name).c_str(),
                 MetadataField("Func_" + Name, Function.Metadata(), ESpecifierTarget::Function).c_str());
         }
-        Writer.PopIndent();
-        Writer.Line("};");
-        Writer.Line();
+        Writer->PopIndent();
+        Writer->Line("};");
+        Writer->Line();
     }
 
     void FCppEmitter::DefineFunctionParameterTables(const FTypeView& Type)
@@ -896,15 +896,15 @@ namespace Lumina::Reflection
                 continue;
             }
 
-            Writer.Linef("constexpr Lumina::FPropertyDesc %s::%s[] =", TypeInfoName(Type).c_str(), Names::FunctionParamsTable(Function.Name()).c_str());
-            Writer.BeginBlock();
+            Writer->Linef("constexpr Lumina::FPropertyDesc %s::%s[] =", TypeInfoName(Type).c_str(), Names::FunctionParamsTable(Function.Name()).c_str());
+            Writer->BeginBlock();
             for (const FParameterView Parameter : Function.Parameters())
             {
                 EmitDescriptor(Parameter.Property());
             }
-            Writer.PopIndent();
-            Writer.Line("};");
-            Writer.Line();
+            Writer->PopIndent();
+            Writer->Line("};");
+            Writer->Line();
         }
     }
 
@@ -921,14 +921,14 @@ namespace Lumina::Reflection
             const char* Underlying = UnderlyingTypeName(Type.UnderlyingSize(), Type.IsUnderlyingUnsigned());
             if (!Namespace.empty())
             {
-                Writer.Linef("namespace %s { enum class %s : %s; }", Namespace.c_str(), Type.DisplayName().c_str(), Underlying);
+                Writer->Linef("namespace %s { enum class %s : %s; }", Namespace.c_str(), Type.DisplayName().c_str(), Underlying);
             }
             else
             {
-                Writer.Linef("enum class %s : %s;", Type.DisplayName().c_str(), Underlying);
+                Writer->Linef("enum class %s : %s;", Type.DisplayName().c_str(), Underlying);
             }
-            Writer.Linef("template<> %s Lumina::CEnum* Lumina::StaticEnum<%s>();", Api.c_str(), Type.QualifiedName().c_str());
-            Writer.Line();
+            Writer->Linef("template<> %s Lumina::CEnum* Lumina::StaticEnum<%s>();", Api.c_str(), Type.QualifiedName().c_str());
+            Writer->Line();
             break;
         }
         case ETypeKind::Struct:
@@ -940,13 +940,13 @@ namespace Lumina::Reflection
             }
             if (!Namespace.empty())
             {
-                Writer.Linef("namespace %s { struct %s; }", Namespace.c_str(), Type.CppName().c_str());
+                Writer->Linef("namespace %s { struct %s; }", Namespace.c_str(), Type.CppName().c_str());
             }
             else
             {
-                Writer.Linef("struct %s;", Type.CppName().c_str());
+                Writer->Linef("struct %s;", Type.CppName().c_str());
             }
-            Writer.Linef("template<> %s Lumina::CStruct* Lumina::StaticStruct<%s>();", Api.c_str(), Type.CppQualifiedName().c_str());
+            Writer->Linef("template<> %s Lumina::CStruct* Lumina::StaticStruct<%s>();", Api.c_str(), Type.CppQualifiedName().c_str());
             break;
         }
         case ETypeKind::Class:
@@ -955,25 +955,25 @@ namespace Lumina::Reflection
             const char* DisplayName = Type.DisplayName().c_str();
             if (!Namespace.empty())
             {
-                Writer.Linef("namespace %s { class %s; }", Namespace.c_str(), DisplayName);
+                Writer->Linef("namespace %s { class %s; }", Namespace.c_str(), DisplayName);
             }
             else
             {
-                Writer.Linef("\tclass %s;", DisplayName);
+                Writer->Linef("\tclass %s;", DisplayName);
             }
 
-            Writer.Linef("template<> %s Lumina::CClass* Lumina::StaticClass<%s>();", Api.c_str(), Type.CppQualifiedName().c_str());
+            Writer->Linef("template<> %s Lumina::CClass* Lumina::StaticClass<%s>();", Api.c_str(), Type.CppQualifiedName().c_str());
 
-            Writer.Linef("#define %s_%u_CLASS \\", FileID.c_str(), Type.Location().Line);
-            Writer.Macro("public:");
+            Writer->Linef("#define %s_%u_CLASS \\", FileID.c_str(), Type.Location().Line);
+            Writer->Macro("public:");
 
             // Exports only GetPrivateStaticClass() so the type is referenceable without force-exporting members.
             const char* ClassApi = Type.HasMetadata("MinimalAPI") ? Api.c_str() : "NO_API";
-            Writer.Macrof("\tDECLARE_CLASS(%s, %s, %s, \"%s\", %s)", Namespace.c_str(), DisplayName, Type.Parent().c_str(), Package.c_str(), ClassApi);
-            Writer.Macrof("\tDEFINE_CLASS_FACTORY(%s::%s)", Namespace.c_str(), DisplayName);
-            Writer.Macrof("\tDECLARE_SERIALIZER(%s, %s)", Namespace.c_str(), DisplayName);
-            Writer.FinalizeMacro();
-            Writer.BlankLines(2);
+            Writer->Macrof("\tDECLARE_CLASS(%s, %s, %s, \"%s\", %s)", Namespace.c_str(), DisplayName, Type.Parent().c_str(), Package.c_str(), ClassApi);
+            Writer->Macrof("\tDEFINE_CLASS_FACTORY(%s::%s)", Namespace.c_str(), DisplayName);
+            Writer->Macrof("\tDECLARE_SERIALIZER(%s, %s)", Namespace.c_str(), DisplayName);
+            Writer->FinalizeMacro();
+            Writer->BlankLines(2);
             break;
         }
         }
@@ -991,38 +991,38 @@ namespace Lumina::Reflection
             // An alias has no struct body to inject GENERATED_BODY into.
             if (Type.IsAlias())
             {
-                Writer.BlankLines(2);
+                Writer->BlankLines(2);
                 return;
             }
 
-            Writer.Linef("#define %s_%u_GENERATED_BODY \\", FileID.c_str(), Type.GeneratedBodyLine());
-            Writer.Macrof("friend struct %s;", TypeInfoName(Type).c_str());
+            Writer->Linef("#define %s_%u_GENERATED_BODY \\", FileID.c_str(), Type.GeneratedBodyLine());
+            Writer->Macrof("friend struct %s;", TypeInfoName(Type).c_str());
 
             // Exports StaticStruct() so the type is referenceable without force-exporting every member.
             if (Type.HasMetadata("MinimalAPI"))
             {
-                Writer.Macrof("static %s class Lumina::CStruct* StaticStruct();", Names::ProjectApiMacro(Type.Module().Name()).c_str());
+                Writer->Macrof("static %s class Lumina::CStruct* StaticStruct();", Names::ProjectApiMacro(Type.Module().Name()).c_str());
             }
             else
             {
-                Writer.Macro("static class Lumina::CStruct* StaticStruct();");
+                Writer->Macro("static class Lumina::CStruct* StaticStruct();");
             }
 
             if (!Type.Parent().empty())
             {
-                Writer.Macrof("using Super = %s::%s;", Type.Namespace().c_str(), Type.Parent().c_str());
+                Writer->Macrof("using Super = %s::%s;", Type.Namespace().c_str(), Type.Parent().c_str());
             }
 
-            Writer.FinalizeMacro();
-            Writer.BlankLines(2);
+            Writer->FinalizeMacro();
+            Writer->BlankLines(2);
             break;
         }
         case ETypeKind::Class:
-            Writer.Linef("#define %s_%u_GENERATED_BODY \\", FileID.c_str(), Type.GeneratedBodyLine());
-            Writer.Macrof("\t%s_%u_CLASS", FileID.c_str(), Type.Location().Line);
-            Writer.Macro("private:");
-            Writer.FinalizeMacro();
-            Writer.BlankLines(2);
+            Writer->Linef("#define %s_%u_GENERATED_BODY \\", FileID.c_str(), Type.GeneratedBodyLine());
+            Writer->Macrof("\t%s_%u_CLASS", FileID.c_str(), Type.Location().Line);
+            Writer->Macro("private:");
+            Writer->FinalizeMacro();
+            Writer->BlankLines(2);
             break;
         }
     }
@@ -1042,27 +1042,27 @@ namespace Lumina::Reflection
         const std::string MetadataSymbol = Names::FriendlyFromQualified(Type.QualifiedName());
 
         OpenNamespace(Type);
-        Writer.Linef("struct %s", TypeInfoName(Type).c_str());
-        Writer.BeginBlock();
+        Writer->Linef("struct %s", TypeInfoName(Type).c_str());
+        Writer->BeginBlock();
 
         EmitMetadataArray(MetadataSymbol, Type.Metadata(), ESpecifierTarget::Reflect);
 
-        Writer.Line("static constexpr Lumina::FEnumeratorDesc Enumerators[] =");
-        Writer.BeginBlock();
+        Writer->Line("static constexpr Lumina::FEnumeratorDesc Enumerators[] =");
+        Writer->BeginBlock();
         for (const FEnumConstantView Constant : Type.Constants())
         {
-            Writer.Linef("{ \"%s::%s\", %u },", Type.DisplayName().c_str(), Constant.Label().c_str(), Constant.Value());
+            Writer->Linef("{ \"%s::%s\", %u },", Type.DisplayName().c_str(), Constant.Label().c_str(), Constant.Value());
         }
-        Writer.PopIndent();
-        Writer.Line("};");
-        Writer.Line();
+        Writer->PopIndent();
+        Writer->Line("};");
+        Writer->Line();
 
-        Writer.Linef("static constexpr Lumina::FEnumDesc Desc = { .Name = \"%s\", .Enumerators = Enumerators, "
+        Writer->Linef("static constexpr Lumina::FEnumDesc Desc = { .Name = \"%s\", .Enumerators = Enumerators, "
             ".NumEnumerators = (Lumina::uint32)std::size(Enumerators)%s };",
             Type.DisplayName().c_str(), MetadataField(MetadataSymbol, Type.Metadata(), ESpecifierTarget::Reflect).c_str());
 
-        Writer.PopIndent();
-        Writer.Line("};");
+        Writer->PopIndent();
+        Writer->Line("};");
         CloseNamespace(Type);
 
         EmitTypeFunctions(Type);
@@ -1076,19 +1076,19 @@ namespace Lumina::Reflection
         const std::string OffsetBase = Names::OffsetBaseTypeName(Cpp, Type.Namespace(), DisplayName);
         if (OffsetBase != Cpp)
         {
-            Writer.Linef("using %s = %s;", OffsetBase.c_str(), Cpp.c_str());
-            Writer.Line();
+            Writer->Linef("using %s = %s;", OffsetBase.c_str(), Cpp.c_str());
+            Writer->Line();
         }
 
-        Writer.Linef("// Begin %s", DisplayName.c_str());
+        Writer->Linef("// Begin %s", DisplayName.c_str());
         OpenNamespace(Type);
         EmitFunctionFrames(Type);
 
-        Writer.Linef("struct %s", TypeInfoName(Type).c_str());
-        Writer.BeginBlock();
+        Writer->Linef("struct %s", TypeInfoName(Type).c_str());
+        Writer->BeginBlock();
 
-        Writer.Linef("static Lumina::FStructOps* MakeOps() { return Lumina::MakeStructOps<%s>(); }", Cpp.c_str());
-        Writer.Line();
+        Writer->Linef("static Lumina::FStructOps* MakeOps() { return Lumina::MakeStructOps<%s>(); }", Cpp.c_str());
+        Writer->Line();
 
         EmitMetadataArrays(Type);
         EmitPropertyTable(Type);
@@ -1098,13 +1098,13 @@ namespace Lumina::Reflection
         EmitLayoutAsserts(Type);
 
         const std::string Super = Type.Parent().empty() ? std::string() : (", .Super = &" + Cpp + "::Super::StaticStruct");
-        Writer.Linef("static constexpr Lumina::FStructDesc Desc = { .Name = \"%s\"%s, .MakeOps = &MakeOps, "
+        Writer->Linef("static constexpr Lumina::FStructDesc Desc = { .Name = \"%s\"%s, .MakeOps = &MakeOps, "
             ".Size = sizeof(%s), .Alignment = alignof(%s)%s%s };",
             DisplayName.c_str(), Super.c_str(), Cpp.c_str(), Cpp.c_str(), MemberTableFields(Type).c_str(),
             MetadataField(Names::FriendlyFromQualified(Type.QualifiedName()), Type.Metadata(), ESpecifierTarget::Reflect).c_str());
 
-        Writer.PopIndent();
-        Writer.Line("};");
+        Writer->PopIndent();
+        Writer->Line("};");
         DefinePropertyTable(Type);
         DefineFunctionParameterTables(Type);
         DefineFunctionTable(Type);
@@ -1129,43 +1129,43 @@ namespace Lumina::Reflection
         // An alias has no StaticStruct member to define.
         if (!Type.IsAlias())
         {
-            Writer.Linef("Lumina::CStruct* %s::StaticStruct()", Cpp.c_str());
-            Writer.Line("{");
-            Writer.Linef("\treturn Lumina::Generated::%s();", TypeFunctionName(Type).c_str());
-            Writer.Line("}");
+            Writer->Linef("Lumina::CStruct* %s::StaticStruct()", Cpp.c_str());
+            Writer->Line("{");
+            Writer->Linef("\treturn Lumina::Generated::%s();", TypeFunctionName(Type).c_str());
+            Writer->Line("}");
         }
 
-        Writer.Linef("//~ End %s", DisplayName.c_str());
-        Writer.Line();
+        Writer->Linef("//~ End %s", DisplayName.c_str());
+        Writer->Line();
     }
 
     void FCppEmitter::DeclareClass(const FTypeView& Type)
     {
         const std::string& DisplayName = Type.DisplayName();
-        Writer.Linef("// Begin %s", DisplayName.c_str());
+        Writer->Linef("// Begin %s", DisplayName.c_str());
         if (EmitRpcShim(Type))
         {
             const std::string Shim = Type.Namespace().empty() ? RpcShim::ShimName(Type) : (Type.Namespace() + "::" + RpcShim::ShimName(Type));
-            Writer.Linef("IMPLEMENT_CLASS_CONSTRUCTING(%s, %s, %s)", Type.Namespace().c_str(), DisplayName.c_str(), Shim.c_str());
+            Writer->Linef("IMPLEMENT_CLASS_CONSTRUCTING(%s, %s, %s)", Type.Namespace().c_str(), DisplayName.c_str(), Shim.c_str());
         }
         else
         {
-            Writer.Linef("IMPLEMENT_CLASS(%s, %s)", Type.Namespace().c_str(), DisplayName.c_str());
+            Writer->Linef("IMPLEMENT_CLASS(%s, %s)", Type.Namespace().c_str(), DisplayName.c_str());
         }
 
         // Otherwise a class that misses an override would silently become abstract and vanish from every picker.
         if (!Type.HasMetadata("Abstract"))
         {
-            Writer.Linef("static_assert(!std::is_abstract_v<%s>, \"%s leaves a pure virtual unimplemented. Implement it, or mark the class REFLECT(Abstract) if it is a base.\");",
+            Writer->Linef("static_assert(!std::is_abstract_v<%s>, \"%s leaves a pure virtual unimplemented. Implement it, or mark the class REFLECT(Abstract) if it is a base.\");",
                 Type.CppQualifiedName().c_str(), DisplayName.c_str());
         }
-        Writer.Line();
+        Writer->Line();
 
         OpenNamespace(Type);
         EmitFunctionFrames(Type);
 
-        Writer.Linef("struct %s", TypeInfoName(Type).c_str());
-        Writer.BeginBlock();
+        Writer->Linef("struct %s", TypeInfoName(Type).c_str());
+        Writer->BeginBlock();
 
         EmitMetadataArrays(Type);
         EmitPropertyTable(Type);
@@ -1174,12 +1174,12 @@ namespace Lumina::Reflection
         EmitCallForwarders(Type);
         EmitLayoutAsserts(Type);
 
-        Writer.Linef("static constexpr Lumina::FClassDesc Desc = { .StaticClass = &%s::StaticClass%s%s };",
+        Writer->Linef("static constexpr Lumina::FClassDesc Desc = { .StaticClass = &%s::StaticClass%s%s };",
             Type.CppQualifiedName().c_str(), MemberTableFields(Type).c_str(),
             MetadataField(Names::FriendlyFromQualified(Type.QualifiedName()), Type.Metadata(), ESpecifierTarget::Reflect).c_str());
 
-        Writer.PopIndent();
-        Writer.Line("};");
+        Writer->PopIndent();
+        Writer->Line("};");
         DefinePropertyTable(Type);
         DefineFunctionParameterTables(Type);
         DefineFunctionTable(Type);
@@ -1187,8 +1187,8 @@ namespace Lumina::Reflection
 
         EmitTypeFunctions(Type);
 
-        Writer.Linef("//~ End %s", DisplayName.c_str());
-        Writer.Line();
+        Writer->Linef("//~ End %s", DisplayName.c_str());
+        Writer->Line();
     }
 
     // Every StaticStruct, StaticClass and StaticEnum the traits reach, declared before that first use.
@@ -1198,7 +1198,7 @@ namespace Lumina::Reflection
         {
             const std::string Api = Names::ProjectApiMacro(Type.Module().Name());
             const std::string Friendly = Names::FriendlyFromParts(Type.Namespace(), Type.DisplayName());
-            EmitGuardedDeclaration(Writer, std::string(AccessorName(Type)) + "_" + Friendly,
+            EmitGuardedDeclaration(*Writer, std::string(AccessorName(Type)) + "_" + Friendly,
                 "template<> " + Api + " Lumina::" + RuntimeTypeName(Type) + "* Lumina::" + AccessorName(Type) + "<" + Type.CppQualifiedName() + ">();");
         };
 
@@ -1230,7 +1230,7 @@ namespace Lumina::Reflection
             }
         }
 
-        Writer.Line();
+        Writer->Line();
     }
 
     void FCppReflectionGenerator::ClaimSpecifiers(FSpecifierRegistry& Registry)
@@ -1267,18 +1267,18 @@ namespace Lumina::Reflection
             }
         }
 
-        const FSpecifierRegistry& Specifiers = Context.Run.Specifiers;
-        Context.Run.Workers.ParallelFor(Dirty.size(), [&](size_t Index)
+        const FSpecifierRegistry& Specifiers = *Context.Run->Specifiers;
+        Context.Run->Workers->ParallelFor(Dirty.size(), [&](size_t Index)
         {
             const FHeaderView Header = Dirty[Index];
             if (!Header.Types().empty())
             {
-                WriteHeaderContent(Context.Outputs.Open(GeneratedFiles::HeaderPath(Header)), Specifiers, Header);
+                WriteHeaderContent(Context.Outputs->Open(GeneratedFiles::HeaderPath(Header)), Specifiers, Header);
             }
-            WriteSourceContent(Context.Outputs.Open(GeneratedFiles::SourcePath(Header)), Specifiers, Header);
+            WriteSourceContent(Context.Outputs->Open(GeneratedFiles::SourcePath(Header)), Specifiers, Header);
         });
 
-        WriteUnityBuildFiles(Context.Outputs, Context.Module, std::move(SourceNames));
-        GeneratedFiles::SweepOrphans(Context.Outputs, GeneratedFiles::ModuleDir(Context.Module), Expected, { ".generated.cpp", ".generated.h" });
+        WriteUnityBuildFiles(*Context.Outputs, Context.Module, std::move(SourceNames));
+        GeneratedFiles::SweepOrphans(*Context.Outputs, GeneratedFiles::ModuleDir(Context.Module), Expected, { ".generated.cpp", ".generated.h" });
     }
 }

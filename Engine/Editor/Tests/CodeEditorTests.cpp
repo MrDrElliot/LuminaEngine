@@ -385,20 +385,20 @@ namespace
     public:
 
         FScopedRebind(SShortcut& InTarget, const SShortcut& Replacement)
-            : Target(InTarget)
+            : Target(&InTarget)
             , Saved(InTarget)
         {
-            Target = Replacement;
+            *Target = Replacement;
         }
 
         ~FScopedRebind()
         {
-            Target = Saved;
+            *Target = Saved;
         }
 
     private:
 
-        SShortcut& Target;
+        SShortcut* Target;
         SShortcut  Saved;
     };
 

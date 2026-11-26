@@ -379,9 +379,9 @@ TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorCenterX), 200u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorRadius), 212u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorFrameSize), 216u);
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _Pad0), 220u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorTransitionScale), 220u);
 
     // Every member is accounted for above, so a new one shows up here as a size mismatch.
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _Pad0) + sizeof(FMeshletHeaderGPU::_Pad0),
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorTransitionScale) + sizeof(FMeshletHeaderGPU::ImpostorTransitionScale),
               sizeof(FMeshletHeaderGPU));
 }

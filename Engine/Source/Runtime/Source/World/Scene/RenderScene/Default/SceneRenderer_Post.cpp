@@ -1147,7 +1147,7 @@ namespace Lumina
 
     void FBuiltInTemporalAA::Evaluate(RHI::FCmdListH CL, const FUpscaleInputs& Inputs)
     {
-        Renderer.TemporalAAPass(CL, Inputs);
+        Renderer->TemporalAAPass(CL, Inputs);
     }
 
     void FDefaultSceneRenderer::TemporalAAPass(RHI::FCmdListH CL, const FUpscaleInputs& Inputs)

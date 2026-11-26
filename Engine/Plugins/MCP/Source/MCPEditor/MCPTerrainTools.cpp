@@ -94,35 +94,35 @@ namespace Lumina::MCP
         class FFoliageFileReader
         {
         public:
-            explicit FFoliageFileReader(const TVector<uint8>& InData) : Data(InData) {}
+            explicit FFoliageFileReader(const TVector<uint8>& InData) : Data(&InData) {}
 
             template<typename T>
             bool Read(T& Out)
             {
-                if (Offset + sizeof(T) > static_cast<size_t>(Data.Num()))
+                if (Offset + sizeof(T) > static_cast<size_t>(Data->Num()))
                 {
                     return false;
                 }
-                Memory::Memcpy(&Out, Data.GetData() + Offset, sizeof(T));
+                Memory::Memcpy(&Out, Data->GetData() + Offset, sizeof(T));
                 Offset += sizeof(T);
                 return true;
             }
 
             bool ReadString(FString& Out, uint16 Length)
             {
-                if (Offset + Length > static_cast<size_t>(Data.Num()))
+                if (Offset + Length > static_cast<size_t>(Data->Num()))
                 {
                     return false;
                 }
-                Out = FStringView(reinterpret_cast<const char*>(Data.GetData()) + Offset, Length);
+                Out = FStringView(reinterpret_cast<const char*>(Data->GetData()) + Offset, Length);
                 Offset += Length;
                 return true;
             }
 
-            size_t Remaining() const { return static_cast<size_t>(Data.Num()) - Offset; }
+            size_t Remaining() const { return static_cast<size_t>(Data->Num()) - Offset; }
 
         private:
-            const TVector<uint8>& Data;
+            const TVector<uint8>* Data;
             size_t Offset = 0;
         };
 
@@ -275,7 +275,7 @@ namespace Lumina::MCP
 
                     FTerrainSculptDab Dab;
                     Dab.Mode          = Modes[ModeIndex];
-                    Dab.TerrainOrigin = World->GetComponent<STransformComponent>(Entity).GetWorldLocation();
+                    Dab.TerrainOrigin = World->GetComponent<STransformComponent>(Entity).ComputeWorldTransform().GetLocation();
                     Dab.WorldPosition = FVector3(In.X, Dab.TerrainOrigin.y, In.Z);
                     Dab.Radius        = Math::Max(In.Radius, 1.0f);
                     Dab.Strength      = Math::Saturate(In.Strength);

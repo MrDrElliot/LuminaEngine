@@ -141,7 +141,7 @@ namespace Lumina
                 const STransformComponent* Transform = Registry.IsValid(Entity) ? Registry.TryGet<ECS::Read<STransformComponent>>(Entity) : nullptr;
                 if (Transform != nullptr)
                 {
-                    Draw->DrawPoint(Transform->GetWorldLocationCached(), 0.5f, kTierColors[static_cast<int32>(Entry.Tier) & 3], 2.0f, -1.0f, false);
+                    Draw->DrawPoint(Transform->GetWorldLocation(), 0.5f, kTierColors[static_cast<int32>(Entry.Tier) & 3], 2.0f, -1.0f, false);
                     ++Held;
                 }
             }
@@ -206,7 +206,7 @@ namespace Lumina
             const bool bExtrapolating = RenderTime > Newest.Time;
 
             // The rendered pose trails the newest sample by the interpolation delay, red once it runs past it.
-            const FVector3 Rendered = Transform.GetWorldLocationCached();
+            const FVector3 Rendered = Transform.GetWorldLocation();
             const FVector4 Color = bExtrapolating ? kExtrapolateColor : kSampleColor;
             for (int32 Index = 0; Index < Rep.Ring.Count; ++Index)
             {

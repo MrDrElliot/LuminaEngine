@@ -53,6 +53,10 @@ namespace Lumina
         // Below this a field binds faster serially than it takes to fan out.
         inline constexpr uint32 kFreshFoliageParallelThreshold = 8192;
         inline constexpr uint32 kActiveBit = (uint32)EInstanceFlags::Active << 16;
+        // Freed runs up to this long are filed by length for reuse, and longer ones join the free blocks.
+        inline constexpr uint32 kMaxListedSlotRun = TRANSFORM_STREAM_MAX_SPAN;
+        // The longest run whose surfaces can share one transform, set by the offset bits a compacted instance carries.
+        inline constexpr uint32 kMaxSharedTransformRun = (0xFFFFFFFFu >> GPU_INSTANCE_TRANSFORM_OFFSET_SHIFT) + 1u;
 
         template <typename TArray>
         void ReserveGeometric(TArray& Array, SIZE_T Target)

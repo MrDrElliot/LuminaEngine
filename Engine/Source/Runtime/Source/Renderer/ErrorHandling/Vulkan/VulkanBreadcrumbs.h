@@ -1,7 +1,7 @@
 #pragma once
 
 #include <atomic>
-#include <volk/volk.h>
+#include <vulkan/vulkan.h>
 
 #include "Containers/String.h"
 #include "Lumina.h"

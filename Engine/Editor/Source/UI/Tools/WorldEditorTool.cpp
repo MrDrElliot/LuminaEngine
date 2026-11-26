@@ -919,7 +919,7 @@ namespace Lumina
             {
                 if (World->GetEntityRegistry().IsValid(Selected))
                 {
-                    World->GetEntityRegistry().EmplaceOrReplace<FNeedsTransformUpdate>(Selected);
+                    ECS::Utils::MarkTransformDirty(World->GetEntityRegistry(), Selected);
                 }
             }
         }
@@ -1644,14 +1644,14 @@ namespace Lumina
                 STransformComponent& PivotTransformComponent = World->GetEntityRegistry().Get<STransformComponent>(PivotEntity);
 
                 // Padded AABB so the gizmo stays visible when the pivot is just outside the frustum but handles aren't.
-                const FVector3 PivotWorld = PivotTransformComponent.GetWorldLocation();
+                const FVector3 PivotWorld = PivotTransformComponent.ComputeWorldTransform().GetLocation();
                 const SAABB PivotBounds(PivotWorld - FVector3(1.0f), PivotWorld + FVector3(1.0f));
                 const bool bPivotVisible = CameraComponent.GetViewVolume().GetFrustum().IsInside(PivotBounds);
 
                 // Mid-drag stays drawn so ImGuizmo's release fires; otherwise bImGuizmoUsedOnce sticks and IsOver() blocks clicks.
                 if (bPivotVisible || bImGuizmoUsedOnce)
                 {
-                    FMatrix4 EntityMatrix = PivotTransformComponent.GetWorldMatrix();
+                    FMatrix4 EntityMatrix = PivotTransformComponent.ComputeWorldTransform().GetMatrix();
 
                     float* SnapValues = nullptr;
                     float SnapArray[3] = {};
@@ -1802,7 +1802,7 @@ namespace Lumina
 
                                         FVector3 LP, WP;
                                         if (!WorldEditorToolInternal::FindClosestVertexToScreenPoint(*MeshComp.StaticMesh.Get(),
-                                                                            Xform.GetWorldMatrix(), SnapViewProj,
+                                                                            Xform.ComputeWorldTransform().GetMatrix(), SnapViewProj,
                                                                             ViewportSize, AnchorScreen,
                                                                             VertexSnapPixelRadius, LP, WP))
                                         {
@@ -1887,7 +1887,7 @@ namespace Lumina
                         }
                         else
                         {
-                            FVector3 PivotPosition = PivotTransformComponent.GetWorldLocationCached();
+                            FVector3 PivotPosition = PivotTransformComponent.GetWorldLocation();
 
                             SelectionView.ForEach([&](ECS::FEntity Entity, STransformComponent& Transform)
                             {
@@ -1898,17 +1898,17 @@ namespace Lumina
                                     case ImGuizmo::TRANSLATE:
                                     {
                                         FMatrix4 TranslationDelta = Math::Translate(FMatrix4(1.f), DeltaTranslation);
-                                        DesiredWorldMatrix = TranslationDelta * Transform.GetWorldMatrix();
+                                        DesiredWorldMatrix = TranslationDelta * Transform.ComputeWorldTransform().GetMatrix();
                                         break;
                                     }
 
                                     case ImGuizmo::ROTATE:
                                     {
-                                        FVector3 OffsetFromPivot = Transform.GetWorldLocationCached() - PivotPosition;
+                                        FVector3 OffsetFromPivot = Transform.GetWorldLocation() - PivotPosition;
                                         FVector3 RotatedOffset   = DeltaRotation * OffsetFromPivot;
                                         FVector3 NewWorldPos     = PivotPosition + RotatedOffset;
-                                        FQuat NewWorldRot     = DeltaRotation * Transform.GetWorldRotation();
-                                        FVector3 WorldScale      = Transform.GetWorldScale();
+                                        FQuat NewWorldRot     = DeltaRotation * Transform.ComputeWorldTransform().GetRotation();
+                                        FVector3 WorldScale      = Transform.ComputeWorldTransform().GetScale();
 
                                         DesiredWorldMatrix = Math::Translate(FMatrix4(1.f), NewWorldPos)
                                                            * Math::ToMatrix4(NewWorldRot)
@@ -1918,7 +1918,7 @@ namespace Lumina
 
                                     case ImGuizmo::SCALE:
                                     {
-                                        const FVector3 CurrentWorldScale = Transform.GetWorldScale();
+                                        const FVector3 CurrentWorldScale = Transform.ComputeWorldTransform().GetScale();
                                         FVector3 ClampedDeltaScale       = DeltaScale;
                                         constexpr float MinScale          = 0.001f;
                                         for (int Axis = 0; Axis < 3; ++Axis)
@@ -1933,10 +1933,10 @@ namespace Lumina
                                             }
                                         }
 
-                                        FVector3 OffsetFromPivot = Transform.GetWorldLocationCached() - PivotPosition;
+                                        FVector3 OffsetFromPivot = Transform.GetWorldLocation() - PivotPosition;
                                         FVector3 ScaledOffset    = OffsetFromPivot * ClampedDeltaScale;
                                         FVector3 NewWorldPos     = PivotPosition + ScaledOffset;
-                                        FQuat WorldRot        = Transform.GetWorldRotation();
+                                        FQuat WorldRot        = Transform.ComputeWorldTransform().GetRotation();
                                         FVector3 NewWorldScale   = CurrentWorldScale * ClampedDeltaScale;
 
                                         DesiredWorldMatrix = Math::Translate(FMatrix4(1.f), NewWorldPos)
@@ -1953,7 +1953,7 @@ namespace Lumina
                                 if (const ECS::FEntity Parent = World->GetEntityRegistry().GetHierarchy().GetParent(Entity); Parent != ECS::NullEntity)
                                 {
                                     STransformComponent& ParentTransform = World->GetEntityRegistry().Get<STransformComponent>(Parent);
-                                    FMatrix4 LocalMatrix = Math::Inverse(ParentTransform.GetWorldMatrix()) * DesiredWorldMatrix;
+                                    FMatrix4 LocalMatrix = Math::Inverse(ParentTransform.ComputeWorldTransform().GetMatrix()) * DesiredWorldMatrix;
 
                                     FVector3 LocalTranslation, LocalScale, LocalSkew;
                                     FQuat LocalRotation;
@@ -1988,7 +1988,7 @@ namespace Lumina
                         // The cached dirty signal can fail in a duplicated world.
                         for (ECS::FEntity Selected : SelectionView)
                         {
-                            World->GetEntityRegistry().EmplaceOrReplace<FNeedsTransformUpdate>(Selected);
+                            ECS::Utils::MarkTransformDirty(World->GetEntityRegistry(), Selected);
                         }
 
                         // Shift keeps the camera with the moved selection, so a long drag never leaves the view.
@@ -2033,7 +2033,7 @@ namespace Lumina
                         {
                             AnchorWorld = bVertexSnapApplied
                                 ? VertexSnapAnchorWorld
-                                : FVector3(PivotTransformComponent.GetWorldMatrix() * FVector4(VertexSnapAnchorLocal, 1.0f));
+                                : FVector3(PivotTransformComponent.ComputeWorldTransform().GetMatrix() * FVector4(VertexSnapAnchorLocal, 1.0f));
                             bHaveAnchor = true;
                         }
                         else if (bPreviewAnchorValid)
@@ -2238,7 +2238,7 @@ namespace Lumina
 
                             if (const SStaticMeshComponent* Mesh = Registry.TryGet<SStaticMeshComponent>(Entity))
                             {
-                                SAABB WorldAABB = Mesh->GetAABB().ToWorld(Transform.GetWorldMatrix());
+                                SAABB WorldAABB = Mesh->GetAABB().ToWorld(Transform.ComputeWorldTransform().GetMatrix());
                                 if (!WorldEditorToolInternal::ProjectAABBToScreenRect(WorldAABB, ViewProj, ViewportSize, ProjMin, ProjMax))
                                 {
                                     return;
@@ -2246,7 +2246,7 @@ namespace Lumina
                             }
                             else
                             {
-                                const FVector3 P = Transform.GetWorldLocation();
+                                const FVector3 P = Transform.ComputeWorldTransform().GetLocation();
                                 FVector4 Clip = ViewProj * FVector4(P, 1.0f);
                                 if (Clip.w <= 1e-4f)
                                 {
@@ -2948,7 +2948,7 @@ namespace Lumina
 
             for (ECS::FEntity Entity : Out.Roots)
             {
-                Out.Pivot += Registry.Get<STransformComponent>(Entity).GetWorldLocation();
+                Out.Pivot += Registry.Get<STransformComponent>(Entity).ComputeWorldTransform().GetLocation();
                 Out.TotalEntityCount += 1;
                 Registry.GetHierarchy().ForEachDescendant(Entity, [&](ECS::FEntity)
                 {
@@ -3533,7 +3533,7 @@ namespace Lumina
             if (PossessedCameraEntity != ECS::NullEntity && World->IsValidEntity(PossessedCameraEntity)
                 && World->HasComponent<STransformComponent>(PossessedCameraEntity))
             {
-                CameraPose = World->GetComponent<STransformComponent>(PossessedCameraEntity).GetWorldTransform();
+                CameraPose = World->GetComponent<STransformComponent>(PossessedCameraEntity).ComputeWorldTransform();
                 bHasPose = true;
             }
 
@@ -3544,7 +3544,7 @@ namespace Lumina
             if (bHasPose && EditorEntity != ECS::NullEntity && World->IsValidEntity(EditorEntity))
             {
                 World->GetComponent<STransformComponent>(EditorEntity).SetLocalTransform(CameraPose);
-                World->EmplaceComponent<FNeedsTransformUpdate>(EditorEntity);
+                ECS::Utils::MarkTransformDirty(World->GetEntityRegistry(), EditorEntity);
             }
 
             // Game view hides the overlays that make selecting a live entity usable.
@@ -4152,7 +4152,7 @@ namespace Lumina
             // Use ProxyEditorEntity (captured at PIE entry); EditorEntity may be null if Travel swapped worlds mid-PIE.
             if (ProxyEditorEntity != ECS::NullEntity && ProxyWorld->GetEntityRegistry().IsValid(ProxyEditorEntity))
             {
-                SavedCameraTransform = ProxyWorld->GetEntityRegistry().Get<STransformComponent>(ProxyEditorEntity).GetWorldTransform();
+                SavedCameraTransform = ProxyWorld->GetEntityRegistry().Get<STransformComponent>(ProxyEditorEntity).ComputeWorldTransform();
                 SavedCamera = ProxyWorld->GetEntityRegistry().Get<SCameraComponent>(ProxyEditorEntity);
                 bHasSavedCamera = true;
 
@@ -4223,7 +4223,7 @@ namespace Lumina
 
             ExitActiveMode();
 
-            FTransform TransformCopy = World->GetEntityRegistry().Get<STransformComponent>(EditorEntity).GetWorldTransform();
+            FTransform TransformCopy = World->GetEntityRegistry().Get<STransformComponent>(EditorEntity).ComputeWorldTransform();
             SCameraComponent CameraCopy = World->GetEntityRegistry().Get<SCameraComponent>(EditorEntity);
 
             World->SetActive(false);
@@ -4278,7 +4278,7 @@ namespace Lumina
             bDetailsDirty = true;
             bSimulatingWorld = false;
 
-            FTransform TransformCopy = World->GetEntityRegistry().Get<STransformComponent>(EditorEntity).GetWorldTransform();
+            FTransform TransformCopy = World->GetEntityRegistry().Get<STransformComponent>(EditorEntity).ComputeWorldTransform();
             SCameraComponent CameraCopy = World->GetEntityRegistry().Get<SCameraComponent>(EditorEntity);
 
             if (EditorEntity != ECS::NullEntity && World->GetEntityRegistry().IsValid(EditorEntity))
@@ -4993,7 +4993,7 @@ namespace Lumina
         FVector3 Median(0.0f);
         for (ECS::FEntity Entity : Targets)
         {
-            Median += Registry.Get<STransformComponent>(Entity).GetWorldLocation();
+            Median += Registry.Get<STransformComponent>(Entity).ComputeWorldTransform().GetLocation();
         }
         Median /= static_cast<float>(Targets.Num());
 
@@ -5027,7 +5027,7 @@ namespace Lumina
 
             if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity); Parent != ECS::NullEntity)
             {
-                const FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Parent).GetWorldMatrix();
+                const FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Parent).ComputeWorldTransform().GetMatrix();
                 const FMatrix4 NewLocal    = Math::Inverse(ParentWorld) * DesiredWorld.GetMatrix();
 
                 FVector3 LocalTranslation, LocalScale, Skew;
@@ -5167,7 +5167,7 @@ namespace Lumina
             return;
         }
 
-        const FTransform ViewTransform = Registry.Get<STransformComponent>(EditorEntity).GetWorldTransform();
+        const FTransform ViewTransform = Registry.Get<STransformComponent>(EditorEntity).ComputeWorldTransform();
 
         TVector<ECS::FEntity> Targets;
         Targets.Reserve(GetSelectedEntities().Num());
@@ -5189,7 +5189,7 @@ namespace Lumina
 
         for (ECS::FEntity Entity : Targets)
         {
-            FTransform Desired = Registry.Get<STransformComponent>(Entity).GetWorldTransform();
+            FTransform Desired = Registry.Get<STransformComponent>(Entity).ComputeWorldTransform();
             Desired.SetRotation(ViewTransform.GetRotation());
             if (!bRotationOnly)
             {
@@ -5221,7 +5221,7 @@ namespace Lumina
             return;
         }
 
-        const FTransform Target = Registry.Get<STransformComponent>(Entity).GetWorldTransform();
+        const FTransform Target = Registry.Get<STransformComponent>(Entity).ComputeWorldTransform();
 
         // Orbit derives the camera from yaw/pitch/distance, so it would overwrite an aligned placement.
         SetCameraMode(EEditorCameraMode::Free);
@@ -5277,7 +5277,7 @@ namespace Lumina
             {
                 return;
             }
-            Candidates.Emplace(Mesh.GetAABB().ToWorld(Transform.GetWorldMatrix()));
+            Candidates.Emplace(Mesh.GetAABB().ToWorld(Transform.ComputeWorldTransform().GetMatrix()));
         });
 
         TVector<ECS::FEntity, 0> TransactionTargets(Targets.begin(), Targets.end());
@@ -5288,7 +5288,7 @@ namespace Lumina
         for (ECS::FEntity Entity : Targets)
         {
             STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
-            const FVector3 WorldLocation = Transform.GetWorldLocation();
+            const FVector3 WorldLocation = Transform.ComputeWorldTransform().GetLocation();
             const FVector3 Origin = WorldLocation + FVector3(0.0f, 0.5f, 0.0f);
 
             float BestT = FLT_MAX;
@@ -5312,14 +5312,14 @@ namespace Lumina
                 NewY = 0.0f;
             }
 
-            FTransform NewWorld = Transform.GetWorldTransform();
+            FTransform NewWorld = Transform.ComputeWorldTransform();
             FVector3 NewLoc = NewWorld.GetLocation();
             NewLoc.y = NewY;
             NewWorld.SetLocation(NewLoc);
 
             if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity); Parent != ECS::NullEntity)
             {
-                FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Parent).GetWorldMatrix();
+                FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Parent).ComputeWorldTransform().GetMatrix();
                 FMatrix4 NewLocalMat = Math::Inverse(ParentWorld) * NewWorld.GetMatrix();
 
                 FVector3 LT, LS, LSkew; FQuat LR; FVector4 LP;
@@ -5372,7 +5372,7 @@ namespace Lumina
                 continue;
             }
 
-            const FVector3 Loc = Registry.Get<STransformComponent>(Entity).GetWorldLocation();
+            const FVector3 Loc = Registry.Get<STransformComponent>(Entity).ComputeWorldTransform().GetLocation();
             Min = Math::Min(Min, Loc);
             Max = Math::Max(Max, Loc);
             bAny = true;
@@ -5411,7 +5411,7 @@ namespace Lumina
             return;
         }
 
-        CopiedTransform = Registry.Get<STransformComponent>(Entity).GetWorldTransform();
+        CopiedTransform = Registry.Get<STransformComponent>(Entity).ComputeWorldTransform();
         bHasCopiedTransform = true;
     }
 
@@ -5448,7 +5448,7 @@ namespace Lumina
 
             if (const ECS::FEntity Parent = Registry.GetHierarchy().GetParent(Entity); Parent != ECS::NullEntity)
             {
-                FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Parent).GetWorldMatrix();
+                FMatrix4 ParentWorld = Registry.Get<STransformComponent>(Parent).ComputeWorldTransform().GetMatrix();
                 FMatrix4 NewLocalMat = Math::Inverse(ParentWorld) * CopiedTransform.GetMatrix();
 
                 FVector3 LT, LS, LSkew; FQuat LR; FVector4 LP;
@@ -5480,7 +5480,7 @@ namespace Lumina
             return;
         }
 
-        CameraBookmarks[Slot] = Registry.Get<STransformComponent>(EditorEntity).GetWorldTransform();
+        CameraBookmarks[Slot] = Registry.Get<STransformComponent>(EditorEntity).ComputeWorldTransform();
         bCameraBookmarkSet[Slot] = true;
     }
 
@@ -5591,7 +5591,7 @@ namespace Lumina
         for (ECS::FEntity Entity : View)
         {
             const STransformComponent& Transform = View.Get<STransformComponent>(Entity);
-            const FVector3 WorldPos = Transform.GetWorldLocation();
+            const FVector3 WorldPos = Transform.ComputeWorldTransform().GetLocation();
             if (!Frustum.IsInside(WorldPos))
             {
                 continue;
@@ -5626,7 +5626,7 @@ namespace Lumina
         {
             const SNameComponent* NameComp = Registry.TryGet<SNameComponent>(C.Entity);
             const STransformComponent& Transform = Registry.Get<STransformComponent>(C.Entity);
-            const FVector3 P = Transform.GetWorldLocation();
+            const FVector3 P = Transform.ComputeWorldTransform().GetLocation();
 
             char Line0[96];
             char Line1[96];
@@ -5723,7 +5723,7 @@ namespace Lumina
         for (ECS::FEntity Entity : SelView)
         {
             const STransformComponent& Transform = SelView.Get<STransformComponent>(Entity);
-            const FVector3 WorldPos = Transform.GetWorldLocation();
+            const FVector3 WorldPos = Transform.ComputeWorldTransform().GetLocation();
 
             FVector4 Clip = ViewProj * FVector4(WorldPos, 1.0f);
 

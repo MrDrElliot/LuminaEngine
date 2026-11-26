@@ -418,7 +418,7 @@ namespace Lumina
 
         for (FTerrainExtract& Item : Frame.Extracts.TerrainExtracts)
         {
-            Item.WorldMatrix = Transforms.Get(Item.Entity).GetWorldMatrixCached();
+            Item.WorldMatrix = Transforms.Get(Item.Entity).GetWorldMatrix();
             PrepareTerrainExtract(TerrainView.template Get<STerrainComponent>(Item.Entity), Item.WorldMatrix, Item);
         }
     }

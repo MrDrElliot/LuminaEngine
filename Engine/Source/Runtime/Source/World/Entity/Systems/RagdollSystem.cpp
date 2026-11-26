@@ -120,7 +120,7 @@ namespace Lumina
                         Globals[i] = (*Source)[i] * AnimPose::GetBindGlobalMatrix(Skeleton, i);
                     }
 
-                    Context.Defer([Entity, Skeleton, Globals = Move(Globals), EntityToWorld = Transform.GetWorldMatrix()](const SExclusiveContext& Exclusive)
+                    Context.Defer([Entity, Skeleton, Globals = Move(Globals), EntityToWorld = Transform.ComputeWorldTransform().GetMatrix()](const SExclusiveContext& Exclusive)
                     {
                         Physics::IPhysicsScene* Scene = Exclusive.GetPhysicsScene();
                         ECS::FRegistry& Registry = Exclusive.GetRegistry();
@@ -191,14 +191,14 @@ namespace Lumina
                     FTransform World;
                     World.SetLocation(RootPos);
                     World.SetRotation(RootRot);
-                    World.SetScale(Transform.GetWorldScale());
+                    World.SetScale(Transform.ComputeWorldTransform().GetScale());
                     Context.Patch<STransformComponent>(Entity, [World](STransformComponent& Driven) { Driven.SetWorldTransform(World); });
 
                     WorldToEntity = Math::Inverse(AnimPose::ComposeTRS(RootPos, RootRot, World.GetScale()));
                 }
                 else
                 {
-                    WorldToEntity = Math::Inverse(Transform.GetWorldMatrix());
+                    WorldToEntity = Math::Inverse(Transform.ComputeWorldTransform().GetMatrix());
                 }
 
                 PhysicsQueries->ReadRagdollPose(*Ragdoll.Ragdoll, WorldToEntity, Skeleton, Mesh.BoneTransforms);

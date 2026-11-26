@@ -11,6 +11,7 @@
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Math/SIMD/SIMD.h"
 #include "Log/Log.h"
+#include "Platform/Time/PlatformTime.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/CharacterControllerComponent.h"
@@ -25,6 +26,12 @@ namespace Lumina::Physics
 {
     // Matches the transform resolve's own fan-out point, below which a job costs more than the work.
     static constexpr uint32 InterpParallelThreshold = 1000;
+
+    // Wall time catching up may spend in a frame, in fixed steps of simulated time.
+    static constexpr double kCatchUpBudgetSteps = 2.0;
+
+    // How fast the measured step cost follows a change, so one slow step does not drop a frame's worth of time.
+    static constexpr double kStepCostSmoothing = 0.2;
 
     void FBox3DPhysicsScene::Simulate()
     {
@@ -317,6 +324,8 @@ namespace Lumina::Physics
         DropCharacterInterpSlots();
 
         const float KillHeight = World->GetDefaultWorldSettings().WorldKillHeight;
+        const bool bTrackReach = CharacterLODRangeSq > 0.0f;
+        AwakeBodyReach.Reset();
 
         for (int32 i = 0; i < Events.moveCount; ++i)
         {
@@ -336,6 +345,16 @@ namespace Lumina::Physics
 
             const FVector3 NewPosition = Box3DUtils::FromB3Vec3(Event.transform.p);
             const FQuat NewRotation = Box3DUtils::FromB3Quat(Event.transform.q);
+
+            // Two steps of travel past its bounds, since characters near it are only made exact for the step after.
+            if (bTrackReach && !Event.fellAsleep)
+            {
+                const b3AABB Box = b3Body_ComputeAABB(Event.bodyId);
+                const b3Vec3 Center = b3MulSV(0.5f, b3Add(Box.lowerBound, Box.upperBound));
+                const float Extent = 0.5f * b3Length(b3Sub(Box.upperBound, Box.lowerBound));
+                const float Travel = 2.0f * b3Length(b3Body_GetLinearVelocity(Event.bodyId)) / Math::Max(World->GetDefaultWorldSettings().PhysicsHz, 10.0f);
+                AwakeBodyReach.Emplace(Center.x, Center.y, Center.z, Extent + Travel);
+            }
 
             if (Handle < static_cast<uint32>(BodyAwake.Num()))
             {
@@ -546,9 +565,25 @@ namespace Lumina::Physics
                 return;
             }
 
-            const FVector3 CurrentPosition = Component.Character->Position;
+            FVector3 CurrentPosition = Component.Character->Position;
+            FVector3 PreviousPosition = Component.LastBodyPosition;
             FQuat CurrentRotation = Component.Character->Rotation;
             FQuat PreviousRotation = Component.LastBodyRotation;
+
+            // A far character moves once per LOD span, so its blend runs across the whole span instead of one step.
+            const FPhysicsCharacterHandle& Handle = *Component.Character;
+            if (Handle.LODInterval > 1)
+            {
+                const float Span = (float)Handle.LODInterval;
+                const float From = Math::Min((float)Handle.LODStepsHeld, Span - 1.0f) / Span;
+                const float To = From + 1.0f / Span;
+                const FVector3 Moved = CurrentPosition - PreviousPosition;
+                const FQuat StartRotation = PreviousRotation;
+                PreviousPosition = Component.LastBodyPosition + Moved * From;
+                CurrentPosition = Component.LastBodyPosition + Moved * To;
+                PreviousRotation = Math::Slerp(StartRotation, CurrentRotation, From);
+                CurrentRotation = Math::Slerp(StartRotation, CurrentRotation, To);
+            }
 
             // Look input steers the capsule rather than being simulated, so it shows the frame it arrives instead of a step later.
             const SCharacterMovementComponent* Movement = Registry.TryGet<SCharacterMovementComponent>(Entity);
@@ -561,7 +596,7 @@ namespace Lumina::Physics
 
             InterpStaging.Entities[Slot] = Entity;
             InterpStaging.Flags[Slot] = CurrentPosition.y < KillHeight ? EInterpFlag::BelowKill : EInterpFlag::Interpolate;
-            InterpStaging.PrevPos[Slot] = Component.LastBodyPosition;
+            InterpStaging.PrevPos[Slot] = PreviousPosition;
             InterpStaging.CurrPos[Slot] = CurrentPosition;
             InterpStaging.PrevQx[Slot] = PreviousRotation.x;
             InterpStaging.PrevQy[Slot] = PreviousRotation.y;
@@ -635,8 +670,8 @@ namespace Lumina::Physics
             return Registry.IsValid(Entity) && TransformStorage.Contains(Entity) && !PendingTeleport.Contains(Entity);
         };
 
-        // The body pose is world space, so a parented entity takes it relative to where its parent now is.
-        auto WritePose = [&](uint32 i)
+        // The body pose is world space, so a parented entity takes it relative to where its parent now is. True when a deferred queue entry is owed.
+        auto WritePose = [&](uint32 i, bool bDeferQueue)
         {
             const ECS::FEntity Entity = InterpStaging.Entities[i];
             STransformComponent& Transform = TransformStorage.Get(Entity);
@@ -662,28 +697,47 @@ namespace Lumina::Physics
             // A resting body or idle character would otherwise mark itself and its whole hierarchy moved every frame.
             if (bResting && Transform.LocalTransform.GetLocation() == Location && Transform.LocalTransform.GetRotation() == Rotation)
             {
-                return;
+                return false;
+            }
+            if (bDeferQueue)
+            {
+                return Transform.SetFromPhysicsUnqueued(Location, Rotation);
             }
             Transform.SetFromPhysics(Location, Rotation);
+            return false;
+        };
+
+        // A static or kinematic body under a simulated one rides along, while a simulated descendant keeps its own motion.
+        auto BodyStorage = Registry.GetStorage<SRigidBodyComponent>();
+        const auto IsRider = [&](ECS::FEntity Descendant)
+        {
+            return BodyStorage.Contains(Descendant) && BodyStorage.Get(Descendant).BodyType != EBodyType::Dynamic;
+        };
+        const auto CarriesRider = [&](ECS::FEntity Entity)
+        {
+            bool bCarries = false;
+            Hierarchy.ForEachDescendant(Entity, [&](ECS::FEntity Descendant) { bCarries = bCarries || IsRider(Descendant); });
+            return bCarries;
         };
 
         // Reports whether the entity carries a rider, which the pre-step pass then moves to the carrier's simulated pose.
-        auto BodyStorage = Registry.GetStorage<SRigidBodyComponent>();
-        auto WriteWithRiders = [&](uint32 i)
+        const auto MarkRiders = [&](uint32 i)
         {
-            WritePose(i);
-
-            // A static or kinematic body under a simulated one rides along, while a simulated descendant keeps its own motion.
             bool bCarries = false;
             Hierarchy.ForEachDescendant(InterpStaging.Entities[i], [&](ECS::FEntity Descendant)
             {
-                if (BodyStorage.Contains(Descendant) && BodyStorage.Get(Descendant).BodyType != EBodyType::Dynamic)
+                if (IsRider(Descendant))
                 {
                     Registry.EmplaceOrReplace<FNeedsPhysicsBodyUpdate>(Descendant);
                     bCarries = true;
                 }
             });
             return bCarries;
+        };
+        auto WriteWithRiders = [&](uint32 i)
+        {
+            WritePose(i, false);
+            return MarkRiders(i);
         };
 
         if (bCarriersOnly)
@@ -698,12 +752,22 @@ namespace Lumina::Physics
             return;
         }
 
-        enum : uint8 { kInterpSkip = 0, kInterpParented = 1, kInterpKill = 2 };
+        enum : uint8 { kInterpSkip = 0, kInterpParented = 1, kInterpKill = 2, kInterpRootCarrier = 3 };
         InterpCategory.SetNum(Count);
         std::atomic<uint32> KillCount{0};
 
+        const uint32 ThreadSlots = Math::Max(Jobs::GetNumThreadSlots(), 1u);
+        if ((uint32)InterpQueuedRoots.Num() < ThreadSlots)
+        {
+            InterpQueuedRoots.SetNum(ThreadSlots);
+        }
+        for (TVector<ECS::FEntity>& Roots : InterpQueuedRoots)
+        {
+            Roots.Reset();
+        }
+
         // A flat entity is nobody's parent, so its pose is written as it is sorted, while a kill is structural and waits for the serial pass.
-        const auto WriteFlat = [&](uint32 i)
+        const auto WriteFlat = [&](uint32 i, uint32 Thread)
         {
             const EInterpFlag Flag = InterpStaging.Flags[i];
             const ECS::FEntity Entity = InterpStaging.Entities[i];
@@ -717,7 +781,16 @@ namespace Lumina::Physics
             {
                 if (TransformStorage.Get(Entity).bIsFlat)
                 {
-                    WritePose(i);
+                    WritePose(i, false);
+                }
+                else if (Hierarchy.GetParent(Entity).IsNull())
+                {
+                    // A root's pose needs no other entity's, so only marking a rider below it, which is structural, waits for the serial pass.
+                    if (WritePose(i, true))
+                    {
+                        InterpQueuedRoots[Thread].Add(Entity);
+                    }
+                    Category = CarriesRider(Entity) ? kInterpRootCarrier : kInterpSkip;
                 }
                 else
                 {
@@ -734,7 +807,15 @@ namespace Lumina::Physics
         {
             for (uint32 i = 0; i < Count; ++i)
             {
-                WriteFlat(i);
+                WriteFlat(i, 0);
+            }
+        }
+
+        for (const TVector<ECS::FEntity>& Roots : InterpQueuedRoots)
+        {
+            if (!Roots.IsEmpty())
+            {
+                ECS::Utils::QueueDirtyTransforms(TransformStorage.Get(Roots[0]).GetDirtyGate(), Roots.GetData(), (uint32)Roots.Num());
             }
         }
 
@@ -756,6 +837,10 @@ namespace Lumina::Physics
             if (InterpCategory[i] == kInterpParented)
             {
                 InterpAppliedParented.Add(i);
+            }
+            else if (InterpCategory[i] == kInterpRootCarrier && Registry.IsValid(InterpStaging.Entities[i]) && MarkRiders(i))
+            {
+                InterpCarrierSlots.Add(i);
             }
         }
         if (InterpAppliedParented.IsEmpty())
@@ -784,6 +869,10 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
+        LastUpdateTimings = FPhysicsUpdateTimings();
+        FPhysicsUpdateTimings& Timings = LastUpdateTimings;
+        PlatformTime::FStopwatch Phase;
+
         RebuildStaleMeshBodies(World->GetEntityRegistry());
         SynchronizeBodies();
 
@@ -800,9 +889,21 @@ namespace Lumina::Physics
 
         Accumulator = Math::Min(Accumulator + (float)DeltaTime, MaxAccumulation);
 
-        CollisionSteps = Accumulator >= FixedTimestep
+        // Catching up on steps that cost about as much as they simulate only lengthens the next frame, so beyond what the budget affords the backlog is dropped.
+        const uint32 WantedSteps = Accumulator >= FixedTimestep
             ? Math::Min((uint32)WorldSettings.MaxPhysicsSteps, (uint32)(Accumulator / FixedTimestep))
             : 0;
+        const uint32 AffordableSteps = AverageStepSeconds > 0.0
+            ? (uint32)Math::Clamp(kCatchUpBudgetSteps * FixedTimestep / AverageStepSeconds, 1.0, (double)Math::Max<uint32>(WorldSettings.MaxPhysicsSteps, 1u))
+            : (uint32)WorldSettings.MaxPhysicsSteps;
+        CollisionSteps = Math::Min(WantedSteps, AffordableSteps);
+        if (CollisionSteps < WantedSteps)
+        {
+            Timings.DroppedSteps = WantedSteps - CollisionSteps;
+            Accumulator = (float)CollisionSteps * FixedTimestep + Math::Mod(Accumulator, FixedTimestep);
+        }
+        LUMINA_PROFILE_VALUE("Physics/DroppedSteps", (int64)Timings.DroppedSteps);
+        PlatformTime::FStopwatch StepLoop;
 
         ContactDrainScratch.Reset();
         ActivationDrainScratch.Reset();
@@ -811,6 +912,8 @@ namespace Lumina::Physics
         if (CollisionSteps > 0)
         {
             // Fixed scripts and a ragdoll following its entity read every pose, otherwise only riders follow their carrier's simulated one.
+            Timings.SyncMs += Phase.ElapsedMilliseconds();
+            Phase.Restart();
             if ((PreStepCallback && PreStepReadsTransforms()) || !OwnedRagdolls.IsEmpty())
             {
                 BuildInterpolatedTransforms(1.0f);
@@ -821,24 +924,31 @@ namespace Lumina::Physics
                 ApplyInterpolatedTransforms(true);
             }
             ResetInterpStaging();
+            Timings.InterpMs += Phase.ElapsedMilliseconds();
 
             for (uint32 Step = 0; Step < CollisionSteps; ++Step)
             {
+                Phase.Restart();
                 // Later steps read the pose the previous one produced, and after the reset only a full pass knows the carriers.
                 if (Step > 0)
                 {
                     BuildInterpolatedTransforms(1.0f);
                     ApplyInterpolatedTransforms(false);
                 }
+                Timings.InterpMs += Phase.ElapsedMilliseconds();
 
                 if (PreStepCallback)
                 {
                     PreStepCallback(FixedTimestep);
                 }
 
+                Phase.Restart();
                 SynchronizeBodies();
                 ApplyDirtyTransforms(FixedTimestep, CollisionSteps - Step, Step == 0);
+                Timings.SyncMs += Phase.ElapsedMilliseconds();
+                Phase.Restart();
                 if (Step == 0) { LatchCharacterInput(); }
+                Timings.LatchMs += Phase.ElapsedMilliseconds();
                 if (CharacterStepHook) { CharacterStepHook(FixedTimestep, false); }
                 ApplyBodyCommands();
 
@@ -846,20 +956,29 @@ namespace Lumina::Physics
                 UpdateVehicles(FixedTimestep);
                 UpdatePoweredRagdolls(FixedTimestep);
 
+                Phase.Restart();
                 b3World_Step(WorldId, FixedTimestep, SubStepCount);
+                Timings.WorldStepMs += Phase.ElapsedMilliseconds();
+                Timings.LastStepProfile = b3World_GetProfile(WorldId);
 
+                Phase.Restart();
                 // Box3D clears its event arrays each step, so they are drained before the next one runs.
                 DrainMoveEvents(Step == CollisionSteps - 1);
                 DrainStepEvents();
+                Timings.DrainMs += Phase.ElapsedMilliseconds();
 
                 UpdateCharacters(FixedTimestep);
                 if (CharacterStepHook) { CharacterStepHook(FixedTimestep, true); }
+                ++Timings.Steps;
             }
 
             StageSettledBodies();
             MonitorBreakableConstraints(FixedTimestep);
 
             Accumulator -= (float)CollisionSteps * FixedTimestep;
+
+            const double StepSeconds = StepLoop.ElapsedSeconds() / (double)CollisionSteps;
+            AverageStepSeconds = AverageStepSeconds > 0.0 ? Math::Mix(AverageStepSeconds, StepSeconds, kStepCostSmoothing) : StepSeconds;
         }
 
         LUMINA_PROFILE_VALUE("Physics/AwakeBodies", b3World_GetAwakeBodyCount(WorldId));
@@ -874,7 +993,14 @@ namespace Lumina::Physics
             ? Math::Clamp(Accumulator / FixedTimestep, 0.0f, 1.0f)
             : 1.0f;
 
+        Phase.Restart();
         BuildInterpolatedTransforms(InterpolationAlpha);
+        Timings.InterpMs += Phase.ElapsedMilliseconds();
+    }
+
+    b3Counters FBox3DPhysicsScene::GetWorldCounters() const
+    {
+        return b3World_GetCounters(WorldId);
     }
 
     void FBox3DPhysicsScene::DispatchPendingEvents()

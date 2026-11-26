@@ -66,7 +66,7 @@ namespace Lumina::SceneOps
 
     private:
 
-        ECS::FRegistry&        Registry;
+        ECS::FRegistry*        Registry;
         ECS::FEntity                 Entity;
         void*                   OuterInstance = nullptr;
         FPropertyChangedEvent   Event;

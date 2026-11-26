@@ -382,29 +382,29 @@ namespace Lumina
 
         struct FMoveBinding
         {
-            const SShortcut& Shortcut;
+            const SShortcut* Shortcut;
             EMove            Move;
         };
         const FMoveBinding Moves[] =
         {
-            { Keys.MoveLeft,            EMove::Left },
-            { Keys.MoveRight,           EMove::Right },
-            { Keys.MoveUp,              EMove::Up },
-            { Keys.MoveDown,            EMove::Down },
-            { Keys.MoveWordLeft,        EMove::WordLeft },
-            { Keys.MoveWordRight,       EMove::WordRight },
-            { Keys.MoveToLineStart,     EMove::LineStart },
-            { Keys.MoveToLineEnd,       EMove::LineEnd },
-            { Keys.MoveToDocumentStart, EMove::DocumentStart },
-            { Keys.MoveToDocumentEnd,   EMove::DocumentEnd },
-            { Keys.MovePageUp,          EMove::PageUp },
-            { Keys.MovePageDown,        EMove::PageDown },
+            { &Keys.MoveLeft,            EMove::Left },
+            { &Keys.MoveRight,           EMove::Right },
+            { &Keys.MoveUp,              EMove::Up },
+            { &Keys.MoveDown,            EMove::Down },
+            { &Keys.MoveWordLeft,        EMove::WordLeft },
+            { &Keys.MoveWordRight,       EMove::WordRight },
+            { &Keys.MoveToLineStart,     EMove::LineStart },
+            { &Keys.MoveToLineEnd,       EMove::LineEnd },
+            { &Keys.MoveToDocumentStart, EMove::DocumentStart },
+            { &Keys.MoveToDocumentEnd,   EMove::DocumentEnd },
+            { &Keys.MovePageUp,          EMove::PageUp },
+            { &Keys.MovePageDown,        EMove::PageDown },
         };
 
         for (const FMoveBinding& Binding : Moves)
         {
-            const bool bPlain = Binding.Shortcut.IsPressed();
-            if (bPlain || Binding.Shortcut.IsPressed(ImGuiMod_Shift))
+            const bool bPlain = Binding.Shortcut->IsPressed();
+            if (bPlain || Binding.Shortcut->IsPressed(ImGuiMod_Shift))
             {
                 MoveCursors(Binding.Move, !bPlain);
                 Io.InputQueueCharacters.resize(0);

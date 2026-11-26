@@ -75,6 +75,7 @@ namespace Lumina
             Lv = FLevel();
         }
         MergedSpheres.Reset();
+        MergedPerBlock.Reset();
         bTrackAll = true;
     }
 
@@ -161,8 +162,9 @@ namespace Lumina
         if (Slot >= (uint32)MergedSpheres.Num())
         {
             MergedSpheres.SetNum(Math::Max((uint32)Entries.Num(), Slot + 1u), FVector4(0.0f));
+            MergedPerBlock.SetNum((int32)RenderUtils::GetGroupCount((uint32)MergedSpheres.Num(), kInstanceCullBlockSize), (uint8)0u);
         }
-        FVector4& Merged = MergedSpheres[Slot];
+        const FVector4 Merged = MergedSpheres[Slot];
         const bool bCaster = Slot < (uint32)Entries.Num() && IsCaster(Entries[Slot]);
         const FVector4 Current = bCaster ? Entries[Slot].SphereBounds : FVector4(0.0f);
         if (bMoveOnly && bCaster && Merged.w > 0.0f)
@@ -177,10 +179,23 @@ namespace Lumina
         {
             Touches.Add(Merged);
         }
-        Merged = Current;
+        SetMerged(Slot, Current);
         if (bCaster)
         {
             Touches.Add(Current);
+        }
+    }
+
+    void FWorldDistanceField::SetMerged(uint32 Slot, const FVector4& Sphere)
+    {
+        FVector4& Merged = MergedSpheres[Slot];
+        const bool bWas = Merged.w > 0.0f;
+        const bool bNow = Sphere.w > 0.0f;
+        Merged = Sphere;
+        if (bWas != bNow)
+        {
+            uint8& Count = MergedPerBlock[Slot / kInstanceCullBlockSize];
+            Count = bNow ? Count + 1u : Count - 1u;
         }
     }
 
@@ -287,10 +302,11 @@ namespace Lumina
         {
             // Every brick samples its casters again, so only where they are now needs remembering.
             bTrackAll = false;
-            MergedSpheres.SetNum((uint32)Entries.Num(), FVector4(0.0f));
+            MergedSpheres.Init(FVector4(0.0f), (int32)Entries.Num());
+            MergedPerBlock.Init((uint8)0u, (int32)RenderUtils::GetGroupCount((uint32)Entries.Num(), kInstanceCullBlockSize));
             for (uint32 Slot = 0; Slot < (uint32)Entries.Num(); ++Slot)
             {
-                MergedSpheres[Slot] = IsCaster(Entries[Slot]) ? Entries[Slot].SphereBounds : FVector4(0.0f);
+                SetMerged(Slot, IsCaster(Entries[Slot]) ? Entries[Slot].SphereBounds : FVector4(0.0f));
             }
             for (FLevel& Lv : Levels)
             {
@@ -317,9 +333,15 @@ namespace Lumina
         }
         else
         {
+            // Most moved slots are skinned movers that never cast, so only casters and slots that once were reach Retrack.
+            const auto Matters = [this, Entries](uint32 Slot)
+            {
+                return (Slot < (uint32)MergedSpheres.Num() && MergedSpheres[Slot].w > 0.0f) || (Slot < (uint32)Entries.Num() && IsCaster(Entries[Slot]));
+            };
             for (const TSpan<const uint32>& List : { Changes.Dirty, Changes.DirtyStatic, Changes.Deactivated })
             {
-                for (uint32 Slot : List)
+                Jobs::ParallelFilter(List, RetrackScratch, RetrackMask, Matters);
+                for (uint32 Slot : RetrackScratch)
                 {
                     Retrack(Slot, Entries, false);
                 }
@@ -327,11 +349,15 @@ namespace Lumina
             // A streamed mover's CPU sphere trails the GPU's by a frame, which the next frame's touch covers while it keeps moving.
             for (uint32 Block : Changes.StreamedBlocks)
             {
-                const uint32 First = Block * kInstanceCullBlockSize;
-                const uint32 End   = Math::Min(First + kInstanceCullBlockSize, (uint32)Entries.Num());
-                for (uint32 Slot = First; Slot < End; ++Slot)
+                // Every caster was retracked when it last changed, so a block with none merged holds none.
+                if (Block >= (uint32)MergedPerBlock.Num() || MergedPerBlock[Block] == 0u)
                 {
-                    if ((Slot < (uint32)MergedSpheres.Num() && MergedSpheres[Slot].w > 0.0f) || IsCaster(Entries[Slot]))
+                    continue;
+                }
+                const uint32 End = Math::Min((Block + 1u) * kInstanceCullBlockSize, (uint32)Entries.Num());
+                for (uint32 Slot = Block * kInstanceCullBlockSize; Slot < End; ++Slot)
+                {
+                    if (Matters(Slot))
                     {
                         Retrack(Slot, Entries, true);
                     }

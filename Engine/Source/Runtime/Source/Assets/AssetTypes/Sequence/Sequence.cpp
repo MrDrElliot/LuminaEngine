@@ -351,7 +351,7 @@ namespace Lumina
             if (Transform != nullptr)
             {
                 Params.bSpatialized = true;
-                Params.Position = Transform->GetWorldLocation();
+                Params.Position = Transform->ComputeWorldTransform().GetLocation();
             }
             if (const CAudioStream* Stream = Cast<CAudioStream>(Clip.Sound.Get()); Stream != nullptr && Offset > 0.0f)
             {
@@ -497,12 +497,12 @@ namespace Lumina
             {
                 return;
             }
-            To += TargetTransform->GetWorldLocation();
+            To += TargetTransform->ComputeWorldTransform().GetLocation();
         }
 
         // An unkeyed weight means a plain aim, so the common case needs no keys at all.
         const float Amount = Weight.Curve.Keys.IsEmpty() && !Weight.bUseAsset ? 1.0f : Math::Clamp(Weight.Evaluate(Context.Time), 0.0f, 1.0f);
-        const FVector3 From = Transform->GetWorldLocation();
+        const FVector3 From = Transform->ComputeWorldTransform().GetLocation();
         if (bAutoFocus)
         {
             if (SCameraComponent* Camera = Context.World->TryGetComponent<SCameraComponent>(Entity))

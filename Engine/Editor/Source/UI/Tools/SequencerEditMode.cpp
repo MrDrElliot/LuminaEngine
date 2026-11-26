@@ -2068,8 +2068,8 @@ namespace Lumina
         for (ECS::FEntity Entity : View)
         {
             const STransformComponent& Transform = View.Get<STransformComponent>(Entity);
-            OutLocation = Transform.GetWorldLocation();
-            OutRotation = Math::Degrees(Math::YawFirstEulerAngles(Transform.GetWorldRotation()));
+            OutLocation = Transform.ComputeWorldTransform().GetLocation();
+            OutRotation = Math::Degrees(Math::YawFirstEulerAngles(Transform.ComputeWorldTransform().GetRotation()));
             return true;
         }
 

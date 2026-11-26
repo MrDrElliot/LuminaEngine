@@ -50,7 +50,7 @@ namespace Lumina
                 continue;
             }
 
-            SpawnComponent->Spawn(Context.GetWorld(), Transform->GetWorldTransform());
+            SpawnComponent->Spawn(Context.GetWorld(), Transform->ComputeWorldTransform());
         }
     }
 
@@ -91,7 +91,7 @@ namespace Lumina
             const float Remainder = SpawnComponent.TimeUntilNextSpawn;
             SpawnComponent.TimeUntilNextSpawn = Math::Max(PrefabSpawnerSystemInternal::DrawSpawnInterval(SpawnComponent.SpawnTimeRange) + Remainder, 0.0001f);
 
-            Context.Defer([Entity, At = Transform.GetWorldTransform()](const SExclusiveContext& X)
+            Context.Defer([Entity, At = Transform.ComputeWorldTransform()](const SExclusiveContext& X)
             {
                 ECS::FRegistry& Registry = X.GetRegistry();
                 if (const SPrefabSpawnerComponent* Live = Registry.IsValid(Entity) ? Registry.TryGet<ECS::Read<SPrefabSpawnerComponent>>(Entity) : nullptr)

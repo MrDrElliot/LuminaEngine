@@ -242,7 +242,7 @@ namespace
         STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
         Transform.Bind(Registry, Entity);
         Transform.ResetDirtyState();
-        Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+        ECS::Utils::MarkTransformDirty(Registry, Entity);
     }
 
     // A bare world skips InitializeWorld, so its transforms are bound the way the world's construct hook binds them.

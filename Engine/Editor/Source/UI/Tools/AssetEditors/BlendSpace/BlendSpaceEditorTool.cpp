@@ -117,7 +117,7 @@ namespace Lumina
         STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
         STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
-        const FQuat LookAt = Math::FindLookAtRotation(MeshTransform.GetWorldLocation() + FVector3(0.0f, 0.9f, 0.0f), EditorTransform.GetLocalLocation());
+        const FQuat LookAt = Math::FindLookAtRotation(MeshTransform.ComputeWorldTransform().GetLocation() + FVector3(0.0f, 0.9f, 0.0f), EditorTransform.GetLocalLocation());
         EditorTransform.SetLocalRotation(LookAt);
     }
 

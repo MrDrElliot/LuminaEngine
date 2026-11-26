@@ -135,7 +135,9 @@ namespace Lumina::Physics
             return -1.0f;
         }
 
-        if (!Box3DUtils::ShouldProfileCollideWithShape(Probe.Profile, ShapeId, Probe.bPermissive))
+        // Characters part by their own contact pass, so a spawn is seated on the world and never on someone's head.
+        if (Box3DUtils::IsCharacterProxyUserData(b3Shape_GetUserData(ShapeId))
+            || !Box3DUtils::ShouldProfileCollideWithShape(Probe.Profile, ShapeId, Probe.bPermissive))
         {
             return -1.0f;
         }

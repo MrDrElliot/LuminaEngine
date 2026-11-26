@@ -90,7 +90,7 @@ namespace Lumina::SceneOps
 
     FPropertyEditScope::FPropertyEditScope(ECS::FRegistry& InRegistry, ECS::FEntity InEntity, CStruct* OuterType,
         void* InOuterInstance, FProperty* Property, const void* ValuePtr)
-        : Registry(InRegistry)
+        : Registry(&InRegistry)
         , Entity(InEntity)
         , OuterInstance(InOuterInstance)
         , Event{OuterType, Property, Property != nullptr ? Property->Name : FName(), true,
@@ -118,7 +118,7 @@ namespace Lumina::SceneOps
             Ops->PostEdit(OuterInstance, Event);
         }
 
-        if (!Registry.IsValid(Entity))
+        if (!Registry->IsValid(Entity))
         {
             return;
         }
@@ -126,16 +126,16 @@ namespace Lumina::SceneOps
         // A raw store stamps nothing by itself, and the edit stays silent like the details panel's live ops.
         if (const FComponentOps* ComponentOps = Event.OuterType->GetComponentOps())
         {
-            Registry.MarkChangedRaw(ComponentOps->GetTypeID(), Entity);
+            Registry->MarkChangedRaw(ComponentOps->GetTypeID(), Entity);
         }
 
         // A raw store leaves none of the flags the transform setters would have raised.
         if (Event.OuterType == STransformComponent::StaticStruct())
         {
-            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+            ECS::Utils::MarkTransformDirty(*Registry, Entity);
         }
 
-        CPrefab::RecaptureComponentOverrides(Registry, Entity, Event.OuterType);
+        CPrefab::RecaptureComponentOverrides(*Registry, Entity, Event.OuterType);
     }
 
     bool HasCollider(const ECS::FRegistry& Registry, ECS::FEntity Entity)

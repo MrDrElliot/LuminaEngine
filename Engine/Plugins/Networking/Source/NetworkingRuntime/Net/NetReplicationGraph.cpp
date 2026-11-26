@@ -112,7 +112,7 @@ namespace Lumina::NetGraph
                     else
                     {
                         // A flat entity never writes WorldTransform, so the raw field would freeze at its spawn pose.
-                        const FTransform& World = T.GetWorldTransformCached();
+                        const FTransform& World = T.GetWorldTransform();
                         Pos   = World.GetLocation();
                         Rot   = World.GetRotation();
                         Scale = World.GetScale();
@@ -149,7 +149,7 @@ namespace Lumina::NetGraph
 
                     L.Guid.Add(Net.NetGUID.Value);
                     L.Pos.Add(Pos);                       // LOCAL -> wire
-                    L.WorldPos.Add(T.GetWorldLocationCached()); // WORLD -> grid/relevancy (== local for roots)
+                    L.WorldPos.Add(T.GetWorldLocation()); // WORLD -> grid/relevancy (== local for roots)
                     L.Rot.Add(QRot);
                     L.Scale.Add(QScale);
                     L.OwnerConn.Add(Net.OwningConnectionId);

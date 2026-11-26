@@ -93,7 +93,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID)
         return;
     }
 
-    const FTransform3x4 LocalToWorld = Pass().RetainedTransforms.Get(SlotIdx);
+    const FTransform3x4 LocalToWorld = Pass().RetainedTransforms.Get(SlotIdx - Static.TransformOffset);
     const float3 Scale = float3(length(float3(LocalToWorld.Row0.x, LocalToWorld.Row1.x, LocalToWorld.Row2.x)),
                                 length(float3(LocalToWorld.Row0.y, LocalToWorld.Row1.y, LocalToWorld.Row2.y)),
                                 length(float3(LocalToWorld.Row0.z, LocalToWorld.Row1.z, LocalToWorld.Row2.z)));

@@ -1,6 +1,8 @@
 ﻿#include "RuntimePCH.h"
 #include "SunShadowCache.h"
 
+#include "Containers/Algorithm.h"
+#include "TaskSystem/TaskSystem.h"
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
 
 namespace Lumina
@@ -21,12 +23,18 @@ namespace Lumina
             && (Entry.FlagsAndThinning & INSTANCE_SHADOW_CACHEABLE_BIT) != 0u;
     }
 
-    bool FSunShadowCache::IsSwayCandidate(const FInstanceCullEntry& Entry, const FInstanceStatic& Static)
+    float FSunShadowCache::GetStillDistance(const FInstanceStatic& Static) const
+    {
+        const float Own = Static.WPODisableDistance;
+        return Own > 0.0f && SwayDistance > 0.0f ? Math::Min(Own, SwayDistance) : Math::Max(Own, SwayDistance);
+    }
+
+    bool FSunShadowCache::IsSwayCandidate(const FInstanceCullEntry& Entry, const FInstanceStatic& Static) const
     {
         const EInstanceFlags Flags = (EInstanceFlags)((Entry.DrawIDAndFlags >> 16u) & 0xFFFFu);
         return EnumHasAllFlags(Flags, EInstanceFlags::Active | EInstanceFlags::HasGeometry | EInstanceFlags::CastShadow)
             && (Entry.FlagsAndThinning & INSTANCE_SHADOW_CACHEABLE_BIT) == 0u
-            && Static.WPODisableDistance > 0.0f && Static.SkinnedIndex == kNoSkinnedIndex;
+            && GetStillDistance(Static) > 0.0f && Static.SkinnedIndex == kNoSkinnedIndex;
     }
 
     bool FSunShadowCache::IsStill(const FInstanceCullEntry& Entry, const FInstanceStatic& Static, float DistanceScale) const
@@ -39,7 +47,7 @@ namespace Lumina
         {
             return false;
         }
-        const float Reach = Static.WPODisableDistance * DistanceScale;
+        const float Reach = GetStillDistance(Static) * DistanceScale;
         const FVector3 ToCamera = FVector3(Entry.SphereBounds) - Camera;
         return Math::Dot(ToCamera, ToCamera) > Reach * Reach;
     }
@@ -62,31 +70,41 @@ namespace Lumina
         const FInstanceCullEntry* Entries = Primitives.GetRetainedCullEntries();
         const FInstanceStatic*    Statics = Primitives.GetRetainedStatic();
 
-        int32 Kept = 0;
-        for (const uint32 Slot : SwayCandidates)
+        const auto IsLive = [this, SlotCount, Entries, Statics](uint32 Slot)
         {
-            if (Slot >= SlotCount || !IsSwayCandidate(Entries[Slot], Statics[Slot]))
+            return Slot < SlotCount && IsSwayCandidate(Entries[Slot], Statics[Slot]);
+        };
+
+        // Every swaying plant is a candidate, so the parallel pass reads them all and only the few that flip reach the serial bookkeeping.
+        Jobs::ParallelFilter(SwayCandidates, SwayScratch, SwayMask, [this, Entries, Statics, &IsLive](uint32 Slot)
+        {
+            if (!IsLive(Slot))
+            {
+                return true;
+            }
+            return HeldSpheres[Slot].w >= 0.0f ? !IsStill(Entries[Slot], Statics[Slot], kSwayReleaseScale)
+                                               : ChangedFrame[Slot] == 0u && IsStill(Entries[Slot], Statics[Slot], kSwayHoldScale);
+        });
+
+        bool bAnyDropped = false;
+        for (const uint32 Slot : SwayScratch)
+        {
+            if (!IsLive(Slot))
             {
                 if (Slot < (uint32)bSwayCandidate.Num())
                 {
                     bSwayCandidate[Slot] = 0u;
                 }
+                bAnyDropped = true;
                 continue;
             }
-            SwayCandidates[Kept++] = Slot;
-
-            const bool bHeld = HeldSpheres[Slot].w >= 0.0f;
-            if (bHeld && !IsStill(Entries[Slot], Statics[Slot], kSwayReleaseScale))
-            {
-                Release(Slot);
-                MarkChanged(Slot);
-            }
-            else if (!bHeld && ChangedFrame[Slot] == 0u && IsStill(Entries[Slot], Statics[Slot], kSwayHoldScale))
-            {
-                MarkChanged(Slot);
-            }
+            Release(Slot);
+            MarkChanged(Slot);
         }
-        SwayCandidates.SetNum(Kept);
+        if (bAnyDropped)
+        {
+            SwayCandidates.RemoveAll([this](uint32 Slot) { return Slot >= (uint32)bSwayCandidate.Num() || bSwayCandidate[Slot] == 0u; });
+        }
     }
 
     void FSunShadowCache::Hold(uint32 Slot, const FVector4& Sphere)
@@ -213,9 +231,10 @@ namespace Lumina
         }
 
         const uint32 SlotCount = Primitives.GetRetainedSlotCount();
-        if (!bActive || Changes.bFull)
+        if (!bActive || Changes.bFull || HeldSwayDistance != SwayDistance)
         {
             HoldAll(Primitives);
+            HeldSwayDistance = SwayDistance;
             bActive = true;
         }
         else
@@ -237,15 +256,47 @@ namespace Lumina
                     MarkChanged(Slot);
                 }
             };
-            for (const uint32 Slot : Changes.Dirty)       { Change(Slot); }
-            for (const uint32 Slot : Changes.DirtyStatic) { Change(Slot); }
-            for (const uint32 Slot : Changes.Deactivated) { Change(Slot); }
+            // Most moved slots are skinned movers that can never be held, so only the few that can reach the serial bookkeeping.
+            const auto Matters = [this, SlotCount, Entries, Statics](uint32 Slot)
+            {
+                return Slot < SlotCount && (HeldSpheres[Slot].w >= 0.0f || IsCacheable(Entries[Slot]) || IsSwayCandidate(Entries[Slot], Statics[Slot]));
+            };
+            for (const TSpan<const uint32>& List : { Changes.Dirty, Changes.DirtyStatic, Changes.Deactivated })
+            {
+                Jobs::ParallelFilter(List, ChangedScratch, ChangedMask, Matters);
+                for (const uint32 Slot : ChangedScratch)
+                {
+                    Change(Slot);
+                }
+            }
+
+            // Every slot with a change frame is in Settling, so its blocks and the held bits find the only streamed blocks with work.
+            ChangedScratch.Reset();
+            for (const uint32 Slot : Settling)
+            {
+                if (Slot < SlotCount && ChangedFrame[Slot] != 0u)
+                {
+                    ChangedScratch.Add(Slot / kInstanceCullBlockSize);
+                }
+            }
+            Algo::Sort(ChangedScratch);
+            ChangedScratch.SetNum((int32)(Algo::Unique(ChangedScratch) - ChangedScratch.begin()));
 
             // A streamed mover's CPU sphere trails the GPU, so every held or settling slot in its block counts as moved.
             for (const uint32 Block : Changes.StreamedBlocks)
             {
-                const uint32 End = Math::Min((Block + 1u) * kInstanceCullBlockSize, SlotCount);
-                for (uint32 Slot = Block * kInstanceCullBlockSize; Slot < End; ++Slot)
+                const uint32 First = Block * kInstanceCullBlockSize;
+                const uint32 End   = Math::Min(First + kInstanceCullBlockSize, SlotCount);
+                bool bHeld = false;
+                for (uint32 Word = First / 32u; Word < RenderUtils::GetGroupCount(End, 32u) && !bHeld; ++Word)
+                {
+                    bHeld = SlotBits[Word] != 0u;
+                }
+                if (!bHeld && !Algo::BinarySearch(ChangedScratch.begin(), ChangedScratch.end(), Block))
+                {
+                    continue;
+                }
+                for (uint32 Slot = First; Slot < End; ++Slot)
                 {
                     if (HeldSpheres[Slot].w >= 0.0f || ChangedFrame[Slot] != 0u)
                     {

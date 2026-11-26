@@ -26,6 +26,8 @@ namespace Lumina
 
         // Set by the sun's extract ahead of this frame's update.
         void SetEnabled(bool bInEnabled) { bEnabled = bInEnabled; }
+        // Camera distance past which every swaying caster holds still in the shadow pages, 0 leaving that to each instance's own disable distance.
+        void SetSwayDistance(float Distance) { SwayDistance = Distance; }
 
         // Camera is where the GPU measures each instance's sway-off distance from, so a swaying caster far past it holds still.
         void Update(const FSlotChanges& Changes, const FScenePrimitiveSet& Primitives, bool bHasSunShadow, const FVector3& Camera);
@@ -53,7 +55,9 @@ namespace Lumina
     private:
         static bool IsCacheable(const FInstanceCullEntry& Entry);
         // A caster whose only motion is its material's sway, which the GPU turns off past the instance's disable distance.
-        static bool IsSwayCandidate(const FInstanceCullEntry& Entry, const FInstanceStatic& Static);
+        bool IsSwayCandidate(const FInstanceCullEntry& Entry, const FInstanceStatic& Static) const;
+        // The nearer of the instance's own disable distance and the renderer's shadow sway distance, 0 when neither is set.
+        float GetStillDistance(const FInstanceStatic& Static) const;
         bool IsStill(const FInstanceCullEntry& Entry, const FInstanceStatic& Static, float DistanceScale) const;
         void AddSwayCandidate(uint32 Slot, const FScenePrimitiveSet& Primitives);
         // Sends a held swayer that came near back to the per-frame pages, and a far one toward the cache.
@@ -74,7 +78,15 @@ namespace Lumina
         TVector<uint32>   Settling;
         TVector<uint32>   SwayCandidates;
         TVector<uint8>    bSwayCandidate;
+        // The moved slots that can be held or already are, filtered in parallel each update.
+        TVector<uint32>   ChangedScratch;
+        TVector<uint8>    ChangedMask;
+        TVector<uint32>   SwayScratch;
+        TVector<uint8>    SwayMask;
         FVector3          Camera = FVector3(0.0f);
+        float             SwayDistance = 0.0f;
+        // The sway distance the held set was built with, so a new one rebuilds it.
+        float             HeldSwayDistance = 0.0f;
 
         TVector<FVector4>   Touched;
         bool                bTouchedAll = false;

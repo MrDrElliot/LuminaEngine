@@ -32,7 +32,7 @@ namespace Lumina::ECS
     }
 
     FCommandBus::FCommandBus(FRegistry& InRegistry)
-        : Registry(InRegistry)
+        : Registry(&InRegistry)
     {
         Slots.SetNum(Math::Max(Jobs::GetNumThreadSlots(), 1u));
         RunningBlocks.SetNum(Slots.Num());
@@ -83,7 +83,7 @@ namespace Lumina::ECS
 
     FEntity FCommandBus::Create()
     {
-        const FEntity Entity = Registry.ReserveEntity();
+        const FEntity Entity = Registry->ReserveEntity();
         FScopeLock Guard(LocalSlotLock());
         LocalSlot().Creates.Add({ Entity, GThreadState.RecordOrder });
         return Entity;
@@ -234,13 +234,13 @@ namespace Lumina::ECS
             Detach();
             for (const FOrderedEntity& Created : PendingCreates)
             {
-                Registry.MaterializeReserved(Created.Entity);
+                Registry->MaterializeReserved(Created.Entity);
             }
             Applied += static_cast<uint32>(PendingCreates.Num());
-            Applied += RunDetachedCommands(&Registry);
+            Applied += RunDetachedCommands(Registry);
             for (const FOrderedEntity& Destroyed : PendingDestroys)
             {
-                Registry.Destroy(Destroyed.Entity);
+                Registry->Destroy(Destroyed.Entity);
             }
             Applied += static_cast<uint32>(PendingDestroys.Num());
         }
@@ -257,7 +257,7 @@ namespace Lumina::ECS
         Detach();
         for (const FOrderedEntity& Created : PendingCreates)
         {
-            Registry.ReleaseReserved(Created.Entity);
+            Registry->ReleaseReserved(Created.Entity);
         }
         RunDetachedCommands(nullptr);
     }

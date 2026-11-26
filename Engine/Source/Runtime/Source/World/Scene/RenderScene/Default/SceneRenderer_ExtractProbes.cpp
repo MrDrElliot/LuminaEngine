@@ -86,10 +86,10 @@ namespace Lumina
 
             // A pool nothing wrote cannot hold new points, so only a possible write pays for hashing them.
             const uint64 DataKey = (bDataMayHaveChanged || !Cache.bValid) ? SplineDataKey(Spline) : Cache.DataKey;
-            const uint64 Key     = HashExtractValue(Transform.GetWorldTransformCached(), DataKey);
+            const uint64 Key     = HashExtractValue(Transform.GetWorldTransform(), DataKey);
             if (!Cache.bValid || Cache.Key != Key)
             {
-                BuildSplineCache(Cache, Entity, Spline, Transform.GetWorldMatrixCached());
+                BuildSplineCache(Cache, Entity, Spline, Transform.GetWorldMatrix());
                 Cache.Key    = Key;
                 Cache.bValid = true;
             }
@@ -210,7 +210,7 @@ namespace Lumina
             Cache.SeenSerial = ExtractSerial;
 
             // Computed rather than cached, since probes extract before this frame's transforms resolve.
-            const FTransform WorldTransform = Transform.GetWorldTransform();
+            const FTransform WorldTransform = Transform.ComputeWorldTransform();
             const uint64     Key   = ProbeInputKey(Probe, WorldTransform);
             if (!Cache.bValid || Cache.Key != Key)
             {

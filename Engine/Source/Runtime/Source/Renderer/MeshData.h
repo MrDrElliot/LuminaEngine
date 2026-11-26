@@ -339,7 +339,8 @@ namespace Lumina
         float  ImpostorCenterX, ImpostorCenterY, ImpostorCenterZ;
         float  ImpostorRadius;
         uint32 ImpostorFrameSize;
-        uint32 _Pad0;
+        // Multiplies the renderer's impostor threshold for this mesh, see Impostor::TransitionScale.
+        float  ImpostorTransitionScale;
     };
     static_assert(sizeof(FMeshletHeaderGPU) == 224, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
 
@@ -496,6 +497,17 @@ namespace Lumina
         FORCEINLINE int32 GetNumSurfaces() const { return GeometrySurfaces.Num(); }
         FORCEINLINE int32 GetNumVertices() const { return Positions.Num(); }
         FORCEINLINE int32 GetNumIndices()  const { return Indices.Num(); }
+
+        // The source level's triangles, which outlive the CPU index stream the upload frees.
+        uint32 GetSourceTriangleCount() const
+        {
+            uint32 SurfaceIndices = 0;
+            for (const FGeometrySurface& Surface : GeometrySurfaces)
+            {
+                SurfaceIndices += Surface.IndexCount;
+            }
+            return SurfaceIndices / 3u;
+        }
 
         // Synthetic interleaved vertex size; only meshopt fetch/overdraw analysis needs it.
         FORCEINLINE size_t GetVertexTypeSize() const

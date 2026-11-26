@@ -9,6 +9,7 @@
 #include "Box3DUtils.h"
 
 #include "Log/Log.h"
+#include "Platform/Time/PlatformTime.h"
 #include "Renderer/RendererUtils.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
@@ -16,6 +17,8 @@
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/World.h"
+#include "World/Entity/Systems/SystemSingletons.h"
+#include "World/Subsystems/WorldSettings.h"
 
 namespace Lumina::Physics
 {
@@ -50,6 +53,24 @@ namespace Lumina::Physics
         // The latch is a few dozen nanoseconds per character, so it only fans out for a crowd.
         constexpr uint32 kCharacterLatchParallelThreshold = 2048;
 
+        // How long a passing rigid body keeps the characters it came near exact, so a bouncing crate does not toggle their proxies.
+        constexpr uint64 kNearBodyHoldSteps = 30;
+
+        // Past a body's reach, so a character it might shove in the next step already has its proxy.
+        constexpr float kAwakeBodyMargin = 1.0f;
+
+        // A proxy below this speed falls asleep, low enough that any real walk wakes it again.
+        constexpr float kProxySleepThreshold = 0.01f;
+
+        // Slack on a step's reach bound for the speed gained within the step.
+        constexpr float kReachSlack = 1.25f;
+
+        // Keeps a massless character from taking an infinite share of a gap.
+        constexpr float kMinContactMass = 1.0f;
+
+        // Closer than this two capsules have no usable direction between them, so one is picked from the pair.
+        constexpr float kCoincidentDistance = 1.0e-4f;
+
         // Gathered per move iteration; the extras are only needed to push whatever the mover leaned on.
         struct FMoverPlanes
         {
@@ -57,7 +78,12 @@ namespace Lumina::Physics
             b3Vec3              Points[kMaxMoverPlanes];
             b3ShapeId           Shapes[kMaxMoverPlanes];
             int32               Count = 0;
+            // Short of the array when neighbor planes need the tail, so a busy floor cannot crowd them out.
+            int32               Capacity = kMaxMoverPlanes;
             float               CosMaxSlope = 0.0f;
+
+            // The first WorldCount planes came from Box3D shapes, the rest stand for other characters.
+            int32               WorldCount = 0;
 
             b3Pos               Origin{};
             b3BodyId            IgnoreBody{};
@@ -104,7 +130,7 @@ namespace Lumina::Physics
             }
 
             const int32 StartCount = Out.Count;
-            for (int32 i = 0; i < PlaneCount && Out.Count < kMaxMoverPlanes; ++i)
+            for (int32 i = 0; i < PlaneCount && Out.Count < Out.Capacity; ++i)
             {
                 Out.Planes[Out.Count] = b3CollisionPlane{ UprightIfTooSteep(Results[i].plane, Out.CosMaxSlope), FLT_MAX, 0.0f, true };
                 Out.Points[Out.Count] = b3Add(Out.Origin, Results[i].point);
@@ -147,6 +173,7 @@ namespace Lumina::Physics
             Character.Mass                   = Physics.Mass;
             Character.MaxCollisionIterations = (int32)Math::Max(Physics.MaxCollisionIterations, 1u);
             Character.bCollideWithCharacters = Physics.bCollideWithCharacters;
+            Character.bLODRelevanceSource    = Physics.bLODRelevanceSource;
             Character.Profile                = Physics.CollisionProfile;
             Character.Filter                 = Box3DUtils::MakeQueryFilter(Physics.CollisionProfile);
 
@@ -226,15 +253,50 @@ namespace Lumina::Physics
         }
 
         // Places the proxy on the character by the next world step, written per body so it runs inside the fan-out.
-        void DriveProxy(FPhysicsCharacterHandle& Character, float FixedDt)
+        // False means the proxy sleeps away from its character, and waking it is left to a serial caller passing bWake.
+        bool DriveProxy(FPhysicsCharacterHandle& Character, float FixedDt, bool bWake)
         {
-            if (!Box3DUtils::IsSafePose(Character.Position, Character.Rotation))
+            if (!Character.bProxyEnabled || !Box3DUtils::IsSafePose(Character.Position, Character.Rotation))
+            {
+                return true;
+            }
+            const b3WorldTransform Target{ Box3DUtils::ToB3Vec3(Character.Position), Box3DUtils::ToB3Quat(Character.Rotation) };
+            if (!bWake && !b3Body_IsAwake(Character.ProxyBody))
+            {
+                return b3LengthSquared(b3SubPos(Target.p, b3Body_GetPosition(Character.ProxyBody))) < kMoveTolerance * kMoveTolerance;
+            }
+            b3Body_SetTargetTransform(Character.ProxyBody, Target, FixedDt, bWake);
+            Character.bProxyInMotion = true;
+            return true;
+        }
+
+        // Enabled where the character stands now, since the proxy did not follow while it was off.
+        void SetProxyEnabled(FPhysicsCharacterHandle& Character, bool bEnabled)
+        {
+            if (!b3Body_IsValid(Character.ProxyBody))
             {
                 return;
             }
-            const b3WorldTransform Target{ Box3DUtils::ToB3Vec3(Character.Position), Box3DUtils::ToB3Quat(Character.Rotation) };
-            b3Body_SetTargetTransform(Character.ProxyBody, Target, FixedDt, false);
-            Character.bProxyInMotion = true;
+            if (bEnabled)
+            {
+                if (Box3DUtils::IsSafePose(Character.Position, Character.Rotation))
+                {
+                    b3Body_SetTransform(Character.ProxyBody, Box3DUtils::ToB3Vec3(Character.Position), Box3DUtils::ToB3Quat(Character.Rotation));
+                }
+                b3Body_Enable(Character.ProxyBody);
+            }
+            else
+            {
+                b3Body_Disable(Character.ProxyBody);
+            }
+            Character.bProxyEnabled = bEnabled;
+            Character.bProxyInMotion = false;
+        }
+
+        // A remote player keeps everything near it exact on the host, where no camera stands in for it.
+        bool IsRelevanceSource(const FPhysicsCharacterHandle& Character)
+        {
+            return Character.bLODRelevanceSource || Character.NetDrive == (uint8)ECharacterNetDrive::Commands;
         }
 
         // Teleports and seating place the proxy at once, so a velocity left from a target transform must not carry it on.
@@ -313,7 +375,13 @@ namespace Lumina::Physics
         BodyDef.type = b3_kinematicBody;
         BodyDef.position = Box3DUtils::ToB3Vec3(Handle->Position);
         BodyDef.rotation = Box3DUtils::ToB3Quat(Handle->Rotation);
-        BodyDef.enableSleep = false;
+        // Asleep once it stops, so a standing crowd leaves the solver until the drive wakes it.
+        BodyDef.enableSleep = true;
+        BodyDef.sleepThreshold = kProxySleepThreshold;
+
+        // Created off under character LOD, since the first step enables only the few that are near something.
+        Handle->bProxyEnabled = World->GetDefaultWorldSettings().CharacterLODDistance <= 0.0f;
+        BodyDef.isEnabled = Handle->bProxyEnabled;
 
         Handle->ProxyBody = b3CreateBody(WorldId, &BodyDef);
         if (!b3Body_IsValid(Handle->ProxyBody))
@@ -499,60 +567,170 @@ namespace Lumina::Physics
         LUMINA_PROFILE_SCOPE();
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
-        auto View = Registry.View<SCharacterPhysicsComponent, SCharacterMovementComponent>();
 
         ++CharacterStepCounter;
         int64 RestingCount = 0;
 
-        CharacterWorkScratch.Reset();
+        PlatformTime::FStopwatch Phase;
 
-        // Resting, teleporting and unseated characters resolve here, so the fan-out below is uniform work.
-        View.ForEach([&](ECS::FEntity Entity, SCharacterPhysicsComponent& Physics, SCharacterMovementComponent& Movement)
+        const SDefaultWorldSettings& Settings = World->GetDefaultWorldSettings();
+        CharacterLODRangeSq = Settings.CharacterLODDistance > 0.0f ? Settings.CharacterLODDistance * Settings.CharacterLODDistance : 0.0f;
+        CharacterLODInterval = Math::Clamp(Settings.CharacterLODStepInterval, 1u, 8u);
+        CharacterRelevancePoints.Reset();
+        if (CharacterLODRangeSq > 0.0f)
         {
-            if (!Physics.Character)
+            if (const FResolvedSceneView* View = World->GetResolvedView())
             {
-                return;
+                CharacterRelevancePoints.Add(View->ViewVolume.GetViewPosition());
             }
+            CharacterRelevancePoints.Append(CharacterRelevanceSources);
+        }
 
-            FPhysicsCharacterHandle& Character = *Physics.Character;
+        auto PhysicsStorage = Registry.GetStorage<SCharacterPhysicsComponent>();
+        auto MovementStorage = Registry.GetStorage<SCharacterMovementComponent>();
+        const ECS::FEntity* Entities = PhysicsStorage.GetDenseData();
+        const uint32 Num = (uint32)PhysicsStorage.GetDenseSize();
+        CharacterPrepStates.SetNum(Num);
+        CharacterPrepMovements.SetNum(Num);
 
-            if (Character.NetDrive == (uint8)ECharacterNetDrive::Commands)
+        const auto Classify = [&](uint32 Dense)
+        {
+            const ECS::FEntity Entity = Entities[Dense];
+            SCharacterMovementComponent* Movement = Entity.IsTombstone() ? nullptr : MovementStorage.TryGet(Entity);
+            SCharacterPhysicsComponent* Physics = Movement != nullptr ? &PhysicsStorage.GetAtDense(Dense) : nullptr;
+            CharacterPrepMovements[Dense] = Movement;
+            CharacterPrepStates[Dense] = Physics != nullptr && Physics->Character
+                ? PrepareCharacter(Registry, Entity, *Physics, *Movement, FixedDt, false)
+                : ECharacterPrep::Skip;
+        };
+        if (Num > kCharacterLatchParallelThreshold)
+        {
+            Jobs::ParallelFor(Num, Classify);
+        }
+        else
+        {
+            for (uint32 Dense = 0; Dense < Num; ++Dense)
             {
-                return;
+                Classify(Dense);
             }
-            if (Character.NetDrive == (uint8)ECharacterNetDrive::FollowTransform)
+        }
+
+        // Teleports, seating, crouching and proxy placement write Box3D, so the few characters that need one finish here.
+        for (uint32 Dense = 0; Dense < Num; ++Dense)
+        {
+            if (CharacterPrepStates[Dense] == ECharacterPrep::Serial)
             {
-                FollowTransform(Registry, Entity, Physics, Movement, FixedDt);
-                return;
+                CharacterPrepStates[Dense] = PrepareCharacter(Registry, Entities[Dense], PhysicsStorage.GetAtDense(Dense),
+                    *CharacterPrepMovements[Dense], FixedDt, true);
             }
+        }
 
-            // Serial, because resizing the proxy shape writes Box3D state the parallel step below only reads.
-            UpdateCrouch(Entity, Physics, Movement);
-
-            if (Character.bResting)
+        // Laid out in dense order, so the step and its contacts come out the same on every run.
+        constexpr uint32 kPrepChunk = 2048;
+        const uint32 ChunkCount = (Num + kPrepChunk - 1) / kPrepChunk;
+        CharacterPrepChunks.SetNum(ChunkCount);
+        const auto CountChunk = [&](uint32 Chunk)
+        {
+            FCharacterPrepChunk& Counts = CharacterPrepChunks[Chunk];
+            Counts = FCharacterPrepChunk();
+            const uint32 End = Math::Min(Num, (Chunk + 1) * kPrepChunk);
+            for (uint32 Dense = Chunk * kPrepChunk; Dense < End; ++Dense)
             {
-                const bool bPollDue = ((CharacterStepCounter + (uint64)(Entity).Value) & kRestPollMask) == 0;
-                if (!bPollDue && !ShouldWakeResting(Character, Movement))
+                const ECharacterPrep State = CharacterPrepStates[Dense];
+                if (State == ECharacterPrep::Skip)
                 {
-                    // The last step's target transform has landed the proxy, so it stops here instead of drifting on.
-                    if (Character.bProxyInMotion)
-                    {
-                        PlaceProxy(Character);
-                    }
-                    ++RestingCount;
-                    return;
+                    continue;
                 }
-
-                Character.bResting = false;
+                const FPhysicsCharacterHandle& Character = *PhysicsStorage.GetAtDense(Dense).Character;
+                ++Counts.Contacts;
+                Counts.Works += State == ECharacterPrep::Step ? 1u : 0u;
+                Counts.Resting += State == ECharacterPrep::Rest ? 1u : 0u;
+                Counts.Sources += IsRelevanceSource(Character) ? 1u : 0u;
+                Counts.MaxRadius = Math::Max(Counts.MaxRadius, Character.Radius);
             }
+        };
+        Jobs::ParallelFor(ChunkCount, CountChunk);
 
-            if (!ResolveCharacterPreStep(Entity, Physics, Movement))
+        uint32 TotalContacts = 0;
+        uint32 TotalWorks = 0;
+        CharacterContactMaxRadius = 0.0f;
+        CharacterContactMaxReach = 0.0f;
+        for (FCharacterPrepChunk& Counts : CharacterPrepChunks)
+        {
+            Counts.ContactStart = TotalContacts;
+            Counts.WorkStart = TotalWorks;
+            TotalContacts += Counts.Contacts;
+            TotalWorks += Counts.Works;
+            RestingCount += Counts.Resting;
+            CharacterContactMaxRadius = Math::Max(CharacterContactMaxRadius, Counts.MaxRadius);
+        }
+        CharacterContacts.SetNum(TotalContacts);
+        CharacterWorkScratch.SetNum(TotalWorks);
+
+        // Sources are rare, so only the runs holding one are walked again, and next step judges distance from here.
+        CharacterRelevanceSources.Reset();
+        for (uint32 Chunk = 0; Chunk < ChunkCount; ++Chunk)
+        {
+            if (CharacterPrepChunks[Chunk].Sources == 0)
             {
-                return;
+                continue;
             }
+            const uint32 End = Math::Min(Num, (Chunk + 1) * kPrepChunk);
+            for (uint32 Dense = Chunk * kPrepChunk; Dense < End; ++Dense)
+            {
+                if (CharacterPrepStates[Dense] != ECharacterPrep::Skip && IsRelevanceSource(*PhysicsStorage.GetAtDense(Dense).Character))
+                {
+                    CharacterRelevanceSources.Add(PhysicsStorage.GetAtDense(Dense).Character->Position);
+                }
+            }
+        }
 
-            CharacterWorkScratch.Emplace(&Physics, &Movement, Entity);
-        });
+        const auto FillChunk = [&](uint32 Chunk)
+        {
+            FCharacterPrepChunk& Counts = CharacterPrepChunks[Chunk];
+            uint32 ContactIndex = Counts.ContactStart;
+            uint32 WorkIndex = Counts.WorkStart;
+            const uint32 End = Math::Min(Num, (Chunk + 1) * kPrepChunk);
+            for (uint32 Dense = Chunk * kPrepChunk; Dense < End; ++Dense)
+            {
+                const ECharacterPrep State = CharacterPrepStates[Dense];
+                if (State == ECharacterPrep::Skip)
+                {
+                    continue;
+                }
+                SCharacterPhysicsComponent& Physics = PhysicsStorage.GetAtDense(Dense);
+                const FPhysicsCharacterHandle& Character = *Physics.Character;
+                const ECS::FEntity Entity = Entities[Dense];
+
+                FCharacterContactBody& Body = CharacterContacts[ContactIndex];
+                Body = FCharacterContactBody();
+                Body.Character = &*Physics.Character;
+                Body.Profile = Character.Profile;
+                Body.Entity = Entity;
+                Body.Radius = Character.Radius;
+                Body.InvMass = 1.0f / Math::Max(Character.Mass, kMinContactMass);
+                Body.bMovable = State == ECharacterPrep::Step;
+                Body.bCollides = Character.bCollideWithCharacters;
+
+                if (State == ECharacterPrep::Step)
+                {
+                    // Velocity eases toward the commanded speed, so neither one is exceeded short of a launch.
+                    const SCharacterMovementComponent& Movement = *CharacterPrepMovements[Dense];
+                    const float Speed = Math::Max(Math::Length(FVector3(Character.Velocity.x, 0.0f, Character.Velocity.z)),
+                        Math::Max(Movement.MoveSpeed, Movement.SprintSpeed)) + Math::Length(Character.GroundVelocity);
+                    Body.Reach = Speed * FixedDt * (float)Character.LODInterval * kReachSlack;
+                    Counts.MaxReach = Math::Max(Counts.MaxReach, Body.Reach);
+                    CharacterWorkScratch[WorkIndex++] = FCharacterWork{ &Physics, CharacterPrepMovements[Dense], Entity, ContactIndex, false,
+                        FixedDt * (float)Character.LODInterval };
+                }
+                ++ContactIndex;
+            }
+        };
+        Jobs::ParallelFor(ChunkCount, FillChunk);
+        for (const FCharacterPrepChunk& Counts : CharacterPrepChunks)
+        {
+            CharacterContactMaxReach = Math::Max(CharacterContactMaxReach, Counts.MaxReach);
+        }
 
         if (!CrouchEvents.IsEmpty())
         {
@@ -561,6 +739,41 @@ namespace Lumina::Physics
         }
 
         const uint32 WorkCount = (uint32)CharacterWorkScratch.Num();
+        LastUpdateTimings.CharacterPrepMs += Phase.ElapsedMilliseconds();
+        Phase.Restart();
+
+        BuildCharacterContacts();
+
+        // Anything awake that could reach a character before the next step keeps that character exact, its proxy on first.
+        if (CharacterLODRangeSq > 0.0f && !CharacterContacts.IsEmpty())
+        {
+            for (const FVector4& Reach : AwakeBodyReach)
+            {
+                const float Range = Reach.w + kAwakeBodyMargin + CharacterContactMaxRadius;
+                CharacterContactGrid.ForEachRowSpan(Reach.x, Reach.z, Range, [&](int32 Begin, int32 End)
+                {
+                    for (int32 Slot = Begin; Slot < End; ++Slot)
+                    {
+                        const float DX = CharacterContactGrid.SortedPosX[Slot] - Reach.x;
+                        const float DZ = CharacterContactGrid.SortedPosZ[Slot] - Reach.z;
+                        if (DX * DX + DZ * DZ > Range * Range)
+                        {
+                            continue;
+                        }
+                        FPhysicsCharacterHandle& Character = *CharacterContacts[CharacterContactGrid.SortedIndices[Slot]].Character;
+                        Character.NearBodyStep = CharacterStepCounter;
+                        if (!Character.bProxyEnabled)
+                        {
+                            SetProxyEnabled(Character, true);
+                        }
+                    }
+                });
+            }
+        }
+        LastUpdateTimings.CharacterContactMs += Phase.ElapsedMilliseconds();
+        LastUpdateTimings.SteppedCharacters += WorkCount;
+        LastUpdateTimings.RestingCharacters += (uint32)RestingCount;
+        Phase.Restart();
 
         const uint32 ThreadSlots = Math::Max(Jobs::GetNumThreadSlots(), 1u);
         if (static_cast<uint32>(CharacterPushScratch.Num()) < ThreadSlots)
@@ -573,23 +786,35 @@ namespace Lumina::Physics
             Bucket.Clear();
         }
 
+        CharacterProxyWakes.SetNum(WorkCount);
         if (WorkCount > kCharacterParallelThreshold)
         {
             Jobs::ParallelFor(WorkCount, [&](uint32 Index, uint32 Thread)
             {
-                StepCharacter(CharacterWorkScratch[Index], FixedDt, Thread);
-                DriveProxy(*CharacterWorkScratch[Index].Physics->Character, FixedDt);
+                StepCharacter(CharacterWorkScratch[Index], CharacterWorkScratch[Index].StepDt, Thread);
+                CharacterProxyWakes[Index] = DriveProxy(*CharacterWorkScratch[Index].Physics->Character, FixedDt, false) ? 0 : 1;
             },
             kCharacterParallelGrain);
+
+            for (uint32 Index = 0; Index < WorkCount; ++Index)
+            {
+                if (CharacterProxyWakes[Index] != 0)
+                {
+                    DriveProxy(*CharacterWorkScratch[Index].Physics->Character, FixedDt, true);
+                }
+            }
         }
         else
         {
             for (uint32 Index = 0; Index < WorkCount; ++Index)
             {
-                StepCharacter(CharacterWorkScratch[Index], FixedDt, 0);
-                DriveProxy(*CharacterWorkScratch[Index].Physics->Character, FixedDt);
+                StepCharacter(CharacterWorkScratch[Index], CharacterWorkScratch[Index].StepDt, 0);
+                DriveProxy(*CharacterWorkScratch[Index].Physics->Character, FixedDt, true);
             }
         }
+
+        LastUpdateTimings.CharacterStepMs += Phase.ElapsedMilliseconds();
+        Phase.Restart();
 
         // Pushes go through Box3D's shared body arrays, so they land after the fan-out.
 
@@ -602,10 +827,150 @@ namespace Lumina::Physics
                     b3Body_ApplyLinearImpulse(Push.Body, Push.Impulse, Push.Point, true);
                 }
             }
+            for (FPhysicsCharacterHandle* Woken : Bucket.Wakes)
+            {
+                Woken->bResting = false;
+            }
             DeliverCharacterEvents(Bucket);
         }
+        LastUpdateTimings.CharacterApplyMs += Phase.ElapsedMilliseconds();
 
         LUMINA_PROFILE_VALUE("Physics/RestingCharacters", RestingCount);
+    }
+
+    void FBox3DPhysicsScene::BuildCharacterContacts()
+    {
+        LUMINA_PROFILE_SCOPE();
+
+        const uint32 ContactCount = (uint32)CharacterContacts.Num();
+        CharacterContactX.SetNum(ContactCount);
+        CharacterContactZ.SetNum(ContactCount);
+
+        const auto Snapshot = [&](uint32 Index)
+        {
+            FCharacterContactBody& Body = CharacterContacts[Index];
+            const FPhysicsCharacterHandle& Character = *Body.Character;
+            const float CenterY = Character.Position.y + Character.TranslationOffset.y - Character.CrouchDrop;
+            Body.Bottom = CenterY - Character.HalfHeight - Character.Radius;
+            Body.Top = CenterY + Character.HalfHeight + Character.Radius;
+            CharacterContactX[Index] = Character.Position.x + Character.TranslationOffset.x;
+            CharacterContactZ[Index] = Character.Position.z + Character.TranslationOffset.z;
+        };
+        if (ContactCount > kCharacterLatchParallelThreshold)
+        {
+            Jobs::ParallelFor(ContactCount, Snapshot);
+        }
+        else
+        {
+            for (uint32 Index = 0; Index < ContactCount; ++Index)
+            {
+                Snapshot(Index);
+            }
+        }
+
+        const bool bAnyPairs = ContactCount > 1 && CharacterContactMaxRadius > 0.0f;
+        CharacterContactGrid.Build(CharacterContactX.GetData(), CharacterContactZ.GetData(), bAnyPairs ? (int32)ContactCount : 0,
+            2.0f * CharacterContactMaxRadius);
+    }
+
+    void FBox3DPhysicsScene::GatherCharacterPlanes(const FCharacterWork& Work, float Reach, FCharacterPlanes& Out, uint32 ThreadSlot)
+    {
+        Out.Count = 0;
+        const FCharacterContactBody& Self = CharacterContacts[Work.ContactIndex];
+        if (!Self.bCollides)
+        {
+            return;
+        }
+
+        const bool bPermissive = Box3DUtils::UsesPermissiveCollisionFilter();
+        const auto Accepts = [bPermissive](const SCollisionProfile& A, const SCollisionProfile& B)
+        {
+            return bPermissive ? A.ShouldCollide(B) : (A.Mask & B.Layer) != (ECollisionProfiles)0;
+        };
+
+        const float SelfX = CharacterContactX[Work.ContactIndex];
+        const float SelfZ = CharacterContactZ[Work.ContactIndex];
+        const float SelfReach = Math::Max(Reach, Self.Reach);
+
+        CharacterContactGrid.ForEachRowSpan(SelfX, SelfZ, Self.Radius + CharacterContactMaxRadius + SelfReach + CharacterContactMaxReach,
+            [&](int32 Begin, int32 End)
+        {
+            for (int32 Slot = Begin; Slot < End; ++Slot)
+            {
+                const int32 OtherIndex = CharacterContactGrid.SortedIndices[Slot];
+                if (OtherIndex == (int32)Work.ContactIndex)
+                {
+                    continue;
+                }
+
+                const FCharacterContactBody& Other = CharacterContacts[OtherIndex];
+                const float DX = SelfX - CharacterContactGrid.SortedPosX[Slot];
+                const float DZ = SelfZ - CharacterContactGrid.SortedPosZ[Slot];
+                const float Contact = Self.Radius + Other.Radius;
+                const float PairReach = SelfReach + Other.Reach;
+                const float Range = Contact + PairReach;
+                const float DistSq = DX * DX + DZ * DZ;
+                if (DistSq >= Range * Range || !Other.bCollides || Self.Top + PairReach <= Other.Bottom || Other.Top + PairReach <= Self.Bottom
+                    || !Accepts(Self.Profile, Other.Profile))
+                {
+                    continue;
+                }
+
+                // Where the masses balance between two stepped characters, while one that is not stepping holds still.
+                const float Share = Other.bMovable && Accepts(Other.Profile, Self.Profile)
+                    ? Self.InvMass / (Self.InvMass + Other.InvMass)
+                    : 1.0f;
+
+                const float Dist = Math::Sqrt(DistSq);
+                b3Vec3 Normal;
+                if (Dist > kCoincidentDistance)
+                {
+                    Normal = b3Vec3{ DX / Dist, 0.0f, DZ / Dist };
+                }
+                else
+                {
+                    // Hashed from the pair and signed by order, so the two sides leave in opposite directions.
+                    const uint32 Low = Math::Min(Self.Entity.Value, Other.Entity.Value);
+                    const uint32 High = Math::Max(Self.Entity.Value, Other.Entity.Value);
+                    const float Angle = (float)(((Low * 0x9E3779B1u) ^ (High * 0x85EBCA77u)) & 0xFFFFu) * (Math::TwoPi<float>() / 65536.0f);
+                    const float Sign = Self.Entity.Value < Other.Entity.Value ? 1.0f : -1.0f;
+                    Normal = b3Vec3{ Math::Cos(Angle) * Sign, 0.0f, Math::Sin(Angle) * Sign };
+                }
+
+                const float Gap = Dist - Contact;
+                const float Allowed = Gap * Share;
+
+                // A resting character only moves once woken, and it has to before an overlap with it can part.
+                if (Gap < 0.0f && !Other.bMovable && Other.Character->bResting)
+                {
+                    CharacterPushScratch[ThreadSlot].Wakes.Add(Other.Character);
+                }
+
+                // A full set keeps the tightest bounds, since a loose one far away rarely limits the move.
+                int32 Target = Out.Count;
+                if (Out.Count == kMaxCharacterPlanes)
+                {
+                    Target = 0;
+                    for (int32 i = 1; i < kMaxCharacterPlanes; ++i)
+                    {
+                        if (Out.Allowed[i] > Out.Allowed[Target])
+                        {
+                            Target = i;
+                        }
+                    }
+                    if (Out.Allowed[Target] <= Allowed)
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    ++Out.Count;
+                }
+                Out.Normals[Target] = Normal;
+                Out.Allowed[Target] = Allowed;
+            }
+        });
     }
 
     void FBox3DPhysicsScene::DeliverCharacterEvents(const FCharacterPushBucket& Bucket)
@@ -613,6 +978,106 @@ namespace Lumina::Physics
         ECS::FEventQueues& Events = World->GetEvents();
         ECS::SendEvents(Events, TSpan<const SCharacterLandedEvent>(Bucket.Landings.GetData(), Bucket.Landings.Num()));
         ECS::SendEvents(Events, TSpan<const SCharacterJumpedEvent>(Bucket.Jumps.GetData(), Bucket.Jumps.Num()));
+    }
+
+    ECharacterPrep FBox3DPhysicsScene::PrepareCharacter(ECS::FRegistry& Registry, ECS::FEntity Entity, SCharacterPhysicsComponent& Physics,
+        SCharacterMovementComponent& Movement, float FixedDt, bool bMayWriteBox3D)
+    {
+        FPhysicsCharacterHandle& Character = *Physics.Character;
+
+        // Prediction steps a net-driven character against proxies on both ends, so its own proxy never leaves.
+        if (Character.NetDrive != (uint8)ECharacterNetDrive::Simulated && !Character.bProxyEnabled)
+        {
+            if (!bMayWriteBox3D)
+            {
+                return ECharacterPrep::Serial;
+            }
+            SetProxyEnabled(Character, true);
+        }
+        if (Character.NetDrive == (uint8)ECharacterNetDrive::Commands)
+        {
+            return ECharacterPrep::Hold;
+        }
+        if (Character.NetDrive == (uint8)ECharacterNetDrive::FollowTransform)
+        {
+            if (!bMayWriteBox3D)
+            {
+                return ECharacterPrep::Serial;
+            }
+            FollowTransform(Registry, Entity, Physics, Movement, FixedDt);
+            return ECharacterPrep::Hold;
+        }
+
+        // Past the LOD distance a character keeps no proxy and moves every few steps, unless something it could touch is near.
+        bool bNear = true;
+        if (CharacterLODRangeSq > 0.0f)
+        {
+            bNear = Character.NearBodyStep != 0 && CharacterStepCounter - Character.NearBodyStep <= kNearBodyHoldSteps;
+            for (int32 i = 0; i < CharacterRelevancePoints.Num() && !bNear; ++i)
+            {
+                bNear = Math::DistanceSquared(CharacterRelevancePoints[i], Character.Position) <= CharacterLODRangeSq;
+            }
+        }
+        if (bNear != Character.bProxyEnabled)
+        {
+            if (!bMayWriteBox3D)
+            {
+                return ECharacterPrep::Serial;
+            }
+            SetProxyEnabled(Character, bNear);
+        }
+        Character.LODInterval = bNear ? 1 : (uint8)CharacterLODInterval;
+
+        // Resizing the proxy shape writes Box3D state the parallel step only reads.
+        if ((Movement.bWantsToCrouch && Movement.bCanCrouch) != Movement.bIsCrouched)
+        {
+            if (!bMayWriteBox3D)
+            {
+                return ECharacterPrep::Serial;
+            }
+            UpdateCrouch(Entity, Physics, Movement);
+        }
+
+        if (Character.bResting)
+        {
+            const bool bPollDue = ((CharacterStepCounter + (uint64)(Entity).Value) & kRestPollMask) == 0;
+            if (!bPollDue && !ShouldWakeResting(Character, Movement))
+            {
+                // The last step's target transform has landed the proxy, so it stops here instead of drifting on.
+                if (Character.bProxyInMotion)
+                {
+                    if (!bMayWriteBox3D)
+                    {
+                        return ECharacterPrep::Serial;
+                    }
+                    PlaceProxy(Character);
+                }
+                return ECharacterPrep::Rest;
+            }
+
+            Character.bResting = false;
+        }
+
+        if (Movement.bPendingTeleport || Character.bAwaitingGround)
+        {
+            if (!bMayWriteBox3D)
+            {
+                return ECharacterPrep::Serial;
+            }
+            if (!ResolveCharacterPreStep(Entity, Physics, Movement))
+            {
+                return ECharacterPrep::Hold;
+            }
+        }
+
+        // Phased by entity so a far crowd spreads its moves evenly over the span.
+        if (Character.LODInterval > 1 && ((CharacterStepCounter + (uint64)Entity.Value) % Character.LODInterval) != 0)
+        {
+            Character.LODStepsHeld = (uint8)Math::Min<uint32>(Character.LODStepsHeld + 1u, 255u);
+            return ECharacterPrep::Hold;
+        }
+        Character.LODStepsHeld = 0;
+        return ECharacterPrep::Step;
     }
 
     bool FBox3DPhysicsScene::ResolveCharacterPreStep(ECS::FEntity Entity, SCharacterPhysicsComponent& Physics, SCharacterMovementComponent& Movement)
@@ -806,8 +1271,8 @@ namespace Lumina::Physics
             }
             CharacterPushScratch[0].Clear();
 
-            StepCharacter(FCharacterWork{ Physics, Movement, Entity }, FixedDt, 0);
-            DriveProxy(*Physics->Character, FixedDt);
+            StepCharacter(FCharacterWork{ Physics, Movement, Entity, 0, true }, FixedDt, 0);
+            DriveProxy(*Physics->Character, FixedDt, true);
 
             // A replay re-walks steps whose pushes and landings already happened, so repeating them would shove and announce twice.
             if (!bReplay)
@@ -835,6 +1300,12 @@ namespace Lumina::Physics
         {
             Physics->Character->NetDrive = (uint8)Drive;
             Physics->Character->bResting = false;
+
+            // A command can be stepped before the next prep pass would switch the proxy on.
+            if (Drive != ECharacterNetDrive::Simulated && !Physics->Character->bProxyEnabled)
+            {
+                SetProxyEnabled(*Physics->Character, true);
+            }
         }
     }
 
@@ -970,22 +1441,37 @@ namespace Lumina::Physics
         Gathered.IgnoreBody = Character.ProxyBody;
         Gathered.Profile = Character.Profile;
         Gathered.bPermissive = Box3DUtils::UsesPermissiveCollisionFilter();
-        Gathered.bCollideWithCharacters = Character.bCollideWithCharacters;
+        // In a crowd step the contact pass meets other characters, so the mover sees only the world.
+        Gathered.bCollideWithCharacters = Work.bProxyCharacterContacts && Character.bCollideWithCharacters;
         Gathered.CosMaxSlope = Character.CosMaxSlope;
         Gathered.Entity = Work.Entity;
+
+        FCharacterPlanes Neighbors;
 
         auto GatherAt = [&](b3Pos At)
         {
             Gathered.Count = 0;
             Gathered.Origin = At;
             b3World_CollideMover(WorldId, At, &Mover, Character.Filter, &GatherPlanes, &Gathered);
+            Gathered.WorldCount = Gathered.Count;
+
+            // Fixed where the step began, so gathering again never moves a neighbor's bound.
+            const b3Vec3 Moved = b3SubPos(At, StartPosition);
+            for (int32 i = 0; i < Neighbors.Count && Gathered.Count < kMaxMoverPlanes; ++i)
+            {
+                const b3Vec3 Normal = Neighbors.Normals[i];
+                Gathered.Planes[Gathered.Count] = b3CollisionPlane{ b3Plane{ Normal, -Neighbors.Allowed[i] - b3Dot(Normal, Moved) }, FLT_MAX, 0.0f, true };
+                Gathered.Points[Gathered.Count] = b3Add(At, b3MulSV(-Character.Radius, Normal));
+                Gathered.Shapes[Gathered.Count] = b3_nullShapeId;
+                ++Gathered.Count;
+            }
         };
 
         auto FindWalkablePlane = [&]()
         {
             int32 Best = Constants::kIndexNone;
             float BestUp = Character.CosMaxSlope;
-            for (int32 i = 0; i < Gathered.Count; ++i)
+            for (int32 i = 0; i < Gathered.WorldCount; ++i)
             {
                 const float Up = Gathered.Planes[i].plane.normal.y;
                 if (Up >= BestUp)
@@ -1004,7 +1490,7 @@ namespace Lumina::Physics
         {
             const float LowerCenterY = Gathered.Origin.y + Math::Min(Mover.center1.y, Mover.center2.y);
             int32 Edge = Constants::kIndexNone;
-            for (int32 i = 0; i < Gathered.Count; ++i)
+            for (int32 i = 0; i < Gathered.WorldCount; ++i)
             {
                 if (Gathered.Points[i].y < LowerCenterY && (Edge == Constants::kIndexNone || Gathered.Points[i].y > Gathered.Points[Edge].y))
                 {
@@ -1034,6 +1520,12 @@ namespace Lumina::Physics
             const FVector3& Ground = Character.GroundNormal;
             Desired.y = -(Desired.x * Ground.x + Desired.z * Ground.z) / Ground.y;
         }
+        if (!Work.bProxyCharacterContacts && Character.bCollideWithCharacters)
+        {
+            GatherCharacterPlanes(Work, b3Length(Desired), Neighbors, ThreadSlot);
+            Gathered.Capacity = kMaxMoverPlanes - Neighbors.Count;
+        }
+
         const float TravelFraction = b3World_CastMover(WorldId, Position, &Mover, Desired, Character.Filter, &MoverCastFilter, &Gathered);
 
         Position = b3Add(Position, b3MulSV(TravelFraction, Desired));
@@ -1081,7 +1573,7 @@ namespace Lumina::Physics
         const b3Vec3 Achieved = b3Sub(Position, StartPosition);
         const float AchievedHorizontal = b3Length(b3Vec3{ Achieved.x, 0.0f, Achieved.z });
 
-        if (bWasGrounded && Character.StepHeight > 0.0f && WantedHorizontal > kMoveTolerance
+        if (bWasGrounded && TravelFraction < 1.0f && Character.StepHeight > 0.0f && WantedHorizontal > kMoveTolerance
             && AchievedHorizontal < WantedHorizontal * 0.9f)
         {
             const b3Vec3 StepUp{ 0.0f, Character.StepHeight, 0.0f };
@@ -1110,11 +1602,15 @@ namespace Lumina::Physics
                     }
                     else if (DownFraction < 1.0f && FindLedgeFloor(Forward, WantedHorizontal))
                     {
+                        // The planes now come from the landing, so an index found before the step no longer names the ground.
                         Position = Landed;
+                        GroundPlane = Constants::kIndexNone;
                     }
                     else
                     {
+                        // The earlier index may name a plane gathered at a slightly different pose, which this set no longer holds.
                         GatherAt(Position);
+                        GroundPlane = FindWalkablePlane();
                     }
                 }
             }
@@ -1193,7 +1689,7 @@ namespace Lumina::Physics
         bool bRestableContacts = true;
 
         // Push whatever the mover leaned on, so crates and props still respond to being walked into.
-        for (int32 i = 0; i < Gathered.Count; ++i)
+        for (int32 i = 0; i < Gathered.WorldCount; ++i)
         {
             const b3BodyId HitBody = b3Shape_GetBody(Gathered.Shapes[i]);
             if (!b3Body_IsValid(HitBody))
@@ -1234,6 +1730,42 @@ namespace Lumina::Physics
             Impulse = Math::Min(Impulse, Character.MaxStrength * FixedDt);
 
             CharacterPushScratch[ThreadSlot].Pushes.Emplace(HitBody, b3MulSV(Impulse, Normal), Point);
+        }
+
+        // Stepping up, settling and pushing out of the floor move the capsule outside the solves, so the neighbor bounds hold once more here.
+        if (!Work.bProxyCharacterContacts && Character.bCollideWithCharacters)
+        {
+            // A push out of the world can carry the capsule past the reach its neighbors were gathered for.
+            const b3Vec3 Moved = b3SubPos(Position, StartPosition);
+            const float MovedFlat = b3Length(b3Vec3{ Moved.x, 0.0f, Moved.z });
+            if (MovedFlat > Math::Max(b3Length(Desired), CharacterContacts[Work.ContactIndex].Reach))
+            {
+                GatherCharacterPlanes(Work, MovedFlat, Neighbors, ThreadSlot);
+            }
+
+            b3Pos Bounded = Position;
+            for (int32 i = 0; i < Neighbors.Count; ++i)
+            {
+                const float Separation = b3Dot(Neighbors.Normals[i], b3SubPos(Bounded, StartPosition)) + Neighbors.Allowed[i];
+                if (Separation < 0.0f)
+                {
+                    Bounded = b3Add(Bounded, b3MulSV(-Separation, Neighbors.Normals[i]));
+                }
+            }
+
+            // Cast rather than placed, so the world still wins and an overlap it leaves parts on the next step.
+            b3Vec3 Correction = b3SubPos(Bounded, Position);
+            if (Character.bGrounded)
+            {
+                // Along the floor, so a shove on a slope neither lifts the capsule off it nor buries it.
+                const b3Vec3 Up = Box3DUtils::ToB3Vec3(Character.GroundNormal);
+                Correction = b3MulSub(Correction, b3Dot(Correction, Up), Up);
+            }
+            if (b3LengthSquared(Correction) > 0.0f)
+            {
+                const float Fraction = b3World_CastMover(WorldId, Position, &Mover, Correction, Character.Filter, &MoverCastFilter, &Gathered);
+                Position = b3Add(Position, b3MulSV(Fraction, Correction));
+            }
         }
 
         Character.Position = Box3DUtils::FromB3Vec3(Position);

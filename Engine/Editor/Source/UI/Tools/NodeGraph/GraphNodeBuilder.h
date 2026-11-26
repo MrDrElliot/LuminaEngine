@@ -9,7 +9,7 @@ namespace Lumina
     {
     public:
 
-        explicit FGraphNodeBuilder(FGraphEditor& InEditor) : Editor(InEditor) {}
+        explicit FGraphNodeBuilder(FGraphEditor& InEditor) : Editor(&InEditor) {}
 
         void Begin(int64 InNodeID, ImVec2& InOutPosition);
         void End(bool bWantsTitlebar);
@@ -52,7 +52,7 @@ namespace Lumina
         void SetStage(EStage NewStage);
         void DrawExpandBar(ImDrawList* DrawList, const ImVec2& NodeMax) const;
 
-        FGraphEditor& Editor;
+        FGraphEditor* Editor;
         int64         NodeID = 0;
         ImVec2        NodePosition;
         EStage        Stage = EStage::Invalid;

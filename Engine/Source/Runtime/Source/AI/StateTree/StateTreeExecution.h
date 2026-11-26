@@ -17,7 +17,7 @@ namespace Lumina
     public:
 
         FStateTreeExecutionContext(FStateTreeInstance& InInstance, CWorld* InWorld, ECS::FEntity InOwner, double InTime, float InDeltaTime)
-            : Instance(InInstance), World(InWorld), Owner(InOwner), Time(InTime), DeltaTime(InDeltaTime)
+            : Instance(&InInstance), World(InWorld), Owner(InOwner), Time(InTime), DeltaTime(InDeltaTime)
         {}
 
         NODISCARD CWorld* GetWorld() const { return World; }
@@ -51,7 +51,7 @@ namespace Lumina
 
         friend class FStateTreeInstance;
 
-        FStateTreeInstance& Instance;
+        FStateTreeInstance* Instance;
         CWorld*             World       = nullptr;
         ECS::FEntity        Owner       = ECS::NullEntity;
         double              Time        = 0.0;

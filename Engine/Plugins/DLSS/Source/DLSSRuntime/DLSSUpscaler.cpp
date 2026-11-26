@@ -10,7 +10,7 @@
 #include "Renderer/RHINative.h"
 
 // Vulkan lives only in this plugin, and RHINative hands out opaque handles reinterpreted here.
-#include <volk/volk.h>
+#include <vulkan/vulkan.h>
 #include <nvsdk_ngx_vk.h>
 #include <nvsdk_ngx_helpers.h>
 #include <nvsdk_ngx_helpers_vk.h>

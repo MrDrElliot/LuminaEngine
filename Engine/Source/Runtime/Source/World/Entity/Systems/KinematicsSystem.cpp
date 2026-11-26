@@ -73,9 +73,9 @@ namespace Lumina
             Entry.bHasWorld = bCaptureWorld;
             if (bCaptureWorld)
             {
-                Entry.World = Xform->GetWorldTransform();
+                Entry.World = Xform->ComputeWorldTransform();
             }
-            const FVector3 Location = bCaptureWorld ? Entry.World.GetLocation() : Xform->GetWorldLocationCached();
+            const FVector3 Location = bCaptureWorld ? Entry.World.GetLocation() : Xform->GetWorldLocation();
             const FVector3 Velocity = (Entry.bHasPrevious && InvDelta > 0.0f)
                 ? (Location - Entry.PreviousLocation) * InvDelta
                 : FVector3(0.0f);
@@ -127,10 +127,10 @@ namespace Lumina
         }
 
         // Last, because a character mover owns its velocity outright and CAnimationSystem preferred it.
-        Movers.ForEach([&](ECS::FEntity Entity, const SCharacterMovementComponent& Movement, const STransformComponent&)
+        Movers.ParallelForEach([&](ECS::FEntity Entity, const SCharacterMovementComponent& Movement, const STransformComponent&)
         {
             Refine(Entity, Movement.Velocity);
-        });
+        }, kKinematicsParallelGrain);
 
         // Mirrored so the reflected component reads the same value in the editor and in script.
         Velocities.ForEach([&](ECS::FEntity Entity, ECS::TMut<SVelocityComponent> OutMut)

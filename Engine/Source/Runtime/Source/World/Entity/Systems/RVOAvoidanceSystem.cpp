@@ -84,7 +84,7 @@ namespace Lumina
             const ECS::FEntity  Entity = State.Entities[i];
             SRVOAgentComponent& Agent  = AvoiderView.Get<ECS::Write<SRVOAgentComponent>>(Entity);
 
-            const FVector3 Position = AvoiderView.Get<ECS::Read<STransformComponent>>(Entity).GetWorldLocationCached();
+            const FVector3 Position = AvoiderView.Get<ECS::Read<STransformComponent>>(Entity).GetWorldLocation();
 
             float CharacterRadius = 0.5f;
             if (const SCharacterPhysicsComponent* Character = Avoiders.TryGet<SCharacterPhysicsComponent>(Entity))
@@ -211,7 +211,7 @@ namespace Lumina
 
         const auto DrawAgentDebug = [&](int32 i, const SRVOAgentComponent& Agent)
         {
-            const FVector3 Base = AvoiderView.Get<ECS::Read<STransformComponent>>(State.Entities[i]).GetWorldLocationCached() + GDebugLift;
+            const FVector3 Base = AvoiderView.Get<ECS::Read<STransformComponent>>(State.Entities[i]).GetWorldLocation() + GDebugLift;
 
             Context.DrawDebugLine(Base,
                 Base + FVector3(Agents.PrefVelX[i], 0.0f, Agents.PrefVelZ[i]) * 0.5f,

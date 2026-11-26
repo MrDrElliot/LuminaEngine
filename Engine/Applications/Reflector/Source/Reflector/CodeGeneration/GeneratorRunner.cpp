@@ -166,7 +166,7 @@ namespace Lumina::Reflection
         char Message[2048];
         std::vsnprintf(Message, sizeof(Message), Fmt, Args);
 
-        const FDiagLocation Loc{ Model.String(Location.File), Location.Line };
+        const FDiagLocation Loc{ Model->String(Location.File), Location.Line };
         const std::lock_guard Lock(Mutex);
         if (bError)
         {
@@ -416,7 +416,7 @@ namespace Lumina::Reflection
         const unsigned Hardware = std::thread::hardware_concurrency();
         FWorkerPool Workers(Hardware > 1 ? Hardware - 1 : 0);
         const FGeneratorDiagnostics Diagnostics(Model);
-        const FRunContext Context{ Model, Specifiers, Diagnostics, Workers };
+        const FRunContext Context{ &Model, &Specifiers, &Diagnostics, &Workers };
 
         // Every path written so far, which a loaded generator may not overwrite or remove.
         std::mutex WrittenMutex;
@@ -450,7 +450,7 @@ namespace Lumina::Reflection
         Workers.ParallelFor(Modules.size(), [&](size_t Index)
         {
             FGeneratedOutputs Outputs;
-            const FModuleContext ModuleContext{ Context, Modules[Index], Outputs };
+            const FModuleContext ModuleContext{ &Context, Modules[Index], &Outputs };
             for (const auto& Generator : Generators)
             {
                 Generator->GenerateModule(ModuleContext);
@@ -487,7 +487,7 @@ namespace Lumina::Reflection
                 Generator.BeginRun(Context);
                 Workers.ParallelFor(Modules.size(), [&](size_t Index)
                 {
-                    Generator.GenerateModule({ Context, Modules[Index], Staged[Index] });
+                    Generator.GenerateModule({ &Context, Modules[Index], &Staged[Index] });
                 });
                 Generator.EndRun(Context, Staged.back());
             });

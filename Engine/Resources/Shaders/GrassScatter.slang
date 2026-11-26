@@ -247,7 +247,7 @@ void main(uint3 Tid : SV_DispatchThreadID)
     Static.MeshletVisibilityBase   = kNoMeshletVisibility;
     Static.RenderLayers            = RENDER_LAYER_DEFAULT_MASK;
     Static.WPODisableDistance      = 0.0;
-    Static.Reserved0               = 0u;
+    Static.TransformOffset         = 0u;
     Static.Reserved1               = 0u;
     Static.Reserved2               = 0u;
     (P->OutStatic).Set(Slot, Static);

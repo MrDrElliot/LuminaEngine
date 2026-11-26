@@ -34,7 +34,7 @@ namespace Lumina::Scalability
             "PostProcess": {
                 "Low":    { "RendererSettings.bEnableGTAO": false, "RendererSettings.GTAOQualityLevel": 0, "RendererSettings.bDistanceFieldAO": false },
                 "Medium": { "RendererSettings.bEnableGTAO": true,  "RendererSettings.GTAOQualityLevel": 1, "RendererSettings.bDistanceFieldAO": false },
-                "High":   { "RendererSettings.bEnableGTAO": true,  "RendererSettings.GTAOQualityLevel": 2, "RendererSettings.bDistanceFieldAO": true },
+                "High":   { "RendererSettings.bEnableGTAO": true,  "RendererSettings.GTAOQualityLevel": 3, "RendererSettings.bDistanceFieldAO": true },
                 "Ultra":  { "RendererSettings.bEnableGTAO": true,  "RendererSettings.GTAOQualityLevel": 3, "RendererSettings.bDistanceFieldAO": true }
             },
             "Textures": {

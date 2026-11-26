@@ -6,6 +6,17 @@
 // The quad is grown past the sphere's radius so the parts in front of its center plane, which project larger, stay inside it.
 static const float kImpostorQuadGrowth = 1.05;
 
+// How far a view may be stretched on screen before a denser mesh stops swapping sooner, the twin of Impostor::kMaxMagnification.
+static const float kImpostorMaxMagnification = 1.5;
+
+// The twin of Impostor::TransitionPixels, the projected diameter the mesh swaps to its impostor under.
+float ImpostorTransitionPixels(FMeshletHeader* Header, float BasePixels)
+{
+    const float Scale  = Header.ImpostorTransitionScale;
+    const float Scaled = BasePixels * Scale;
+    return Scale > 1.0 ? min(Scaled, max(BasePixels, float(Header.ImpostorFrameSize) * kImpostorMaxMagnification)) : Scaled;
+}
+
 // Blended coverage under which a near pixel shows what is behind the impostor, which far ones dither around.
 static const float kImpostorCoverageCutoff = 0.5;
 

@@ -119,7 +119,7 @@ namespace Lumina
         STransformComponent& MeshTransform = World->GetComponent<STransformComponent>(MeshEntity);
         STransformComponent& EditorTransform = World->GetComponent<STransformComponent>(EditorEntity);
 
-        FQuat Rotation = Math::FindLookAtRotation(MeshTransform.GetWorldLocation()+ FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocalLocation());
+        FQuat Rotation = Math::FindLookAtRotation(MeshTransform.ComputeWorldTransform().GetLocation()+ FVector3(0.0f, 0.85f, 0.0f), EditorTransform.GetLocalLocation());
         EditorTransform.SetLocalRotation(Rotation);
     }
 
@@ -165,7 +165,7 @@ namespace Lumina
         FMatrix4 EntityMatrix = FMatrix4(1.0f);
         if (MeshEntity != ECS::NullEntity)
         {
-            EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).GetWorldMatrix();
+            EntityMatrix = World->GetComponent<STransformComponent>(MeshEntity).ComputeWorldTransform().GetMatrix();
         }
 
         BoneWorldTransforms.SetNum(SkeletonResource->GetNumBones());

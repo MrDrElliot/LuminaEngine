@@ -411,32 +411,32 @@ namespace Lumina
     public:
 
         FMemMark() noexcept
-            : Arena(GetThreadScratchAllocator())
-            , Mark(Arena.GetMark())
+            : Arena(&GetThreadScratchAllocator())
+            , Mark(Arena->GetMark())
         {}
 
         explicit FMemMark(FBlockLinearAllocator& InArena) noexcept
-            : Arena(InArena)
+            : Arena(&InArena)
             , Mark(InArena.GetMark())
         {}
 
-        ~FMemMark() { Arena.RestoreToMark(Mark); }
+        ~FMemMark() { Arena->RestoreToMark(Mark); }
 
         FMemMark(const FMemMark&)            = delete;
         FMemMark& operator=(const FMemMark&) = delete;
         FMemMark(FMemMark&&) = delete;
         FMemMark& operator=(FMemMark&&) = delete;
 
-        void* Allocate(SIZE_T Size, SIZE_T Alignment = 16) { return Arena.Allocate(Size, Alignment); }
+        void* Allocate(SIZE_T Size, SIZE_T Alignment = 16) { return Arena->Allocate(Size, Alignment); }
 
         template<typename T, typename... TArgs>
-        T* Alloc(TArgs&&... Args) { return Memory::ConstructAt(static_cast<T*>(Arena.Allocate(sizeof(T), alignof(T))), Forward<TArgs>(Args)...); }
+        T* Alloc(TArgs&&... Args) { return Memory::ConstructAt(static_cast<T*>(Arena->Allocate(sizeof(T), alignof(T))), Forward<TArgs>(Args)...); }
 
         template<typename T, typename F>
         requires(!std::is_trivially_constructible_v<T>)
         T* AllocArray(size_t N, F&& f)
         {
-            void* Mem = Arena.Allocate(sizeof(T) * N, alignof(T));
+            void* Mem = Arena->Allocate(sizeof(T) * N, alignof(T));
             T* Ptr = static_cast<T*>(Mem);
             
             for (size_t i = 0; i < N; ++i)
@@ -451,16 +451,16 @@ namespace Lumina
         requires(std::is_trivially_constructible_v<T>)
         T* AllocArray(size_t N)
         {
-            void* Mem = Arena.Allocate(sizeof(T) * N, alignof(T));
+            void* Mem = Arena->Allocate(sizeof(T) * N, alignof(T));
             std::memset(Mem, 0, sizeof(T) * N);
             return static_cast<T*>(Mem);
         }
         
-        FBlockLinearAllocator& GetAllocator() const { return Arena; }
+        FBlockLinearAllocator& GetAllocator() const { return *Arena; }
 
     private:
 
-        FBlockLinearAllocator&   Arena;
+        FBlockLinearAllocator*   Arena;
         FBlockLinearAllocator::FMark Mark;
     };
 

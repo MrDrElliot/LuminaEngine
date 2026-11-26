@@ -462,7 +462,7 @@ namespace
     bool RouteCrosses(const NavTest::FNavWorld& World, ECS::FEntity Agent, const FVector3& BoxMin, const FVector3& BoxMax)
     {
         const SPathFollowComponent& Follow = World.Registry().Get<SPathFollowComponent>(Agent);
-        FVector3 From = World.Registry().Get<STransformComponent>(Agent).GetWorldLocationCached();
+        FVector3 From = World.Registry().Get<STransformComponent>(Agent).GetWorldLocation();
         for (int32 i = Follow.CurrentCorner; i < Follow.CornerCount; ++i)
         {
             const FVector3 To = Follow.PathCorners[i];

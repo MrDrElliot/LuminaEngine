@@ -12,13 +12,13 @@ namespace Lumina
     public:
 
         explicit FMemorySink(Logging::FLogQueue& InOutputMessages)
-            : OutputMessages(InOutputMessages)
+            : OutputMessages(&InOutputMessages)
         {}
 
         void Write(const Logging::FLogRecord& Record) override;
 
     private:
 
-        Logging::FLogQueue& OutputMessages;
+        Logging::FLogQueue* OutputMessages;
     };
 }

@@ -157,7 +157,7 @@ namespace Lumina
                 {
                     if (!Modifier.bEnabled) return;
 
-                    const FTransform& WT = Xform.GetWorldTransform();
+                    const FTransform& WT = Xform.ComputeWorldTransform();
                     const FVector3 Scale = WT.GetScale();
                     const FVector3 Center = WT.GetLocation() + Math::Rotate(WT.GetRotation(), Modifier.Offset * Scale);
                     const FVector3 Half(Modifier.Extents.x * std::fabs(Scale.x), Modifier.Extents.y * std::fabs(Scale.y), Modifier.Extents.z * std::fabs(Scale.z));
@@ -333,7 +333,7 @@ namespace Lumina
         {
             const FMatrix4 LocalOffset = Math::Translate(FMatrix4(1.0f), TransOffset)
                                         * Math::ToMatrix4(FQuat(EulerOffset));
-            return X.GetWorldMatrix() * LocalOffset;
+            return X.ComputeWorldTransform().GetMatrix() * LocalOffset;
         }
 
         FORCEINLINE void EmitTri(FGatherAccumulator& Acc, const FVector3& BakeMin, const FVector3& BakeMax, const FVector3& A, const FVector3& B, const FVector3& C)
@@ -1301,7 +1301,7 @@ namespace Lumina
                 Entry.Key = PackSourceKey(E, ENavColliderType::DynamicMesh);
                 Entry.ContentId = (uint64)(uintptr_t)DMC.Shape.Get();
                 Entry.Prim.Type = ENavColliderType::DynamicMesh;
-                Entry.Prim.World = X.GetWorldMatrix();
+                Entry.Prim.World = X.ComputeWorldTransform().GetMatrix();
                 Entry.Prim.CollisionShape = DMC.Shape;
                 const FVector3& Mn = DMC.Shape->LocalMin;
                 const FVector3& Mx = DMC.Shape->LocalMax;
@@ -1344,7 +1344,7 @@ namespace Lumina
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::CharacterCapsule);
                 Entry.Prim.Type = ENavColliderType::CharacterCapsule;
-                FMatrix4 CapsuleWorld = X.GetWorldMatrix();
+                FMatrix4 CapsuleWorld = X.ComputeWorldTransform().GetMatrix();
                 CapsuleWorld[3] = CapsuleWorld * FVector4(Cap.TranslationOffset.x, Cap.TranslationOffset.y, Cap.TranslationOffset.z, 1.0f);
                 Entry.Prim.World = CapsuleWorld;
                 Entry.Prim.Shape = FVector3(Cap.Radius, Cap.HalfHeight, 0.0f);
@@ -1357,7 +1357,7 @@ namespace Lumina
             {
                 if (!Compound.bAffectsNavigation || IsSimulated(E)) return;
 
-                const FMatrix4 BodyWorld = X.GetWorldMatrix();
+                const FMatrix4 BodyWorld = X.ComputeWorldTransform().GetMatrix();
                 for (int32 i = 0; i < Compound.Shapes.Num(); ++i)
                 {
                     const SCompoundSubShape& Child = Compound.Shapes[i];
@@ -1418,7 +1418,7 @@ namespace Lumina
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::AreaVolume, (uint32)Modifier.Area);
                 Entry.Prim.Type = ENavColliderType::AreaVolume;
-                Entry.Prim.World = X.GetWorldMatrix() * Math::Translate(FMatrix4(1.0f), Modifier.Offset);
+                Entry.Prim.World = X.ComputeWorldTransform().GetMatrix() * Math::Translate(FMatrix4(1.0f), Modifier.Offset);
 
                 FVector3 LocalCorners[8];
                 BuildBoxCorners(Modifier.Extents, LocalCorners);
@@ -1447,7 +1447,7 @@ namespace Lumina
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::OffMeshLink, PackLinkSubIndex(LinkComp));
                 Entry.Prim.Type = ENavColliderType::OffMeshLink;
-                Entry.Prim.World = X.GetWorldMatrix();
+                Entry.Prim.World = X.ComputeWorldTransform().GetMatrix();
 
                 auto Link = MakeShared<FNavOffMeshLink>();
                 Link->Start = FVector3(Entry.Prim.World * FVector4(LinkComp.Start, 1.0f));
@@ -1475,7 +1475,7 @@ namespace Lumina
                 Entry.ContentId = Terrain->CPUState.HeightmapVersion;
                 Entry.Prim.Type = ENavColliderType::Terrain;
                 // Terrain draws and collides axis aligned and unscaled, so its navmesh takes only the entity's position.
-                Entry.Prim.World = Math::Translate(FMatrix4(1.0f), FVector3(X.GetWorldMatrix()[3]));
+                Entry.Prim.World = Math::Translate(FMatrix4(1.0f), FVector3(X.ComputeWorldTransform().GetMatrix()[3]));
                 const float Half = Terrain->TileWorldSize * 0.5f;
                 const FVector3 Corners[8] = {
                     {-Half, 0.0f, -Half}, { Half, 0.0f, -Half}, { Half, 0.0f,  Half}, {-Half, 0.0f,  Half},
@@ -2015,7 +2015,7 @@ namespace Lumina
             // Scale always mirrors, location only in the editor, since runtime keeps the serialized Center.
             if (Transform)
             {
-                const FTransform& WT = Transform->GetWorldTransform();
+                const FTransform& WT = Transform->ComputeWorldTransform();
                 const FVector3 WS = WT.GetScale();
                 Comp.Runtime.WorldScale = FVector3(std::fabs(WS.x), std::fabs(WS.y), std::fabs(WS.z));
                 if (Context.GetWorldType() == EWorldType::Editor)
@@ -2589,7 +2589,7 @@ namespace Lumina
             SNavMeshComponent& Nav = Reg.Get<ECS::Write<SNavMeshComponent>>(Entity);
             if (auto* Xform = Reg.TryGet<ECS::Read<STransformComponent>>(Entity))
             {
-                Nav.Center = Xform->GetWorldTransform().GetLocation();
+                Nav.Center = Xform->ComputeWorldTransform().GetLocation();
             }
         }
 

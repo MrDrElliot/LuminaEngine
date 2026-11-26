@@ -298,7 +298,7 @@ TEST(TransformBench, DISABLED_FlatWorldCopyCost)
 namespace
 {
     // Capsule-like roots, each carrying a mesh, two pieces of gear and a light, with an item socketed under the mesh.
-    void MakeCharacters(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Roots, uint32 Count)
+    void MakeCharacters(ECS::FRegistry& Registry, TVector<ECS::FEntity>& Roots, uint32 Count, uint32 Children = 4, bool bItem = true)
     {
         Roots.Reserve(Count);
         for (uint32 i = 0; i < Count; ++i)
@@ -307,7 +307,7 @@ namespace
             Registry.Emplace<STransformComponent>(Root);
 
             ECS::FEntity Mesh = ECS::NullEntity;
-            for (int32 c = 0; c < 4; ++c)
+            for (uint32 c = 0; c < Children; ++c)
             {
                 const ECS::FEntity Child = Registry.Create();
                 Registry.Emplace<STransformComponent>(Child).LocalTransform.SetLocation(FVector3(0.0f, (float)c, 0.0f));
@@ -318,10 +318,13 @@ namespace
                     Mesh = Child;
                 }
             }
-            const ECS::FEntity Item = Registry.Create();
-            Registry.Emplace<STransformComponent>(Item).LocalTransform.SetLocation(FVector3(0.5f, 1.0f, 0.0f));
-            Registry.AttachChild(Item, Mesh);
-            Registry.Get<STransformComponent>(Item).Bind(Registry, Item);
+            if (bItem)
+            {
+                const ECS::FEntity Item = Registry.Create();
+                Registry.Emplace<STransformComponent>(Item).LocalTransform.SetLocation(FVector3(0.5f, 1.0f, 0.0f));
+                Registry.AttachChild(Item, Mesh);
+                Registry.Get<STransformComponent>(Item).Bind(Registry, Item);
+            }
 
             Registry.Get<STransformComponent>(Root).Bind(Registry, Root);
             Roots.Add(Root);
@@ -383,6 +386,22 @@ TEST(TransformBench, DISABLED_CharacterHierarchyPropagation)
     const double FrameNs = PropagateRootMoves(Registry, Roots, Frames);
     std::printf("\n  characters %u x 6 entities, %d frames:  propagate %8.1f us/frame  %6.2f ns/entity\n",
                 Count, Frames, FrameNs / 1000.0, FrameNs / (double)(Count * 6));
+    SUCCEED();
+}
+
+// The CrowdStress shape, a capsule root carrying one mesh, at a count whose components no longer fit in cache.
+TEST(TransformBench, DISABLED_CrowdPropagation)
+{
+    constexpr uint32 Count  = 100000;
+    constexpr int32  Frames = 40;
+
+    ECS::FRegistry Registry{};
+    TVector<ECS::FEntity> Roots;
+    MakeCharacters(Registry, Roots, Count, 1, false);
+
+    const double FrameNs = PropagateRootMoves(Registry, Roots, Frames);
+    std::printf("\n  crowd %u x 2 entities, %d frames:  propagate %8.1f us/frame  %6.2f ns/entity\n",
+                Count, Frames, FrameNs / 1000.0, FrameNs / (double)(Count * 2));
     SUCCEED();
 }
 

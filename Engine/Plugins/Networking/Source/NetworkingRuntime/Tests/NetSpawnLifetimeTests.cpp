@@ -20,12 +20,12 @@ namespace
     {
         ECS::FRegistry     Registry;
         ECS::FEventQueues  Events{ Registry };
-        FNetWorldState&    State;
+        FNetWorldState*    State;
 
         FClient()
-            : State(Registry.Ctx().Emplace<FNetWorldState>())
+            : State(&Registry.Ctx().Emplace<FNetWorldState>())
         {
-            State.Events = &Events;
+            State->Events = &Events;
             Registry.GetSignals<SNetworkComponent>().OnDestroy.Connect<&OnNetworkComponentDestroyed>();
         }
 
@@ -36,7 +36,7 @@ namespace
 
         ECS::FEntity Mapped() const
         {
-            return State.GuidTable.Find(SNetGUID{ SpawnedGuid });
+            return State->GuidTable.Find(SNetGUID{ SpawnedGuid });
         }
 
         void ReceiveSpawn(bool bTruncated = false)
@@ -50,14 +50,14 @@ namespace
             TVector<uint8> Msg;
             WriteSpawnMessage(Server, ServerState, Source, SpawnedGuid, 0, FVector3(0.0f), FQuat::Identity(), FVector3(1.0f), Msg);
             const SIZE_T Size = static_cast<SIZE_T>(Msg.Num());
-            ApplySpawnEntity(Registry, State, ServerConnection, Msg.GetData(), bTruncated ? Size / 2 : Size);
+            ApplySpawnEntity(Registry, *State, ServerConnection, Msg.GetData(), bTruncated ? Size / 2 : Size);
         }
 
         void ReceiveDespawn()
         {
             TVector<uint8> Msg;
             WriteDespawnMessage(SpawnedGuid, Msg);
-            ApplyDespawnEntity(Registry, State, Msg.GetData(), static_cast<SIZE_T>(Msg.Num()));
+            ApplyDespawnEntity(Registry, *State, Msg.GetData(), static_cast<SIZE_T>(Msg.Num()));
         }
 
         ECS::FEntity CreateNetworked(uint32 Guid)
@@ -113,7 +113,7 @@ TEST(NetSpawnLifetime, AMappingToADeadEntityDoesNotBlockASpawn)
     FClient Client;
     const ECS::FEntity Dead = Client.Registry.Create();
     Client.Registry.Destroy(Dead);
-    Client.State.GuidTable.Register(SNetGUID{ SpawnedGuid }, Dead);
+    Client.State->GuidTable.Register(SNetGUID{ SpawnedGuid }, Dead);
 
     Client.ReceiveSpawn();
 
@@ -125,7 +125,7 @@ TEST(NetSpawnLifetime, ADespawnClearsAMappingToADeadEntity)
     FClient Client;
     const ECS::FEntity Dead = Client.Registry.Create();
     Client.Registry.Destroy(Dead);
-    Client.State.GuidTable.Register(SNetGUID{ SpawnedGuid }, Dead);
+    Client.State->GuidTable.Register(SNetGUID{ SpawnedGuid }, Dead);
 
     Client.ReceiveDespawn();
 
@@ -147,11 +147,11 @@ TEST(NetSpawnLifetime, ADestroyedChildDropsItsPendingAttach)
 {
     FClient Client;
     const ECS::FEntity Child = Client.CreateNetworked(SpawnedGuid + 1);
-    Client.State.PendingAttach[static_cast<uint32>(Child.Value)] = SpawnedGuid;
+    Client.State->PendingAttach[static_cast<uint32>(Child.Value)] = SpawnedGuid;
 
     ECS::Utils::DestroyEntity(Client.Registry, Child);
 
-    EXPECT_FALSE(Client.State.PendingAttach.Contains(static_cast<uint32>(Child.Value)));
+    EXPECT_FALSE(Client.State->PendingAttach.Contains(static_cast<uint32>(Child.Value)));
 }
 
 TEST(NetSpawnLifetime, SpawnAndDespawnReachAnEventReader)

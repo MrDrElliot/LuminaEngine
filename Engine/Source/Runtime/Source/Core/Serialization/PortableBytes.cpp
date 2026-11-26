@@ -55,10 +55,10 @@ namespace Lumina
 
             explicit FPortableReader(const FPortableBytes& InSource)
                 : FPackageContainerReader(InSource.Bytes)
-                , Source(InSource)
+                , Source(&InSource)
                 , Names(DenseNames(InSource))
             {
-                SetFileVersion(Source.FileVersion);
+                SetFileVersion(Source->FileVersion);
                 SetNameTable(&Names);
             }
 
@@ -68,9 +68,9 @@ namespace Lumina
             {
                 FObjectPackageIndex Index;
                 *this << Index;
-                const auto It = Algo::LowerBound(Source.Objects, Index.GetRaw(),
+                const auto It = Algo::LowerBound(Source->Objects, Index.GetRaw(),
                     [](const FPortableBytes::FObjectSlot& Entry, int32 Key) { return Entry.Index < Key; });
-                Value = (It != Source.Objects.end() && It->Index == Index.GetRaw()) ? ResolveObject(It->Object) : nullptr;
+                Value = (It != Source->Objects.end() && It->Index == Index.GetRaw()) ? ResolveObject(It->Object) : nullptr;
                 return *this;
             }
 
@@ -84,7 +84,7 @@ namespace Lumina
 
         private:
 
-            const FPortableBytes& Source;
+            const FPortableBytes* Source;
             FPackageNameTable     Names;
         };
 

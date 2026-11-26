@@ -278,7 +278,7 @@ namespace Lumina
         return false;
     }
 
-    void FImpostorBaker::QueueMissingForestImpostors()
+    void FImpostorBaker::QueueMissingFoliageImpostors()
     {
         FString Error;
         CWorld* World = SessionOps::IsSimulating() ? nullptr : SessionOps::GetSceneWorld(Error);
@@ -288,24 +288,35 @@ namespace Lumina
         }
 
         uint32 Added = 0;
+        auto QueueIfMissing = [&](CStaticMesh* Mesh)
+        {
+            if (Mesh == nullptr || Mesh->HasImpostor() || Mesh->TryGetMeshResource() == nullptr
+                || Algo::AnyOf(AutoQueued, [Mesh](const TWeakObjectPtr<CStaticMesh>& Seen) { return Seen.Get() == Mesh; }))
+            {
+                return;
+            }
+            AutoQueued.Add(TWeakObjectPtr<CStaticMesh>(Mesh));
+            Enqueue(Mesh);
+            ++Added;
+        };
+
         for (ECS::FEntity Entity : World->View<SForestComponent>())
         {
             for (const SForestSpecies& Species : World->GetComponent<SForestComponent>(Entity).Species)
             {
-                CStaticMesh* Mesh = Species.Type.Mesh.Get();
-                if (Mesh == nullptr || Mesh->HasImpostor() || Mesh->TryGetMeshResource() == nullptr
-                    || Algo::AnyOf(AutoQueued, [Mesh](const TWeakObjectPtr<CStaticMesh>& Seen) { return Seen.Get() == Mesh; }))
-                {
-                    continue;
-                }
-                AutoQueued.Add(TWeakObjectPtr<CStaticMesh>(Mesh));
-                Enqueue(Mesh);
-                ++Added;
+                QueueIfMissing(Species.Type.Mesh.Get());
+            }
+        }
+        for (ECS::FEntity Entity : World->View<SFoliageComponent>())
+        {
+            for (const SFoliageType& Type : World->GetComponent<SFoliageComponent>(Entity).Types)
+            {
+                QueueIfMissing(Type.Mesh.Get());
             }
         }
         if (Added != 0u)
         {
-            LOG_INFO("Impostor bake queued {} forest meshes that had none. Save them to keep the bakes.", Added);
+            LOG_INFO("Impostor bake queued {} foliage meshes that had none. Save them to keep the bakes.", Added);
         }
     }
 
@@ -318,7 +329,7 @@ namespace Lumina
             if (FramesToAutoScan == 0u)
             {
                 FramesToAutoScan = kAutoScanIntervalFrames;
-                QueueMissingForestImpostors();
+                QueueMissingFoliageImpostors();
             }
             --FramesToAutoScan;
         }

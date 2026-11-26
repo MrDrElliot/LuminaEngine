@@ -363,7 +363,7 @@ namespace Lumina
         // Stands in for a task list in the crowd tier, keeping only the per-frame payload and keying the topology by the path that emitted it.
         struct FRecordSink
         {
-            FAnimTaskRecord&   Record;
+            FAnimTaskRecord*   Record;
             FAnimTaskList*     Captured      = nullptr;
             FSkeletonResource* Skeleton      = nullptr;
             int16              OutputTask    = FAnimTask::NoTask;
@@ -375,7 +375,7 @@ namespace Lumina
             int16  Count     = 0;
             uint64 Key       = 0x84222325CBF29CE4ull;
 
-            FRecordSink(FAnimTaskRecord& InRecord, FAnimTaskList* InCaptured) : Record(InRecord), Captured(InCaptured) {}
+            FRecordSink(FAnimTaskRecord& InRecord, FAnimTaskList* InCaptured) : Record(&InRecord), Captured(InCaptured) {}
 
             FORCEINLINE void Mix(uint64 Word)
             {
@@ -385,7 +385,7 @@ namespace Lumina
 
             void Reset()
             {
-                Record.Payload.Reset();
+                Record->Payload.Reset();
                 if (Captured != nullptr)
                 {
                     Captured->Reset();
@@ -407,7 +407,7 @@ namespace Lumina
                 {
                     Mix((uint64)(uintptr_t)Task.Clip);
                 }
-                Anim::AppendTaskPayload(Task, Record.Payload);
+                Anim::AppendTaskPayload(Task, Record->Payload);
                 if (Captured != nullptr)
                 {
                     Captured->Add(Task);
@@ -419,7 +419,7 @@ namespace Lumina
             {
                 Mix((uint64)(uint16)OutputTask | ((uint64)bLockRoot << 16) | ((uint64)(uint32)RootBoneIndex << 32));
                 Mix((uint64)(uintptr_t)Skeleton);
-                Record.TopologyKey = Key;
+                Record->TopologyKey = Key;
                 if (Captured != nullptr)
                 {
                     Captured->Skeleton      = Skeleton;

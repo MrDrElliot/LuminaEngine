@@ -5,7 +5,7 @@
 namespace Lumina
 {
     FMemoryReader::FMemoryReader(const TVector<uint8>& InBytes, bool bIsPersistent)
-        : Bytes    (InBytes)
+        : Bytes    (&InBytes)
         , LimitSize(INT64_MAX)
     {
         this->SetFlag(EArchiverFlags::Reading);
@@ -13,7 +13,7 @@ namespace Lumina
 
     int64 FMemoryReader::TotalSize()
     {
-        return Math::Min<int64>(Bytes.Num(), LimitSize);   
+        return Math::Min<int64>(Bytes->Num(), LimitSize);   
     }
 
 
@@ -49,7 +49,7 @@ namespace Lumina
             // Only serialize if we have the requested amount of data
             if (Offset + Size <= TotalSize())
             {
-                Memory::Memcpy(V, &Bytes[IntCastChecked<int32>(Offset)], Size);
+                Memory::Memcpy(V, &(*Bytes)[IntCastChecked<int32>(Offset)], Size);
                 Offset += Size;
             }
             else
@@ -129,7 +129,7 @@ namespace Lumina
     }
     
     FMemoryWriter::FMemoryWriter(TVector<uint8>& InBytes, uint32 StartOffset)
-        :Bytes(InBytes)
+        :Bytes(&InBytes)
     {
         Offset = StartOffset;
         this->SetFlag(EArchiverFlags::Writing);
@@ -137,17 +137,17 @@ namespace Lumina
 
     void FMemoryWriter::Serialize(void* Data, int64 Size)
     {
-        const int64 NumBytesToAdd = Offset + Size - static_cast<int64>(Bytes.Num());
+        const int64 NumBytesToAdd = Offset + Size - static_cast<int64>(Bytes->Num());
         if (NumBytesToAdd > 0)
         {
-            const int64 NewArrayCount = static_cast<int64>(Bytes.Num()) + NumBytesToAdd;
+            const int64 NewArrayCount = static_cast<int64>(Bytes->Num()) + NumBytesToAdd;
                 
-            Bytes.SetNum(IntCastChecked<int32>(NewArrayCount));
+            Bytes->SetNum(IntCastChecked<int32>(NewArrayCount));
         }
 
-        ASSERT((Offset + Size) <= Bytes.Num());
+        ASSERT((Offset + Size) <= Bytes->Num());
         
-        Memory::Memcpy(&Bytes[IntCastChecked<int32>(Offset)], Data, Size);
+        Memory::Memcpy(&(*Bytes)[IntCastChecked<int32>(Offset)], Data, Size);
         Offset += Size;
     }
 }

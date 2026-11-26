@@ -53,9 +53,9 @@ namespace Lumina::ECS
     }
 
     FEventQueue::FEventQueue(FComponentTypeID InTypeID)
-        : Info(FComponentTypeRegistry::Get().GetInfo(InTypeID))
+        : Info(&FComponentTypeRegistry::Get().GetInfo(InTypeID))
         , TypeID(InTypeID)
-        , Stride(Math::Max(Info.Size, 1u))
+        , Stride(Math::Max(Info->Size, 1u))
     {
         Staging.SetNum(Math::Max(Jobs::GetNumThreadSlots(), 1u));
     }
@@ -79,11 +79,11 @@ namespace Lumina::ECS
         }
 
         const uint32 NewCapacity = Math::Max(Wanted, Math::Max(Buffer.Capacity * 2u, 16u));
-        uint8* NewData = static_cast<uint8*>(Memory::Malloc((size_t)NewCapacity * Stride, Math::Max(Info.Alignment, 1u)));
+        uint8* NewData = static_cast<uint8*>(Memory::Malloc((size_t)NewCapacity * Stride, Math::Max(Info->Alignment, 1u)));
 
         if (Buffer.Count != 0)
         {
-            if (Info.bTriviallyRelocatable)
+            if (Info->bTriviallyRelocatable)
             {
                 Memory::Memcpy(NewData, Buffer.Data, (size_t)Buffer.Count * Stride);
             }
@@ -91,7 +91,7 @@ namespace Lumina::ECS
             {
                 for (uint32 Index = 0; Index < Buffer.Count; ++Index)
                 {
-                    Info.Relocate(Info, NewData + (size_t)Index * Stride, At(Buffer, Index));
+                    Info->Relocate(*Info, NewData + (size_t)Index * Stride, At(Buffer, Index));
                 }
             }
         }
@@ -108,7 +108,7 @@ namespace Lumina::ECS
     void FEventQueue::CopyInto(FBuffer& Buffer, const uint8* Source, uint32 Count)
     {
         Reserve(Buffer, Buffer.Count + Count);
-        if (Info.bTriviallyCopyable)
+        if (Info->bTriviallyCopyable)
         {
             Memory::Memcpy(At(Buffer, Buffer.Count), Source, (size_t)Count * Stride);
         }
@@ -116,7 +116,7 @@ namespace Lumina::ECS
         {
             for (uint32 Index = 0; Index < Count; ++Index)
             {
-                Info.CopyConstruct(Info, At(Buffer, Buffer.Count + Index), Source + (size_t)Index * Stride);
+                Info->CopyConstruct(*Info, At(Buffer, Buffer.Count + Index), Source + (size_t)Index * Stride);
             }
         }
         Buffer.Count += Count;
@@ -125,7 +125,7 @@ namespace Lumina::ECS
     void FEventQueue::RelocateInto(FBuffer& Buffer, FBuffer& Source)
     {
         Reserve(Buffer, Buffer.Count + Source.Count);
-        if (Info.bTriviallyRelocatable)
+        if (Info->bTriviallyRelocatable)
         {
             Memory::Memcpy(At(Buffer, Buffer.Count), Source.Data, (size_t)Source.Count * Stride);
         }
@@ -133,7 +133,7 @@ namespace Lumina::ECS
         {
             for (uint32 Index = 0; Index < Source.Count; ++Index)
             {
-                Info.Relocate(Info, At(Buffer, Buffer.Count + Index), At(Source, Index));
+                Info->Relocate(*Info, At(Buffer, Buffer.Count + Index), At(Source, Index));
             }
         }
         Buffer.Count += Source.Count;
@@ -142,11 +142,11 @@ namespace Lumina::ECS
 
     void FEventQueue::DestroyAll(FBuffer& Buffer)
     {
-        if (!Info.bTriviallyDestructible && Info.Destruct != nullptr)
+        if (!Info->bTriviallyDestructible && Info->Destruct != nullptr)
         {
             for (uint32 Index = 0; Index < Buffer.Count; ++Index)
             {
-                Info.Destruct(Info, At(Buffer, Index));
+                Info->Destruct(*Info, At(Buffer, Index));
             }
         }
         Buffer.Count = 0;
@@ -176,9 +176,9 @@ namespace Lumina::ECS
         }
 
         // A reload resized the event since the last Advance, so the caller's buffer no longer matches the stride.
-        if (Math::Max(Info.Size, 1u) != Stride)
+        if (Math::Max(Info->Size, 1u) != Stride)
         {
-            LOG_WARN("Dropped {} event(s) of type {} sent while its layout changed; the queue resumes next frame.", Count, Info.Name);
+            LOG_WARN("Dropped {} event(s) of type {} sent while its layout changed; the queue resumes next frame.", Count, Info->Name);
             return;
         }
 
@@ -192,7 +192,7 @@ namespace Lumina::ECS
     {
         FEventRuns Runs;
         Runs.Stride = Stride;
-        if (Math::Max(Info.Size, 1u) != Stride)
+        if (Math::Max(Info->Size, 1u) != Stride)
         {
             return Runs;
         }
@@ -217,7 +217,7 @@ namespace Lumina::ECS
 
     uint32 FEventQueue::NumUnread(uint64 Cursor) const
     {
-        if (Math::Max(Info.Size, 1u) != Stride)
+        if (Math::Max(Info->Size, 1u) != Stride)
         {
             return 0;
         }
@@ -251,16 +251,16 @@ namespace Lumina::ECS
         NextIndex += Added;
 
         // Sends a handler makes land in staging, so the run handed over here cannot move under it.
-        if (Info.EventFanOut != nullptr)
+        if (Info->EventFanOut != nullptr)
         {
-            Info.EventFanOut(Registry, At(Target, Before), Added);
+            Info->EventFanOut(Registry, At(Target, Before), Added);
         }
         return true;
     }
 
     void FEventQueue::RefreshLayout()
     {
-        const uint32 Wanted = Math::Max(Info.Size, 1u);
+        const uint32 Wanted = Math::Max(Info->Size, 1u);
         if (Wanted == Stride)
         {
             return;
@@ -301,7 +301,7 @@ namespace Lumina::ECS
     }
 
     FEventQueues::FEventQueues(FRegistry& InRegistry)
-        : Registry(InRegistry)
+        : Registry(&InRegistry)
     {
     }
 
@@ -349,7 +349,7 @@ namespace Lumina::ECS
             bool bMoved = false;
             for (FEventQueue* Queue : CommitScratch)
             {
-                bMoved |= Queue->Commit(Registry);
+                bMoved |= Queue->Commit(*Registry);
             }
 
             if (!bMoved)

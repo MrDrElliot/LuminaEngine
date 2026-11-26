@@ -182,7 +182,7 @@ namespace Lumina
         // A swap waiting on the topology turns new queries away until it lands, so a stream of them cannot hold it off.
         struct FQueryScope
         {
-            const FNavMesh& Mesh;
+            const FNavMesh* Mesh;
             explicit FQueryScope(const FNavMesh& InMesh);
             ~FQueryScope();
             FQueryScope(const FQueryScope&) = delete;
@@ -196,7 +196,7 @@ namespace Lumina
 
         struct FSwapScope
         {
-            FNavMesh& Mesh;
+            FNavMesh* Mesh;
             explicit FSwapScope(FNavMesh& InMesh);
             ~FSwapScope();
             FSwapScope(const FSwapScope&) = delete;

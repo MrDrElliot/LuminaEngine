@@ -25,7 +25,7 @@ namespace
     {
     public:
 
-        FLoopbackTransport(FLoopNetwork& InNetwork, uint32 InEndpoint) : Network(InNetwork), Endpoint(InEndpoint) {}
+        FLoopbackTransport(FLoopNetwork& InNetwork, uint32 InEndpoint) : Network(&InNetwork), Endpoint(InEndpoint) {}
 
         ENetworkBackend GetBackend() const override { return ENetworkBackend::ENet; }
         bool StartServer(const FListenParams&) override { return true; }
@@ -37,7 +37,7 @@ namespace
         bool Send(FConnectionHandle Connection, const void* Data, SIZE_T Size, uint8 Channel, ESendMode) override
         {
             const uint32 Target = Endpoint == 0 ? Connection.Value : 0u;
-            FNetworkEvent& Event = Network.Inbox[Target].EmplaceGetRef();
+            FNetworkEvent& Event = Network->Inbox[Target].EmplaceGetRef();
             Event.Type       = ENetworkEventType::Data;
             Event.Connection = FConnectionHandle{ Endpoint == 0 ? 1u : Endpoint };
             Event.Channel    = Channel;
@@ -47,7 +47,7 @@ namespace
 
         void Broadcast(const void* Data, SIZE_T Size, uint8 Channel, ESendMode Mode) override
         {
-            for (uint32 Client = 1; Client < (uint32)Network.Inbox.Num(); ++Client)
+            for (uint32 Client = 1; Client < (uint32)Network->Inbox.Num(); ++Client)
             {
                 Send(FConnectionHandle{ Client }, Data, Size, Channel, Mode);
             }
@@ -55,13 +55,13 @@ namespace
 
         void Service(TVector<FNetworkEvent>& OutEvents) override
         {
-            OutEvents.Append(Network.Inbox[Endpoint]);
-            Network.Inbox[Endpoint].Reset();
+            OutEvents.Append(Network->Inbox[Endpoint]);
+            Network->Inbox[Endpoint].Reset();
         }
 
     private:
 
-        FLoopNetwork& Network;
+        FLoopNetwork* Network;
         uint32        Endpoint;
     };
 

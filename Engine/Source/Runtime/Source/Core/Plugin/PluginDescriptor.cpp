@@ -40,7 +40,7 @@ namespace Lumina
         {
         public:
 
-            explicit FFieldReader(FString& InError) : Error(InError) {}
+            explicit FFieldReader(FString& InError) : Error(&InError) {}
 
             NODISCARD bool Failed() const { return bFailed; }
 
@@ -106,7 +106,7 @@ namespace Lumina
             {
                 if (!bFailed)
                 {
-                    Error = Format("Plugin descriptor field '{}' must be {}.", Key, Expected);
+                    *Error = Format("Plugin descriptor field '{}' must be {}.", Key, Expected);
                     bFailed = true;
                 }
             }
@@ -115,7 +115,7 @@ namespace Lumina
             {
                 if (!bFailed)
                 {
-                    Error = Move(Message);
+                    *Error = Move(Message);
                     bFailed = true;
                 }
             }
@@ -137,7 +137,7 @@ namespace Lumina
                 return Field;
             }
 
-            FString& Error;
+            FString* Error;
             bool     bFailed = false;
         };
     }

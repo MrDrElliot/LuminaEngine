@@ -694,7 +694,7 @@ namespace Lumina::Physics
         const int32 RootBone = Ragdoll.JointToBone[0];
         const FMatrix4 Global = Component.TargetGlobals.Num() == Ragdoll.Skeleton->GetNumBones()
             ? Component.TargetGlobals[RootBone] : Math::Inverse(Ragdoll.Skeleton->GetBone(RootBone).InvBindMatrix);
-        AnimPose::DecomposeTRS(Transform->GetWorldMatrix() * Global, TargetPosition, TargetRotation, Scale);
+        AnimPose::DecomposeTRS(Transform->ComputeWorldTransform().GetMatrix() * Global, TargetPosition, TargetRotation, Scale);
 
         const FVector3 Gravity = Box3DUtils::FromB3Vec3(b3World_GetGravity(WorldId));
         const float    M       = Math::Max(MeasureRagdoll(Ragdoll).Mass, 1e-3f);

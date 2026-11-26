@@ -94,6 +94,9 @@ namespace Lumina::Platform
     RUNTIME_API size_t GetProcessMemoryUsageBytes();
     RUNTIME_API size_t GetProcessMemoryUsageMegaBytes();
 
+    // User plus kernel time summed over every thread of the process, so a span of it against wall time reads as thread utilization.
+    RUNTIME_API double GetProcessCPUSeconds();
+
     // Unlike the category tracker this sees memory no engine allocator touched, such as the GPU driver and foreign CRT heaps.
     struct FAddressSpaceStats
     {

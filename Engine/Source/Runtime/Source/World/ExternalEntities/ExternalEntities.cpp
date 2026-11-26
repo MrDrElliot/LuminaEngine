@@ -51,35 +51,35 @@ namespace Lumina
 
             FEntityFileArchive(FArchive& InInner, ECS::FRegistry& InRegistry, FExternalEntityFile& InFile)
                 : FProxyArchive(InInner)
-                , Registry(InRegistry)
-                , File(InFile)
+                , Registry(&InRegistry)
+                , File(&InFile)
             {
                 // A save serializes once to find its exports and again to write, so each pass starts its own table.
                 if (IsWriting())
                 {
-                    File.Guids.Reset();
-                    SlotOf(File.Self);
+                    File->Guids.Reset();
+                    SlotOf(File->Self);
                 }
             }
 
             using FProxyArchive::operator<<;
 
             // FProxyArchive leaves these to the base, which would keep the entity's assets out of its package's tables.
-            FArchive& operator<<(CObject*& Value) override { InnerArchive << Value; return *this; }
-            void RegisterSoftAssetReference(const FGuid& AssetGUID) override { InnerArchive.RegisterSoftAssetReference(AssetGUID); }
-            FStringView SetSoftReferenceBundles(FStringView Bundles) override { return InnerArchive.SetSoftReferenceBundles(Bundles); }
-            bool SupportsBulkData() const override { return InnerArchive.SupportsBulkData(); }
-            bool WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size) override { return InnerArchive.WriteBulkData(OutRef, Data, Size); }
-            void FlagUnresolvedBulkData() override { InnerArchive.FlagUnresolvedBulkData(); }
-            bool DescribeCutBytes(FPortableBytes& Cut) const override { return InnerArchive.DescribeCutBytes(Cut); }
+            FArchive& operator<<(CObject*& Value) override { *InnerArchive << Value; return *this; }
+            void RegisterSoftAssetReference(const FGuid& AssetGUID) override { InnerArchive->RegisterSoftAssetReference(AssetGUID); }
+            FStringView SetSoftReferenceBundles(FStringView Bundles) override { return InnerArchive->SetSoftReferenceBundles(Bundles); }
+            bool SupportsBulkData() const override { return InnerArchive->SupportsBulkData(); }
+            bool WriteBulkData(FBulkDataRef& OutRef, const void* Data, int64 Size) override { return InnerArchive->WriteBulkData(OutRef, Data, Size); }
+            void FlagUnresolvedBulkData() override { InnerArchive->FlagUnresolvedBulkData(); }
+            bool DescribeCutBytes(FPortableBytes& Cut) const override { return InnerArchive->DescribeCutBytes(Cut); }
 
             void SerializeEntityId(uint32& PackedEntity) override
             {
                 uint32 Slot = IsWriting() ? SlotOf(ECS::FEntity::FromPacked(PackedEntity)) : 0;
-                InnerArchive << Slot;
+                *InnerArchive << Slot;
                 if (IsReading())
                 {
-                    PackedEntity = (Slot == 0 ? ECS::NullEntity : Slot == kSelfSlot ? File.Self : UnresolvedHandle(Slot)).GetPacked();
+                    PackedEntity = (Slot == 0 ? ECS::NullEntity : Slot == kSelfSlot ? File->Self : UnresolvedHandle(Slot)).GetPacked();
                 }
             }
 
@@ -87,7 +87,7 @@ namespace Lumina
 
             uint32 SlotOf(ECS::FEntity Entity)
             {
-                if (!Registry.IsValid(Entity))
+                if (!Registry->IsValid(Entity))
                 {
                     return 0;
                 }
@@ -95,12 +95,12 @@ namespace Lumina
                 {
                     return *Known;
                 }
-                File.Guids.Add(ExternalEntities::GuidOf(Registry, Entity));
-                return Slots[Entity] = (uint32)File.Guids.Num();
+                File->Guids.Add(ExternalEntities::GuidOf(*Registry, Entity));
+                return Slots[Entity] = (uint32)File->Guids.Num();
             }
 
-            ECS::FRegistry&                     Registry;
-            FExternalEntityFile&                File;
+            ECS::FRegistry*                     Registry;
+            FExternalEntityFile*                File;
             THashMap<ECS::FEntity, uint32>      Slots;
         };
 
@@ -379,7 +379,7 @@ namespace Lumina
                     Unread.Add(Guid);
                     continue;
                 }
-                Registry.EmplaceOrReplace<FNeedsTransformUpdate>(File.Self);
+                ECS::Utils::MarkTransformDirty(Registry, File.Self);
             }
 
             ResolveEntityReferences(Registry, Files);

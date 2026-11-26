@@ -379,7 +379,7 @@ namespace Lumina
 
         if (bShowAABB && IsValid(StaticMeshComponent.StaticMesh.Get()))
         {
-            SAABB AABB = StaticMeshComponent.StaticMesh->GetAABB().ToWorld(Transform.GetWorldMatrix());
+            SAABB AABB = StaticMeshComponent.StaticMesh->GetAABB().ToWorld(Transform.ComputeWorldTransform().GetMatrix());
             World->GetDebugInterface()->DrawBox(AABB.GetCenter(), AABB.GetSize() * 0.5f, FQuat(1, 0, 0, 0), FColor::Green);
         }
 
@@ -412,7 +412,7 @@ namespace Lumina
                     SAABB SurfaceAABB;
                     SurfaceAABB.Min = Lo;
                     SurfaceAABB.Max = Hi;
-                    SurfaceAABB     = SurfaceAABB.ToWorld(Transform.GetWorldMatrix());
+                    SurfaceAABB     = SurfaceAABB.ToWorld(Transform.ComputeWorldTransform().GetMatrix());
                     World->GetDebugInterface()->DrawBox(SurfaceAABB.GetCenter(), SurfaceAABB.GetSize() * 0.5f, FQuat(1, 0, 0, 0), FColor::Yellow, 2.0f);
                 }
             }
@@ -422,7 +422,7 @@ namespace Lumina
 
         if (IsValid(StaticMeshComponent.StaticMesh.Get()) && !StaticMeshComponent.StaticMesh->Sockets.IsEmpty())
         {
-            const FMatrix4 EntityMatrix = Transform.GetWorldMatrix();
+            const FMatrix4 EntityMatrix = Transform.ComputeWorldTransform().GetMatrix();
             constexpr float AxisLength = 0.18f;
 
             for (const SMeshSocket& Socket : StaticMeshComponent.StaticMesh->Sockets)

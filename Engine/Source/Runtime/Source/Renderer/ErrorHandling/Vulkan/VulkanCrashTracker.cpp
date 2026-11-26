@@ -3,7 +3,7 @@
 #include "VulkanCrashTracker.h"
 #include "Platform/Filesystem/PlatformFilesystem.h"
 #include <fstream>
-#include <volk/volk.h>
+#include "Renderer/API/Vulkan/VulkanLoader.h"
 #if WITH_AFTERMATH
 // MessageBoxA in the Aftermath error macro; nothing else pulls windows.h into this TU.
 #include <windows.h>
@@ -241,7 +241,7 @@ namespace Lumina::RHI
         Props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
         Props2.pNext = &DriverProps;
 
-        vkGetPhysicalDeviceProperties2(PhysicalDevice, &Props2);
+        Vulkan::GetApi().GetPhysicalDeviceProperties2(PhysicalDevice, &Props2);
 
         const uint32 ApiVer = Props2.properties.apiVersion;
         LOG_ERROR("[DeviceLost] GPU: {} | Driver: {} ({}) [{}] | API: {}.{}.{}",
@@ -280,7 +280,7 @@ namespace Lumina::RHI
 
     FString FVulkanCrashTracker::LogDeviceFaultInfo() const
     {
-        if (!bDeviceFaultEnabled || Device == VK_NULL_HANDLE || vkGetDeviceFaultInfoEXT == nullptr)
+        if (!bDeviceFaultEnabled || Device == VK_NULL_HANDLE || Vulkan::GetApi().GetDeviceFaultInfoEXT == nullptr)
         {
             LOG_ERROR("[DeviceLost] VK_EXT_device_fault unavailable; no vendor fault detail for this crash.");
             return {};
@@ -289,7 +289,7 @@ namespace Lumina::RHI
         VkDeviceFaultCountsEXT Counts{};
         Counts.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT;
 
-        VkResult Result = vkGetDeviceFaultInfoEXT(Device, &Counts, nullptr);
+        VkResult Result = Vulkan::GetApi().GetDeviceFaultInfoEXT(Device, &Counts, nullptr);
         if (Result != VK_SUCCESS && Result != VK_INCOMPLETE)
         {
             LOG_ERROR("[DeviceLost] vkGetDeviceFaultInfoEXT(counts) failed: 0x{:x}", (uint32)Result);
@@ -307,7 +307,7 @@ namespace Lumina::RHI
         Info.pVendorInfos      = VendorInfos.IsEmpty()  ? nullptr : VendorInfos.GetData();
         Info.pVendorBinaryData = VendorBinary.IsEmpty() ? nullptr : VendorBinary.GetData();
 
-        Result = vkGetDeviceFaultInfoEXT(Device, &Counts, &Info);
+        Result = Vulkan::GetApi().GetDeviceFaultInfoEXT(Device, &Counts, &Info);
         if (Result != VK_SUCCESS && Result != VK_INCOMPLETE)
         {
             LOG_ERROR("[DeviceLost] vkGetDeviceFaultInfoEXT(info) failed: 0x{:x}", (uint32)Result);
@@ -401,7 +401,7 @@ namespace Lumina::RHI
         Props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
         Props2.pNext = &DriverProps;
 
-        vkGetPhysicalDeviceProperties2(PhysicalDevice, &Props2);
+        Vulkan::GetApi().GetPhysicalDeviceProperties2(PhysicalDevice, &Props2);
 
         return DriverProps.driverID == VK_DRIVER_ID_AMD_PROPRIETARY
             || DriverProps.driverID == VK_DRIVER_ID_AMD_OPEN_SOURCE
@@ -780,13 +780,13 @@ namespace Lumina::RHI
     void FVulkanCrashTracker::SetMarker(RHICommandBuffer CmdBuffer, const char* MarkerName)
     {
         #if WITH_AFTERMATH
-        if (CmdBuffer == nullptr || vkCmdSetCheckpointNV == nullptr)
+        if (CmdBuffer == nullptr || Vulkan::GetApi().CmdSetCheckpointNV == nullptr)
         {
             return;
         }
 
         const void* Marker = StoreMarker(MarkerName);
-        vkCmdSetCheckpointNV(static_cast<VkCommandBuffer>(CmdBuffer), Marker);
+        Vulkan::GetApi().CmdSetCheckpointNV(static_cast<VkCommandBuffer>(CmdBuffer), Marker);
         #endif
     }
 
@@ -794,27 +794,27 @@ namespace Lumina::RHI
     {
         // NV checkpoints are flat; bracket via begin/end strings instead of push/pop.
         #if WITH_AFTERMATH
-        if (CmdBuffer == nullptr || vkCmdSetCheckpointNV == nullptr)
+        if (CmdBuffer == nullptr || Vulkan::GetApi().CmdSetCheckpointNV == nullptr)
         {
             return;
         }
 
         FString BeginName = FString("[Begin] ") + (MarkerName ? MarkerName : "");
         const void* Marker = StoreMarker(*BeginName);
-        vkCmdSetCheckpointNV(static_cast<VkCommandBuffer>(CmdBuffer), Marker);
+        Vulkan::GetApi().CmdSetCheckpointNV(static_cast<VkCommandBuffer>(CmdBuffer), Marker);
         #endif
     }
 
     void FVulkanCrashTracker::EndMarker(RHICommandBuffer CmdBuffer)
     {
         #if WITH_AFTERMATH
-        if (CmdBuffer == nullptr || vkCmdSetCheckpointNV == nullptr)
+        if (CmdBuffer == nullptr || Vulkan::GetApi().CmdSetCheckpointNV == nullptr)
         {
             return;
         }
 
         const void* Marker = StoreMarker("[End]");
-        vkCmdSetCheckpointNV(static_cast<VkCommandBuffer>(CmdBuffer), Marker);
+        Vulkan::GetApi().CmdSetCheckpointNV(static_cast<VkCommandBuffer>(CmdBuffer), Marker);
         #endif
     }
 

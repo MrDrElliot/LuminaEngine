@@ -35,7 +35,7 @@ namespace
         void GenerateModule(const FModuleContext& Context) override
         {
             const std::string FileName = Mode == "Clobber" ? "ReflectionUnity_0.gen.cpp" : Context.Module.Name() + ".fixture.txt";
-            FCodeWriter& Report = Context.Outputs.Open(Context.Module.GeneratedDir() + "/" + FileName);
+            FCodeWriter& Report = Context.Outputs->Open(Context.Module.GeneratedDir() + "/" + FileName);
 
             for (const FHeaderView Header : Context.Module.Headers())
             {
@@ -50,7 +50,7 @@ namespace
                         Report.Line(Type.DisplayName() + "." + Property.Name());
                         if (Mode == "Error")
                         {
-                            Context.Run.Diagnostics.Error(Property.Location(), "Fixture error on '%s'.", Property.Name().c_str());
+                            Context.Run->Diagnostics->Error(Property.Location(), "Fixture error on '%s'.", Property.Name().c_str());
                         }
                     }
                 }

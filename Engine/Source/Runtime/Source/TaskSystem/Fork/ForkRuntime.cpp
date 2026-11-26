@@ -75,9 +75,9 @@ namespace Lumina::Jobs
 
         struct FScopedSpin
         {
-            explicit FScopedSpin(FSpinLock& InLock) : Lock(InLock) { Lock.Lock(); }
-            ~FScopedSpin() { Lock.Unlock(); }
-            FSpinLock& Lock;
+            explicit FScopedSpin(FSpinLock& InLock) : Lock(&InLock) { Lock->Lock(); }
+            ~FScopedSpin() { Lock->Unlock(); }
+            FSpinLock* Lock;
         };
 
         struct alignas(64) FSlot
@@ -664,30 +664,30 @@ namespace Lumina::Jobs
         // Floors keep this wait off the outer task's continuations, and the swapped stack keeps the outer frames intact.
         struct FNestedWait
         {
-            explicit FNestedWait(FContext& InContext) : Context(InContext)
+            explicit FNestedWait(FContext& InContext) : Context(&InContext)
             {
                 for (uint32 Band = 0; Band < kNumJobPriorities; ++Band)
                 {
-                    SavedFloors[Band] = Context.Slot->Bands[Band].RaiseFloor();
+                    SavedFloors[Band] = Context->Slot->Bands[Band].RaiseFloor();
                 }
-                SavedStack = Context.Stack;
-                Context.Stack = AcquireStack(Context);
-                Context.AllocStack = Context.Stack;
+                SavedStack = Context->Stack;
+                Context->Stack = AcquireStack(*Context);
+                Context->AllocStack = Context->Stack;
             }
 
             ~FNestedWait()
             {
-                DrainAboveFloor(Context);
-                ReleaseStack(Context, Context.Stack);
-                Context.Stack = SavedStack;
-                Context.AllocStack = SavedStack;
+                DrainAboveFloor(*Context);
+                ReleaseStack(*Context, Context->Stack);
+                Context->Stack = SavedStack;
+                Context->AllocStack = SavedStack;
                 for (uint32 Band = 0; Band < kNumJobPriorities; ++Band)
                 {
-                    Context.Slot->Bands[Band].RestoreFloor(SavedFloors[Band]);
+                    Context->Slot->Bands[Band].RestoreFloor(SavedFloors[Band]);
                 }
             }
 
-            FContext& Context;
+            FContext* Context;
             FStack*   SavedStack = nullptr;
             int64     SavedFloors[kNumJobPriorities] = {};
         };

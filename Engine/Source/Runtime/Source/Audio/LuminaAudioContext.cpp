@@ -877,11 +877,11 @@ namespace Lumina
 		InsideRender.fetch_add(1);
 		if (bOffline.load())
 		{
-			std::memset(OutInterleaved, 0, (size_t)FrameCount * Mixer.GetChannelCount() * sizeof(float));
+			std::memset(OutInterleaved, 0, (size_t)FrameCount * Mixer->GetChannelCount() * sizeof(float));
 		}
 		else
 		{
-			Mixer.RenderAudio(OutInterleaved, FrameCount);
+			Mixer->RenderAudio(OutInterleaved, FrameCount);
 		}
 		InsideRender.fetch_sub(1);
 	}

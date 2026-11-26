@@ -13,6 +13,6 @@ namespace Lumina
         Message.Message = Record.Message;
         Message.Level      = Record.Level;
 
-        OutputMessages.Add(Move(Message));
+        OutputMessages->Add(Move(Message));
     }
 }

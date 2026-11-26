@@ -20,15 +20,15 @@ namespace
     struct FFixture
     {
         ECS::FRegistry   Registry;
-        FNetWorldState&  State;
+        FNetWorldState*  State;
         FFakeCharacterScene Scene;
         ECS::FEntity     Entity;
 
         FFixture()
-            : State(Registry.Ctx().Emplace<FNetWorldState>())
+            : State(&Registry.Ctx().Emplace<FNetWorldState>())
         {
             Entity = Registry.Create();
-            State.GuidTable.Register(SNetGUID{ Guid }, Entity);
+            State->GuidTable.Register(SNetGUID{ Guid }, Entity);
 
             SNetworkComponent& Net = Registry.Emplace<SNetworkComponent>(Entity);
             Net.NetGUID.Value = Guid;

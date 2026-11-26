@@ -243,8 +243,8 @@ namespace Lumina
         bool RemoveLocked(uint64 Id);
         void DestroyRetired();
 
-        ECS::FRegistry&    Registry;
-        ECS::FCommandBus&  Commands;
+        ECS::FRegistry*    Registry;
+        ECS::FCommandBus*  Commands;
         FDelegateHandle    ScriptReloadHandle;
 
         mutable FMutex                       Mutex;

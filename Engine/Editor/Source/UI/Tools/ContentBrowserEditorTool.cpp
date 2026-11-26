@@ -145,24 +145,24 @@ namespace Lumina
                 , bProtected(bInProtected)
                 , bMissingType(bInMissingType)
                 , TypeLabel(InTypeLabel)
-                , FileInfo(InInfo)
-                , TooltipCache(InTooltipCache)
+                , FileInfo(&InInfo)
+                , TooltipCache(&InTooltipCache)
                 , IconKind(ClassifyIcon(InInfo))
             {
             }
 
             void SetDragDropPayloadData() const override
             {
-                if (FileInfo.IsLAsset())
+                if (FileInfo->IsLAsset())
                 {
-                    FStringView Path(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len());
+                    FStringView Path(*FileInfo->VirtualPath, FileInfo->VirtualPath.Len());
                     if (const FAssetDataPtr Data = FAssetRegistry::Get().GetAssetByPath(Path))
                     {
                         DragDrop::SetAssetPayload(*Data);
                         return;
                     }
                 }
-                DragDrop::SetFilePayload(FStringView(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len()));
+                DragDrop::SetFilePayload(FStringView(*FileInfo->VirtualPath, FileInfo->VirtualPath.Len()));
             }
 
             void DrawTooltip() const override;
@@ -171,15 +171,15 @@ namespace Lumina
 
             NODISCARD FStringView GetName() const override
             {
-                return VFS::FileName(FileInfo.PathSource, true);
+                return VFS::FileName(FileInfo->PathSource, true);
             }
             
-            NODISCARD const VFS::FFileInfo& GetFileInfo() const { return FileInfo; }
-            NODISCARD FStringView GetPathSource() const { return FileInfo.PathSource; }
-            NODISCARD FStringView GetVirtualPath() const { return FileInfo.VirtualPath; }
-            NODISCARD bool IsAsset() const { return FileInfo.IsLAsset(); }
-            NODISCARD bool IsDirectory() const { return FileInfo.IsDirectory(); }
-            NODISCARD FString GetExtension() const { return FileInfo.GetExt(); }
+            NODISCARD const VFS::FFileInfo& GetFileInfo() const { return *FileInfo; }
+            NODISCARD FStringView GetPathSource() const { return FileInfo->PathSource; }
+            NODISCARD FStringView GetVirtualPath() const { return FileInfo->VirtualPath; }
+            NODISCARD bool IsAsset() const { return FileInfo->IsLAsset(); }
+            NODISCARD bool IsDirectory() const { return FileInfo->IsDirectory(); }
+            NODISCARD FString GetExtension() const { return FileInfo->GetExt(); }
             NODISCARD bool IsProtected() const { return bProtected; }
             NODISCARD bool IsMissingType() const { return bMissingType; }
             NODISCARD EIconKind GetIconKind() const { return IconKind; }
@@ -215,8 +215,8 @@ namespace Lumina
             bool                    bProtected = false;
             bool                    bMissingType = false;
             FName                   TypeLabel;
-            const VFS::FFileInfo&   FileInfo;
-            FHoverTooltipCache&     TooltipCache;
+            const VFS::FFileInfo*   FileInfo;
+            FHoverTooltipCache*     TooltipCache;
             EIconKind               IconKind = EIconKind::Generic;
         };
 
@@ -934,11 +934,11 @@ namespace Lumina
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
 
         ImGui::PushStyleColor(ImGuiCol_Text, ContentBrowserEditorToolInternal::kMenuAccent);
-        ImGui::TextUnformatted(*FileInfo.Name);
+        ImGui::TextUnformatted(*FileInfo->Name);
         ImGui::PopStyleColor();
-        const FStringView Folder = VFS::Parent(FStringView(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len()), true);
+        const FStringView Folder = VFS::Parent(FStringView(*FileInfo->VirtualPath, FileInfo->VirtualPath.Len()), true);
         ImGui::TextColored(EditorColors::TextDim(), LE_ICON_FOLDER " %.*s", Folder.Len(), Folder.GetData());
-        if (FileInfo.IsReadOnly())
+        if (FileInfo->IsReadOnly())
         {
             ImGui::TextColored(EditorColors::Warning(), LE_ICON_LOCK " Read-only on disk, so it cannot be saved, renamed, moved or deleted until it is made writable.");
         }
@@ -948,56 +948,56 @@ namespace Lumina
         {
         case ContentBrowserEditorToolInternal::EIconKind::CSharpScript:
             {
-                const FStringView VPath(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len());
-                const FStringView DPath(*FileInfo.PathSource, FileInfo.PathSource.Len());
-                ContentBrowserEditorToolInternal::UpdateScriptHoverCache(TooltipCache, VPath, DPath);
-                ContentBrowserEditorToolInternal::DrawScriptHoverContent(TooltipCache.Script);
+                const FStringView VPath(*FileInfo->VirtualPath, FileInfo->VirtualPath.Len());
+                const FStringView DPath(*FileInfo->PathSource, FileInfo->PathSource.Len());
+                ContentBrowserEditorToolInternal::UpdateScriptHoverCache(*TooltipCache, VPath, DPath);
+                ContentBrowserEditorToolInternal::DrawScriptHoverContent(TooltipCache->Script);
                 break;
             }
         case ContentBrowserEditorToolInternal::EIconKind::Asset:
             {
-                ContentBrowserEditorToolInternal::DrawAssetTooltipContent(FileInfo);
+                ContentBrowserEditorToolInternal::DrawAssetTooltipContent(*FileInfo);
                 break;
             }
         case ContentBrowserEditorToolInternal::EIconKind::Directory:
             {
-                ContentBrowserEditorToolInternal::UpdateFolderHoverCache(TooltipCache, FStringView(*FileInfo.VirtualPath, FileInfo.VirtualPath.Len()));
-                const int32 Count = TooltipCache.FolderItemCount;
+                ContentBrowserEditorToolInternal::UpdateFolderHoverCache(*TooltipCache, FStringView(*FileInfo->VirtualPath, FileInfo->VirtualPath.Len()));
+                const int32 Count = TooltipCache->FolderItemCount;
                 ImGui::TextColored(EditorColors::TextDim(), "Folder - %d item%s", Count, Count == 1 ? "" : "s");
                 break;
             }
         case ContentBrowserEditorToolInternal::EIconKind::Markup:
             {
                 ImGui::TextColored(EditorColors::TextDim(), "UI Document (.rml)");
-                ContentBrowserEditorToolInternal::DrawItemSizeLine(FileInfo);
+                ContentBrowserEditorToolInternal::DrawItemSizeLine(*FileInfo);
                 break;
             }
         case ContentBrowserEditorToolInternal::EIconKind::Stylesheet:
             {
                 ImGui::TextColored(EditorColors::TextDim(), "UI Stylesheet (.rcss)");
-                ContentBrowserEditorToolInternal::DrawItemSizeLine(FileInfo);
+                ContentBrowserEditorToolInternal::DrawItemSizeLine(*FileInfo);
                 break;
             }
         case ContentBrowserEditorToolInternal::EIconKind::Audio:
             {
-                ImGui::TextColored(EditorColors::TextDim(), "Audio Clip (%s)", *FileInfo.GetExt());
-                ContentBrowserEditorToolInternal::DrawItemSizeLine(FileInfo);
+                ImGui::TextColored(EditorColors::TextDim(), "Audio Clip (%s)", *FileInfo->GetExt());
+                ContentBrowserEditorToolInternal::DrawItemSizeLine(*FileInfo);
                 break;
             }
         case ContentBrowserEditorToolInternal::EIconKind::Generic:
             {
-                const FString Ext = FileInfo.GetExt();
+                const FString Ext = FileInfo->GetExt();
                 if (!Ext.IsEmpty())
                 {
                     ImGui::TextColored(EditorColors::TextDim(), "%s file", *Ext);
                 }
-                ContentBrowserEditorToolInternal::DrawItemSizeLine(FileInfo);
+                ContentBrowserEditorToolInternal::DrawItemSizeLine(*FileInfo);
                 break;
             }
         }
 
         ImGui::Spacing();
-        ImGui::TextColored(EditorColors::TextDim(), "%s", *FileInfo.VirtualPath);
+        ImGui::TextColored(EditorColors::TextDim(), "%s", *FileInfo->VirtualPath);
 
         ImGui::PopTextWrapPos();
     }

@@ -573,7 +573,7 @@ namespace Lumina
         ECS::FRegistry& Registry = World->GetEntityRegistry();
         Registry.View<FSelectedInEditorComponent>().ForEach([&](ECS::FEntity Entity)
         {
-            Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+            ECS::Utils::MarkTransformDirty(Registry, Entity);
         });
 
         EntityScripts::DebugDraw(Registry);
@@ -777,7 +777,7 @@ namespace Lumina
                 Transform->SetLocalLocation(FVector3(0.0f));
                 Transform->SetLocalRotation(FQuat(1.0f, 0.0f, 0.0f, 0.0f));
                 Transform->SetLocalScale(FVector3(1.0f));
-                Registry.EmplaceOrReplace<FNeedsTransformUpdate>(Entity);
+                ECS::Utils::MarkTransformDirty(Registry, Entity);
             }
         }
         EndTransaction("Reset Transform");
@@ -1107,7 +1107,7 @@ namespace Lumina
                 return;
             }
 
-            FMatrix4 EntityMatrix = PivotTransform->GetWorldMatrix();
+            FMatrix4 EntityMatrix = PivotTransform->ComputeWorldTransform().GetMatrix();
             FMatrix4 PreManipulate = EntityMatrix;
 
             float* SnapValues = nullptr;
@@ -1197,7 +1197,7 @@ namespace Lumina
                         continue;
                     }
 
-                    const FMatrix4 OtherWorld = OtherTransform->GetWorldMatrix();
+                    const FMatrix4 OtherWorld = OtherTransform->ComputeWorldTransform().GetMatrix();
                     FMatrix4 NewWorld = OtherWorld;
 
                     switch (GuizmoOp)

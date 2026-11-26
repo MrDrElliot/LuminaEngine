@@ -32,7 +32,7 @@ namespace Lumina
                 return false;
             }
 
-            OutTransform = Transform->GetWorldTransform();
+            OutTransform = Transform->ComputeWorldTransform();
             return true;
         }
 

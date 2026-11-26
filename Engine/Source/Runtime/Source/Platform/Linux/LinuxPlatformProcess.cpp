@@ -798,6 +798,16 @@ namespace Lumina::Platform
         return GetProcessMemoryUsageBytes() / Constants::kMiB;
     }
 
+    double GetProcessCPUSeconds()
+    {
+        timespec Time{};
+        if (::clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &Time) != 0)
+        {
+            return 0.0;
+        }
+        return double(Time.tv_sec) + double(Time.tv_nsec) * 1e-9;
+    }
+
     void GetAddressSpaceStats(FAddressSpaceStats& Out, bool bIncludeHeaps)
     {
         Out = FAddressSpaceStats();

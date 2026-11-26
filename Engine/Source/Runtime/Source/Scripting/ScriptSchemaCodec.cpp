@@ -47,11 +47,11 @@ namespace Lumina::Scripting
         // Each record states its tag and byte length first, so a reader skips a field it does not know and resyncs.
         struct FRecordScope
         {
-            FBlobReader&        Reader;
+            FBlobReader*        Reader;
             const uint8*        RecordEnd;
 
             FRecordScope(FBlobReader& InReader, EScriptSchemaRecord Expected)
-                : Reader(InReader)
+                : Reader(&InReader)
             {
                 const uint8 Tag = InReader.U8();
                 const uint32 Length = InReader.U32();
@@ -72,7 +72,7 @@ namespace Lumina::Scripting
 
             LE_NO_COPYMOVE(FRecordScope);
 
-            ~FRecordScope() { Reader.SeekTo(RecordEnd); }
+            ~FRecordScope() { Reader->SeekTo(RecordEnd); }
         };
 
         FString NumberToString(double V) { char Buf[32]; snprintf(Buf, sizeof(Buf), "%g", V); return FString(Buf); }

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Containers/List.h"
-#include <volk/volk.h>
+#include <vulkan/vulkan.h>
 #if WITH_AFTERMATH
 #ifndef VULKAN_H_
 #define VULKAN_H_ 1

@@ -216,7 +216,7 @@ namespace Lumina
 
         static constexpr size_t kInlineBytes = 128;
 
-        const FFunction& Function;
+        const FFunction* Function;
         void*            Memory = nullptr;
         alignas(FFunction::kFrameAlignment) uint8 Inline[kInlineBytes];
     };

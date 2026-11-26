@@ -517,7 +517,7 @@ namespace
 
         FRenamingWriter(FArchive& Inner, const THashMap<FName, FName>& InRenames)
             : FInProcessObjectArchiver(Inner)
-            , Renames(InRenames)
+            , Renames(&InRenames)
         {
         }
 
@@ -525,14 +525,14 @@ namespace
 
         FArchive& operator<<(FName& Value) override
         {
-            const auto Renamed = Renames.Find(Value);
+            const auto Renamed = Renames->Find(Value);
             FName Written = Renamed != nullptr ? (*Renamed) : Value;
             return FInProcessObjectArchiver::operator<<(Written);
         }
 
     private:
 
-        const THashMap<FName, FName>& Renames;
+        const THashMap<FName, FName>* Renames;
     };
 }
 

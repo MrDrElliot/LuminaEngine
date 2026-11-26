@@ -33,7 +33,7 @@ namespace Lumina
             using FArchive::operator<<;
 
             explicit FReferenceCollectorArchive(THashSet<CObject*>& InCollected)
-                : Collected(InCollected)
+                : Collected(&InCollected)
             {
                 SetFlag(EArchiverFlags::Writing);
             }
@@ -42,7 +42,7 @@ namespace Lumina
             {
                 if (Value != nullptr)
                 {
-                    Collected.Add(Value);
+                    Collected->Add(Value);
                 }
                 return *this;
             }
@@ -51,14 +51,14 @@ namespace Lumina
             {
                 if (CObject* Resolved = Value.Resolve())
                 {
-                    Collected.Add(Resolved);
+                    Collected->Add(Resolved);
                 }
                 return *this;
             }
 
         private:
 
-            THashSet<CObject*>& Collected;
+            THashSet<CObject*>* Collected;
         };
 
         const char* StatusLabel(bool bLoaded)

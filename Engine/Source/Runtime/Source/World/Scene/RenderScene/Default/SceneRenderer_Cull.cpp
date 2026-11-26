@@ -285,8 +285,10 @@ namespace Lumina
         constexpr uint32 BlocksPerTask = 256;
         const uint32 NumTasks = RenderUtils::GetGroupCount(NumWork, BlocksPerTask);
         const bool bAll = bBlockBoundsRebuildAll;
+        // The merge swapped the blocks dirtied on the CPU into the scratch, and only those can have changed flags.
+        const TVector<uint32>* CPUDirtyBlocks = (!bAll && !StreamedBlocks->IsEmpty()) ? &BlockMergeScratch : nullptr;
         bBlockBoundsRunning = true;
-        const auto ComputeBlockBounds = [this, Entries, NumSlots, NumWork, bAll, StreamedBlocks](const Jobs::FRange& Range)
+        const auto ComputeBlockBounds = [this, Entries, NumSlots, NumWork, bAll, StreamedBlocks, CPUDirtyBlocks](const Jobs::FRange& Range)
         {
             for (uint32 TaskIndex = Range.Start; TaskIndex < Range.End; ++TaskIndex)
             {
@@ -297,6 +299,14 @@ namespace Lumina
                     const uint32 First = Block * kInstanceCullBlockSize;
                     const uint32 Last  = Math::Min(First + kInstanceCullBlockSize, NumSlots);
                     const bool bStreamed = !StreamedBlocks->IsEmpty() && Algo::BinarySearch(StreamedBlocks->begin(), StreamedBlocks->end(), Block);
+
+                    // A block only the stream moved is scanned whole by the cull and keeps its flags, so neither scan below can change anything.
+                    if (bStreamed && CPUDirtyBlocks != nullptr && !Algo::BinarySearch(CPUDirtyBlocks->begin(), CPUDirtyBlocks->end(), Block))
+                    {
+                        InstanceBlockBounds[Block] = FInstanceBlockBounds{ FVector3(0.0f), 0.0f, FVector3(0.0f), 1u };
+                        continue;
+                    }
+
                     InstanceBlockBounds[Block] = SceneCull::ComputeInstanceBlockBounds(Entries, First, Last,
                                                                                       bStreamed || SceneRendererCullInternal::OverlapsAny(GPUWrittenSlotRanges, First, Last));
 
@@ -597,19 +607,46 @@ namespace Lumina
         SkinnedSlotsUploaded = (uint32)Slots.Num();
 
         //~ Bounds arena layout, assigned before the upload below carries the bases to the GPU.
-        uint64 BoundsTotal = 0;
-
-        for (uint32 Slot : Slots)
+        // Chunks of the gathered list split both passes across workers, with a prefix over the chunk totals joining them.
+        constexpr uint32 kLayoutChunk = 8192;
+        const uint32 DataCount = (uint32)Data.Num();
+        const uint32 NumChunks = RenderUtils::GetGroupCount((uint32)Slots.Num(), kLayoutChunk);
+        const auto ChunkSlots = [&Slots](uint32 Chunk)
         {
-            if (Slot >= (uint32)Data.Num())
+            const uint32 First = Chunk * kLayoutChunk;
+            return TSpan<const uint32>(Slots.GetData() + First, Math::Min(kLayoutChunk, (uint32)Slots.Num() - First));
+        };
+
+        SkinnedLayoutChunks.SetNum(NumChunks);
+        Jobs::ParallelForOrSerial(NumChunks, 2u, [&](const Jobs::FRange& Range)
+        {
+            for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)
             {
-                continue;
+                FUIntVector3 Totals(0u);
+                for (const uint32 Slot : ChunkSlots(Chunk))
+                {
+                    if (Slot < DataCount)
+                    {
+                        const uint32 Len = Data[Slot].SurfaceMeshletCount;
+                        Totals.x += Len;
+                        Totals.y = Math::Max(Totals.y, Len);
+                        ++Totals.z;
+                    }
+                }
+                SkinnedLayoutChunks[Chunk] = Totals;
             }
+        });
 
-            const uint32 Len = Data[Slot].SurfaceMeshletCount;
-
-            SkinnedBoundsMaxRange = Math::Max(SkinnedBoundsMaxRange, Len);
-            BoundsTotal += Len;
+        uint64 BoundsTotal = 0;
+        uint32 ListedBase  = 0;
+        for (FUIntVector3& Chunk : SkinnedLayoutChunks)
+        {
+            SkinnedBoundsMaxRange = Math::Max(SkinnedBoundsMaxRange, Chunk.y);
+            const FUIntVector3 Totals = Chunk;
+            Chunk.x = (uint32)Math::Min<uint64>(BoundsTotal, Constants::kIndexNoneU32);
+            Chunk.z = ListedBase;
+            BoundsTotal += Totals.x;
+            ListedBase  += Totals.z;
         }
 
         SkinWorkCapacity = (uint32)Math::Min<uint64>(BoundsTotal, Constants::kIndexNoneU32 - 1u);
@@ -622,41 +659,46 @@ namespace Lumina
         SkinnedMeshletBoundsCapacity = Math::Min(SkinnedMeshletBoundsBuffer.CapacityOf<FMeshletSphere>(),
                                                  SkinnedMeshletConeBuffer.CapacityOf<FMeshletCone>());
 
-        // Stamped on the render thread, since the merge ran against a different FFrameData.
-        uint32 BoundsCursor  = 0;
-        uint32 DispatchIndex = 0;
-
-        for (uint32 Slot : Slots)
+        // Stamped on the render thread, since the merge ran against a different FFrameData. Each gathered slot is listed once, so chunks write disjoint entries.
+        const uint32 FrameTag = CurrentSkinnedFrameTag;
+        const uint64 Capacity = SkinnedMeshletBoundsCapacity;
+        Jobs::ParallelForOrSerial(NumChunks, 2u, [&](const Jobs::FRange& Range)
         {
-            if (Slot >= (uint32)Data.Num())
+            for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)
             {
-                continue;
+                uint64 Cursor        = SkinnedLayoutChunks[Chunk].x;
+                uint32 DispatchIndex = SkinnedLayoutChunks[Chunk].z;
+                for (const uint32 Slot : ChunkSlots(Chunk))
+                {
+                    if (Slot >= DataCount)
+                    {
+                        continue;
+                    }
+
+                    // Position in this list is the bounds dispatch's y index, which cannot exceed the grid limit.
+                    const bool bDispatchable = DispatchIndex < SceneRendererCullInternal::kMaxSkinnedBoundsDispatchY;
+                    DispatchIndex++;
+
+                    FSkinnedFrameData& D = Data[Slot];
+                    D.FrameTag = FrameTag;
+
+                    const uint32 Begin = D.SurfaceMeshletOffset;
+                    const uint32 Len   = D.SurfaceMeshletCount;
+                    const uint64 Start = Cursor;
+                    Cursor += Len;
+
+                    // All or nothing, because a partly written slice leaves the cull rejecting against stale data, and a fold onto the no-bounds marker would read as unbounded.
+                    if (Len == 0u || !bDispatchable || Start + Len > Capacity || (uint32)Start - Begin == kNoSkinnedBounds)
+                    {
+                        D.SkinnedBoundsBase = kNoSkinnedBounds;
+                        continue;
+                    }
+
+                    // Folded so the shader indexes by a mesh-global meshlet index, same trick as the pre-skin slice.
+                    D.SkinnedBoundsBase = (uint32)Start - Begin;
+                }
             }
-
-            // Position in this list is the bounds dispatch's y index, which cannot exceed the grid limit.
-            const bool bDispatchable = DispatchIndex < SceneRendererCullInternal::kMaxSkinnedBoundsDispatchY;
-            DispatchIndex++;
-
-            FSkinnedFrameData& D = Data[Slot];
-            D.FrameTag = CurrentSkinnedFrameTag;
-
-            const uint32 Begin = D.SurfaceMeshletOffset;
-            const uint32 Len   = D.SurfaceMeshletCount;
-
-            // A fold that lands on the no-bounds marker would read as unbounded, so that slice starts one entry later.
-            const uint32 Cursor = (BoundsCursor - Begin == kNoSkinnedBounds) ? BoundsCursor + 1u : BoundsCursor;
-
-            // All or nothing, because a partly written slice leaves the cull rejecting against stale data.
-            if (Len == 0u || !bDispatchable || (uint64)Cursor + Len > SkinnedMeshletBoundsCapacity)
-            {
-                D.SkinnedBoundsBase = kNoSkinnedBounds;
-                continue;
-            }
-
-            // Folded so the shader indexes by a mesh-global meshlet index, same trick as the pre-skin slice.
-            D.SkinnedBoundsBase = Cursor - Begin;
-            BoundsCursor = Cursor + Len;
-        }
+        });
 
         // A merged gap is still staged and copied, so this trades one copy region against ~1 KiB of bytes.
         constexpr uint32 kSkinnedMergeGap = 24;
@@ -1281,21 +1323,25 @@ namespace Lumina
                 RHI::TGPUSpan<uint32>            SlotList;
                 RHI::TGPUSpan<FSkinnedFrameData> SkinnedData;
                 RHI::TGPUSpan<uint32>            OutWorkBase;
-                RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutDispatchArgs;
-                RHI::TGPUSpan<uint32>            WorkEntry;
+                RHI::TGPUSpan<uint32>            OutGroupCount;
             } WPC = {};
-            static_assert(sizeof(FBuildSkinWorkPC) == 80, "FBuildSkinWorkPC must match BuildSkinWork.slang.");
+            static_assert(sizeof(FBuildSkinWorkPC) == 64, "FBuildSkinWorkPC must match BuildSkinWork.slang.");
 
             WPC.SlotList        = { SkinnedSlotListBuffer, NumSkinned };
             WPC.SkinnedData     = { SkinnedFrameDataBuffer };
             WPC.OutWorkBase     = { SkinWorkBaseRing[Slot], NumSkinned };
-            WPC.OutDispatchArgs = { GetSkinDispatchArgs() };
-            WPC.WorkEntry       = { SkinWorkEntryRing[Slot], WorkEntryCount };
+            WPC.OutGroupCount   = RHI::TGPUSpan<uint32>::FromAddress(GetSkinDispatchArgs().Gpu, 1u);
 
-            DispatchCompute(CL, WorkShader, WPC, 1u, 1u, 1u);
+            // The group count is the running total the work build adds into, folded into a grid once every entry has its base.
+            const RHI::FDispatchIndirectArguments ZeroArgs = { 0u, 1u, 1u };
+            WriteBuffer(CL, GetSkinDispatchArgs().Gpu, &ZeroArgs, sizeof(ZeroArgs));
+            Barriers::TransferToCompute(CL);
+
+            const FUIntVector2 Groups = RenderUtils::FoldGroupCount(RenderUtils::GetGroupCount(NumSkinned, 64u));
+            DispatchCompute(CL, WorkShader, WPC, Groups.x, Groups.y, 1u);
 
             RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
         }
 
         //~ Stamp each work index with its entry, one thread per entry so the stores spread over the whole GPU.
@@ -1308,19 +1354,21 @@ namespace Lumina
                 RHI::TGPUSpan<FSkinnedFrameData> SkinnedData;
                 RHI::TGPUSpan<uint32>            WorkBase;
                 RHI::TGPUSpan<uint32>            OutWorkEntry;
+                RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutDispatchArgs;
             } EPC = {};
-            static_assert(sizeof(FSkinWorkEntriesPC) == 64, "FSkinWorkEntriesPC must match SkinWorkEntries.slang.");
+            static_assert(sizeof(FSkinWorkEntriesPC) == 80, "FSkinWorkEntriesPC must match SkinWorkEntries.slang.");
 
-            EPC.SlotList     = { SkinnedSlotListBuffer, NumSkinned };
-            EPC.SkinnedData  = { SkinnedFrameDataBuffer };
-            EPC.WorkBase     = { SkinWorkBaseRing[Slot], NumSkinned };
-            EPC.OutWorkEntry = { SkinWorkEntryRing[Slot], WorkEntryCount };
+            EPC.SlotList        = { SkinnedSlotListBuffer, NumSkinned };
+            EPC.SkinnedData     = { SkinnedFrameDataBuffer };
+            EPC.WorkBase        = { SkinWorkBaseRing[Slot], NumSkinned };
+            EPC.OutWorkEntry    = { SkinWorkEntryRing[Slot], WorkEntryCount };
+            EPC.OutDispatchArgs = { GetSkinDispatchArgs() };
 
             const FUIntVector2 Groups = RenderUtils::FoldGroupCount(RenderUtils::GetGroupCount(NumSkinned, 64u));
             DispatchCompute(CL, EntryShader, EPC, Groups.x, Groups.y, 1u);
 
             RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead);
+                RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::IndirectRead);
         }
 
         struct FSkinningPushConstants

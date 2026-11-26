@@ -2971,9 +2971,9 @@ namespace Lumina
         ImVec4 NotVisibleColor = ImVec4(0.4f, 0.4f, 0.4f, 1.0f);
 
         ImGui::PushStyleColor(ImGuiCol_Text, bVisible ? VisibleColor : NotVisibleColor);
-        // Read when the window begins, so the toolbar sits flat on the window with only a hairline beneath it.
+        // Read when the window begins, so the toolbar sits flat with a hairline beneath it, left out where it would cross a viewport.
         ImGui::PushStyleColor(ImGuiCol_MenuBarBg, EditorColors::WindowBg());
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, EditorTool->HasWorld() ? 0.0f : 1.0f);
         ImGui::SetNextWindowSizeConstraints(ImVec2(128, 128), ImVec2(FLT_MAX, FLT_MAX));
         ImGui::SetNextWindowSize(ImVec2(1024, 768), ImGuiCond_FirstUseEver);
 

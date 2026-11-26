@@ -185,8 +185,8 @@ namespace Lumina
             }
 
             const FVector2 Extent(Math::Max(Fog.Extent.x, 0.5f), Math::Max(Fog.Extent.y, 0.5f));
-            const FMatrix4 WorldToLayer = Math::Inverse(Math::Scale(Transform->GetWorldMatrixCached(), FVector3(Extent.x, 1.0f, Extent.y)));
-            const float    Base         = Transform->GetWorldLocationCached().y;
+            const FMatrix4 WorldToLayer = Math::Inverse(Math::Scale(Transform->GetWorldMatrix(), FVector3(Extent.x, 1.0f, Extent.y)));
+            const float    Base         = Transform->GetWorldLocation().y;
             const float    ViewDistance = Math::Max(Fog.ViewDistance, 1.0f);
 
             FGPUGroundFogLayer Layer;
