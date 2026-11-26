@@ -92,4 +92,8 @@ public static class Gizmo
     /// <summary>Screen-space text for this frame (stacked top-left).</summary>
     public static void Text(string Message)
         => Engine.World.Debug.DrawText(Message, Color);
+
+    // Centered where Location lands on screen for this frame, shrinking with distance and multiplied by Scale.
+    public static void Text(string Message, FVector3 Location, float Scale = 1.0f)
+        => Engine.World.Debug.DrawWorldText(Message, Location, Color, Scale);
 }

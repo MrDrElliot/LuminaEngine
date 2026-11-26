@@ -116,6 +116,10 @@ namespace Lumina
         FUNCTION()
         void DrawText(const FString& Text, FVector4 Color);
 
+        // Centered where Location lands on screen, over the scene and shrinking with distance, for this frame only.
+        FUNCTION()
+        void DrawWorldText(const FString& Text, FVector3 Location, FVector4 Color, float Scale = 1.0f);
+
         // Once a frame while the developer overlay shows, between ImGui's NewFrame and Render, so handlers build debug windows.
         PROPERTY(Hidden)
         FScriptDelegate OnDebugGui;

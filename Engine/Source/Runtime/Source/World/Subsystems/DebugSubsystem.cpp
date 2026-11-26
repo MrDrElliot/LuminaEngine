@@ -298,6 +298,17 @@ namespace Lumina
         #endif
     }
 
+    void CDebugSubsystem::DrawWorldText(const FString& Text, FVector3 Location, FVector4 Color, float Scale)
+    {
+        CWorld* World = GetWorld();
+        #if !defined(LE_SHIPPING)
+        if (World != nullptr)
+        {
+            World->GetDebugInterface()->DrawWorldText(Text, Location, Color, Scale);
+        }
+        #endif
+    }
+
     #if USING(WITH_DEV_UI)
     void CDebugSubsystem::BroadcastDebugGui()
     {
