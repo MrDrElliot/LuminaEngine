@@ -622,31 +622,61 @@ namespace Lumina
             {
                 // Pixels per em.
                 const float PxSize = 32.0f;
-                const float Margin = 12.0f;
-                float       PenY   = Margin;
+                // Located text is 28 px at 50 m and shrinks with the square root of distance, softer than perspective.
+                const float LocatedPxSizeAtReference = 28.0f;
+                const float LocatedReferenceDistance = 50.0f;
+                const float MinReadablePxSize       = 8.0f;
+                const float MaxLocatedPxSize        = 64.0f;
+                const float Margin                  = 12.0f;
+                float       PenY                    = Margin;
+                const FVector2 DisplaySize((float)SceneViews[0].DisplaySize.x, (float)SceneViews[0].DisplaySize.y);
 
                 TVector<FShapedGlyph> DebugShaped;
                 for (const FDebugTextLine& Line : DebugLines)
                 {
-                    const uint32 Color = PackColor(Line.Color);
-                    if (DebugFont->ShapeText(Line.Text, 0.0f, 0.0f, 1.0f, DebugShaped))
-                    {
-                        for (const FShapedGlyph& S : DebugShaped)
-                        {
-                            FGPUGlyph& G = Frame.Primitives.DebugTextGlyphs.EmplaceGetRef();
-                            G.PlaneMin  = FVector2(Margin + S.Min.x * PxSize, PenY - S.Max.y * PxSize);
-                            G.PlaneMax  = FVector2(Margin + S.Max.x * PxSize, PenY - S.Min.y * PxSize);
-                            G.UVRect    = S.UV;
-                            G.ColorPack = Color;
-                        }
-                    }
-
                     int32 NumLines = 1;
                     for (const char C : Line.Text)
                     {
                         if (C == '\n') ++NumLines;
                     }
-                    PenY += (float)NumLines * DebugFont->GetLineHeight() * PxSize;
+
+                    FVector2 Origin(Margin, PenY);
+                    float    LinePxSize = PxSize;
+                    float    Align      = 0.0f;
+                    if (Line.Location.IsSet())
+                    {
+                        float ViewDepth;
+                        if (!Frame.ViewVolume.WorldToScreen(*Line.Location, DisplaySize, Origin, ViewDepth))
+                            continue;
+                        LinePxSize = Math::Min(
+                            Line.Scale * LocatedPxSizeAtReference * Math::Sqrt(LocatedReferenceDistance / ViewDepth),
+                            MaxLocatedPxSize);
+                        if (LinePxSize < MinReadablePxSize)
+                            continue;
+                        // No glyph is wider than an em, so this bounds how far the label reaches from its center.
+                        const float ReachX = (float)Line.Text.Len() * LinePxSize;
+                        const float ReachY = (float)NumLines * LinePxSize;
+                        if (Origin.x < -ReachX || Origin.x > DisplaySize.x + ReachX ||
+                            Origin.y < -ReachY || Origin.y > DisplaySize.y + ReachY)
+                            continue;
+                        Align = 0.5f;
+                    }
+
+                    const uint32 Color = PackColor(Line.Color);
+                    if (DebugFont->ShapeText(Line.Text, Align, Align, 1.0f, DebugShaped))
+                    {
+                        for (const FShapedGlyph& S : DebugShaped)
+                        {
+                            FGPUGlyph& G = Frame.Primitives.DebugTextGlyphs.EmplaceGetRef();
+                            G.PlaneMin  = FVector2(Origin.x + S.Min.x * LinePxSize, Origin.y - S.Max.y * LinePxSize);
+                            G.PlaneMax  = FVector2(Origin.x + S.Max.x * LinePxSize, Origin.y - S.Min.y * LinePxSize);
+                            G.UVRect    = S.UV;
+                            G.ColorPack = Color;
+                        }
+                    }
+
+                    if (!Line.Location.IsSet())
+                        PenY += (float)NumLines * DebugFont->GetLineHeight() * PxSize;
                 }
 
                 if (!Frame.Primitives.DebugTextGlyphs.IsEmpty())

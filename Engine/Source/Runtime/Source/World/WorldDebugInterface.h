@@ -24,6 +24,8 @@ namespace Lumina
         void DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale) override;
         void DrawLine(const FVector3& Start, const FVector3& End, const FVector4& Color, float Thickness = 1.0f, bool bDepthTest = true, float Duration = 0.0f) override;
         void DrawText(FStringView Text, TOptional<FVector4> Color);
+        // Centered on where Location lands on screen, over the scene; shrinks with distance, Scale multiplies its size.
+        void DrawWorldText(FStringView Text, FVector3 Location, TOptional<FVector4> Color, float Scale = 1.0f);
 
         //~ Wireframe shapes, where an unset option takes the interface default.
 
