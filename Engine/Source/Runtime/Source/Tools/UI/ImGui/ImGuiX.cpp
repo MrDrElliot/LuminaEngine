@@ -596,7 +596,8 @@ namespace Lumina::ImGuiX
                 const float SavedGrabMinSize = g.Style.GrabMinSize;
                 g.Style.GrabMinSize = ImMax(1.0f, 2.0f * (KnobRadius - 2.0f));
                 ImRect GrabBB;
-                ValueChanged = ImGui::SliderBehavior(FrameBB, ID, DataType, Value, Min, Max, Format, ImGuiSliderFlags_None, &GrabBB);
+                const ImGuiSliderFlags Behavior = EnumHasAnyFlags(Flags, ESliderFlags::Logarithmic) ? ImGuiSliderFlags_Logarithmic : ImGuiSliderFlags_None;
+                ValueChanged = ImGui::SliderBehavior(FrameBB, ID, DataType, Value, Min, Max, Format, Behavior, &GrabBB);
                 g.Style.GrabMinSize = SavedGrabMinSize;
                 if (ValueChanged)
                 {
@@ -606,7 +607,7 @@ namespace Lumina::ImGuiX
 
             const bool Held = (g.ActiveId == ID);
 
-            // Normalized position for the knob/fill (linear).
+            // Normalized position for the knob and fill.
             double DMin = 0.0, DMax = 0.0, DVal = 0.0;
             if (DataType == ImGuiDataType_Float)
             {
@@ -616,7 +617,11 @@ namespace Lumina::ImGuiX
             {
                 DMin = (double)*(const int32*)Min; DMax = (double)*(const int32*)Max; DVal = (double)*(const int32*)Value;
             }
-            const float T = (DMax != DMin) ? ImSaturate((float)((DVal - DMin) / (DMax - DMin))) : 0.0f;
+            // A positive range maps by its log as SliderBehavior does, while one touching zero falls back to linear.
+            const bool bLogKnob = EnumHasAnyFlags(Flags, ESliderFlags::Logarithmic) && DMin > 0.0 && DMax > DMin;
+            const float T = bLogKnob
+                ? ImSaturate((float)(ImLog(ImMax(DVal, DMin) / DMin) / ImLog(DMax / DMin)))
+                : ((DMax != DMin) ? ImSaturate((float)((DVal - DMin) / (DMax - DMin))) : 0.0f);
 
             const float TrackLeft = FrameBB.Min.x + KnobRadius;
             const float TrackRight = FrameBB.Max.x - KnobRadius;

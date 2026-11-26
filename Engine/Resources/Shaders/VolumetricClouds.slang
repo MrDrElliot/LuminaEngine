@@ -47,9 +47,16 @@ struct FPushConstants
     uint         OffsetY;
 
     FTexture2D   Weather;
-    uint         _Pad1;
-    uint         _Pad2;
-    uint         _Pad3;
+    // Invalid without the dynamic sky, which leaves SunColor as the ground sees it and the clouds unhazed.
+    FTexture2D   TransmittanceLut;
+    FTexture2D   SkyView;
+    uint         _Pad0;
+
+    float3       SkySunDirection;
+    float        SkyExposure;
+
+    float3       MoonDirection;
+    float        AmbientIntensity;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -87,6 +94,9 @@ float Cloud_SampleDensityEnvelope(float3 WorldPos, float HeightFrac, out float E
 {
     return Cloud_SampleDensityEnvelopeM(Cloud_Medium(), WorldPos, HeightFrac, false, Envelope);
 }
+
+// Half the sun's angular width in cosine near the horizon, so the planet's shadow line on a cloud is as soft as the real sun makes it.
+static const float kSunDiscCos = 0.0047;
 
 // A step wider than a small cumulus lets neighboring pixels disagree on whether it is there at all.
 static const float kMaxStepLength = 150.0;
@@ -152,6 +162,27 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     float3 Scattered     = float3(0.0, 0.0, 0.0);
     float  Transmittance = 1.0;
+
+    // Where along the ray the cloud's light came from, weighted by what each step hid, for the haze in front of it.
+    float WeightedDistance = 0.0;
+    float HiddenSum        = 0.0;
+
+    FTexture2D TransmittanceLut = Pass().TransmittanceLut;
+    const bool bAtmosphere = TransmittanceLut.IsValid();
+    // The light's color is authored for the ground under a high sun, so each sample's air is taken relative to that.
+    const float3 InvGroundTransmittance = bAtmosphere
+        ? 1.0 / max(Sky_SampleTransmittance(TransmittanceLut, kPlanetR + SKY_GROUND_ALTITUDE, 1.0), float3(1e-4, 1e-4, 1e-4))
+        : float3(1.0, 1.0, 1.0);
+
+    // The sky itself lights the clouds, blue from above and the ground's bounce from below, when it has been baked.
+    float3 AmbientTop    = Pass().AmbientColor;
+    float3 AmbientBottom = Pass().AmbientColor * 0.35;
+    if (HasIBL() && bAtmosphere)
+    {
+        const float AmbientScale = Pass().AmbientIntensity;
+        AmbientTop    = GetSceneRoot().SkyIrradiance.SampleLevel(Samplers::LinearClamp, float3(0.0, 1.0, 0.0), 0.0).rgb * AmbientScale;
+        AmbientBottom = GetSceneRoot().SkyIrradiance.SampleLevel(Samplers::LinearClamp, float3(0.0, -1.0, 0.0), 0.0).rgb * AmbientScale;
+    }
 
     // Clear air between clouds is cheap, so stride through it in whole fine steps, which keeps every sample on one jittered lattice.
     float EmptyStep = BaseStep * clamp(floor(kMaxEmptyStride / BaseStep), 1.0, kEmptyStepScale);
@@ -242,20 +273,57 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         float Powder = 1.0 - exp(-Density * BaseStep * 2.0);
         float Lit    = lerp(1.0, Powder, Pass().PowderStrength);
 
-        float3 SunTerm     = Pass().SunColor * SunScatter * Lit;
-        float3 AmbientTerm = Pass().AmbientColor * lerp(0.35, 1.0, HeightFrac);
+        float3 SunLight = Pass().SunColor;
+        if (bAtmosphere)
+        {
+            // The air this sample looks through toward the light, and the planet once the light sinks below its horizon, so high cloud keeps the sunset after low cloud loses it.
+            const float Radius     = length(SamplePos);
+            const float Mu         = dot(SamplePos, Pass().SunDirection) / Radius;
+            const float Ratio      = kPlanetR / Radius;
+            const float CosHorizon = -sqrt(saturate(1.0 - Ratio * Ratio));
+            const float Visible    = smoothstep(CosHorizon - kSunDiscCos, CosHorizon + kSunDiscCos, Mu);
+            SunLight *= Sky_SampleTransmittance(TransmittanceLut, Radius, Mu) * InvGroundTransmittance * Visible;
+        }
+
+        float3 SunTerm     = SunLight * SunScatter * Lit;
+        float3 AmbientTerm = lerp(AmbientBottom, AmbientTop, HeightFrac);
 
         float StepTrans = exp(-Density * BaseStep);
 
         // Analytic segment integral rather than a Riemann sum, which keeps energy at coarse steps.
         float3 StepScatter = (SunTerm + AmbientTerm) * (1.0 - StepTrans);
 
+        const float Hidden = Transmittance * (1.0 - StepTrans);
+        WeightedDistance += T * Hidden;
+        HiddenSum        += Hidden;
+
         Scattered     += StepScatter * Transmittance;
         Transmittance *= StepTrans;
     }
 
-    // Distant cloud thins into the horizon haze, rather than ending on the hard line where the march is clamped.
-    float DistanceFade = 1.0 - smoothstep(Pass().MaxDistance * 0.4, Pass().MaxDistance, Start);
+    // The atmosphere between the camera and the cloud, so distant cloud sinks into the horizon's haze and takes its color.
+    const bool bHitsGround = Sky_RaySphereIntersect(Origin, RayDir, kPlanetR).x > 0.0;
+    if (bAtmosphere && HiddenSum > 1e-4 && !bHitsGround)
+    {
+        const float  CloudDistance = WeightedDistance / HiddenSum;
+        const float3 CloudPoint    = Origin + RayDir * CloudDistance;
+        const float  CloudRadius   = length(CloudPoint);
+        const float3 ToSpace       = Sky_SampleTransmittance(TransmittanceLut, length(Origin), RayDir.y);
+        const float3 CloudToSpace  = Sky_SampleTransmittance(TransmittanceLut, CloudRadius, dot(CloudPoint, RayDir) / CloudRadius);
+        const float3 InFront       = saturate(ToSpace / max(CloudToSpace, float3(1e-6, 1e-6, 1e-6)));
+
+        // The in-scatter grows with the air crossed, so the share in front of the cloud is its share of the extinction to space.
+        const float  ViewRadius = Sky_ViewRadius(CamPos.y);
+        const float3 SkyIn      = (Sky_SampleSkyView(Pass().SkyView, ViewRadius, RayDir, Pass().SkySunDirection, 0u)
+                                 + Sky_SampleSkyView(Pass().SkyView, ViewRadius, RayDir, Pass().MoonDirection, 1u)) * Pass().SkyExposure;
+        const float3 Haze       = SkyIn * saturate((1.0 - InFront) / max(1.0 - ToSpace, float3(1e-4, 1e-4, 1e-4)));
+
+        Scattered = Scattered * InFront + Haze * (1.0 - Transmittance);
+    }
+
+    // The march still ends at MaxDistance, so the last stretch fades rather than stopping on a line, later where the haze already hides it.
+    const float FadeStart = Pass().MaxDistance * (bAtmosphere ? 0.75 : 0.4);
+    float DistanceFade = 1.0 - smoothstep(FadeStart, Pass().MaxDistance, Start);
     Scattered     *= DistanceFade;
     Transmittance  = lerp(1.0, Transmittance, DistanceFade);
 

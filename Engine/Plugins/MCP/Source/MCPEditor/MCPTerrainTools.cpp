@@ -14,6 +14,8 @@
 #include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
+#include "World/Subsystems/TerrainSculptSystem.h"
 #include "World/World.h"
 
 namespace Lumina::MCP
@@ -220,6 +222,77 @@ namespace Lumina::MCP
                 });
         }
 
+        void RegisterTerrainSculpt(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<STerrainSculptParams, STerrainSculptResult>(
+                Owner, "terrain.sculpt",
+                "Apply one brush dab to a terrain the way the terrain mode's brush does, held for Seconds. Call it along a path for a stroke.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const STerrainSculptParams& In, STerrainSculptResult& Out)
+                {
+                    // Ramp is left out, since it needs a drag from one point to another rather than a dab.
+                    constexpr ETerrainBrushMode Modes[] = { ETerrainBrushMode::Sculpt, ETerrainBrushMode::Smooth, ETerrainBrushMode::Flatten, ETerrainBrushMode::Noise,
+                                                            ETerrainBrushMode::Erode, ETerrainBrushMode::Terrace, ETerrainBrushMode::Paint };
+                    constexpr const char* ModeNames[] = { "Sculpt", "Smooth", "Flatten", "Noise", "Erode", "Terrace", "Paint" };
+                    int32 ModeIndex = -1;
+                    for (int32 i = 0; i < int32(std::size(ModeNames)); ++i)
+                    {
+                        if (In.Mode == ModeNames[i])
+                        {
+                            ModeIndex = i;
+                        }
+                    }
+                    if (ModeIndex < 0)
+                    {
+                        return Agent::FToolResult::Error(Lumina::Format("Mode '{}' is not one of Sculpt, Smooth, Flatten, Noise, Erode, Terrace or Paint.", In.Mode));
+                    }
+
+                    FString Error;
+                    CWorld* World = SessionOps::GetSceneWorld(Error);
+                    if (World == nullptr)
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    ECS::FEntity Entity = ECS::NullEntity;
+                    if (In.Entity.IsEmpty())
+                    {
+                        for (ECS::FEntity Candidate : World->View<STerrainComponent>())
+                        {
+                            Entity = Candidate;
+                            break;
+                        }
+                    }
+                    else if (!Agent::FEntityTokens::Resolve(World->GetEntityRegistry(), FStringView(In.Entity), Entity, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+                    STerrainComponent* Terrain = Entity != ECS::NullEntity ? World->TryGetComponent<STerrainComponent>(Entity) : nullptr;
+                    if (Terrain == nullptr)
+                    {
+                        return Agent::FToolResult::Error("No terrain to sculpt.");
+                    }
+
+                    FTerrainSculptDab Dab;
+                    Dab.Mode          = Modes[ModeIndex];
+                    Dab.TerrainOrigin = World->GetComponent<STransformComponent>(Entity).GetWorldLocation();
+                    Dab.WorldPosition = FVector3(In.X, Dab.TerrainOrigin.y, In.Z);
+                    Dab.Radius        = Math::Max(In.Radius, 1.0f);
+                    Dab.Strength      = Math::Saturate(In.Strength);
+                    Dab.DeltaSeconds  = Math::Clamp(In.Seconds, 0.0f, 10.0f);
+                    Dab.SculptSign    = In.bInvert ? int8(-1) : int8(1);
+                    Dab.FlattenHeight = In.FlattenHeight;
+
+                    if (!SessionOps::RunTransacted("Sculpt Terrain (agent)", [&] { FTerrainSculptSystem::ApplyDab(*Terrain, Dab); }, Error, { Entity }))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+
+                    FTerrainSculptSystem::SampleHeight(*Terrain, Dab.TerrainOrigin, In.X, In.Z, Out.Height);
+                    return Agent::FToolResult::Ok(Lumina::Format("Applied a {} dab at ({}, {}), where the ground now stands at {}.", In.Mode, In.X, In.Z, Out.Height));
+                });
+        }
+
         void RegisterTerrainImportFoliage(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SImportFoliageParams, SImportFoliageResult>(
@@ -370,6 +443,7 @@ namespace Lumina::MCP
     void RegisterTerrainTools(FStringView Owner)
     {
         RegisterTerrainCreate(Owner);
+        RegisterTerrainSculpt(Owner);
         RegisterTerrainImportFoliage(Owner);
     }
 }

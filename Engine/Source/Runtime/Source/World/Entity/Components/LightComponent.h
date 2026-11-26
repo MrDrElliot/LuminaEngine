@@ -199,7 +199,7 @@ namespace Lumina
         PROPERTY(Editable, Category = "Light|Temperature", ClampMin = 1000.0f, ClampMax = 15000.0f, Units = "K")
         float Temperature = 6500.0f;
 
-        // Below the horizon the light turns to the moon opposite the sun, while the sky keeps the true sun for its night.
+        // Below the horizon the light turns to the moon the sky draws, while the sky keeps the true sun for its night.
         PROPERTY(Editable, Category = "Light|Moon")
         bool bMoonlight = false;
 
@@ -215,14 +215,13 @@ namespace Lumina
         }
 
         // The direction surfaces are lit and shadowed from, which is the moon once the sun has set.
-        FVector3 GetLightingDirection() const
+        FVector3 GetLightingDirection(const FVector3& MoonDirection) const
         {
-            const FVector3 Sun = Math::Normalize(Direction);
-            return IsMoonLit() ? -Sun : Sun;
+            return IsMoonLit() ? Math::Normalize(MoonDirection) : Math::Normalize(Direction);
         }
 
         // Fades to nothing at the horizon from either side, so the swap between sun and moon never pops.
-        float GetLightingIntensity() const
+        float GetLightingIntensity(const FVector3& MoonDirection, float MoonPhaseBrightness) const
         {
             if (!bMoonlight)
             {
@@ -232,10 +231,9 @@ namespace Lumina
             // A low moon crosses far more atmosphere than a low sun needs to fade out over, so it brightens more slowly.
             constexpr float SunFadeElevation  = 0.1f;
             constexpr float MoonFadeElevation = 0.35f;
-            const float Elevation = Math::Normalize(Direction).y;
-            return Elevation >= 0.0f
-                ? Intensity * Math::SmoothStep(0.0f, SunFadeElevation, Elevation)
-                : MoonIntensity * Math::SmoothStep(0.0f, MoonFadeElevation, -Elevation);
+            return !IsMoonLit()
+                ? Intensity * Math::SmoothStep(0.0f, SunFadeElevation, Math::Normalize(Direction).y)
+                : MoonIntensity * MoonPhaseBrightness * Math::SmoothStep(0.0f, MoonFadeElevation, Math::Normalize(MoonDirection).y);
         }
 
         // When true, this light contributes to the shadow pass.

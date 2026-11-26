@@ -431,6 +431,11 @@ namespace Lumina
         /** When true, this collider contributes its shape to NavMesh bakes. */
         PROPERTY(Editable, Category = "Navigation")
         bool bAffectsNavigation = true;
+
+        // Heightmap versions collision was built from and last polled, so a sculpt rebuilds it once the stroke ends.
+        uint32 BuiltHeightmapVersion = 0;
+        uint32 SeenHeightmapVersion  = 0;
+        bool   bHeightmapTracked     = false;
     };
 
     /** Primitive type for one child of a compound collider. */

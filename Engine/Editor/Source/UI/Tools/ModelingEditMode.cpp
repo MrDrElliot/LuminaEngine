@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "Core/Math/Math.h"
+#include "Tools/ComponentVisualizers/ComponentVisualizerContext.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
 #include "World/ECS/Registry.h"
 #include "World/Entity/Components/CameraComponent.h"
@@ -35,24 +36,9 @@ namespace Lumina
                 return false;
             }
 
-            const float W = Math::Max(ViewportSize.x, 1.0f);
-            const float H = Math::Max(ViewportSize.y, 1.0f);
-
-            const float Sx = (PixelWithinViewport.x / W) * 2.0f - 1.0f;
-            const float Sy = 1.0f - (PixelWithinViewport.y / H) * 2.0f;
-
-            const FViewVolume& View    = Camera.GetViewVolume();
-            const FVector3     Forward = View.GetForwardVector();
-            const FVector3     Up      = View.GetUpVector();
-            const FVector3     Right   = Math::Normalize(Math::Cross(Up, Forward));
-
-            const float AspectRatio = W / H;
-            const float TanHalfFov  = std::tan(Math::Radians(View.GetFOV()) * 0.5f);
-
-            OutOrigin = Camera.GetPosition();
-            OutDir    = Math::Normalize(Forward
-                                      + Right * (Sx * TanHalfFov * AspectRatio)
-                                      + Up    * (Sy * TanHalfFov));
+            FVisualizerView View;
+            View.SetFromCamera(Camera, ImVec2(0.0f, 0.0f), ViewportSize);
+            View.ScreenToRay(PixelWithinViewport, OutOrigin, OutDir);
             return true;
         }
 

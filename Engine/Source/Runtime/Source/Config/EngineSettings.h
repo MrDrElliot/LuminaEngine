@@ -289,6 +289,16 @@ namespace Lumina
         Ultra,
     };
 
+    // Each step up marches the cloud layer and its light toward the sun in more steps.
+    REFLECT()
+    enum class ECloudQuality : uint8
+    {
+        Low,
+        Medium,
+        High,
+        Ultra,
+    };
+
     // XeGTAO marches horizons along screen slices; CORTAO ray-traces a hemisphere against circular occluders built from depth.
     REFLECT()
     enum class EAmbientOcclusionMethod : uint8
@@ -397,6 +407,10 @@ namespace Lumina
         /** Steps taken through the cloud layer per shadow texel. */
         PROPERTY(Editable, Category = "Volumetric Fog", ClampMin = 1, ClampMax = 32)
         int32 CloudShadowSteps = 8;
+
+        // Scales each cloud component's march and light steps, half at Low and one and a half at Ultra.
+        PROPERTY(Editable, Category = "Volumetric Clouds")
+        ECloudQuality CloudQuality = ECloudQuality::High;
 
         // Largest face a point light's cube shadow may claim. Higher is sharper, but every tap touches more cache lines.
         PROPERTY(Editable, Category = "Shadows", ClampMin = 128, ClampMax = 1024)

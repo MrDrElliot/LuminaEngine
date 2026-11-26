@@ -19,6 +19,14 @@ namespace Lumina
 
         // Koschmieder extinction ln(50)/V, where contrast falls to 2%.
         constexpr float FogContrastThreshold = 3.912f;
+
+        // Bands that widen with height, so climbing a hill keeps the IBL while a flight rebakes it every few hundred meters.
+        float IBLAltitudeBand(float CameraY)
+        {
+            constexpr float BandBase = 200.0f;
+            constexpr float BandsPerDoubling = 4.0f;
+            return std::floor(std::log2(1.0f + Math::Max(CameraY, 0.0f) / BandBase) * BandsPerDoubling);
+        }
     }
 
     const SEnvironmentComponent* FDefaultSceneRenderer::ExtractEnvironment(ECS::FRegistry& Registry, FFrameData& Frame)
@@ -88,6 +96,10 @@ namespace Lumina
                                                         Env.bMoonOpposeSun ? 1.0f : 0.0f);
             EnvironmentParams.MoonDirection = FVector4(Env.MoonDirection, 0.0f);
             EnvironmentParams.GalaxyParams  = FVector4(Env.GalaxyIntensity, Env.GalaxyTilt, 0.0f, 0.0f);
+            EnvironmentParams.AtmosphereParams = FVector4(Math::Max(Env.AerosolDensity, 0.0f),
+                                                          Env.MoonPhase - std::floor(Env.MoonPhase),
+                                                          (float)SKY_SOLAR_ILLUMINANCE * Frame.Volumetrics.MoonlitSkyRatio,
+                                                          IBLAltitudeBand(Frame.ViewVolume.GetViewPosition().y));
 
             const float HDRIYaw = Math::Radians(Env.HDRIRotation);
             EnvironmentParams.HDRIParams    = FVector4(Math::Max(Env.HDRIIntensity, 0.0f),

@@ -75,6 +75,11 @@ namespace Lumina
         ECS::FEntity GetModeSelectionFocus() const override { return GetLastSelectedEntity(); }
         void SetModeSelection(ECS::FEntity Entity) override { SetSingleSelectedEntity(Entity); }
 
+        // Each viewport mode's display name in picker order, with the active one's index.
+        TVector<FString> GetModeNames(int32& OutActive) const;
+        // False when no viewport mode goes by that display name.
+        bool SetActiveModeByName(FStringView Name);
+
         void OnEntityDestroyed(ECS::FRegistry& Registry, ECS::FEntity Entity);
         void OnEntityScriptChanged(ECS::FRegistry& Registry, ECS::FEntity Entity);
 

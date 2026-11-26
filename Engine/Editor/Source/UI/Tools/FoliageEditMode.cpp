@@ -1,10 +1,10 @@
 #include "FoliageEditMode.h"
+#include "BrushModeUI.h"
 
 #include <cmath>
 #include "Containers/Algorithm.h"
 #include "Core/Math/Math.h"
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
-#include "World/Entity/Components/CameraComponent.h"
 #include "World/Entity/Components/EditorComponent.h"
 #include "World/Entity/Components/FoliageComponent.h"
 #include "World/Entity/Components/ForestComponent.h"
@@ -18,27 +18,15 @@ namespace Lumina
 {
     namespace
     {
-        void BuildRayFromScreen(const SCameraComponent& Camera, ImVec2 PixelWithinViewport, ImVec2 ViewportSize, FVector3& OutOrigin, FVector3& OutDir)
+        // In EBrushMode order, so a mode indexes its own entry.
+        constexpr BrushUI::FTool kFoliageTools[] =
         {
-            const float W = Math::Max(ViewportSize.x, 1.0f);
-            const float H = Math::Max(ViewportSize.y, 1.0f);
+            { LE_ICON_BRUSH,  "Paint", "Paint the species into the ground, where the forest grows it by its own rules. Alt erases.", IM_COL32(110, 215, 110, 255) },
+            { LE_ICON_ERASER, "Erase", "Clear the species' painted cover and its placed plants. Alt paints.",                         IM_COL32(230, 110, 110, 255) },
+            { LE_ICON_FOREST, "Place", "Drop single plants at the species' density, kept exactly where they land. Alt erases.",       IM_COL32(110, 165, 240, 255) },
+        };
 
-            const float Sx = (PixelWithinViewport.x / W) * 2.0f - 1.0f;
-            const float Sy = 1.0f - (PixelWithinViewport.y / H) * 2.0f;
-
-            const FViewVolume& View    = Camera.GetViewVolume();
-            const FVector3    Forward = View.GetForwardVector();
-            const FVector3    Up      = View.GetUpVector();
-            const FVector3    Right   = Math::Normalize(Math::Cross(Up, Forward));
-
-            const float AspectRatio = W / H;
-            const float TanHalfFov  = std::tan(Math::Radians(View.GetFOV()) * 0.5f);
-
-            OutOrigin = Camera.GetPosition();
-            OutDir    = Math::Normalize(Forward
-                                       + Right * (Sx * TanHalfFov * AspectRatio)
-                                       + Up    * (Sy * TanHalfFov));
-        }
+        constexpr float kMaxRadius = 1024.0f;
 
         bool RaycastGroundPlane(const FVector3& Origin, const FVector3& Dir, FVector3& OutHit)
         {
@@ -159,15 +147,18 @@ namespace Lumina
         return ECS::NullEntity;
     }
 
+    FFoliageEditMode::EBrushMode FFoliageEditMode::StrokeMode() const
+    {
+        if (!ImGui::GetIO().KeyAlt)
+        {
+            return Mode;
+        }
+        return Mode == EBrushMode::Erase ? EBrushMode::Paint : EBrushMode::Erase;
+    }
+
     float FFoliageEditMode::BrushWeight(float Distance) const
     {
-        const float T = Math::Clamp(Distance / Math::Max(Radius, 1e-3f), 0.0f, 1.0f);
-        if (T >= 1.0f)
-        {
-            return 0.0f;
-        }
-        const float Soft = 1.0f - T * T * (3.0f - 2.0f * T);
-        return Math::Mix(1.0f, Soft, Falloff);
+        return FTerrainSculptSystem::FalloffWeight(Distance, Radius, Falloff, FalloffShape);
     }
 
     void FFoliageEditMode::PaintDab(const FTarget& Target, const FVector3& Hit, float DeltaSeconds, float Sign)
@@ -328,54 +319,15 @@ namespace Lumina
             return;
         }
 
-        ImVec2 AnchorPos = ImGui::GetWindowPos();
-        AnchorPos.y += ImGui::GetWindowSize().y + 4.0f;
-        ImGui::SetNextWindowPos(AnchorPos);
-        ImGui::SetNextWindowBgAlpha(0.85f);
-        // The width comes from the asset picker, whose thumbnail eats 64px before the path field.
-        constexpr float PanelWidth = 460.0f;
-        ImGui::SetNextWindowSizeConstraints(ImVec2(PanelWidth, 0.0f), ImVec2(PanelWidth, FLT_MAX));
-        ImGui::Begin("##FoliageBrushSettings", nullptr,
-                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize);
+        // The width comes from the species' asset picker, whose thumbnail eats 64 pixels before the path field.
+        BrushUI::BeginPanel("##FoliageBrushSettings", 460.0f);
 
-        ImGui::SeparatorText("Brush");
-
-        // Toggles, since a combo costs two clicks and hides the current state behind a label.
-        struct FModeButton
+        int32 Tool = int32(Mode);
+        if (BrushUI::ToolPalette(kFoliageTools, IM_ARRAYSIZE(kFoliageTools), Tool))
         {
-            EBrushMode  Mode;
-            const char* Label;
-            ImU32       Color;
-        };
-        const FModeButton Buttons[] =
-        {
-            { EBrushMode::Paint, LE_ICON_BRUSH" Paint",  IM_COL32(70, 130, 80, 255) },
-            { EBrushMode::Erase, LE_ICON_ERASER" Erase", IM_COL32(150, 70, 70, 255) },
-            { EBrushMode::Place, LE_ICON_FOREST" Place", IM_COL32(70, 100, 150, 255) },
-        };
-        const float ButtonWidth = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
-        for (const FModeButton& Button : Buttons)
-        {
-            if (&Button != &Buttons[0])
-            {
-                ImGui::SameLine();
-            }
-            ImGui::PushStyleColor(ImGuiCol_Button, Mode == Button.Mode ? Button.Color : ImGui::GetColorU32(ImGuiCol_Button));
-            if (ImGui::Button(Button.Label, ImVec2(ButtonWidth, 0.0f)))
-            {
-                Mode = Button.Mode;
-            }
-            ImGui::PopStyleColor();
+            Mode = EBrushMode(Tool);
         }
-
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::SliderFloat("##Radius",   &Radius,   1.0f, 1024.0f, "Radius  %.1f m", ImGuiSliderFlags_Logarithmic);
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::SliderFloat("##Strength", &Strength, 0.01f, 1.0f, "Strength  %.2f");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::SliderFloat("##Falloff",  &Falloff,  0.0f, 1.0f, "Falloff  %.2f");
+        BrushUI::BrushSection(Radius, kMaxRadius, Strength, Falloff, FalloffShape, kFoliageTools[int32(Mode)].Color);
 
         const FTarget Target = FindForest(World, LastHit);
         DrawSpeciesPanel(World, Target);
@@ -391,7 +343,8 @@ namespace Lumina
             }
         }
 
-        ImGui::TextDisabled("[ / ] resize brush");
+        ImGui::Separator();
+        BrushUI::Hint("[ ] size   Shift+[ ] strength   Alt inverts");
         ImGui::End();
     }
 
@@ -557,7 +510,8 @@ namespace Lumina
 
     void FFoliageEditMode::Tick(CWorld* World, const SCameraComponent& Camera, bool bViewportHovered, ImVec2 ViewportScreenOrigin, ImVec2 ViewportSize)
     {
-        bHitValid = false;
+        bHitValid      = false;
+        ReadoutSeconds = Math::Max(ReadoutSeconds - ImGui::GetIO().DeltaTime, 0.0f);
 
         // Closes the stroke's transaction the moment the button is released.
         if (bTransactionOpen && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
@@ -570,13 +524,20 @@ namespace Lumina
             PlaceAccumulator = 0.0f;
         }
 
-        if (!World || !bViewportHovered)
+        if (!World)
         {
             return;
         }
 
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true))  { Radius = Math::Max(1.0f, Radius / 1.1f); }
-        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true)) { Radius = Math::Min(1024.0f, Radius * 1.1f); }
+        if (BrushUI::HandleBrushKeys(Radius, kMaxRadius, Strength))
+        {
+            ReadoutSeconds = 1.5f;
+        }
+
+        if (!bViewportHovered)
+        {
+            return;
+        }
 
         const ImVec2 MousePos = ImGui::GetMousePos();
         const ImVec2 Local    = ImVec2(MousePos.x - ViewportScreenOrigin.x, MousePos.y - ViewportScreenOrigin.y);
@@ -585,8 +546,10 @@ namespace Lumina
             return;
         }
 
+        FVisualizerView View;
+        View.SetFromCamera(Camera, ViewportScreenOrigin, ViewportSize);
         FVector3 RayOrigin, RayDir;
-        BuildRayFromScreen(Camera, Local, ViewportSize, RayOrigin, RayDir);
+        View.ScreenToRay(MousePos, RayOrigin, RayDir);
 
         const TVector<FGround> Ground = GatherGround(World);
         FVector3 Hit;
@@ -616,7 +579,7 @@ namespace Lumina
         }
 
         const float DeltaSeconds = Math::Max(ImGui::GetIO().DeltaTime, 1.0f / 240.0f);
-        switch (Mode)
+        switch (StrokeMode())
         {
         case EBrushMode::Paint:
             PaintDab(Target, Hit, DeltaSeconds, 1.0f);
@@ -641,50 +604,48 @@ namespace Lumina
             return;
         }
 
-        const FMatrix4 ViewProj = Camera.GetProjectionMatrix() * Camera.GetViewMatrix();
-        auto ProjectToScreen = [&](const FVector3& WorldPos, ImVec2& Out) -> bool
+        FVisualizerView View;
+        View.SetFromCamera(Camera, ViewportScreenOrigin, ViewportSize);
+        ImVec2 Center;
+        if (!View.WorldToScreen(LastHit, Center))
         {
-            FVector4 Clip = ViewProj * FVector4(WorldPos, 1.0f);
-            if (Clip.w <= 0.0f)
-            {
-                return false;
-            }
-            FVector3 Ndc = FVector3(Clip) / Clip.w;
-            Out.x = ViewportScreenOrigin.x + (Ndc.x * 0.5f + 0.5f) * ViewportSize.x;
-            Out.y = ViewportScreenOrigin.y + (Ndc.y * 0.5f + 0.5f) * ViewportSize.y;
-            return true;
-        };
+            return;
+        }
 
-        const ImU32 Colors[] = { IM_COL32(120, 230, 120, 220), IM_COL32(230, 120, 120, 220), IM_COL32(120, 170, 240, 220) };
-        const ImU32 Color = Colors[(int32)Mode];
+        const EBrushMode Stroke = StrokeMode();
+        const ImU32      Color  = kFoliageTools[int32(Stroke)].Color;
 
-        // Follows the ground, so the ring reads true on a slope instead of cutting through the hill.
+        // Lifted off the ground a little, so the ring is not lost in the grass it paints.
         const TVector<FGround> Ground = GatherGround(World);
-        constexpr int Segments = 64;
-        ImVec2 Points[Segments];
-        int Count = 0;
-        for (int i = 0; i < Segments; ++i)
+        auto OnGround = [&](FVector3& P)
         {
-            const float A = (static_cast<float>(i) / static_cast<float>(Segments)) * Math::TwoPi<float>();
-            FVector3 P = LastHit + FVector3(std::cos(A) * Radius, 0.0f, std::sin(A) * Radius);
             FVector3 Normal;
             ProjectToGround(Ground, P.x, P.z, P, Normal);
-            ImVec2 S;
-            if (ProjectToScreen(P + FVector3(0.0f, 0.1f, 0.0f), S))
-            {
-                Points[Count++] = S;
-            }
-        }
+            P.y += 0.1f;
+        };
 
         ImDrawList* Draw = ImGui::GetWindowDrawList();
-        if (Count >= 2)
+        BrushUI::DrawRing(Draw, View, LastHit, Radius, BrushUI::ScaleColor(Color, 1.0f, 0.9f), 2.0f, OnGround);
+        // The core, inside which the brush works at full strength.
+        if (Falloff > 0.02f)
         {
-            Draw->AddPolyline(Points, Count, Color, 2.0f, ImDrawFlags_Closed);
+            BrushUI::DrawRing(Draw, View, LastHit, Radius * (1.0f - Falloff), BrushUI::ScaleColor(Color, 1.0f, 0.45f), 1.0f, OnGround);
         }
-        ImVec2 Center;
-        if (ProjectToScreen(LastHit, Center))
+        Draw->AddCircleFilled(Center, 3.0f, IM_COL32(255, 255, 255, 220));
+
+        // What the brush will do and how strongly, shown when Alt flips it or a shortcut just changed it.
+        char Readout[64] = {};
+        if (ReadoutSeconds > 0.0f)
         {
-            Draw->AddCircleFilled(Center, 3.0f, IM_COL32(255, 255, 255, 220));
+            ImFormatString(Readout, sizeof(Readout), "%.0f m  %.0f%%", Radius, Strength * 100.0f);
+        }
+        else if (Stroke != Mode)
+        {
+            ImFormatString(Readout, sizeof(Readout), "%s", kFoliageTools[int32(Stroke)].Label);
+        }
+        if (Readout[0] != '\0')
+        {
+            BrushUI::CursorLabel(Draw, Center, Readout, Color);
         }
     }
 }

@@ -596,6 +596,12 @@ namespace Lumina
             PrepareSceneColorForCallbacks(CL);
             RunRenderCallbacks(CL, ERenderStage::FrameStart);
 
+            AtmosphereLUTPass(CL);
+            {
+                // On graphics, since the sky pass below reads the same LUTs before the compute queue is waited on.
+                SCENE_GPU_SCOPE(CL, "Aerial Perspective");
+                AerialPerspectivePass(CL);
+            }
             SkyCubeCapturePass(CL);
             TexturePaintPass(CL);
             TerrainUpdatePass(CL);
@@ -678,22 +684,11 @@ namespace Lumina
 
                 const bool bGTAOWritten = bGTAOPrefiltered && GTAOPass(ComputeCL, EGTAOStage::Trace);
 
-                bool bAerialWritten = false;
-                {
-                    SCENE_GPU_SCOPE(ComputeCL, "Aerial Perspective");
-                    bAerialWritten = AerialPerspectivePass(ComputeCL);
-                }
-
                 // Only what graphics reads goes back; GTAO's scratch images stay on compute and are rewritten each frame.
                 TInlineVector<RHI::FTextureH, 3> ComputeOutputs;
                 if (bGTAOWritten)
                 {
                     ComputeOutputs.Add(GetNamedImage(ENamedImage::GTAOBlur).Texture);
-                }
-                if (bAerialWritten)
-                {
-                    ComputeOutputs.Add(GetNamedImage(ENamedImage::AerialInScatter).Texture);
-                    ComputeOutputs.Add(GetNamedImage(ENamedImage::AerialTransmittance).Texture);
                 }
 
                 if (bAsyncCompute)
@@ -710,7 +705,7 @@ namespace Lumina
                     RHI::CmdBeginMarker(CL, "RenderView Overlap");
                 }
 
-                // Nothing up to the lighting reads AO or the aerial LUTs, and the clusters are built here because the fog below needs them before the wait.
+                // Nothing up to the lighting reads AO, and the clusters are built here because the fog below needs them before the wait.
                 {
                     SCENE_GPU_SCOPE(CL, "Cluster Build");
                     ClusterBuildPass(CL);
@@ -1045,6 +1040,7 @@ namespace Lumina
 
     void FDefaultSceneRenderer::RenderCaptureView(RHI::FCmdListH CL)
     {
+        AtmosphereLUTPass(CL);
         TerrainCullPass(CL);
         VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
         ClusterBuildPass(CL);
@@ -1467,6 +1463,9 @@ namespace Lumina
         case ENamedImage::FroxelIntegrated:   return "Scene.FroxelIntegrated";
         case ENamedImage::AerialInScatter:    return "Scene.AerialInScatter";
         case ENamedImage::AerialTransmittance: return "Scene.AerialTransmittance";
+        case ENamedImage::AtmosphereTransmittance: return "Scene.AtmosphereTransmittance";
+        case ENamedImage::AtmosphereMultiScatter:  return "Scene.AtmosphereMultiScatter";
+        case ENamedImage::SkyView:            return "Scene.SkyView";
         case ENamedImage::CloudNoise:         return "Scene.CloudNoise";
         case ENamedImage::CloudWeather:       return "Scene.CloudWeather";
         case ENamedImage::CloudScatter:       return "Scene.CloudScatter";
@@ -2048,6 +2047,21 @@ namespace Lumina
             AerialDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
             View.Images[(int)ENamedImage::AerialInScatter]     = CreateSceneImage(AerialDesc, true, true);
             View.Images[(int)ENamedImage::AerialTransmittance] = CreateSceneImage(AerialDesc, true, true);
+        }
+
+        {
+            RHI::FTextureDesc LUTDesc;
+            LUTDesc.Type   = RHI::ETextureType::Tex2D;
+            LUTDesc.Format = EFormat::RGBA16_FLOAT;
+            LUTDesc.Usage  = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+
+            LUTDesc.Dimension = FUIntVector3(SKY_TRANSMITTANCE_LUT_WIDTH, SKY_TRANSMITTANCE_LUT_HEIGHT, 1);
+            View.Images[(int)ENamedImage::AtmosphereTransmittance] = CreateSceneImage(LUTDesc, true, true);
+            LUTDesc.Dimension = FUIntVector3(SKY_MULTISCATTER_LUT_SIZE * 2u, SKY_MULTISCATTER_LUT_SIZE, 1);
+            View.Images[(int)ENamedImage::AtmosphereMultiScatter]  = CreateSceneImage(LUTDesc, true, true);
+            LUTDesc.Dimension = FUIntVector3(SKY_VIEW_LUT_WIDTH * 2u, SKY_VIEW_LUT_HEIGHT, 1);
+            View.Images[(int)ENamedImage::SkyView]                 = CreateSceneImage(LUTDesc, true, true);
+            View.AtmosphereLUTAerosol = -1.0f;
         }
 
         {

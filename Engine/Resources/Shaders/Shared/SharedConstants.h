@@ -254,3 +254,30 @@
 #define PROXY_ENTRY_POINT_BIT           0x80000000u
 // Impostor points per cull thread group, and the span one point block's bounds cover.
 #define IMPOSTOR_POINT_GROUP_SIZE       64u
+
+// Earth's atmosphere in meters and per meter, shared so the sunlight the CPU tints matches the sky the GPU draws.
+#define SKY_PLANET_RADIUS               6360e3
+#define SKY_ATMOSPHERE_RADIUS           6420e3
+#define SKY_RAYLEIGH_SCALE_HEIGHT       8e3
+#define SKY_MIE_SCALE_HEIGHT            1.2e3
+#define SKY_RAYLEIGH_R                  5.802e-6
+#define SKY_RAYLEIGH_G                  13.558e-6
+#define SKY_RAYLEIGH_B                  33.1e-6
+// Bruneton 2017's clear day, since the older 2.1e-5 is a hazy one with a 30 degree halo.
+#define SKY_MIE_SCATTERING              3.996e-6
+#define SKY_MIE_EXTINCTION_RATIO        1.11
+#define SKY_OZONE_R                     0.65e-6
+#define SKY_OZONE_G                     1.881e-6
+#define SKY_OZONE_B                     0.085e-6
+#define SKY_OZONE_CENTER                25e3
+#define SKY_OZONE_HALF_WIDTH            15e3
+// The light the dynamic sky is integrated under, apart from the sun disc's own brightness.
+#define SKY_SOLAR_ILLUMINANCE           20.0
+// The ground sits this far below world height zero, so the camera never touches the planet sphere.
+#define SKY_GROUND_ALTITUDE             50.0
+#define SKY_TRANSMITTANCE_LUT_WIDTH     256u
+#define SKY_TRANSMITTANCE_LUT_HEIGHT    64u
+#define SKY_MULTISCATTER_LUT_SIZE       32u
+// One half of the sky view image, which holds the sun's sky on the left and the moon's on the right.
+#define SKY_VIEW_LUT_WIDTH              192u
+#define SKY_VIEW_LUT_HEIGHT             104u

@@ -173,6 +173,7 @@ namespace Lumina::ImGuiX
         AlwaysValue  = 1 << 2,   // always draw the formatted value, right-aligned over the track
         Glow         = 1 << 3,   // soft halo behind the knob
         ReadOnly     = 1 << 4,   // render normally but ignore input
+        Logarithmic  = 1 << 5,   // even steps per decade, for ranges such as sizes that span several orders of magnitude
     };
 
     ENUM_CLASS_FLAGS(ESliderFlags);

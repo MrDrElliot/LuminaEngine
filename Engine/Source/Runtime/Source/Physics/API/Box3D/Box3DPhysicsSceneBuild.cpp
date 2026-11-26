@@ -25,7 +25,10 @@ namespace Lumina::Physics
 {
     namespace
     {
-        // Box3D height fields index [row * countX + column] with the sample grid on the XZ plane.
+        // Box3D splits every quad from (x, z + 1) to (x + 1, z) and the renderer from (x, z) to (x + 1, z + 1), so the grid is turned a quarter about Y to match.
+        const b3Quat kTerrainGridTurn = { { 0.0f, 0.70710678f, 0.0f }, 0.70710678f };
+
+        // Row r and column c of the turned grid land on terrain sample x = r, z = Res - 1 - c.
         b3HeightFieldData* BuildTerrainHeightField(const STerrainComponent& Terrain)
         {
             const int32 Res = Terrain.Resolution;
@@ -39,12 +42,15 @@ namespace Lumina::Physics
 
             float MinHeight = FLT_MAX;
             float MaxHeight = -FLT_MAX;
-            for (int32 i = 0; i < Heights.Num(); ++i)
+            for (int32 Row = 0; Row < Res; ++Row)
             {
-                const float H = Terrain.Heightmap[i] * Terrain.MaxHeight;
-                Heights[i] = H;
-                MinHeight = Math::Min(MinHeight, H);
-                MaxHeight = Math::Max(MaxHeight, H);
+                for (int32 Column = 0; Column < Res; ++Column)
+                {
+                    const float H = Terrain.Heightmap[(Res - 1 - Column) * Res + Row] * Terrain.MaxHeight;
+                    Heights[Row * Res + Column] = H;
+                    MinHeight = Math::Min(MinHeight, H);
+                    MaxHeight = Math::Max(MaxHeight, H);
+                }
             }
 
             const float Stride = Terrain.TileWorldSize / float(Res - 1);
@@ -99,6 +105,8 @@ namespace Lumina::Physics
         FVector3 ColliderTranslationOffset(0.0f);
         FVector3 ColliderRotationOffset(0.0f);
         bool bMustBeStatic = false;
+        // Terrain draws, sculpts, navigates and scatters axis aligned, so its collision ignores the entity's turn too.
+        bool bAxisAligned = false;
         bool bColliderIsTrigger = false;
         const CPhysicsMaterial* ResolvedMaterial = nullptr;
 
@@ -340,10 +348,12 @@ namespace Lumina::Physics
             FPendingShape Shape;
             Shape.Type = b3_heightShape;
             Shape.HeightField = Out.Geometry.HeightField.Get();
-            // Box3D indexes the grid from a corner, so it is recentered onto the tile.
-            Shape.Transform.p = b3Vec3{ Terrain->TileWorldSize * -0.5f, 0.0f, Terrain->TileWorldSize * -0.5f };
+            // The turned grid's first sample is the tile's corner at minimum x and maximum z.
+            Shape.Transform.p = b3Vec3{ Terrain->TileWorldSize * -0.5f, 0.0f, Terrain->TileWorldSize * 0.5f };
+            Shape.Transform.q = kTerrainGridTurn;
             Out.Shapes.Add(Shape);
             bMustBeStatic = true;
+            bAxisAligned = true;
         }
         else
         {
@@ -390,7 +400,7 @@ namespace Lumina::Physics
         Out.BodyDef = b3DefaultBodyDef();
         Out.BodyDef.type = Box3DUtils::ToBox3DBodyType(BodyType);
         Out.BodyDef.position = Box3DUtils::ToB3Vec3(Position);
-        Out.BodyDef.rotation = Box3DUtils::ToB3Quat(Rotation);
+        Out.BodyDef.rotation = bAxisAligned ? b3Quat_identity : Box3DUtils::ToB3Quat(Rotation);
         Out.BodyDef.linearDamping = RigidBody->LinearDamping;
         Out.BodyDef.angularDamping = RigidBody->AngularDamping;
         Out.BodyDef.gravityScale = RigidBody->bUseGravity ? 1.0f : 0.0f;
@@ -476,16 +486,17 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        // b3CreateHeightFieldShape takes no transform and indexes from the body origin, so the height field's local offset is folded into the body.
+        // b3CreateHeightFieldShape takes no transform and indexes from the body origin, so the height field's local placement is folded into the body.
         for (const FPendingShape& Shape : Build.Shapes)
         {
-            if (Shape.Type != b3_heightShape || b3LengthSquared(Shape.Transform.p) <= 0.0f)
+            if (Shape.Type != b3_heightShape)
             {
                 continue;
             }
 
             const b3Vec3 WorldOffset = b3RotateVector(Build.BodyDef.rotation, Shape.Transform.p);
             Build.BodyDef.position = b3Add(Build.BodyDef.position, WorldOffset);
+            Build.BodyDef.rotation = b3MulQuat(Build.BodyDef.rotation, Shape.Transform.q);
             Build.LastBodyPosition = Box3DUtils::FromB3Vec3(Build.BodyDef.position);
             break;
         }

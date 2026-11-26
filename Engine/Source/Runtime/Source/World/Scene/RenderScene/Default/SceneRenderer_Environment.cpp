@@ -147,11 +147,115 @@ namespace Lumina
         CompletedProbeBakes.fetch_or(1u << (uint32)Bake.BakingProbe, std::memory_order_acq_rel);
     }
 
+    FVector3 FDefaultSceneRenderer::GetSkySunDirection() const
+    {
+        const auto& LightData = RenderFrame->Lighting.LightData;
+        return LightData.bHasSun ? Math::Normalize(LightData.SkySunDirection) : Math::Normalize(FVector3(0.3f, 0.8f, 0.4f));
+    }
+
+    void FDefaultSceneRenderer::AtmosphereLUTPass(RHI::FCmdListH CL)
+    {
+        const FFrameData& Frame = *RenderFrame;
+        if (!FrameFlags.bHasEnvironment)
+        {
+            return;
+        }
+
+        const FEnvironmentParams& Params = Frame.Volumetrics.EnvironmentParams;
+        const uint32 SkyMode = std::bit_cast<uint32>(Params.Misc.x);
+        if (SkyMode != GSkyMode_Dynamic && SkyMode != GSkyMode_Gradient)
+        {
+            return;
+        }
+
+        static const FShaderH TransmittanceCS = FShaderLibrary::Get("AtmosphereTransmittanceLUT.slang");
+        static const FShaderH MultiScatterCS  = FShaderLibrary::Get("AtmosphereMultiScatterLUT.slang");
+        static const FShaderH SkyViewCS       = FShaderLibrary::Get("SkyViewLUT.slang");
+        if (!TransmittanceCS || !MultiScatterCS || !SkyViewCS)
+        {
+            return;
+        }
+
+        const FSceneImage& Transmittance = GetNamedImage(ENamedImage::AtmosphereTransmittance);
+        const FSceneImage& MultiScatter  = GetNamedImage(ENamedImage::AtmosphereMultiScatter);
+        const FSceneImage& SkyView       = GetNamedImage(ENamedImage::SkyView);
+        if (!Transmittance.IsValid() || !MultiScatter.IsValid() || !SkyView.IsValid())
+        {
+            return;
+        }
+
+        SCENE_GPU_SCOPE(CL, "Atmosphere LUTs");
+        constexpr uint32 LUTTile = 8u;
+
+        // Both depend on the air alone, so they rebuild only when the aerosol does.
+        const float Aerosol = Params.AtmosphereParams.x;
+        if (CurrentView->AtmosphereLUTAerosol != Aerosol)
+        {
+            struct FTransmittanceLUTArgs
+            {
+                uint32 OutUAV;
+                float  Aerosol;
+                uint32 _Pad0;
+                uint32 _Pad1;
+            };
+            static_assert(sizeof(FTransmittanceLUTArgs) == 16, "FTransmittanceLUTArgs must match AtmosphereTransmittanceLUT.slang.");
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(TransmittanceCS));
+            RHI::CmdDispatch(CL, MakeArgs(FTransmittanceLUTArgs{ (uint32)Transmittance.GetMipUAVIndex(0), Aerosol, 0u, 0u }),
+                RenderUtils::GetGroupCount(SKY_TRANSMITTANCE_LUT_WIDTH, LUTTile), RenderUtils::GetGroupCount(SKY_TRANSMITTANCE_LUT_HEIGHT, LUTTile), 1u);
+            RHI::Barriers::ComputeToCompute(CL);
+
+            struct FMultiScatterLUTArgs
+            {
+                uint32 OutUAV;
+                uint32 Transmittance;
+                float  Aerosol;
+                uint32 _Pad0;
+            };
+            static_assert(sizeof(FMultiScatterLUTArgs) == 16, "FMultiScatterLUTArgs must match AtmosphereMultiScatterLUT.slang.");
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(MultiScatterCS));
+            RHI::CmdDispatch(CL, MakeArgs(FMultiScatterLUTArgs{ (uint32)MultiScatter.GetMipUAVIndex(0), (uint32)Transmittance.GetResourceID(), Aerosol, 0u }),
+                SKY_MULTISCATTER_LUT_SIZE, SKY_MULTISCATTER_LUT_SIZE, 1u);
+            RHI::Barriers::ComputeToCompute(CL);
+
+            CurrentView->AtmosphereLUTAerosol = Aerosol;
+        }
+
+        if (SkyMode == GSkyMode_Dynamic)
+        {
+            struct FSkyViewLUTArgs
+            {
+                uint64   EnvAddr;
+                uint32   OutUAV;
+                uint32   Transmittance;
+                FVector3 SunDirection;
+                uint32   MultiScatter;
+            };
+            static_assert(sizeof(FSkyViewLUTArgs) == 32, "FSkyViewLUTArgs must match SkyViewLUT.slang.");
+
+            FSkyViewLUTArgs Args = {};
+            Args.EnvAddr       = RHI::CopyTransient(Params);
+            Args.OutUAV        = (uint32)SkyView.GetMipUAVIndex(0);
+            Args.Transmittance = (uint32)Transmittance.GetResourceID();
+            Args.SunDirection  = GetSkySunDirection();
+            Args.MultiScatter  = (uint32)MultiScatter.GetResourceID();
+
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SkyViewCS));
+            RHI::CmdDispatch(CL, MakeArgs(Args),
+                RenderUtils::GetGroupCount(SKY_VIEW_LUT_WIDTH * 2u, LUTTile), RenderUtils::GetGroupCount(SKY_VIEW_LUT_HEIGHT, LUTTile), 1u);
+        }
+
+        // The cube capture, the aerial volume and the sky pass all read these.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+    }
+
     void FDefaultSceneRenderer::SkyCubeCapturePass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
-        const auto& LightData         = Frame.Lighting.LightData;
-        const auto& SceneGlobalData   = Frame.SceneGlobalData;
         const int32 EnvironmentMapID  = Frame.Volumetrics.EnvironmentMapID;
         const bool bIBLDirty          = Frame.Volumetrics.bIBLDirty;
 
@@ -247,22 +351,16 @@ namespace Lumina
         {
             uint64   EnvAddr;
             uint32   SkyCubeUAV;
-            float    Time;
+            uint32   Transmittance;
             FVector3 SunDirection;
-            float    _Pad;
+            uint32   SkyView;
         } PC = {};
-        PC.EnvAddr    = RHI::CopyTransient(Frame.Volumetrics.EnvironmentParams);
-        PC.SkyCubeUAV = (uint32)SkyCube.GetMipUAVIndex(0);
-
-        if (LightData.bHasSun)
-        {
-            PC.SunDirection = Math::Normalize(LightData.SkySunDirection);
-        }
-        else
-        {
-            PC.SunDirection = Math::Normalize(FVector3(0.3f, 0.8f, 0.4f));
-        }
-        PC.Time = SceneGlobalData.Time;
+        static_assert(sizeof(FSkyCapturePC) == 32, "FSkyCapturePC must match SkyCubeCapture.slang.");
+        PC.EnvAddr       = RHI::CopyTransient(Frame.Volumetrics.EnvironmentParams);
+        PC.SkyCubeUAV    = (uint32)SkyCube.GetMipUAVIndex(0);
+        PC.Transmittance = (uint32)GetNamedImage(ENamedImage::AtmosphereTransmittance).GetResourceID();
+        PC.SunDirection  = GetSkySunDirection();
+        PC.SkyView       = (uint32)GetNamedImage(ENamedImage::SkyView).GetResourceID();
 
         constexpr uint32 SkyCaptureTile = 8u;
         const uint32 FaceSize = SkyCube.GetSizeX();
@@ -461,19 +559,26 @@ namespace Lumina
 
         struct FEnvPushConstants
         {
-            uint64 EnvAddr;
-            uint32 SkyCubeIndex;
-            uint32 EquirectIndex;
-            uint32 EquirectWidth;   // HDRI mode LOD that anti-aliases the sky
-            uint32 _Pad1;
+            uint64   EnvAddr;
+            uint32   SkyCubeIndex;
+            uint32   EquirectIndex;
+            FVector3 SunDirection;
+            uint32   EquirectWidth;   // HDRI mode LOD that anti-aliases the sky
+            uint32   TransmittanceIndex;
+            uint32   SkyViewIndex;
+            uint32   _Pad0;
+            uint32   _Pad1;
         };
-        static_assert(sizeof(FEnvPushConstants) == 24, "FEnvPushConstants must match the slang pass block.");
+        static_assert(sizeof(FEnvPushConstants) == 48, "FEnvPushConstants must match the slang pass block.");
 
         FEnvPushConstants PC = {};
-        PC.EnvAddr       = RHI::CopyTransient(RenderFrame->Volumetrics.EnvironmentParams);
-        PC.SkyCubeIndex  = (uint32)SkyCube.GetResourceID();
-        PC.EquirectIndex = EquirectIdx;
-        PC.EquirectWidth = EquirectW;
+        PC.EnvAddr            = RHI::CopyTransient(RenderFrame->Volumetrics.EnvironmentParams);
+        PC.SkyCubeIndex       = (uint32)SkyCube.GetResourceID();
+        PC.EquirectIndex      = EquirectIdx;
+        PC.SunDirection       = GetSkySunDirection();
+        PC.EquirectWidth      = EquirectW;
+        PC.TransmittanceIndex = (uint32)GetNamedImage(ENamedImage::AtmosphereTransmittance).GetResourceID();
+        PC.SkyViewIndex       = (uint32)GetNamedImage(ENamedImage::SkyView).GetResourceID();
 
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);

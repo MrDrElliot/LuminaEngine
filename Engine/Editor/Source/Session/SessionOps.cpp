@@ -229,6 +229,34 @@ namespace Lumina::SessionOps
         return true;
     }
 
+    bool GetEditorModes(TVector<FString>& OutModes, FString& OutActive, FString& OutError)
+    {
+        FWorldEditorTool* Tool = RequireSceneEditor(OutError);
+        if (Tool == nullptr)
+        {
+            return false;
+        }
+        int32 Active = 0;
+        OutModes  = Tool->GetModeNames(Active);
+        OutActive = (Active >= 0 && Active < OutModes.Num()) ? OutModes[Active] : FString();
+        return true;
+    }
+
+    bool SetEditorMode(FStringView Name, FString& OutError)
+    {
+        FWorldEditorTool* Tool = RequireSceneEditor(OutError);
+        if (Tool == nullptr)
+        {
+            return false;
+        }
+        if (!Tool->SetActiveModeByName(Name))
+        {
+            OutError = Lumina::Format("No viewport mode is named '{}'.", Name);
+            return false;
+        }
+        return true;
+    }
+
     bool SetPaused(bool bPaused, FString& OutError)
     {
         FWorldEditorTool* Tool = RequireSceneEditor(OutError);

@@ -57,10 +57,10 @@ namespace Lumina
     {
         // How much these replace the cloud component's own values, so a preset without clouds leaves them alone.
         float Weight         = 0.0f;
-        float Coverage       = 0.3f;
-        float Density        = 1.0f;
-        float Billow         = 0.6f;
-        float DetailStrength = 0.35f;
+        float Coverage       = 0.42f;
+        float Density        = 1.3f;
+        float Billow         = 0.8f;
+        float DetailStrength = 0.4f;
         float SunScale       = 1.0f;
         float AmbientScale   = 1.0f;
 

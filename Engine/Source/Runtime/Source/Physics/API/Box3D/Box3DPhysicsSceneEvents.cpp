@@ -14,6 +14,7 @@
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Events/CollisionEvent.h"
 #include "World/World.h"
@@ -333,6 +334,23 @@ namespace Lumina::Physics
                 OnRigidBodyComponentUpdated(Registry, Entity);
             }
         }
+
+        // A stroke changes the heightmap every frame, so collision waits for a frame without a change before it rebuilds.
+        for (auto [Entity, Collider, Terrain, Body] : Registry.View<STerrainColliderComponent, ECS::Read<STerrainComponent>, SRigidBodyComponent>().Each())
+        {
+            const uint32 Version = Terrain.CPUState.HeightmapVersion;
+            if (!Collider.bHeightmapTracked)
+            {
+                Collider.BuiltHeightmapVersion = Version;
+                Collider.bHeightmapTracked = true;
+            }
+            else if (Version != Collider.BuiltHeightmapVersion && Version == Collider.SeenHeightmapVersion)
+            {
+                Collider.BuiltHeightmapVersion = Version;
+                OnRigidBodyComponentUpdated(Registry, Entity);
+            }
+            Collider.SeenHeightmapVersion = Version;
+        }
     }
 
     void FBox3DPhysicsScene::DestroyBodyHandle(uint32 Handle)
@@ -413,11 +431,13 @@ namespace Lumina::Physics
         }
         PendingDrainScratch.SetNum(Count);
 
+        TInlineVector<ECS::FEntity, 4> RebuiltBodies;
         for (ECS::FEntity Entity : PendingDrainScratch)
         {
             FBodyRecord& Record = RigidBodies.FindChecked(Entity);
             if (Record.bRebuild)
             {
+                RebuiltBodies.Add(Entity);
                 const b3BodyId Old = ResolveBody(Record.Handle);
                 if (b3Body_IsValid(Old) && b3Body_GetType(Old) == b3_dynamicBody)
                 {
@@ -431,6 +451,23 @@ namespace Lumina::Physics
             }
         }
         CreateRigidBodiesBatched(PendingDrainScratch);
+
+        // Rebuilt ground can rise around whoever stands on it, and a height field has no inside to push a buried capsule out of.
+        if (!RebuiltBodies.IsEmpty())
+        {
+            for (auto [Entity, Physics] : Registry.View<SCharacterPhysicsComponent>().Each())
+            {
+                if (!Physics.Character || !Physics.Character->bGrounded || !Algo::Contains(RebuiltBodies, Physics.Character->GroundEntity))
+                {
+                    continue;
+                }
+                FPhysicsCharacterHandle& Character = *Physics.Character;
+                Character.SpawnPosition       = Character.Position;
+                Character.bAwaitingGround     = true;
+                Character.AwaitingGroundSteps = 0;
+                Character.bResting            = false;
+            }
+        }
 
         for (const FCarriedMotion& Motion : CarriedMotion)
         {

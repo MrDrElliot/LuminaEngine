@@ -176,6 +176,12 @@ namespace Lumina::Physics
             {
                 case b3_staticBody:
                 {
+                    // A terrain body carries the grid's corner offset and turn, which the entity pose alone would drop.
+                    if (Registry.TryGet<STerrainColliderComponent>(Entity) != nullptr)
+                    {
+                        OnRigidBodyComponentUpdated(Registry, Entity);
+                        break;
+                    }
                     b3Body_SetTransform(BodyId, Position, Rotation);
                     AdoptTeleportedPose();
                     break;

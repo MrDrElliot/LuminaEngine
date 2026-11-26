@@ -9,6 +9,7 @@
 
 #include "UI/Properties/PropertyTable.h"
 #include "WorldEditorMode.h"
+#include "World/Subsystems/TerrainSculptSystem.h"
 
 namespace Lumina
 {
@@ -37,6 +38,7 @@ namespace Lumina
         bool ConsumesViewportInput() const override { return true; }
 
     private:
+        // In palette order.
         enum class EBrushMode : int32 { Paint, Erase, Place };
 
         struct FGround
@@ -48,11 +50,15 @@ namespace Lumina
 
         bool  bShowSettings = true;
 
-        EBrushMode Mode     = EBrushMode::Paint;
-        float      Radius   = 32.0f;
-        float      Falloff  = 0.5f;
-        float      Strength = 0.5f;
-        int32      ActiveSpecies = 0;
+        EBrushMode           Mode         = EBrushMode::Paint;
+        float                Radius       = 32.0f;
+        float                Falloff      = 0.5f;
+        ETerrainBrushFalloff FalloffShape = ETerrainBrushFalloff::Smooth;
+        float                Strength     = 0.5f;
+        int32                ActiveSpecies = 0;
+
+        // Seconds left showing the size and strength beside the cursor after a shortcut changed them.
+        float ReadoutSeconds = 0.0f;
 
         FVector3 LastHit   = FVector3(0.0f);
         bool     bHitValid = false;
@@ -82,6 +88,8 @@ namespace Lumina
         static FTarget CreateForest(CWorld* World, const TVector<FGround>& Ground);
         static ECS::FEntity FindLegacyFoliage(CWorld* World);
 
+        // Mode, or with Alt held its opposite, so Paint and Place erase and Erase paints.
+        EBrushMode StrokeMode() const;
         float BrushWeight(float Distance) const;
         void  PaintDab(const FTarget& Target, const FVector3& Hit, float DeltaSeconds, float Sign);
         void  PlaceDab(const FTarget& Target, const TVector<FGround>& Ground, const FVector3& Hit, float DeltaSeconds);

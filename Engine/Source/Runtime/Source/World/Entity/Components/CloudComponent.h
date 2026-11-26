@@ -17,11 +17,11 @@ namespace Lumina
 
         /** Fraction of sky covered. Low values give scattered puffs, high gives overcast. */
         PROPERTY(Editable, Category = "Clouds", ClampMin = 0.0f, ClampMax = 1.0f)
-        float Coverage = 0.3f;
+        float Coverage = 0.42f;
 
         /** Optical density of the cloud medium; higher is thicker and darker inside. */
         PROPERTY(Editable, Category = "Clouds", ClampMin = 0.0f, Delta = 0.01f)
-        float Density = 1.0f;
+        float Density = 1.3f;
 
         /** Altitude of the cloud layer's underside. */
         PROPERTY(Editable, Category = "Clouds|Layer", ClampMin = 100.0f, Units = "m")
@@ -29,23 +29,23 @@ namespace Lumina
 
         /** Altitude of the cloud layer's top. Thicker layers give taller, more billowed shapes. */
         PROPERTY(Editable, Category = "Clouds|Layer", ClampMin = 200.0f, Units = "m")
-        float LayerTop = 4000.0f;
+        float LayerTop = 5500.0f;
 
         /** World size of one tile of the base shape noise; larger means bigger cloud masses. */
         PROPERTY(Editable, Category = "Clouds|Shape", ClampMin = 100.0f, Units = "m")
-        float ShapeScale = 6000.0f;
+        float ShapeScale = 12000.0f;
 
         /** World size of one tile of the erosion noise that carves the wispy edges. */
         PROPERTY(Editable, Category = "Clouds|Shape", ClampMin = 10.0f, Units = "m")
-        float DetailScale = 700.0f;
+        float DetailScale = 800.0f;
 
         /** How aggressively the detail noise erodes the base shape's edges. */
         PROPERTY(Editable, Category = "Clouds|Shape", ClampMin = 0.0f, ClampMax = 1.0f)
-        float DetailStrength = 0.35f;
+        float DetailStrength = 0.4f;
 
         /** Vertical bias of the shape: 0 keeps flat stratus, 1 gives tall billowing cumulus. */
         PROPERTY(Editable, Category = "Clouds|Shape", ClampMin = 0.0f, ClampMax = 1.0f)
-        float Billow = 0.6f;
+        float Billow = 0.8f;
 
         /** Direction the layer drifts, in the XZ plane. */
         PROPERTY(Editable, Category = "Clouds|Wind")
@@ -65,7 +65,7 @@ namespace Lumina
 
         /** Skylight fill inside shadowed cloud, so undersides read blue-gray rather than black. */
         PROPERTY(Editable, Category = "Clouds|Lighting", ClampMin = 0.0f)
-        float AmbientIntensity = 1.0f;
+        float AmbientIntensity = 1.25f;
 
         /** Forward-scatter asymmetry; higher concentrates the silver lining toward the sun. */
         PROPERTY(Editable, Category = "Clouds|Lighting", ClampMin = 0.0f, ClampMax = 0.95f)

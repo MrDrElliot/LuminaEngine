@@ -8,6 +8,17 @@ namespace Lumina
 {
     namespace
     {
+        // At full strength a held sculpt moves the center by the smaller of the brush radius and the terrain's height range per second.
+        constexpr float kSculptRate = 1.0f;
+        // Blend modes close this many e-folds of the gap to their target per second at full strength.
+        constexpr float kBlendRate = 6.0f;
+        // The smooth blur's reach as a share of the brush radius, so a wide brush relaxes wide features and not only the finest grain.
+        constexpr float kSmoothKernelShare = 0.15f;
+        constexpr int32 kMaxSmoothKernel   = 24;
+        // Erode passes per dab, each sliding material at most one sample downhill.
+        constexpr int32 kErodePasses = 4;
+        constexpr float kErodeRate   = 30.0f;
+
         // Matches DefaultSceneRenderer OriginXZ so brush hits the same samples the renderer sees.
         FVector2 TerrainOriginXZ(const STerrainComponent& Terrain, const FVector3& TerrainOrigin)
         {
@@ -15,9 +26,14 @@ namespace Lumina
             return FVector2(TerrainOrigin.x - HalfSize, TerrainOrigin.z - HalfSize);
         }
 
+        float SampleStride(const STerrainComponent& Terrain)
+        {
+            return Terrain.TileWorldSize / float(Terrain.Resolution - 1);
+        }
+
         FIntVector4 ComputeSampleRect(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, const FVector3& WorldPos, float Radius)
         {
-            const float Stride = Terrain.TileWorldSize / float(Terrain.Resolution - 1);
+            const float Stride = SampleStride(Terrain);
             const FVector2 OriginXZ = TerrainOriginXZ(Terrain, TerrainOrigin);
             const float LocalX = WorldPos.x - OriginXZ.x;
             const float LocalZ = WorldPos.z - OriginXZ.y;
@@ -40,26 +56,126 @@ namespace Lumina
             return FIntVector4(MinX, MinY, MaxX, MaxY);
         }
 
-        // Smoothstep-shaped disk falloff. Returns 0 outside the radius.
-        float BrushWeight(float DistSq, float Radius, float Falloff)
+        // Normalized height a full-weight sample of a Sculpt or Noise dab moves by.
+        float SculptDelta(const STerrainComponent& Terrain, const FTerrainSculptDab& Dab)
         {
-            const float R  = Radius;
-            const float R2 = R * R;
-            if (DistSq >= R2)
+            const float MaxHeight = Math::Max(Terrain.MaxHeight, 1e-3f);
+            const float Rate      = Dab.Strength * kSculptRate * Math::Min(Dab.Radius, MaxHeight);
+            return Rate * Dab.DeltaSeconds * float(Dab.SculptSign) / MaxHeight;
+        }
+
+        // Share of the gap to its target a full-weight sample of a blend dab closes, the same over a second at any frame rate.
+        float BlendAlpha(const FTerrainSculptDab& Dab)
+        {
+            return 1.0f - Math::Exp(-Math::Max(Dab.Strength, 0.0f) * kBlendRate * Dab.DeltaSeconds);
+        }
+
+        // Runs Op(X, Y, Weight) for every sample of Rect the brush reaches, with rows spread over the workers.
+        template<typename TOp>
+        void ForEachBrushSample(const STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect, TOp&& Op)
+        {
+            const float    Stride   = SampleStride(Terrain);
+            const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
+            Jobs::ParallelFor(uint32(Rect.w - Rect.y + 1), [&](const Jobs::FRange& Range)
             {
-                return 0.0f;
+                for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
+                {
+                    const int32 Y  = Rect.y + int32(RowIdx);
+                    const float DZ = OriginXZ.y + float(Y) * Stride - Dab.WorldPosition.z;
+                    for (int32 X = Rect.x; X <= Rect.z; ++X)
+                    {
+                        const float DX = OriginXZ.x + float(X) * Stride - Dab.WorldPosition.x;
+                        const float W  = FTerrainSculptSystem::FalloffWeight(std::sqrt(DX * DX + DZ * DZ), Dab.Radius, Dab.Falloff, Dab.FalloffShape);
+                        if (W > 0.0f)
+                        {
+                            Op(X, Y, W);
+                        }
+                    }
+                }
+            }, 64u);
+        }
+
+        // A block of heights copied out around a footprint, so a brush that reads neighbors sees the surface from before the dab.
+        struct FHeightBlock
+        {
+            int32          MinX   = 0;
+            int32          MinY   = 0;
+            int32          Width  = 0;
+            int32          Height = 0;
+            TVector<float> Values;
+
+            FHeightBlock(const STerrainComponent& Terrain, const FIntVector4& Rect, int32 Apron)
+            {
+                const int32 Res = Terrain.Resolution;
+                MinX   = Math::Max(Rect.x - Apron, 0);
+                MinY   = Math::Max(Rect.y - Apron, 0);
+                Width  = Math::Min(Rect.z + Apron, Res - 1) - MinX + 1;
+                Height = Math::Min(Rect.w + Apron, Res - 1) - MinY + 1;
+                Values.SetNum(size_t(Width) * size_t(Height));
+                for (int32 Y = 0; Y < Height; ++Y)
+                {
+                    Memory::Memcpy(&Values[size_t(Y) * Width], &Terrain.Heightmap[(MinY + Y) * Res + MinX], size_t(Width) * sizeof(float));
+                }
             }
 
-            float T = 1.0f - std::sqrt(DistSq) / R;           // 1 at center, 0 at edge
-            float H = Math::Mix(1.0f, T * T * (3.0f - 2.0f * T), Falloff);
-            return H;
+            bool Contains(int32 X, int32 Y) const
+            {
+                return X >= MinX && Y >= MinY && X < MinX + Width && Y < MinY + Height;
+            }
+
+            float& At(int32 X, int32 Y) { return Values[size_t(Y - MinY) * Width + (X - MinX)]; }
+        };
+
+        // One box pass of half-width K over a Width by Height block, along rows or columns, clamping reads at the block edge.
+        void BoxBlur(const TVector<float>& Src, TVector<float>& Dst, int32 Width, int32 Height, int32 K, bool bColumns)
+        {
+            const int32  Lines    = bColumns ? Width : Height;
+            const int32  Length   = bColumns ? Height : Width;
+            const size_t Step     = bColumns ? size_t(Width) : 1u;
+            const size_t LineStep = bColumns ? 1u : size_t(Width);
+            const float  Inv      = 1.0f / float(2 * K + 1);
+            Jobs::ParallelFor(uint32(Lines), [&](const Jobs::FRange& Range)
+            {
+                for (uint32 Line = Range.Start; Line < Range.End; ++Line)
+                {
+                    const float* In  = Src.GetData() + Line * LineStep;
+                    float*       Out = Dst.GetData() + Line * LineStep;
+                    float Sum = 0.0f;
+                    for (int32 I = -K; I <= K; ++I)
+                    {
+                        Sum += In[size_t(Math::Clamp(I, 0, Length - 1)) * Step];
+                    }
+                    for (int32 I = 0; I < Length; ++I)
+                    {
+                        Out[size_t(I) * Step] = Sum * Inv;
+                        Sum += In[size_t(Math::Min(I + K + 1, Length - 1)) * Step] - In[size_t(Math::Max(I - K, 0)) * Step];
+                    }
+                }
+            }, 16u);
         }
     }
 
-    FIntVector2 FTerrainSculptSystem::WorldToSample(const STerrainComponent& Terrain, const FVector3& WorldPos)
+    float FTerrainSculptSystem::FalloffWeight(float Distance, float Radius, float Falloff, ETerrainBrushFalloff Shape)
     {
-        const float Stride = Terrain.TileWorldSize / float(Terrain.Resolution - 1);
-        return FIntVector2(int(WorldPos.x / Stride), int(WorldPos.z / Stride));
+        if (Distance >= Radius)
+        {
+            return 0.0f;
+        }
+        const float Soft = Radius * Math::Saturate(Falloff);
+        if (Soft <= 1e-4f)
+        {
+            return 1.0f;
+        }
+
+        // U runs from 0 at the rim to 1 where the full-strength core begins.
+        const float U = Math::Saturate((Radius - Distance) / Soft);
+        switch (Shape)
+        {
+        case ETerrainBrushFalloff::Linear: return U;
+        case ETerrainBrushFalloff::Sphere: return std::sqrt(Math::Max(1.0f - (1.0f - U) * (1.0f - U), 0.0f));
+        case ETerrainBrushFalloff::Tip:    return 1.0f - std::sqrt(Math::Max(1.0f - U * U, 0.0f));
+        default:                           return U * U * (3.0f - 2.0f * U);
+        }
     }
 
     FTerrainHeightView FTerrainSculptSystem::MakeHeightView(const STerrainComponent& Terrain, const FVector3& TerrainOrigin)
@@ -211,7 +327,7 @@ namespace Lumina
         FIntVector4 Rect;
         if (Dab.Mode == ETerrainBrushMode::Ramp)
         {
-                const FIntVector4 R1 = ComputeSampleRect(Terrain, Dab.TerrainOrigin, Dab.RampStart, Dab.RampHalfWidth);
+            const FIntVector4 R1 = ComputeSampleRect(Terrain, Dab.TerrainOrigin, Dab.RampStart, Dab.RampHalfWidth);
             const FIntVector4 R2 = ComputeSampleRect(Terrain, Dab.TerrainOrigin, Dab.RampEnd,   Dab.RampHalfWidth);
             const bool V1 = !(R1.z < R1.x || R1.w < R1.y);
             const bool V2 = !(R2.z < R2.x || R2.w < R2.y);
@@ -244,7 +360,10 @@ namespace Lumina
         case ETerrainBrushMode::Smooth:  ApplySmooth (Terrain, Dab, Rect); break;
         case ETerrainBrushMode::Noise:   ApplyNoise  (Terrain, Dab, Rect); break;
         case ETerrainBrushMode::Ramp:    ApplyRamp   (Terrain, Dab, Rect); break;
+        case ETerrainBrushMode::Erode:   ApplyErode  (Terrain, Dab, Rect); break;
+        case ETerrainBrushMode::Terrace: ApplyTerrace(Terrain, Dab, Rect); break;
         case ETerrainBrushMode::Paint:   ApplyPaint  (Terrain, Dab, Rect); break;
+        case ETerrainBrushMode::Num:     break;
         }
 
         if (Dab.Mode == ETerrainBrushMode::Paint)
@@ -265,133 +384,54 @@ namespace Lumina
     
     void FTerrainSculptSystem::ApplySculpt(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
-        const float Stride    = Terrain.TileWorldSize / float(Terrain.Resolution - 1);
-        const float Radius    = Dab.Radius;
-        
-        // Strength is expressed in normalized height units per second (i.e. 1.0 == full
-        const float DeltaVal = (Dab.Strength * Dab.DeltaSeconds * static_cast<float>(Dab.SculptSign)) / Terrain.MaxHeight;
-        const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
-
-        const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, DeltaVal, Stride, OriginXZ](const Jobs::FRange& Range)
+        const float Delta = SculptDelta(Terrain, Dab);
+        const int32 Res   = Terrain.Resolution;
+        ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
-            for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
-            {
-                int Y = Rect.y + static_cast<int>(RowIdx);
-                float WorldZ = OriginXZ.y + static_cast<float>(Y) * Stride;
-                float DZ = WorldZ - Dab.WorldPosition.z;
-                for (int X = Rect.x; X <= Rect.z; ++X)
-                {
-                    float WorldX = OriginXZ.x + static_cast<float>(X) * Stride;
-                    float DX = WorldX - Dab.WorldPosition.x;
-                    float DistSq = DX * DX + DZ * DZ;
-                    float W = BrushWeight(DistSq, Radius, Dab.Falloff);
-                    if (W <= 0.0f)
-                    {
-                        continue;
-                    }
-
-                    float& H = Terrain.Heightmap[Y * Terrain.Resolution + X];
-                    H = Math::Clamp(H + DeltaVal * W, 0.0f, 1.0f);
-                }
-            }
-        }, 64u);
+            float& H = Terrain.Heightmap[Y * Res + X];
+            H = Math::Clamp(H + Delta * W, 0.0f, 1.0f);
+        });
     }
 
     void FTerrainSculptSystem::ApplyFlatten(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
-        const float Stride = Terrain.TileWorldSize / float(Terrain.Resolution - 1);
         const float Target = Terrain.MaxHeight > 0.0f ? Math::Clamp(Dab.FlattenHeight / Terrain.MaxHeight, 0.0f, 1.0f) : 0.0f;
-        const float Speed  = Math::Clamp(Dab.Strength * Dab.DeltaSeconds, 0.0f, 1.0f);
-        const float Radius = Dab.Radius;
-        const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
-
-        const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Target, Speed, Stride, OriginXZ](const Jobs::FRange& Range)
+        const float Alpha  = BlendAlpha(Dab);
+        const int32 Res    = Terrain.Resolution;
+        ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
-            for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
+            float& H = Terrain.Heightmap[Y * Res + X];
+            const float Flat = Math::Mix(H, Target, Alpha * W);
+            switch (Dab.FlattenSide)
             {
-                int Y = Rect.y + int(RowIdx);
-                float WorldZ = OriginXZ.y + float(Y) * Stride;
-                float DZ = WorldZ - Dab.WorldPosition.z;
-                for (int X = Rect.x; X <= Rect.z; ++X)
-                {
-                    float WorldX = OriginXZ.x + float(X) * Stride;
-                    float DX = WorldX - Dab.WorldPosition.x;
-                    float W = BrushWeight(DX * DX + DZ * DZ, Radius, Dab.Falloff);
-                    if (W <= 0.0f)
-                    {
-                        continue;
-                    }
-
-                    float& H = Terrain.Heightmap[Y * Terrain.Resolution + X];
-                    H = Math::Mix(H, Target, Speed * W);
-                }
+            case ETerrainFlattenSide::RaiseOnly: H = Math::Max(H, Flat); break;
+            case ETerrainFlattenSide::LowerOnly: H = Math::Min(H, Flat); break;
+            default:                             H = Flat;               break;
             }
-        }, 64u);
+        });
     }
 
     void FTerrainSculptSystem::ApplySmooth(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
-        // Snapshot only the affected rect+1px apron; copying the full map at 1025^2 dominated per-dab cost.
-        const int32 Res    = Terrain.Resolution;
-        const float Stride = Terrain.TileWorldSize / float(Res - 1);
-        const float Speed  = Math::Clamp(Dab.Strength * Dab.DeltaSeconds, 0.0f, 1.0f);
-        const float Radius = Dab.Radius;
-        const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
+        const int32 Kernel = Math::Clamp(int32(Dab.Radius * kSmoothKernelShare / SampleStride(Terrain) + 0.5f), 1, kMaxSmoothKernel);
 
-        const int32 SnapMinX = Math::Max(Rect.x - 1, 0);
-        const int32 SnapMinY = Math::Max(Rect.y - 1, 0);
-        const int32 SnapMaxX = Math::Min(Rect.z + 1, Res - 1);
-        const int32 SnapMaxY = Math::Min(Rect.w + 1, Res - 1);
-        const int32 SnapW    = SnapMaxX - SnapMinX + 1;
-        const int32 SnapH    = SnapMaxY - SnapMinY + 1;
-
-        // Heap rather than scratch, since a wide brush's apron can exceed one scratch block.
-        TVector<float> Snapshot;
-        Snapshot.SetNum(size_t(SnapW) * size_t(SnapH));
-        for (int32 Y = 0; Y < SnapH; ++Y)
+        // Two box passes approach a Gaussian, and each reads a kernel of real neighbors past the footprint.
+        FHeightBlock Block(Terrain, Rect, 2 * Kernel);
+        TVector<float> Scratch;
+        Scratch.SetNum(Block.Values.Num());
+        for (int32 Pass = 0; Pass < 2; ++Pass)
         {
-            const float* SrcRow = &Terrain.Heightmap[(SnapMinY + Y) * Res + SnapMinX];
-            float*       DstRow = &Snapshot[Y * SnapW];
-            Memory::Memcpy(DstRow, SrcRow, size_t(SnapW) * sizeof(float));
+            BoxBlur(Block.Values, Scratch, Block.Width, Block.Height, Kernel, false);
+            BoxBlur(Scratch, Block.Values, Block.Width, Block.Height, Kernel, true);
         }
 
-        const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Speed, Stride, OriginXZ, SnapMinX, SnapMinY, SnapW](const Jobs::FRange& Range)
+        const float Alpha = BlendAlpha(Dab);
+        const int32 Res   = Terrain.Resolution;
+        ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
-            for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
-            {
-                int Y = Rect.y + int(RowIdx);
-                float WorldZ = OriginXZ.y + float(Y) * Stride;
-                float DZ = WorldZ - Dab.WorldPosition.z;
-                for (int X = Rect.x; X <= Rect.z; ++X)
-                {
-                    float WorldX = OriginXZ.x + float(X) * Stride;
-                    float DX = WorldX - Dab.WorldPosition.x;
-                    float W = BrushWeight(DX * DX + DZ * DZ, Radius, Dab.Falloff);
-                    if (W <= 0.0f)
-                    {
-                        continue;
-                    }
-
-                    float Sum = 0.0f;
-                    int Count = 0;
-                    for (int YY = Math::Max(Y - 1, 0); YY <= Math::Min(Y + 1, Res - 1); ++YY)
-                    {
-                        for (int XX = Math::Max(X - 1, 0); XX <= Math::Min(X + 1, Res - 1); ++XX)
-                        {
-                            Sum += Snapshot[(YY - SnapMinY) * SnapW + (XX - SnapMinX)];
-                            ++Count;
-                        }
-                    }
-                    float Avg = Sum / float(Count);
-
-                    float& H = Terrain.Heightmap[Y * Res + X];
-                    H = Math::Mix(H, Avg, Speed * W);
-                }
-            }
-        }, 64u);
+            float& H = Terrain.Heightmap[Y * Res + X];
+            H = Math::Mix(H, Block.At(X, Y), Alpha * W);
+        });
     }
 
     namespace
@@ -440,45 +480,25 @@ namespace Lumina
 
     void FTerrainSculptSystem::ApplyNoise(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
-        const int32 Res    = Terrain.Resolution;
-        const float Stride = Terrain.TileWorldSize / float(Res - 1);
-        const float Radius = Dab.Radius;
-        const float DeltaPerSecond = (Dab.Strength * Dab.DeltaSeconds * float(Dab.SculptSign)) / Terrain.MaxHeight;
-        const float Freq = Math::Max(Dab.NoiseFrequency, 1e-6f);
-        const int   Octaves = Math::Clamp(Dab.NoiseOctaves, 1, 8);
+        const int32    Res      = Terrain.Resolution;
+        const float    Stride   = SampleStride(Terrain);
+        const float    Delta    = SculptDelta(Terrain, Dab);
+        const float    Freq     = Math::Max(Dab.NoiseFrequency, 1e-6f);
+        const int      Octaves  = Math::Clamp(Dab.NoiseOctaves, 1, 8);
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
-
-        const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, DeltaPerSecond, Stride, OriginXZ, Freq, Octaves](const Jobs::FRange& Range)
+        ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
-            for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
-            {
-                int Y = Rect.y + int(RowIdx);
-                float WorldZ = OriginXZ.y + float(Y) * Stride;
-                float DZ = WorldZ - Dab.WorldPosition.z;
-                for (int X = Rect.x; X <= Rect.z; ++X)
-                {
-                    float WorldX = OriginXZ.x + float(X) * Stride;
-                    float DX = WorldX - Dab.WorldPosition.x;
-                    float W = BrushWeight(DX * DX + DZ * DZ, Radius, Dab.Falloff);
-                    if (W <= 0.0f)
-                    {
-                        continue;
-                    }
-
-                    const float N = Fbm2D(WorldX * Freq, WorldZ * Freq, Octaves);
-                    float& H = Terrain.Heightmap[Y * Res + X];
-                    H = Math::Clamp(H + DeltaPerSecond * W * N, 0.0f, 1.0f);
-                }
-            }
-        }, 64u);
+            const float N = Fbm2D((OriginXZ.x + float(X) * Stride) * Freq, (OriginXZ.y + float(Y) * Stride) * Freq, Octaves);
+            float& H = Terrain.Heightmap[Y * Res + X];
+            H = Math::Clamp(H + Delta * W * N, 0.0f, 1.0f);
+        });
     }
 
     void FTerrainSculptSystem::ApplyRamp(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
         const int32 Res    = Terrain.Resolution;
-        const float Stride = Terrain.TileWorldSize / float(Res - 1);
-        const float Speed  = Math::Clamp(Dab.Strength * Dab.DeltaSeconds, 0.0f, 1.0f);
+        const float Stride = SampleStride(Terrain);
+        const float Speed  = BlendAlpha(Dab);
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
 
         const FVector2 A   = FVector2(Dab.RampStart.x, Dab.RampStart.z);
@@ -554,52 +574,106 @@ namespace Lumina
         }, 64u);
     }
 
+    void FTerrainSculptSystem::ApplyErode(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
+    {
+        const float Stride = SampleStride(Terrain);
+        // Normalized height a straight neighbor may stand below a sample before material slides onto it.
+        const float Talus = std::tan(Math::Radians(Math::Clamp(Dab.TalusAngle, 1.0f, 89.0f))) * Stride / Math::Max(Terrain.MaxHeight, 1e-3f);
+        // Under a sixteenth, a sample standing above all eight neighbors cannot shed past them in one pass.
+        const float Rate = Math::Saturate(Dab.Strength * Dab.DeltaSeconds * kErodeRate) / 16.0f;
+        if (Rate <= 0.0f)
+        {
+            return;
+        }
+
+        // Each pair trades by the smaller of its two weights, so whatever one sample sheds its neighbor gains.
+        FHeightBlock Weights(Terrain, Rect, 1);
+        const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
+        for (int32 Y = Weights.MinY; Y < Weights.MinY + Weights.Height; ++Y)
+        {
+            const float DZ = OriginXZ.y + float(Y) * Stride - Dab.WorldPosition.z;
+            for (int32 X = Weights.MinX; X < Weights.MinX + Weights.Width; ++X)
+            {
+                const float DX = OriginXZ.x + float(X) * Stride - Dab.WorldPosition.x;
+                Weights.At(X, Y) = FalloffWeight(std::sqrt(DX * DX + DZ * DZ), Dab.Radius, Dab.Falloff, Dab.FalloffShape);
+            }
+        }
+
+        const int32 Res = Terrain.Resolution;
+        for (int32 Pass = 0; Pass < kErodePasses; ++Pass)
+        {
+            FHeightBlock Before(Terrain, Rect, 1);
+            ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float)
+            {
+                const float Here       = Before.At(X, Y);
+                const float WeightHere = Weights.At(X, Y);
+                float Change = 0.0f;
+                for (int32 OY = -1; OY <= 1; ++OY)
+                {
+                    for (int32 OX = -1; OX <= 1; ++OX)
+                    {
+                        if ((OX == 0 && OY == 0) || !Before.Contains(X + OX, Y + OY))
+                        {
+                            continue;
+                        }
+                        const float Limit = (OX != 0 && OY != 0) ? Talus * 1.41421356f : Talus;
+                        const float Drop  = Before.At(X + OX, Y + OY) - Here;
+                        const float Pair  = Math::Min(WeightHere, Weights.At(X + OX, Y + OY));
+                        if (Drop > Limit)
+                        {
+                            Change += (Drop - Limit) * Pair;
+                        }
+                        else if (-Drop > Limit)
+                        {
+                            Change -= (-Drop - Limit) * Pair;
+                        }
+                    }
+                }
+                Terrain.Heightmap[Y * Res + X] = Math::Clamp(Here + Rate * Change, 0.0f, 1.0f);
+            });
+        }
+    }
+
+    void FTerrainSculptSystem::ApplyTerrace(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
+    {
+        const float Step  = Math::Max(Dab.TerraceStep, 0.01f) / Math::Max(Terrain.MaxHeight, 1e-3f);
+        const float Alpha = BlendAlpha(Dab);
+        const int32 Res   = Terrain.Resolution;
+        ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
+        {
+            // Each step eases from tread to tread, so holding the brush keeps sharpening the risers.
+            float& H = Terrain.Heightmap[Y * Res + X];
+            const float Level  = H / Step;
+            const float Tread  = std::floor(Level);
+            const float Rise   = Level - Tread;
+            const float Target = (Tread + Rise * Rise * (3.0f - 2.0f * Rise)) * Step;
+            H = Math::Clamp(Math::Mix(H, Target, Alpha * W), 0.0f, 1.0f);
+        });
+    }
+
     void FTerrainSculptSystem::ApplyPaint(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
         const int32 Layer = Dab.ActiveLayer;
         if (Layer < 0 || Layer >= Terrain.Layers.Num())
+        {
             return;
+        }
 
         const int32 Res         = Terrain.Resolution;
-        const int32 LayerCount  = Terrain.Layers.Num();
         const int32 LayerStride = Res * Res;
-        const int32 Needed      = LayerCount * LayerStride;
+        const int32 Needed      = Terrain.Layers.Num() * LayerStride;
         if (Terrain.LayerWeights.Num() < Needed)
         {
             Terrain.LayerWeights.SetNum(Needed, 0u);
         }
 
-        const float Stride = Terrain.TileWorldSize / float(Terrain.Resolution - 1);
-        const float Speed  = Math::Clamp(Dab.Strength * Dab.DeltaSeconds, 0.0f, 1.0f);
-        const float Radius = Dab.Radius;
-        const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
-
-        const int32 RowCount = Rect.w - Rect.y + 1;
-        Jobs::ParallelFor((uint32)RowCount, [&, Rect, Radius, Speed, Stride, OriginXZ, Layer, LayerStride, Res](const Jobs::FRange& Range)
+        const float Alpha = BlendAlpha(Dab);
+        const float Goal  = Dab.SculptSign >= 0 ? 1.0f : 0.0f;
+        ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
-            for (uint32 RowIdx = Range.Start; RowIdx < Range.End; ++RowIdx)
-            {
-                int Y = Rect.y + int(RowIdx);
-                float WorldZ = OriginXZ.y + float(Y) * Stride;
-                float DZ = WorldZ - Dab.WorldPosition.z;
-                for (int X = Rect.x; X <= Rect.z; ++X)
-                {
-                    float WorldX = OriginXZ.x + float(X) * Stride;
-                    float DX = WorldX - Dab.WorldPosition.x;
-                    float W = BrushWeight(DX * DX + DZ * DZ, Radius, Dab.Falloff);
-                    if (W <= 0.0f)
-                    {
-                        continue;
-                    }
-
-                    const int32 Pixel = Y * Res + X;
-                    uint8& Target  = Terrain.LayerWeights[Layer * LayerStride + Pixel];
-                    float  Current = float(Target) / 255.0f;
-                    float  Goal    = (Dab.SculptSign >= 0) ? 1.0f : 0.0f;
-                    float  New     = Math::Mix(Current, Goal, Speed * W);
-                    Target = uint8(Math::Clamp(New * 255.0f + 0.5f, 0.0f, 255.0f));
-                }
-            }
-        }, 64u);
+            uint8& Target = Terrain.LayerWeights[Layer * LayerStride + Y * Res + X];
+            const float New = Math::Mix(float(Target) / 255.0f, Goal, Alpha * W);
+            Target = uint8(Math::Clamp(New * 255.0f + 0.5f, 0.0f, 255.0f));
+        });
     }
 }

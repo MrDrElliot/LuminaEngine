@@ -2,6 +2,7 @@
 
 #include "EditorToolContext.h"
 #include "ToolFlags.h"
+#include "Tools/ComponentVisualizers/ComponentVisualizerContext.h"
 #include "Animation/SkeletonDebugDraw.h"
 #include "Assets/AssetRegistry/AssetRegistry.h"
 #include "Assets/AssetTypes/Mesh/Mesh.h"
@@ -2590,35 +2591,9 @@ namespace Lumina
             return false;
         }
 
-        // The same construction the terrain sculpt cursor uses, including the ImGui Y-flip.
-        const ImVec2 Size = ImVec2(Math::Max(ViewportScreenSize.x, 1.0f), Math::Max(ViewportScreenSize.y, 1.0f));
-        const float  Sx   = ((ScreenPos.x - ViewportScreenMin.x) / Size.x) * 2.0f - 1.0f;
-        const float  Sy   = 1.0f - ((ScreenPos.y - ViewportScreenMin.y) / Size.y) * 2.0f;
-
-        const FViewVolume& View    = Camera->GetViewVolume();
-        const FVector3     Forward = View.GetForwardVector();
-        const FVector3     Up      = View.GetUpVector();
-        const FVector3     Right   = Math::Normalize(Math::Cross(Up, Forward));
-
-        const float AspectRatio = Size.x / Size.y;
-
-        // Ortho rays are parallel, so the pixel selects the ORIGIN rather than the direction.
-        if (View.IsOrthographic())
-        {
-            const float HalfWidth  = View.GetOrthoWidth() * 0.5f;
-            const float HalfHeight = HalfWidth / Math::Max(AspectRatio, 0.001f);
-
-            OutOrigin    = Camera->GetPosition() + Right * (Sx * HalfWidth) + Up * (Sy * HalfHeight);
-            OutDirection = Forward;
-            return true;
-        }
-
-        const float TanHalfFov = std::tan(Math::Radians(View.GetFOV()) * 0.5f);
-
-        OutOrigin    = Camera->GetPosition();
-        OutDirection = Math::Normalize(Forward
-                                     + Right * (Sx * TanHalfFov * AspectRatio)
-                                     + Up    * (Sy * TanHalfFov));
+        FVisualizerView View;
+        View.SetFromCamera(*Camera, ViewportScreenMin, ViewportScreenSize);
+        View.ScreenToRay(ScreenPos, OutOrigin, OutDirection);
         return true;
     }
 

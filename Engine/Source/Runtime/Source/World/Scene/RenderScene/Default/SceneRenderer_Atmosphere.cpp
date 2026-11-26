@@ -1,6 +1,8 @@
 #include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
 
+#include <bit>
+
 namespace Lumina
 {
     namespace
@@ -593,8 +595,13 @@ namespace Lumina
 
             FVector3 SunDirection;
             float    Range;
+
+            uint32   TransmittanceLUT;
+            uint32   MultiScatterLUT;
+            uint32   _Pad0;
+            uint32   _Pad1;
         };
-        static_assert(sizeof(FAerialLUTPushConstants) == 32,
+        static_assert(sizeof(FAerialLUTPushConstants) == 48,
             "FAerialLUTPushConstants must match AerialPerspectiveLUT.slang::FPushConstants.");
 
         constexpr uint32 AerialTileSize = 8;
@@ -652,11 +659,17 @@ namespace Lumina
             uint32   OffsetY;
 
             uint32   WeatherIndex;
-            uint32   _Pad1;
-            uint32   _Pad2;
-            uint32   _Pad3;
+            uint32   TransmittanceIndex;    // ~0u when the sky has no atmosphere, which keeps the light at its ground color
+            uint32   SkyViewIndex;
+            uint32   _Pad0;
+
+            FVector3 SkySunDirection;
+            float    SkyExposure;
+
+            FVector3 MoonDirection;
+            float    AmbientIntensity;
         };
-        static_assert(sizeof(FCloudPushConstants) == 160,
+        static_assert(sizeof(FCloudPushConstants) == 192,
             "FCloudPushConstants must match VolumetricClouds.slang::FPushConstants.");
 
         struct FCloudResolvePushConstants
@@ -816,6 +829,21 @@ namespace Lumina
             SunColor = FVector3(Unpack.x, Unpack.y, Unpack.z) * Sun.Intensity;
         }
 
+        // Under the dynamic sky the clouds take their own light, which each sample tints by the air it looks through.
+        const FEnvironmentParams& Env = Frame.Volumetrics.EnvironmentParams;
+        const bool bAtmosphere = FrameFlags.bHasEnvironment && LightData.bHasSun && std::bit_cast<uint32>(Env.Misc.x) == GSkyMode_Dynamic;
+        if (bAtmosphere)
+        {
+            SunDir   = Frame.Lighting.CloudLightDirection;
+            SunColor = Frame.Lighting.CloudLightColor;
+        }
+
+        // Each tier scales the component's march and light steps, the two costs that grow with what the clouds cover.
+        const CRendererSettings* RenderSettings = GetDefault<CRendererSettings>();
+        const ECloudQuality Quality = RenderSettings != nullptr ? RenderSettings->CloudQuality : ECloudQuality::High;
+        constexpr float StepScales[] = { 0.5f, 0.75f, 1.0f, 1.5f };
+        const float StepScale = StepScales[Math::Clamp((int32)Quality, 0, 3)];
+
         const float Time     = Frame.SceneGlobalData.Time;
         FVector2 Wind        = C.WindDirection;
         const float WindLen  = Math::Sqrt(Wind.x * Wind.x + Wind.y * Wind.y);
@@ -838,8 +866,8 @@ namespace Lumina
         PC.WeatherIndex      = (uint32)GetNamedImage(ENamedImage::CloudWeather).GetResourceID();
         PC.ScreenW           = Scatter.GetSizeX();
         PC.ScreenH           = Scatter.GetSizeY();
-        PC.MarchSteps        = (uint32)Math::Clamp(C.MarchSteps, 16, 256);
-        PC.LightSteps        = (uint32)Math::Clamp(C.LightSteps, 1, 16);
+        PC.MarchSteps        = (uint32)Math::Clamp((int32)((float)C.MarchSteps * StepScale), 16, 256);
+        PC.LightSteps        = (uint32)Math::Clamp((int32)((float)C.LightSteps * StepScale + 0.5f), 2, 16);
         PC.MaxDistance       = Math::Max(C.MaxDistance, 1000.0f);
         PC.SunDirection      = SunDir;
         PC.LayerBottom       = Math::Max(C.LayerBottom, 100.0f);
@@ -860,6 +888,12 @@ namespace Lumina
         PC.DetailWindOffset  = FVector2(PC.WindOffset.x * C.DetailWindFactor,
                                         PC.WindOffset.y * C.DetailWindFactor);
         PC.CloudDepthUAV     = (uint32)CloudDepthUAV;
+        PC.TransmittanceIndex = bAtmosphere ? (uint32)GetNamedImage(ENamedImage::AtmosphereTransmittance).GetResourceID() : Constants::kIndexNoneU32;
+        PC.SkyViewIndex       = bAtmosphere ? (uint32)GetNamedImage(ENamedImage::SkyView).GetResourceID() : Constants::kIndexNoneU32;
+        PC.SkySunDirection    = GetSkySunDirection();
+        PC.SkyExposure        = Math::Max(Env.Misc.z, 1e-3f);
+        PC.MoonDirection      = Frame.Lighting.SkyMoonDirection;
+        PC.AmbientIntensity   = Math::Max(C.AmbientIntensity, 0.0f);
 
         // Only the primary view carries a previous view projection, and a cut leaves nothing worth reprojecting.
         const bool bTemporal = CurrentView->bIsPrimary && bHistoryValid && CameraCutFramesLeft == 0u;
@@ -931,8 +965,10 @@ namespace Lumina
 
         const FSceneImage& InScatter     = GetNamedImage(ENamedImage::AerialInScatter);
         const FSceneImage& Transmittance = GetNamedImage(ENamedImage::AerialTransmittance);
+        const FSceneImage& SkyTransmittance = GetNamedImage(ENamedImage::AtmosphereTransmittance);
+        const FSceneImage& SkyMultiScatter  = GetNamedImage(ENamedImage::AtmosphereMultiScatter);
 
-        if (!InScatter.IsValid() || !Transmittance.IsValid())
+        if (!InScatter.IsValid() || !Transmittance.IsValid() || !SkyTransmittance.IsValid() || !SkyMultiScatter.IsValid())
         {
             return false;
         }
@@ -946,21 +982,18 @@ namespace Lumina
         LutPC.InScatterUAV     = (uint32)InScatter.GetMipUAVIndex(0);
         LutPC.TransmittanceUAV = (uint32)Transmittance.GetMipUAVIndex(0);
         LutPC.Range            = Range;
-
-        if (Frame.Lighting.LightData.bHasSun)
-        {
-            LutPC.SunDirection = Math::Normalize(Frame.Lighting.LightData.SkySunDirection);
-        }
-        else
-        {
-            LutPC.SunDirection = Math::Normalize(FVector3(0.3f, 0.8f, 0.4f));
-        }
+        LutPC.SunDirection     = GetSkySunDirection();
+        LutPC.TransmittanceLUT = (uint32)SkyTransmittance.GetResourceID();
+        LutPC.MultiScatterLUT  = (uint32)SkyMultiScatter.GetResourceID();
 
         const uint32 LutGroups = RenderUtils::GetGroupCount(kAerialLUTSize, AerialTileSize);
         RHI::CmdDispatch(CL, MakeArgs(LutPC), LutGroups, LutGroups, 1);
 
-        // Only AtmosphereCompositePass reads the LUT, and it is a dispatch.
-        RHI::Barriers::ComputeToCompute(CL);
+        // The composite dispatch and the lighting both read it.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::PixelShader,
+            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
 
         AtmosphereTerms.AerialInScatterIndex     = (uint32)InScatter.GetResourceID();
         AtmosphereTerms.AerialTransmittanceIndex = (uint32)Transmittance.GetResourceID();

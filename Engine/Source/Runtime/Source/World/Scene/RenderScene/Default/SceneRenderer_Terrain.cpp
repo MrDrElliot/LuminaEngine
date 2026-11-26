@@ -5,6 +5,9 @@ namespace Lumina
 {
     namespace TerrainPassInternal
     {
+        // Where terrain vertices are built and their heights, normals and visible list read, the mesh stage or the vertex fallback.
+        constexpr RHI::EStageFlags kTerrainGeometryStages = RHI::EStageFlags::MeshShader | RHI::EStageFlags::VertexShader;
+
         FSceneImage CreateTerrainImage(uint32 Size, uint16 ArraySize, EFormat Format, bool bUav, bool bArrayView = false,
             const char* DebugName = "Terrain.Image")
         {
@@ -117,7 +120,7 @@ namespace Lumina
             if (!bUploadBarrierIssued)
             {
                 RHI::CmdBarrier(CL,
-                    RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
+                    RHI::EStageFlags::Compute | TerrainPassInternal::kTerrainGeometryStages | RHI::EStageFlags::PixelShader | RHI::EStageFlags::IndirectArguments,
                     RHI::EAccessFlags::None,
                     RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
                 bUploadBarrierIssued = true;
@@ -249,10 +252,10 @@ namespace Lumina
                 DispatchCompute(CL, NormalShader, NormalArgs, RenderUtils::GetGroupCount((uint32)NW, 8u),
                                                    RenderUtils::GetGroupCount((uint32)NH, 8u), 1u);
 
-                // Normals are sampled by the terrain VS/PS.
+                // Normals are read where terrain vertices are built and by the deferred shading.
                 RHI::CmdBarrier(CL,
                     RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                    RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
+                    TerrainPassInternal::kTerrainGeometryStages | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
                     RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
             }
 
@@ -295,7 +298,7 @@ namespace Lumina
         {
             RHI::CmdBarrier(CL,
                 RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                RHI::EStageFlags::Compute | RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader,
+                RHI::EStageFlags::Compute | TerrainPassInternal::kTerrainGeometryStages | RHI::EStageFlags::PixelShader,
                 RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
         }
     }
@@ -403,7 +406,7 @@ namespace Lumina
 
         // A capture view resets these while the primary view's terrain draws may still be fetching them.
         RHI::CmdBarrier(CL,
-            RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::VertexShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::None,
+            RHI::EStageFlags::IndirectArguments | TerrainPassInternal::kTerrainGeometryStages | RHI::EStageFlags::Compute, RHI::EAccessFlags::None,
             RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
         for (FTerrainGPUState* State : Visible)
         {
@@ -433,7 +436,7 @@ namespace Lumina
 
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::VertexShader | RHI::EStageFlags::IndirectArguments,
+            TerrainPassInternal::kTerrainGeometryStages | RHI::EStageFlags::IndirectArguments,
             RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
     }
 

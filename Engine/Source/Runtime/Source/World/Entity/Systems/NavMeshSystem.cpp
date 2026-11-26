@@ -1474,7 +1474,8 @@ namespace Lumina
                 Entry.Key = PackSourceKey(E, ENavColliderType::Terrain);
                 Entry.ContentId = Terrain->CPUState.HeightmapVersion;
                 Entry.Prim.Type = ENavColliderType::Terrain;
-                Entry.Prim.World = X.GetWorldMatrix();
+                // Terrain draws and collides axis aligned and unscaled, so its navmesh takes only the entity's position.
+                Entry.Prim.World = Math::Translate(FMatrix4(1.0f), FVector3(X.GetWorldMatrix()[3]));
                 const float Half = Terrain->TileWorldSize * 0.5f;
                 const FVector3 Corners[8] = {
                     {-Half, 0.0f, -Half}, { Half, 0.0f, -Half}, { Half, 0.0f,  Half}, {-Half, 0.0f,  Half},

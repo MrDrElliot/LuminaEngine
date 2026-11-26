@@ -1418,6 +1418,30 @@ namespace Lumina
         return !WorldEditorToolInternal::IsLockedPrefabChild(World->GetEntityRegistry(), Entity);
     }
 
+    TVector<FString> FWorldEditorTool::GetModeNames(int32& OutActive) const
+    {
+        TVector<FString> Names;
+        for (const TUniquePtr<IWorldEditorMode>& Mode : EditorModes)
+        {
+            Names.Add(FString(Mode ? Mode->GetDisplayName() : ""));
+        }
+        OutActive = ActiveModeIndex;
+        return Names;
+    }
+
+    bool FWorldEditorTool::SetActiveModeByName(FStringView Name)
+    {
+        for (int32 Idx = 0; Idx < EditorModes.Num(); ++Idx)
+        {
+            if (EditorModes[Idx] && FStringView(EditorModes[Idx]->GetDisplayName()) == Name)
+            {
+                SetActiveMode(Idx);
+                return true;
+            }
+        }
+        return false;
+    }
+
     void FWorldEditorTool::SetActiveMode(int32 NewIndex)
     {
         if (EditorModes.IsEmpty()) return;

@@ -34,6 +34,9 @@ namespace Lumina::Physics
         // A face already this close to vertical acts as a wall unchanged.
         constexpr float kMinSteepNormalY = 0.02f;
 
+        // How far past a ledge's edge the floor under a step is read, enough to clear the bevel of a worn edge.
+        constexpr float kLedgeProbeInset = 0.05f;
+
         // A couple of seconds of fixed steps, long past any deferred collider build.
         constexpr uint32 kAwaitingGroundWarnSteps = 120;
 
@@ -196,6 +199,30 @@ namespace Lumina::Physics
         bool MoverCastFilter(b3ShapeId ShapeId, void* Context)
         {
             return MoverAcceptsShape(*static_cast<const FMoverPlanes*>(Context), ShapeId);
+        }
+
+        // The floor a ray finds, which reports the face itself where the capsule only sees the radial normal of an edge.
+        struct FFloorHit
+        {
+            const FMoverPlanes* Query = nullptr;
+            b3ShapeId           Shape{};
+            b3Pos               Point{};
+            b3Vec3              Normal{ 0.0f, 1.0f, 0.0f };
+            bool                bHit = false;
+        };
+
+        float ClosestFloorHit(b3ShapeId ShapeId, b3Pos Point, b3Vec3 Normal, float Fraction, uint64_t, int, int, void* Context)
+        {
+            FFloorHit& Hit = *static_cast<FFloorHit*>(Context);
+            if (!MoverAcceptsShape(*Hit.Query, ShapeId))
+            {
+                return -1.0f;
+            }
+            Hit.Shape  = ShapeId;
+            Hit.Point  = Point;
+            Hit.Normal = Normal;
+            Hit.bHit   = true;
+            return Fraction;
         }
 
         // Places the proxy on the character by the next world step, written per body so it runs inside the fan-out.
@@ -970,6 +997,33 @@ namespace Lumina::Physics
             return Best;
         };
 
+        // A capsule landing on a ledge rests on its rounded edge, whose normal reads too steep, so the face just past the edge decides.
+        FFloorHit LedgeFloor;
+        LedgeFloor.Query = &Gathered;
+        auto FindLedgeFloor = [&](const b3Vec3& Forward, float ForwardLength)
+        {
+            const float LowerCenterY = Gathered.Origin.y + Math::Min(Mover.center1.y, Mover.center2.y);
+            int32 Edge = Constants::kIndexNone;
+            for (int32 i = 0; i < Gathered.Count; ++i)
+            {
+                if (Gathered.Points[i].y < LowerCenterY && (Edge == Constants::kIndexNone || Gathered.Points[i].y > Gathered.Points[Edge].y))
+                {
+                    Edge = i;
+                }
+            }
+            if (Edge == Constants::kIndexNone || ForwardLength <= 0.0f)
+            {
+                return false;
+            }
+
+            const b3Vec3 Inset  = b3MulSV(kLedgeProbeInset / ForwardLength, Forward);
+            const b3Pos  Origin = b3Add(Gathered.Points[Edge], b3Vec3{ Inset.x, Character.StepHeight, Inset.z });
+            LedgeFloor.bHit = false;
+            b3World_CastRay(WorldId, Origin, b3Vec3{ 0.0f, -2.0f * Character.StepHeight, 0.0f }, Character.Filter, &ClosestFloorHit, &LedgeFloor);
+            LedgeFloor.bHit = LedgeFloor.bHit && LedgeFloor.Normal.y >= Character.CosMaxSlope;
+            return LedgeFloor.bHit;
+        };
+
         // Box3D's mover order is cast, gather at the new pose, then solve; solving first walks the character downhill on slopes.
         b3Vec3 Desired = b3MulSV(FixedDt, Box3DUtils::ToB3Vec3(Character.Velocity));
 
@@ -1054,6 +1108,10 @@ namespace Lumina::Physics
                         Position    = Landed;
                         GroundPlane = LandedPlane;
                     }
+                    else if (DownFraction < 1.0f && FindLedgeFloor(Forward, WantedHorizontal))
+                    {
+                        Position = Landed;
+                    }
                     else
                     {
                         GatherAt(Position);
@@ -1063,7 +1121,7 @@ namespace Lumina::Physics
         }
 
         // Only a move that left the ground is pulled back down, since settling every frame would re-seat the capsule in the floor.
-        if (GroundPlane == Constants::kIndexNone && bWasGrounded && !bJumpedThisStep && Character.Velocity.y <= 0.0f)
+        if (GroundPlane == Constants::kIndexNone && !LedgeFloor.bHit && bWasGrounded && !bJumpedThisStep && Character.Velocity.y <= 0.0f)
         {
             const b3Vec3 Drop{ 0.0f, -Character.StickToFloorDistance, 0.0f };
             const float DropFraction = b3World_CastMover(WorldId, Position, &Mover, Drop, Character.Filter, &MoverCastFilter, &Gathered);
@@ -1086,7 +1144,9 @@ namespace Lumina::Physics
             }
         }
 
-        const bool bNowGrounded = GroundPlane != Constants::kIndexNone && !bJumpedThisStep;
+        const bool bOnLedge = GroundPlane == Constants::kIndexNone && LedgeFloor.bHit;
+        const bool bNowGrounded = (GroundPlane != Constants::kIndexNone || bOnLedge) && !bJumpedThisStep;
+        const b3ShapeId GroundShape = bOnLedge ? LedgeFloor.Shape : (GroundPlane != Constants::kIndexNone ? Gathered.Shapes[GroundPlane] : b3ShapeId{});
 
         // The landing edge is only visible here, where this step's ground has been resolved against the last one.
         const bool bLanded = bNowGrounded && !bWasGrounded;
@@ -1099,13 +1159,13 @@ namespace Lumina::Physics
 
         if (Character.bGrounded)
         {
-            Character.GroundNormal = Box3DUtils::FromB3Vec3(Gathered.Planes[GroundPlane].plane.normal);
+            Character.GroundNormal = Box3DUtils::FromB3Vec3(bOnLedge ? LedgeFloor.Normal : Gathered.Planes[GroundPlane].plane.normal);
 
-            const b3BodyId GroundBody = b3Shape_GetBody(Gathered.Shapes[GroundPlane]);
-            void* GroundUserData = b3Body_IsValid(GroundBody) ? b3Body_GetUserData(GroundBody) : nullptr;
-            Character.GroundEntity = GroundUserData != nullptr ? UnpackEntity(GroundUserData) : ECS::NullEntity;
+            // Entity 0 on body handle 0 packs to a null pointer, so a null test would lose the first entity's ground.
+            const b3BodyId GroundBody = b3Shape_GetBody(GroundShape);
+            Character.GroundEntity = EntityOfBody(GroundBody);
             Character.GroundVelocity = b3Body_IsValid(GroundBody)
-                ? Box3DUtils::FromB3Vec3(b3Body_GetWorldPointVelocity(GroundBody, Gathered.Points[GroundPlane]))
+                ? Box3DUtils::FromB3Vec3(b3Body_GetWorldPointVelocity(GroundBody, bOnLedge ? LedgeFloor.Point : Gathered.Points[GroundPlane]))
                 : FVector3(0.0f);
         }
         else
@@ -1114,6 +1174,11 @@ namespace Lumina::Physics
             Character.GroundEntity = ECS::NullEntity;
             Character.GroundVelocity = FVector3(0.0f);
         }
+
+        // Published now as well, since a character that settles takes no further step to copy it over.
+        Movement.bGrounded    = Character.bGrounded;
+        Movement.GroundNormal = Character.GroundNormal;
+        Movement.GroundEntity = Character.GroundEntity;
 
         if (bLanded)
         {
@@ -1202,7 +1267,7 @@ namespace Lumina::Physics
         }
 
         // Only static ground rests, since a platform or another character can move out from under the capsule without any signal the wake check sees.
-        const b3BodyId GroundBody = b3Shape_GetBody(Gathered.Shapes[GroundPlane]);
+        const b3BodyId GroundBody = b3Shape_GetBody(GroundShape);
         if (!b3Body_IsValid(GroundBody) || b3Body_GetType(GroundBody) != b3_staticBody)
         {
             return;

@@ -76,6 +76,11 @@ namespace Lumina::SessionOps
     // Applies to the next StartPlay. NetMode is standalone, listen or dedicated.
     EDITOR_API bool SetPlayNetwork(int32 NumPlayers, FStringView NetMode, FString& OutError);
     EDITOR_API bool StopPlay(FString& OutError);
+
+    //~ Viewport modes, such as Select, Terrain and Foliage.
+
+    EDITOR_API bool GetEditorModes(TVector<FString>& OutModes, FString& OutActive, FString& OutError);
+    EDITOR_API bool SetEditorMode(FStringView Name, FString& OutError);
     EDITOR_API bool SetPaused(bool bPaused, FString& OutError);
     NODISCARD EDITOR_API bool IsPaused(FString& OutError);
 

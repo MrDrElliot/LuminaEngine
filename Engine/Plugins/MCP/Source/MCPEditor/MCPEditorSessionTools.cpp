@@ -29,6 +29,7 @@
 #include "Tools/Screenshot/ScreenshotCapture.h"
 #include "UI/Tools/EditorToolContext.h"
 #include "World/World.h"
+#include "World/WorldManager.h"
 
 namespace Lumina::MCP
 {
@@ -366,6 +367,24 @@ namespace Lumina::MCP
 
             const FURL Url = FURL::Parse(FStringView(*Level, Level.Len()));
             Out.Map = Url.Map;
+
+            // With nothing playing there is no game to travel, so the level opens for editing instead of booting a second world.
+            if (Global::GWorldManager == nullptr || Global::GWorldManager->GetPrimaryGameContext() == nullptr)
+            {
+                const FString AssetPath = Url.Map.EndsWith(".lasset") ? Url.Map : Url.Map + ".lasset";
+                const TOptional<FGuid> Guid = Agent::ParseAssetGuid(FStringView(AssetPath));
+                if (!Guid.IsSet())
+                {
+                    return Agent::FToolResult::Error(Lumina::Format("No world asset at '{}'.", Url.Map));
+                }
+                FString Error;
+                if (!SessionOps::OpenAsset(*Guid, Out.Tab, Error))
+                {
+                    return Agent::FToolResult::Error(Error);
+                }
+                return Agent::FToolResult::Ok(Lumina::Format("No game is running, so {} opened for editing in tab '{}'.", Url.Map, Out.Tab));
+            }
+
             Global::GEngine->OpenLevel(Url);
             return Agent::FToolResult::Ok(Lumina::Format("Opening {}.", Url.Map));
         }
@@ -949,12 +968,33 @@ namespace Lumina::MCP
                 });
         }
 
+        void RegisterEditorMode(FStringView Owner)
+        {
+            Agent::FToolRegistry::Get().Register<SEditorModeParams, SEditorModeResult>(
+                Owner, "editor.mode",
+                "List the world editor's viewport modes, such as Select, Terrain and Foliage, or switch to one by its Mode name.",
+                Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
+                [](const SEditorModeParams& In, SEditorModeResult& Out)
+                {
+                    FString Error;
+                    if (!In.Mode.IsEmpty() && !SessionOps::SetEditorMode(FStringView(In.Mode), Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+                    if (!SessionOps::GetEditorModes(Out.Modes, Out.Active, Error))
+                    {
+                        return Agent::FToolResult::Error(Error);
+                    }
+                    return Agent::FToolResult::Ok(Lumina::Format("The viewport is in {} mode.", Out.Active));
+                });
+        }
+
         void RegisterEditorOpen(FStringView Owner)
         {
             Agent::FToolRegistry::Get().Register<SEditorOpenParams, SEditorOpenResult>(
                 Owner, "editor.open",
                 "Open an Asset in its editor tab, a text File in its own editor, or travel the running game to a Level at the start "
-                "of the next frame. Set exactly one.",
+                "of the next frame. With no game running, a Level opens in the world editor instead. Set exactly one.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SEditorOpenParams& In, SEditorOpenResult& Out)
                 {
@@ -1133,6 +1173,7 @@ namespace Lumina::MCP
         RegisterEditorPlay(Owner);
         RegisterEditorTabs(Owner);
         RegisterEditorTools(Owner);
+        RegisterEditorMode(Owner);
         RegisterEditorOpen(Owner);
         RegisterEditorInput(Owner);
         RegisterEditorGraph(Owner);

@@ -13,6 +13,8 @@ namespace Lumina
         uint16  Port      = 7777;
         bool    bListen    = false;
         bool    bDedicated = false; // listen as a clientless, non-rendered dedicated server
+        // Starts a game world when none is running, which a travel inside the editor otherwise refuses.
+        bool    bStartGame = false;
 
         bool IsClient() const { return !Host.IsEmpty(); }
 

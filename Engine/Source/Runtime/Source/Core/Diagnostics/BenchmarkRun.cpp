@@ -177,7 +177,9 @@ namespace Lumina::Benchmark
         }
 
         LOG_DISPLAY("Benchmark: opening {}", GState.Map);
-        Global::GEngine->OpenLevel(FURL::Parse(FStringView(*GState.Map, GState.Map.Len())));
+        FURL Url = FURL::Parse(FStringView(*GState.Map, GState.Map.Len()));
+        Url.bStartGame = true;
+        Global::GEngine->OpenLevel(Url);
     }
 
     bool Tick(double DeltaSeconds)

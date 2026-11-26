@@ -2,40 +2,84 @@
 
 #include "Core/Math/Math.h"
 #include "Platform/GenericPlatform.h"
-#include "World/Entity/Components/TerrainBrushComponent.h"
 
 namespace Lumina
 {
     struct STerrainComponent;
 
+    // What a brush stroke does to the terrain, in the order the edit mode's palette and number keys list them.
+    enum class ETerrainBrushMode : uint8
+    {
+        Sculpt,
+        Smooth,
+        Flatten,
+        Ramp,
+        Noise,
+        Erode,
+        Terrace,
+        Paint,
+        Num,
+    };
+
+    // The curve a brush's weight follows from its full core down to zero at its rim.
+    enum class ETerrainBrushFalloff : uint8
+    {
+        Smooth,
+        Linear,
+        Sphere,
+        Tip,
+        Num,
+    };
+
+    // Which way Flatten may move the ground toward its target.
+    enum class ETerrainFlattenSide : uint8
+    {
+        Both,
+        RaiseOnly,
+        LowerOnly,
+        Num,
+    };
+
     // A single brush dab captured during a stroke and replayed against the CPU heightmap.
     struct FTerrainSculptDab
     {
-        ETerrainBrushMode   Mode          = ETerrainBrushMode::Sculpt;
-        FVector3           WorldPosition = FVector3(0.0f);
-        /** Owning terrain entity's transform origin. The terrain is centered on this. */
-        FVector3           TerrainOrigin = FVector3(0.0f);
-        float               Radius        = 0.0f;
-        float               Strength      = 0.0f;
-        float               Falloff       = 0.5f;
-        float               FlattenHeight = 0.0f;
-        float               DeltaSeconds  = 0.0f;
-        int32               ActiveLayer   = 0;
-        int8                SculptSign    = 1;
+        ETerrainBrushMode    Mode          = ETerrainBrushMode::Sculpt;
+        ETerrainBrushFalloff FalloffShape  = ETerrainBrushFalloff::Smooth;
+        FVector3             WorldPosition = FVector3(0.0f);
+        // The owning entity's position, which the terrain centers on.
+        FVector3             TerrainOrigin = FVector3(0.0f);
+        float                Radius        = 512.0f;
+        // From 0 to 1 in every mode, which Sculpt and Noise turn into a height rate scaled by Radius and the rest into a blend rate.
+        float                Strength      = 0.5f;
+        // Share of the radius over which the weight falls to zero, so 0 is a hard disk.
+        float                Falloff       = 0.5f;
+        float                DeltaSeconds  = 0.0f;
+        int32                ActiveLayer   = 0;
+        int8                 SculptSign    = 1;
 
-        /** Noise mode parameters (world-space frequency in 1/units, octaves >= 1). */
-        float               NoiseFrequency = 1.0f / 512.0f;
-        int32               NoiseOctaves   = 4;
+        // World units above the terrain origin.
+        float                FlattenHeight = 0.0f;
+        ETerrainFlattenSide  FlattenSide   = ETerrainFlattenSide::Both;
 
-        /** Ramp mode endpoints in world space; only XZ used. Heights are sampled from
-         *  the heightmap at the endpoints unless RampUseExplicitHeights is set. */
-        FVector3           RampStart      = FVector3(0.0f);
-        FVector3           RampEnd        = FVector3(0.0f);
-        bool                RampUseExplicitHeights = false;
-        float               RampStartHeight = 0.0f;
-        float               RampEndHeight   = 0.0f;
-        /** Half-width of the ramp's linear core (world units). Beyond this, falloff applies. */
-        float               RampHalfWidth   = 0.0f;
+        // World-space frequency in 1/units.
+        float                NoiseFrequency = 1.0f / 512.0f;
+        int32                NoiseOctaves   = 4;
+
+        // The steepest slope in degrees that Erode leaves standing.
+        float                TalusAngle     = 35.0f;
+
+        // World units between terrace levels, and how sheer the risers between them are from 0 to 1.
+        float                TerraceStep      = 32.0f;
+        float                TerraceSharpness = 0.7f;
+
+        // Only XZ is used, and heights come from the terrain under the endpoints unless RampUseExplicitHeights is set.
+        FVector3             RampStart              = FVector3(0.0f);
+        FVector3             RampEnd                = FVector3(0.0f);
+        bool                 RampUseExplicitHeights = false;
+        float                RampStartHeight        = 0.0f;
+        float                RampEndHeight          = 0.0f;
+        // Half-width of the ramp's linear core, past which the falloff applies.
+        float                RampHalfWidth          = 256.0f;
     };
 
     // A terrain's heights as the renderer draws them, which a caller may hold a copy of and sample from any thread.
@@ -57,11 +101,11 @@ namespace Lumina
     class RUNTIME_API FTerrainSculptSystem
     {
     public:
-        /** Apply a single dab, dispatching row updates to worker threads. */
+        // Apply a single dab, dispatching row updates to worker threads.
         static void ApplyDab(STerrainComponent& Terrain, const FTerrainSculptDab& Dab);
 
-        /** Convert a world-space XYZ point to heightmap sample coordinates. */
-        static FIntVector2 WorldToSample(const STerrainComponent& Terrain, const FVector3& WorldPos);
+        // Brush weight at Distance from the center, 1 inside the core and 0 at and past Radius, shared with the editor's falloff preview.
+        static float FalloffWeight(float Distance, float Radius, float Falloff, ETerrainBrushFalloff Shape);
 
         // Raycast against the current heightmap, where TerrainOrigin is the entity position the terrain centers on.
         static bool Raycast(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, const FVector3& RayOrigin, const FVector3& RayDir, FVector3& OutHit);
@@ -81,6 +125,8 @@ namespace Lumina
         static void ApplySmooth (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
         static void ApplyNoise  (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
         static void ApplyRamp   (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
+        static void ApplyErode  (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
+        static void ApplyTerrace(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
         static void ApplyPaint  (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
     };
 }

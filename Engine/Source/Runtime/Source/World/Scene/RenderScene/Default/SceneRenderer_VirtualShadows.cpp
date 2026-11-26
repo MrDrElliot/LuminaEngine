@@ -505,7 +505,10 @@ namespace Lumina
                 if (Res.bComputeRasterCounting)
                 {
                     const uint64 CountOffset = kComputeRasterCount * sizeof(uint32);
-                    RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead);
+                    // Transfer too, since the page pass copied the whole block over these same words earlier in the frame.
+                    RHI::CmdBarrier(CL,
+                                    RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::TransferWrite,
+                                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead | RHI::EAccessFlags::TransferWrite);
                     RHI::CmdMemcpy(CL, { Res.StatsReadback[CurrentFrameSlot].Gpu + CountOffset, 2u * sizeof(uint32) },
                                    { Res.Counters.Gpu + CountOffset, 2u * sizeof(uint32) });
                 }

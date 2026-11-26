@@ -511,6 +511,13 @@ namespace Lumina
                     float                        ContactLength = 0.0f;
                 } SunFarShadow;
 
+                // The light on the clouds, which stand kilometers up and so keep the sun for a while after it sets on the ground.
+                FVector3                         CloudLightDirection = FVector3(0.0f, 1.0f, 0.0f);
+                // Untinted, since each cloud sample takes the air between it and the light from the transmittance LUT.
+                FVector3                         CloudLightColor = FVector3(0.0f);
+                // Where the sky draws the moon, whose half of the sky view LUT is laid out around it.
+                FVector3                         SkyMoonDirection = FVector3(0.0f, -1.0f, 0.0f);
+
                 // The sun's shadow cache as this frame sees it, empty bits while it is off.
                 struct FShadowCache
                 {
@@ -574,6 +581,8 @@ namespace Lumina
                 FIBLBakeResolution               IBLResolution        = {};
                 bool                             bAerialPerspective   = false;
                 float                            AerialRange          = 8000.0f;
+                // The moonlight against the sun's, times the phase, which the moonlit sky matches so it agrees with the ground.
+                float                            MoonlitSkyRatio      = 0.0f;
                 float                            AerialIntensity      = 1.0f;
 
                 bool                             bClouds              = false;
@@ -777,6 +786,9 @@ namespace Lumina
             FroxelIntegrated,
             AerialInScatter,
             AerialTransmittance,
+            AtmosphereTransmittance,
+            AtmosphereMultiScatter,
+            SkyView,
             CloudNoise,
             CloudWeather,
             CloudScatter,
@@ -836,6 +848,8 @@ namespace Lumina
             FSceneImage                                     BloomChainImage;
             // CloudNoise is per-view, so a renderer-wide flag leaves view two sampling an unbaked volume.
             bool                                            bCloudNoiseBaked = false;
+            // The aerosol the transmittance and multiple scattering LUTs were built for, negative while unbuilt.
+            float                                           AtmosphereLUTAerosol = -1.0f;
             // Picks which texel of each 2x2 block the clouds march this frame, the rest keeping their last march.
             uint32                                          CloudFrame = 0;
             bool                                            bCloudHistoryValid = false;
@@ -1240,6 +1254,9 @@ namespace Lumina
         void WaterPass(RHI::FCmdListH CL);
         void UnderwaterPass(RHI::FCmdListH CL);
         void EnvironmentPass(RHI::FCmdListH CL);
+        // The direction the sky is lit from, which stands in for a missing sun so the sky never goes undefined.
+        FVector3 GetSkySunDirection() const;
+        void AtmosphereLUTPass(RHI::FCmdListH CL);
         void SkyCubeCapturePass(RHI::FCmdListH CL);
         void IrradianceConvolutionPass(RHI::FCmdListH CL);
         void PrefilterEnvMapPass(RHI::FCmdListH CL);
@@ -1369,7 +1386,17 @@ namespace Lumina
         void LayoutSkinnedBoneSlices(TVector<FThreadLocalDrawData>& ThreadLocal, const auto& FollowerStorage, const auto& SkeletalStorage);
         void EmitSkinnedPrimitives(const Jobs::FRange& Range, FThreadLocalDrawData& Local, const auto& SkeletalStorage);
 
-        void BuildSceneCullContext(const SDirectionalLightComponent* Sun);
+        // What the sky tells the sun's light, read on the main thread before the light jobs start.
+        struct FSkyLightInputs
+        {
+            FVector3 MoonDirection       = FVector3(0.0f, -1.0f, 0.0f);
+            float    MoonPhaseBrightness = 1.0f;
+            float    Altitude            = 0.0f;
+            float    Aerosol             = 1.0f;
+            bool     bThroughAtmosphere  = false;
+        };
+        FSkyLightInputs GatherSkyLightInputs(ECS::FRegistry& Registry, const SDirectionalLightComponent* Sun);
+        void BuildSceneCullContext(const SDirectionalLightComponent* Sun, const FSkyLightInputs& Sky);
         void MergeMeshDrawData(TVector<FThreadLocalDrawData>& ThreadLocal);
 
         FThreadLocalDrawData& AcquireThreadLocalDrawData(uint32 Slot);
@@ -1441,7 +1468,7 @@ namespace Lumina
         void ProcessPointLight(ECS::FEntity Entity, const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
         void ProcessSpotLight(ECS::FEntity Entity, const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
         void ProcessAreaLight(ECS::FEntity Entity, const SAreaLightComponent& AreaLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
-        void ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight);
+        void ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight, const FSkyLightInputs& Sky);
         // Places the sun's virtual shadow levels around the camera and decides which of them lost their cached pages.
         void ProcessVirtualSunShadow(const SDirectionalLightComponent& DirectionalLight, const FVector3& LightDir, const FVector3& ShadowUp,
                                      FLightShadowData* ShadowData, int32 ShadowDataBase, float ShadowFar);

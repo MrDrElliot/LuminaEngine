@@ -219,6 +219,7 @@ namespace Lumina
         bool                    bPendingHostListen    = false;
         bool                    bPendingHostDedicated = false;
         uint16                  PendingHostPort       = 7777;
+        bool                    bPendingStartGame     = false;
 
         // Set during a Welcome-driven client travel so the new world's net system adopts this transport.
         TUniquePtr<INetworkTransport> CarriedTransport;

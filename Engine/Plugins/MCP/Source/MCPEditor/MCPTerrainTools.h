@@ -63,6 +63,56 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API STerrainSculptParams
+    {
+        GENERATED_BODY()
+
+        // Terrain entity id, or empty for the first terrain in the scene.
+        PROPERTY()
+        FString Entity;
+
+        // Sculpt, Smooth, Flatten, Noise, Erode, Terrace or Paint, as the terrain mode's palette names them.
+        PROPERTY()
+        FString Mode = "Sculpt";
+
+        // World X and Z of the brush center.
+        PROPERTY()
+        float X = 0.0f;
+
+        PROPERTY()
+        float Z = 0.0f;
+
+        PROPERTY()
+        float Radius = 64.0f;
+
+        // From 0 to 1, as the brush's strength slider.
+        PROPERTY()
+        float Strength = 0.5f;
+
+        // How long the brush is held, applied as one dab.
+        PROPERTY()
+        float Seconds = 0.1f;
+
+        // Lowers, carves or erases instead, as holding Alt does.
+        PROPERTY()
+        bool bInvert = false;
+
+        // Flatten's target in world units above the terrain origin.
+        PROPERTY()
+        float FlattenHeight = 0.0f;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API STerrainSculptResult
+    {
+        GENERATED_BODY()
+
+        // World height of the ground under the brush center after the dab.
+        PROPERTY()
+        float Height = 0.0f;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SImportFoliageParams
     {
         GENERATED_BODY()

@@ -78,12 +78,16 @@ float TraceSkyCone(FWorldDistanceField* Field, float3 Origin, float3 Dir, FSkyCo
     const float FadeStart = Schedule.FadeStart;
     const float InvFade   = Schedule.InvFade;
 
+    // A level stores distances clamped to its band, so a cone wider than the band less the voxel a trilinear read blends reads a coarser level, each doubling the voxel.
+    const float LevelScale = kConeTanHalf / ((kWorldDFBandVoxels - 1.0) * Field.VoxelSize(0u));
+
     float Visibility = 1.0;
     float t          = Start;
     uint  Level      = ReceiverLevel;
     [loop]
     for (uint Step = 0; Step < kSkyConeSteps && Visibility > 0.0; ++Step, t *= StepRatio)
     {
+        Level = max(Level, uint(max(ceil(log2(t * LevelScale)), 0.0)));
         const float Distance = Field.Sample(Origin + Dir * t, Level);
         if (Level >= kWorldDFLevels)
         {

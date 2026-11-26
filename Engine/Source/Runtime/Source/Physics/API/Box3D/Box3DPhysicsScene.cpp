@@ -116,8 +116,7 @@ namespace Lumina::Physics
 
         WorldId = b3CreateWorld(&Def);
 
-        LOG_DISPLAY("[Box3D] Scene created with {} solver worker(s), capacity {} bodies.",
-            TaskBridge.GetWorkerCount(), MaxBodies);
+        LOG_DISPLAY("[Box3D] Scene created with {} solver worker(s), capacity {} bodies.", TaskBridge.GetWorkerCount(), MaxBodies);
 
         static TAtomic<uint64> NextSceneIdentity{ 1 };
         SceneIdentity = NextSceneIdentity.fetch_add(1, std::memory_order_relaxed);
@@ -129,7 +128,11 @@ namespace Lumina::Physics
 
         ECS::FRegistry& Registry = World->GetEntityRegistry();
 
-        ForEachColliderType([&]<typename TCollider>() { Registry.GetSignals<TCollider>().OnConstruct.template Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>(); });
+        ForEachColliderType([&]<typename TCollider>() 
+        { 
+            Registry.GetSignals<TCollider>().OnConstruct.template Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>(); 
+        });
+        
         Registry.GetSignals<SVehicleComponent>().OnConstruct.Connect<&ECS::FRegistry::GetOrEmplace<SRigidBodyComponent>>();
     }
 

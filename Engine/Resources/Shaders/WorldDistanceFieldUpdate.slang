@@ -43,12 +43,40 @@ float CasterDistance(FDFObject Object, float3 P)
 {
     const float3 Local   = DFObjectLocalPoint(Object, P);
     const float3 Clamped = clamp(Local, Object.VolumeMin, Object.VolumeMin + Object.VolumeSize);
-    float Distance = SampleDFObject(Object, Clamped) + length(Local - Clamped);
+    const float  Raw     = SampleDFObject(Object, Clamped);
+
+    // The bake caps how far it records, so a capped sample says only that the surface is at least that far, never that it is near.
+    if (Raw >= Object.MaxDistance * 0.98)
+    {
+        return 1.0e6;
+    }
+
+    float Inside = Raw;
     if ((Object.Flags & kDistanceFieldTwoSided) != 0u)
     {
-        Distance -= Object.VoxelSize * 0.5;
+        Inside -= Object.VoxelSize * 0.5;
     }
-    return Distance * Object.MinScale;
+
+    // A row of the inverse is one local axis over its world scale, so the gap to the box is measured in world units on every axis.
+    const float3 AxisScale = 1.0 / max(float3(length(Object.WorldToLocal.Row0.xyz), length(Object.WorldToLocal.Row1.xyz), length(Object.WorldToLocal.Row2.xyz)), 1e-6);
+
+    // A scaled plane at local distance d lies d / |n / scale| away in the world, where the smallest scale alone darkens a flattened caster's whole box.
+    float InsideScale = Object.MinScale;
+    // Inside, the local gradient often runs along a stretched axis and would sink the depth far below the surface, so the smallest scale stays.
+    if (Inside > 0.0 && max(AxisScale.x, max(AxisScale.y, AxisScale.z)) > Object.MinScale * 1.01)
+    {
+        // Centered a voxel inside the volume, since past the outermost texel centers the clamped sampler repeats the border and flattens that axis of the gradient.
+        const float  Half     = Object.VoxelSize * 0.5;
+        const float3 Center   = clamp(Clamped, Object.VolumeMin + Object.VoxelSize, Object.VolumeMin + Object.VolumeSize - Object.VoxelSize);
+        const float3 Gradient = float3(SampleDFObject(Object, Center + float3(Half, 0.0, 0.0)) - SampleDFObject(Object, Center - float3(Half, 0.0, 0.0)),
+                                       SampleDFObject(Object, Center + float3(0.0, Half, 0.0)) - SampleDFObject(Object, Center - float3(0.0, Half, 0.0)),
+                                       SampleDFObject(Object, Center + float3(0.0, 0.0, Half)) - SampleDFObject(Object, Center - float3(0.0, 0.0, Half)));
+        if (dot(Gradient, Gradient) > 1e-12)
+        {
+            InsideScale = 1.0 / length(normalize(Gradient) / AxisScale);
+        }
+    }
+    return Inside * InsideScale + length((Local - Clamped) * AxisScale);
 }
 
 [shader("compute")]

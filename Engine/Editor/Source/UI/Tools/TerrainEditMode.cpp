@@ -1,7 +1,7 @@
 #include "TerrainEditMode.h"
+#include "BrushModeUI.h"
 #include "World/ECS/Registry.h"
 
-#include <algorithm>
 #include <cmath>
 #include "Core/Math/Math.h"
 #include "Memory/Memcpy.h"
@@ -10,8 +10,6 @@
 #include "Renderer/Format.h"
 #include "Tools/Import/ImportHelpers.h"
 #include "Tools/UI/ImGui/ImGuiX.h"
-#include "World/Entity/Components/CameraComponent.h"
-#include "World/Entity/Components/NameComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
@@ -23,28 +21,38 @@ namespace Lumina
 {
     namespace
     {
-        void TerrainBuildRayFromScreen(const SCameraComponent& Camera, ImVec2 PixelWithinViewport, ImVec2 ViewportSize, FVector3& OutOrigin, FVector3& OutDir)
+        // In ETerrainBrushMode order, so a mode indexes its own entry.
+        constexpr BrushUI::FTool kTerrainTools[] =
         {
-            const float W = Math::Max(ViewportSize.x, 1.0f);
-            const float H = Math::Max(ViewportSize.y, 1.0f);
+            { LE_ICON_ELEVATION_RISE,      "Sculpt",  "Raise the ground, or lower it while Alt is held.",                                   IM_COL32(235, 175,  70, 255) },
+            { LE_ICON_BLUR,                "Smooth",  "Relax bumps and creases, over a wider area with a wider brush. Shift smooths from any sculpt tool.", IM_COL32( 95, 200, 120, 255) },
+            { LE_ICON_FORMAT_ALIGN_MIDDLE, "Flatten", "Level the ground to the height where the stroke starts, or to a fixed height.",       IM_COL32( 80, 200, 230, 255) },
+            { LE_ICON_SLOPE_UPHILL,        "Ramp",    "Drag from A to B for a straight slope between the heights there.",                    IM_COL32( 95, 150, 240, 255) },
+            { LE_ICON_GRAIN,               "Noise",   "Add fractal bumps, or carve them in while Alt is held.",                              IM_COL32(185, 130, 230, 255) },
+            { LE_ICON_LANDSLIDE,           "Erode",   "Slump slopes steeper than the talus angle into scree, the way loose rock settles.",   IM_COL32(215, 120,  80, 255) },
+            { LE_ICON_STAIRS,              "Terrace", "Step the ground into flat treads, sharper the longer the brush is held.",             IM_COL32(210, 205, 100, 255) },
+            { LE_ICON_FORMAT_PAINT,        "Paint",   "Paint the selected layer, or erase it while Alt is held.",                            IM_COL32(230, 100, 150, 255) },
+        };
+        static_assert(IM_ARRAYSIZE(kTerrainTools) == size_t(ETerrainBrushMode::Num));
 
-            const float Sx = (PixelWithinViewport.x / W) * 2.0f - 1.0f;
-            // ImGui Y=0 is top of viewport; negate so the ray tilts up in world space (camera-basis fix in 5827d9d9).
-            const float Sy = 1.0f - (PixelWithinViewport.y / H) * 2.0f;
+        constexpr const char* kFlattenSideNames[] = { "Raise and lower", "Raise only", "Lower only" };
+        static_assert(IM_ARRAYSIZE(kFlattenSideNames) == size_t(ETerrainFlattenSide::Num));
 
-            const FViewVolume& View    = Camera.GetViewVolume();
-            const FVector3    Forward = View.GetForwardVector();
-            const FVector3    Up      = View.GetUpVector();
+        // Capped at the shader's four-layer maximum, so the editor cannot paint a slot nothing reads.
+        constexpr ImU32 kLayerSwatchColors[GTerrainMaxLayers] =
+        {
+            IM_COL32(220,  80,  80, 255),
+            IM_COL32( 80, 200, 110, 255),
+            IM_COL32( 80, 140, 230, 255),
+            IM_COL32(220, 200,  80, 255),
+        };
 
-            const FVector3    Right   = Math::Normalize(Math::Cross(Up, Forward));
+        constexpr ImU32 kLowerColor = IM_COL32(90, 150, 255, 255);
+        constexpr float kMaxRadius  = 8192.0f;
 
-            const float AspectRatio = W / H;
-            const float TanHalfFov  = std::tan(Math::Radians(View.GetFOV()) * 0.5f);
-
-            OutOrigin = Camera.GetPosition();
-            OutDir    = Math::Normalize(Forward
-                                       + Right * (Sx * TanHalfFov * AspectRatio)
-                                       + Up    * (Sy * TanHalfFov));
+        const BrushUI::FTool& GetTerrainTool(ETerrainBrushMode Mode)
+        {
+            return kTerrainTools[Math::Min(int32(Mode), int32(IM_ARRAYSIZE(kTerrainTools)) - 1)];
         }
     }
 
@@ -326,95 +334,104 @@ namespace Lumina
             return;
         }
 
-        ImVec2 AnchorPos = ImGui::GetWindowPos();
-        AnchorPos.y += ImGui::GetWindowSize().y + 4.0f;
-        ImGui::SetNextWindowPos(AnchorPos);
-        ImGui::SetNextWindowBgAlpha(0.85f);
-        ImGui::Begin("##TerrainBrushSettings", nullptr,
-                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize);
+        // Four tool buttons a row with their labels set the width.
+        BrushUI::BeginPanel("##TerrainBrushSettings", 400.0f);
 
-        const char* ModeNames[] = { "Sculpt", "Flatten", "Smooth", "Noise", "Ramp", "Paint" };
-        int ModeIndex = (int)Mode;
-        ImGui::SetNextItemWidth(140.0f);
-        if (ImGui::Combo("Mode", &ModeIndex, ModeNames, IM_ARRAYSIZE(ModeNames)))
+        int32 Tool = int32(Brush.Mode);
+        if (BrushUI::ToolPalette(kTerrainTools, IM_ARRAYSIZE(kTerrainTools), Tool))
         {
-            Mode = (ETerrainBrushMode)ModeIndex;
+            Brush.Mode    = ETerrainBrushMode(Tool);
             bRampStarted  = false;
             bHasStrokeHit = false;
         }
+        BrushUI::BrushSection(Brush.Radius, kMaxRadius, Brush.Strength, Brush.Falloff, Brush.FalloffShape, GetTerrainTool(Brush.Mode).Color);
 
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::SliderFloat("Radius",   &Radius,   8.0f,  4096.0f, "%.0f");
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::SliderFloat("Strength", &Strength, 0.0f,  1024.0f, "%.0f");
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Height change rate at the brush center, in world units per second.");
-        }
-        ImGui::SetNextItemWidth(140.0f);
-        ImGui::SliderFloat("Falloff",  &Falloff,  0.0f,  1.0f,    "%.2f");
+        DrawToolSettings(World);
 
-        if (Mode == ETerrainBrushMode::Sculpt || Mode == ETerrainBrushMode::Noise)
-        {
-            ImGui::Checkbox("Invert (LAlt momentary)", &bInvertSculpt);
-        }
+        ImGui::Separator();
+        BrushUI::Hint("[ ] size   Shift+[ ] strength   Shift smooths   Alt inverts");
 
-        if (Mode == ETerrainBrushMode::Flatten)
-        {
-            ImGui::SetNextItemWidth(140.0f);
-            ImGui::SliderFloat("Height", &FlattenHeight, 0.0f, 1024.0f, "%.0f");
-            ImGui::TextDisabled("Ctrl+Click: sample height under cursor");
-        }
+        ImGui::End();
+    }
 
-        if (Mode == ETerrainBrushMode::Noise)
+    void FTerrainEditMode::DrawToolSettings(CWorld* World)
+    {
+        const BrushUI::FTool& Tool = GetTerrainTool(Brush.Mode);
+        ImGui::SeparatorText(Tool.Label);
+        BrushUI::Hint(Tool.Tip);
+
+        const ECS::FEntity TerrainEntity = FindPreferredTerrain(World);
+        STerrainComponent* Terrain = TerrainEntity != ECS::NullEntity ? World->TryGetComponent<STerrainComponent>(TerrainEntity) : nullptr;
+        const float MaxHeight = Terrain != nullptr ? Terrain->MaxHeight : 1024.0f;
+
+        switch (Brush.Mode)
         {
-            float FreqDisplay = NoiseFrequency * 1000.0f;
-            ImGui::SetNextItemWidth(140.0f);
-            if (ImGui::SliderFloat("Freq (per 1km)", &FreqDisplay, 0.1f, 100.0f, "%.2f"))
+        case ETerrainBrushMode::Sculpt:
+            ImGui::Checkbox("Lower instead of raise", &bInvertSculpt);
+            break;
+
+        case ETerrainBrushMode::Noise:
+        {
+            float FeatureSize = 1.0f / Math::Max(Brush.NoiseFrequency, 1e-6f);
+            if (BrushUI::Slider("Feature", &FeatureSize, 4.0f, 4096.0f, "%.0f m", Tool.Color, true))
             {
-                NoiseFrequency = Math::Max(FreqDisplay * 0.001f, 1e-6f);
+                Brush.NoiseFrequency = 1.0f / Math::Max(FeatureSize, 1.0f);
             }
-            ImGui::SetNextItemWidth(140.0f);
-            ImGui::SliderInt("Octaves", &NoiseOctaves, 1, 8);
+            BrushUI::SliderInt("Octaves", &Brush.NoiseOctaves, 1, 8, "%d", Tool.Color);
+            ImGui::Checkbox("Carve instead of add", &bInvertSculpt);
+            break;
         }
 
-        if (Mode == ETerrainBrushMode::Ramp)
+        case ETerrainBrushMode::Flatten:
         {
-            ImGui::SetNextItemWidth(140.0f);
-            ImGui::SliderFloat("Width", &RampHalfWidth, 8.0f, 4096.0f, "%.0f");
-
-            ImGui::Checkbox("Explicit heights", &bRampExplicitHeights);
-            if (ImGui::IsItemHovered())
+            ImGui::Checkbox("Fixed height", &bFixedFlattenHeight);
+            if (bFixedFlattenHeight)
             {
-                ImGui::SetTooltip("Use fixed start/end heights instead of sampling the terrain under A and B.");
+                BrushUI::Slider("Height", &Brush.FlattenHeight, 0.0f, MaxHeight, "%.1f m", Tool.Color);
+                ImGui::TextDisabled("Ctrl+Click samples the ground under the cursor.");
             }
-            if (bRampExplicitHeights)
+            else
             {
-                ImGui::SetNextItemWidth(140.0f);
-                ImGui::SliderFloat("Start H", &RampStartHeight, 0.0f, 1024.0f, "%.0f");
-                ImGui::SetNextItemWidth(140.0f);
-                ImGui::SliderFloat("End H",   &RampEndHeight,   0.0f, 1024.0f, "%.0f");
+                ImGui::TextDisabled("Levels to %.1f m, where the last stroke started.", Brush.FlattenHeight);
             }
-            ImGui::TextDisabled("Drag from A to B; release to commit.");
+            int32 Side = int32(Brush.FlattenSide);
+            if (BrushUI::Combo("Direction", &Side, kFlattenSideNames, IM_ARRAYSIZE(kFlattenSideNames)))
+            {
+                Brush.FlattenSide = ETerrainFlattenSide(Side);
+            }
+            break;
         }
 
-        if (Mode == ETerrainBrushMode::Paint)
-        {
-            ECS::FEntity TerrainEntity = FindPreferredTerrain(World);
-            STerrainComponent* Terrain = (TerrainEntity != ECS::NullEntity)
-                ? &World->GetComponent<STerrainComponent>(TerrainEntity)
-                : nullptr;
-            if (Terrain)
+        case ETerrainBrushMode::Ramp:
+            BrushUI::Slider("Half width", &Brush.RampHalfWidth, 1.0f, 4096.0f, "%.0f m", Tool.Color, true);
+            ImGui::Checkbox("Fixed end heights", &Brush.RampUseExplicitHeights);
+            ImGui::SetItemTooltip("Use fixed start and end heights instead of the ground under A and B.");
+            if (Brush.RampUseExplicitHeights)
+            {
+                BrushUI::Slider("Start", &Brush.RampStartHeight, 0.0f, MaxHeight, "%.1f m", Tool.Color);
+                BrushUI::Slider("End", &Brush.RampEndHeight, 0.0f, MaxHeight, "%.1f m", Tool.Color);
+            }
+            break;
+
+        case ETerrainBrushMode::Erode:
+            BrushUI::Slider("Talus", &Brush.TalusAngle, 5.0f, 80.0f, "%.0f\xc2\xb0", Tool.Color);
+            ImGui::SetItemTooltip("The steepest slope that stays standing.");
+            break;
+
+        case ETerrainBrushMode::Terrace:
+            BrushUI::Slider("Step", &Brush.TerraceStep, 0.5f, Math::Max(MaxHeight * 0.5f, 1.0f), "%.1f m", Tool.Color, true);
+            break;
+
+        case ETerrainBrushMode::Paint:
+            if (Terrain != nullptr)
             {
                 DrawLayerPanel(*Terrain);
             }
+            break;
+
+        default:
+            break;
         }
-
-        ImGui::TextDisabled("[ / ] resize brush");
-
-        ImGui::End();
     }
 
     void FTerrainEditMode::DrawLayerPanel(STerrainComponent& Terrain)
@@ -424,27 +441,19 @@ namespace Lumina
         ImGui::Separator();
         ImGui::TextUnformatted("Layers");
 
-        // Capped at the shader's four-layer maximum, so the editor cannot paint a slot nothing reads.
-        constexpr ImU32 SwatchColors[GTerrainMaxLayers] = {
-            IM_COL32(220,  80,  80, 255),
-            IM_COL32( 80, 200, 110, 255),
-            IM_COL32( 80, 140, 230, 255),
-            IM_COL32(220, 200,  80, 255),
-        };
-
         const ImVec2 SwatchSize(28, 28);
         for (int32 i = 0; i < LayerCount; ++i)
         {
             ImGui::PushID(i);
-            const bool bSelected = (ActiveLayer == i);
+            const bool bSelected = (Brush.ActiveLayer == i);
             const ImU32 Border  = bSelected ? IM_COL32(255, 255, 255, 255) : IM_COL32(80, 80, 80, 255);
-            const ImU32 Fill    = SwatchColors[i % GTerrainMaxLayers];
+            const ImU32 Fill    = kLayerSwatchColors[i % GTerrainMaxLayers];
 
             ImVec2 Pos = ImGui::GetCursorScreenPos();
             ImGui::InvisibleButton("##Swatch", SwatchSize);
             if (ImGui::IsItemClicked())
             {
-                ActiveLayer = i;
+                Brush.ActiveLayer = i;
             }
             ImDrawList* Dl = ImGui::GetWindowDrawList();
             Dl->AddRectFilled(Pos, ImVec2(Pos.x + SwatchSize.x, Pos.y + SwatchSize.y), Fill, 4.0f);
@@ -482,29 +491,28 @@ namespace Lumina
             ImGui::TextDisabled("(max %d)", GTerrainMaxLayers);
         }
 
-        ActiveLayer = Math::Clamp(ActiveLayer, 0, Math::Max(LayerCount - 1, 0));
+        Brush.ActiveLayer = Math::Clamp(Brush.ActiveLayer, 0, Math::Max(LayerCount - 1, 0));
 
         // Reorder also mutates LayerWeights, so weights follow the layer rather than swapping under it.
-        if (ActiveLayer >= 0 && ActiveLayer < LayerCount)
+        if (Brush.ActiveLayer >= 0 && Brush.ActiveLayer < LayerCount)
         {
-            STerrainLayer& L = Terrain.Layers[ActiveLayer];
+            STerrainLayer& L = Terrain.Layers[Brush.ActiveLayer];
 
-            ImGui::SetNextItemWidth(140.0f);
-            ImGuiX::InputText("Name", L.Name, ImGuiInputTextFlags_AutoSelectAll);
+            BrushUI::RowLabel("Name");
+            ImGuiX::InputText("##LayerName", L.Name, ImGuiInputTextFlags_AutoSelectAll);
             TrackLayerEditTransaction("Rename Terrain Layer");
 
-            ImGui::SetNextItemWidth(140.0f);
-            ImGui::SliderFloat("UV Scale", &L.UVScale, 1.0f / 1024.0f, 1.0f, "%.4f", ImGuiSliderFlags_Logarithmic);
+            BrushUI::Slider("UV scale", &L.UVScale, 1.0f / 1024.0f, 1.0f, "%.4f", kLayerSwatchColors[Brush.ActiveLayer % GTerrainMaxLayers], true);
             TrackLayerEditTransaction("Edit Terrain Layer UV Scale");
 
-            const bool bCanUp   = ActiveLayer > 0;
-            const bool bCanDown = ActiveLayer + 1 < LayerCount;
+            const bool bCanUp   = Brush.ActiveLayer > 0;
+            const bool bCanDown = Brush.ActiveLayer + 1 < LayerCount;
 
             ImGui::BeginDisabled(!bCanUp);
             if (ImGui::Button("Up"))
             {
-                RunModeTransaction("Move Terrain Layer Up", [&] { SwapLayers(Terrain, ActiveLayer, ActiveLayer - 1); });
-                --ActiveLayer;
+                RunModeTransaction("Move Terrain Layer Up", [&] { SwapLayers(Terrain, Brush.ActiveLayer, Brush.ActiveLayer - 1); });
+                --Brush.ActiveLayer;
             }
             ImGui::EndDisabled();
 
@@ -512,8 +520,8 @@ namespace Lumina
             ImGui::BeginDisabled(!bCanDown);
             if (ImGui::Button("Down"))
             {
-                RunModeTransaction("Move Terrain Layer Down", [&] { SwapLayers(Terrain, ActiveLayer, ActiveLayer + 1); });
-                ++ActiveLayer;
+                RunModeTransaction("Move Terrain Layer Down", [&] { SwapLayers(Terrain, Brush.ActiveLayer, Brush.ActiveLayer + 1); });
+                ++Brush.ActiveLayer;
             }
             ImGui::EndDisabled();
 
@@ -521,8 +529,8 @@ namespace Lumina
             ImGui::BeginDisabled(LayerCount <= 1);
             if (ImGui::Button("Remove"))
             {
-                RunModeTransaction("Remove Terrain Layer", [&] { RemoveLayer(Terrain, ActiveLayer); });
-                ActiveLayer = Math::Min(ActiveLayer, Terrain.Layers.Num() - 1);
+                RunModeTransaction("Remove Terrain Layer", [&] { RemoveLayer(Terrain, Brush.ActiveLayer); });
+                Brush.ActiveLayer = Math::Min(Brush.ActiveLayer, Terrain.Layers.Num() - 1);
             }
             ImGui::EndDisabled();
         }
@@ -580,7 +588,8 @@ namespace Lumina
 
     void FTerrainEditMode::Tick(CWorld* World, const SCameraComponent& Camera, bool bViewportHovered, ImVec2 ViewportScreenOrigin, ImVec2 ViewportSize)
     {
-        bHitValid = false;
+        bHitValid      = false;
+        ReadoutSeconds = Math::Max(ReadoutSeconds - ImGui::GetIO().DeltaTime, 0.0f);
 
         // The moment the button is released anywhere, commit the stroke's undo transaction.
         if (bTransactionOpen && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
@@ -614,14 +623,9 @@ namespace Lumina
         const STransformComponent& TerrainTransform = World->GetComponent<STransformComponent>(TerrainEntity);
         const FVector3 TerrainOrigin = TerrainTransform.GetWorldLocation();
 
-        // Wired to ImGui's repeat, so holding a bracket key still scrubs the size.
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket, true))
+        if (BrushUI::HandleBrushKeys(Brush.Radius, kMaxRadius, Brush.Strength))
         {
-            Radius = Math::Max(8.0f, Radius / 1.1f);
-        }
-        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket, true))
-        {
-            Radius = Math::Min(8192.0f, Radius * 1.1f);
+            ReadoutSeconds = 1.5f;
         }
 
         if (!bViewportHovered)
@@ -631,7 +635,6 @@ namespace Lumina
             return;
         }
 
-        // Mouse position relative to the viewport image.
         const ImVec2 MousePos = ImGui::GetMousePos();
         const ImVec2 Local    = ImVec2(MousePos.x - ViewportScreenOrigin.x, MousePos.y - ViewportScreenOrigin.y);
         if (Local.x < 0.0f || Local.y < 0.0f || Local.x > ViewportSize.x || Local.y > ViewportSize.y)
@@ -639,8 +642,10 @@ namespace Lumina
             return;
         }
 
+        FVisualizerView View;
+        View.SetFromCamera(Camera, ViewportScreenOrigin, ViewportSize);
         FVector3 RayOrigin, RayDir;
-        TerrainBuildRayFromScreen(Camera, Local, ViewportSize, RayOrigin, RayDir);
+        View.ScreenToRay(MousePos, RayOrigin, RayDir);
 
         FVector3 Hit;
         if (!FTerrainSculptSystem::Raycast(Terrain, TerrainOrigin, RayOrigin, RayDir, Hit))
@@ -657,12 +662,13 @@ namespace Lumina
         LastHit   = Hit;
         bHitValid = true;
 
+        const ImGuiIO& IO = ImGui::GetIO();
+
         // On click rather than down, so a held stroke cannot accidentally retarget itself.
-        if (Mode == ETerrainBrushMode::Flatten
-            && ImGui::GetIO().KeyCtrl
-            && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        if (Brush.Mode == ETerrainBrushMode::Flatten && IO.KeyCtrl && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
-            FlattenHeight = Hit.y - TerrainOrigin.y;
+            Brush.FlattenHeight = Hit.y - TerrainOrigin.y;
+            bFixedFlattenHeight = true;
             return;
         }
 
@@ -675,45 +681,32 @@ namespace Lumina
 
         // The host suppresses gizmo manipulation entirely here, so ImGuizmo state is stale.
 
-        // Wall-clock delta, since the simulated tick is zero in edit mode and every dab a no-op.
-        const float RealDelta = Math::Max(ImGui::GetIO().DeltaTime, 0.0f);
-
-        // Applied every frame while held, including a stationary cursor, which is how you dig in place.
+        if (Brush.Mode == ETerrainBrushMode::Flatten && !bFixedFlattenHeight && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            Brush.FlattenHeight = Hit.y - TerrainOrigin.y;
+        }
 
         // Ramp captures the start of the stroke once, then drags the end while held.
-        if (Mode == ETerrainBrushMode::Ramp)
+        if (Brush.Mode == ETerrainBrushMode::Ramp)
         {
             if (!bRampStarted)
             {
-                RampStart    = Hit;
-                bRampStarted = true;
+                Brush.RampStart = Hit;
+                bRampStarted    = true;
             }
-            RampEnd = Hit;
+            Brush.RampEnd = Hit;
         }
 
-        FTerrainSculptDab Dab;
-        Dab.Mode          = Mode;
+        // Wall-clock delta, since the simulated tick is zero in edit mode and every dab a no-op.
+        const float RealDelta = Math::Max(IO.DeltaTime, 0.0f);
+
+        // Applied every frame while held, including a stationary cursor, which is how you dig in place.
+        FTerrainSculptDab Dab = Brush;
+        Dab.Mode          = IsMomentarySmooth() ? ETerrainBrushMode::Smooth : Brush.Mode;
         Dab.WorldPosition = Hit;
         Dab.TerrainOrigin = TerrainOrigin;
-        Dab.Radius        = Radius;
-        Dab.Strength      = Strength;
-        Dab.Falloff       = Falloff;
-        Dab.FlattenHeight = FlattenHeight;
         Dab.DeltaSeconds  = RealDelta;
-        Dab.ActiveLayer   = ActiveLayer;
-
-        // Shift was the old modifier but is now reserved for constraint and slow-drag shortcuts.
-        const bool bInvertNow = bInvertSculpt != ImGui::GetIO().KeyAlt;
-        Dab.SculptSign = bInvertNow ? int8(-1) : int8(1);
-
-        Dab.NoiseFrequency = NoiseFrequency;
-        Dab.NoiseOctaves   = NoiseOctaves;
-        Dab.RampStart      = RampStart;
-        Dab.RampEnd        = RampEnd;
-        Dab.RampHalfWidth  = Math::Max(RampHalfWidth, 1.0f);
-        Dab.RampUseExplicitHeights = bRampExplicitHeights;
-        Dab.RampStartHeight        = RampStartHeight;
-        Dab.RampEndHeight          = RampEndHeight;
+        Dab.SculptSign    = (bInvertSculpt != IO.KeyAlt) ? int8(-1) : int8(1);
 
         // Opened before the first edit so the snapshot captures the pre-stroke heightmap.
         if (!bTransactionOpen && Context)
@@ -723,7 +716,7 @@ namespace Lumina
         }
 
         // Ramp re-applies the whole line each frame, while footprint brushes interpolate dabs along travel.
-        if (Mode == ETerrainBrushMode::Ramp || !bHasStrokeHit)
+        if (Dab.Mode == ETerrainBrushMode::Ramp || !bHasStrokeHit)
         {
             FTerrainSculptSystem::ApplyDab(Terrain, Dab);
         }
@@ -731,7 +724,7 @@ namespace Lumina
         {
             const FVector3 Delta = Hit - LastStrokeHit;
             const float Dist    = Math::Length(FVector2(Delta.x, Delta.z));
-            const float Spacing = Math::Max(Radius * 0.25f, 1.0f);
+            const float Spacing = Math::Max(Brush.Radius * 0.25f, 1.0f);
             const int   Steps   = Math::Clamp((int)std::ceil(Dist / Spacing), 1, 32);
             const float StepDt  = RealDelta / float(Steps);
             for (int i = 1; i <= Steps; ++i)
@@ -746,6 +739,12 @@ namespace Lumina
         bHasStrokeHit = true;
     }
 
+    bool FTerrainEditMode::IsMomentarySmooth() const
+    {
+        // Paint and Ramp keep Shift, since smoothing in their place would surprise rather than help.
+        return ImGui::GetIO().KeyShift && Brush.Mode != ETerrainBrushMode::Paint && Brush.Mode != ETerrainBrushMode::Ramp;
+    }
+
     void FTerrainEditMode::DrawOverlay(CWorld* World, ImVec2 ViewportScreenOrigin, ImVec2 ViewportSize, const SCameraComponent& Camera)
     {
         if (!bHitValid || !World)
@@ -753,23 +752,11 @@ namespace Lumina
             return;
         }
 
-        // A world-space disk projects to an ellipse at oblique angles, so ring samples project individually.
-        const FMatrix4 ViewProj = Camera.GetProjectionMatrix() * Camera.GetViewMatrix();
-        auto ProjectToScreen = [&](const FVector3& W, ImVec2& Out) -> bool
-        {
-            FVector4 Clip = ViewProj * FVector4(W, 1.0f);
-            if (Clip.w <= 0.0f)
-            {
-                return false;
-            }
-            FVector3 Ndc = FVector3(Clip) / Clip.w;
-            Out.x = ViewportScreenOrigin.x + (Ndc.x * 0.5f + 0.5f) * ViewportSize.x;
-            Out.y = ViewportScreenOrigin.y + (Ndc.y * 0.5f + 0.5f) * ViewportSize.y;
-            return true;
-        };
+        FVisualizerView View;
+        View.SetFromCamera(Camera, ViewportScreenOrigin, ViewportSize);
 
         ImVec2 Center;
-        if (!ProjectToScreen(LastHit, Center))
+        if (!View.WorldToScreen(LastHit, Center))
         {
             return;
         }
@@ -779,60 +766,81 @@ namespace Lumina
         const ECS::FEntity TerrainEntity = FindPreferredTerrain(World);
         const STerrainComponent* Terrain = TerrainEntity != ECS::NullEntity ? World->TryGetComponent<STerrainComponent>(TerrainEntity) : nullptr;
         const FVector3 TerrainOrigin     = Terrain != nullptr ? World->GetComponent<STransformComponent>(TerrainEntity).GetWorldLocation() : FVector3(0.0f);
-
-        auto AddWorldRing = [&](float WorldRadius, ImU32 Color, float Thickness)
+        auto OnGround = [&](FVector3& P)
         {
-            constexpr int Segments = 64;
-            ImVec2 Points[Segments];
-            int Count = 0;
-            for (int i = 0; i < Segments; ++i)
+            if (Terrain != nullptr)
             {
-                const float A = (static_cast<float>(i) / static_cast<float>(Segments)) * Math::TwoPi<float>();
-                FVector3 P = LastHit + FVector3(std::cos(A) * WorldRadius, 0.0f, std::sin(A) * WorldRadius);
-                // Laid on the ground, since a flat ring at the hit height sinks into slopes and floats over hollows.
-                if (Terrain != nullptr)
-                {
-                    FTerrainSculptSystem::SampleHeight(*Terrain, TerrainOrigin, P.x, P.z, P.y);
-                }
-                ImVec2 S;
-                if (ProjectToScreen(P, S))
-                {
-                    Points[Count++] = S;
-                }
-            }
-            if (Count >= 2)
-            {
-                Draw->AddPolyline(Points, Count, Color, Thickness, ImDrawFlags_Closed);
+                FTerrainSculptSystem::SampleHeight(*Terrain, TerrainOrigin, P.x, P.z, P.y);
             }
         };
 
-        AddWorldRing(Radius, IM_COL32(255, 220,  80, 220), 2.0f);
-        AddWorldRing(Radius * Math::Max(0.0f, 1.0f - Falloff * 0.5f),  IM_COL32(255, 220,  80, 120), 1.0f);
+        const ETerrainBrushMode StrokeMode = IsMomentarySmooth() ? ETerrainBrushMode::Smooth : Brush.Mode;
+        const bool bInverted = bInvertSculpt != ImGui::GetIO().KeyAlt;
+        ImU32 Color = GetTerrainTool(StrokeMode).Color;
+        if (bInverted && (StrokeMode == ETerrainBrushMode::Sculpt || StrokeMode == ETerrainBrushMode::Noise))
+        {
+            Color = kLowerColor;
+        }
+        else if (StrokeMode == ETerrainBrushMode::Paint)
+        {
+            Color = kLayerSwatchColors[Math::Clamp(Brush.ActiveLayer, 0, int32(GTerrainMaxLayers) - 1)];
+        }
+
+        BrushUI::DrawRing(Draw, View, LastHit, Brush.Radius, BrushUI::ScaleColor(Color, 1.0f, 0.9f), 2.0f, OnGround);
+        // The core, inside which the brush works at full strength.
+        if (Brush.Falloff > 0.02f)
+        {
+            BrushUI::DrawRing(Draw, View, LastHit, Brush.Radius * (1.0f - Brush.Falloff), BrushUI::ScaleColor(Color, 1.0f, 0.45f), 1.0f, OnGround);
+        }
+        if (StrokeMode == ETerrainBrushMode::Flatten)
+        {
+            const float TargetY = TerrainOrigin.y + Brush.FlattenHeight;
+            BrushUI::DrawRing(Draw, View, LastHit, Brush.Radius, BrushUI::ScaleColor(Color, 1.0f, 0.6f), 1.0f, [TargetY](FVector3& P) { P.y = TargetY; });
+        }
         Draw->AddCircleFilled(Center, 3.0f, IM_COL32(255, 255, 255, 220));
 
+        // What the brush will do and how strongly, shown when a modifier changes it or a shortcut just did.
+        char Readout[96] = {};
+        if (ReadoutSeconds > 0.0f)
+        {
+            ImFormatString(Readout, sizeof(Readout), "%.0f m  %.0f%%", Brush.Radius, Brush.Strength * 100.0f);
+        }
+        else if (StrokeMode != Brush.Mode)
+        {
+            ImFormatString(Readout, sizeof(Readout), "%s", GetTerrainTool(StrokeMode).Label);
+        }
+        else if (bInverted && (StrokeMode == ETerrainBrushMode::Sculpt || StrokeMode == ETerrainBrushMode::Noise || StrokeMode == ETerrainBrushMode::Paint))
+        {
+            ImFormatString(Readout, sizeof(Readout), "%s", StrokeMode == ETerrainBrushMode::Paint ? "Erase" : "Lower");
+        }
+        if (Readout[0] != '\0')
+        {
+            BrushUI::CursorLabel(Draw, Center, Readout, Color);
+        }
+
         // Anchor, live cursor and a thin perpendicular pair showing the half-width corridor.
-        if (Mode == ETerrainBrushMode::Ramp && bRampStarted)
+        if (Brush.Mode == ETerrainBrushMode::Ramp && bRampStarted)
         {
             ImVec2 Anchor;
-            if (ProjectToScreen(RampStart, Anchor))
+            if (View.WorldToScreen(Brush.RampStart, Anchor))
             {
                 Draw->AddCircleFilled(Anchor, 4.0f, IM_COL32( 80, 220, 255, 220));
                 Draw->AddLine(Anchor, Center, IM_COL32( 80, 220, 255, 220), 2.0f);
             }
 
-            const FVector2 AB2 = FVector2(RampEnd.x - RampStart.x, RampEnd.z - RampStart.z);
+            const FVector2 AB2 = FVector2(Brush.RampEnd.x - Brush.RampStart.x, Brush.RampEnd.z - Brush.RampStart.z);
             const float Len = Math::Length(AB2);
             if (Len > 1e-3f)
             {
                 const FVector2 N = FVector2(-AB2.y, AB2.x) / Len;
-                const FVector3 N3 = FVector3(N.x, 0.0f, N.y) * RampHalfWidth;
+                const FVector3 N3 = FVector3(N.x, 0.0f, N.y) * Brush.RampHalfWidth;
 
                 ImVec2 P0, P1;
-                if (ProjectToScreen(RampStart + N3, P0) && ProjectToScreen(RampEnd + N3, P1))
+                if (View.WorldToScreen(Brush.RampStart + N3, P0) && View.WorldToScreen(Brush.RampEnd + N3, P1))
                 {
                     Draw->AddLine(P0, P1, IM_COL32( 80, 220, 255, 160), 1.0f);
                 }
-                if (ProjectToScreen(RampStart - N3, P0) && ProjectToScreen(RampEnd - N3, P1))
+                if (View.WorldToScreen(Brush.RampStart - N3, P0) && View.WorldToScreen(Brush.RampEnd - N3, P1))
                 {
                     Draw->AddLine(P0, P1, IM_COL32( 80, 220, 255, 160), 1.0f);
                 }

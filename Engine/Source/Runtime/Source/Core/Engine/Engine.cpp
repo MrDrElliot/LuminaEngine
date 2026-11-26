@@ -1402,6 +1402,8 @@ namespace Lumina
         PendingTravelPath.Reset();
         CWorld* const FromWorld = PendingTravelWorld.Get();
         PendingTravelWorld.Reset();
+        const bool bStartGame = bPendingStartGame;
+        bPendingStartGame = false;
 
         if (RawPath.IsEmpty())
         {
@@ -1426,6 +1428,37 @@ namespace Lumina
 
         const FFixedString MapName = VFS::ResolveToVirtualPath(RawPath);
 
+        FWorldContext* OldContext = FromWorld != nullptr ? Global::GWorldManager->FindContext(FromWorld) : nullptr;
+
+        // The edited world is replaced only through the world editor, which asks to save it first.
+        if (OldContext != nullptr && OldContext->Type == EWorldType::Editor)
+        {
+            OldContext = nullptr;
+        }
+
+        // Prefer a PIE Game context so Travel replaces the running world, not the editor proxy world.
+        bool bEditorHosted = false;
+        if (OldContext == nullptr)
+        {
+            for (const TUniquePtr<FWorldContext>& Ctx : Global::GWorldManager->GetContexts())
+            {
+                bEditorHosted |= Ctx->Type == EWorldType::Editor;
+                if (Ctx->Type == EWorldType::Game && (OldContext == nullptr || !OldContext->bPIE))
+                {
+                    OldContext = Ctx.get();
+                }
+            }
+        }
+
+        // With nothing playing, a travel in the editor would boot a second live world beside the one being edited.
+        if (OldContext == nullptr && bEditorHosted && !bStartGame)
+        {
+            LOG_ERROR("FEngine::Travel: no game is running to travel to '{}'. Press Play first, or open the world in the world editor to edit it.", *MapName);
+            bPendingHostOverride  = false;
+            bPendingHostDedicated = false;
+            return;
+        }
+
         // Travel fans the destination world's whole dependency closure across workers.
         CWorld* WorldAsset = LoadObjectGraph<CWorld>(FStringView(*MapName, MapName.Len()));
         if (WorldAsset == nullptr)
@@ -1434,24 +1467,6 @@ namespace Lumina
             return;
         }
 
-        FWorldContext* OldContext = FromWorld != nullptr ? Global::GWorldManager->FindContext(FromWorld) : nullptr;
-
-        // Prefer a PIE Game context so Travel replaces the running world, not the editor proxy world.
-        if (OldContext == nullptr)
-        {
-            for (const TUniquePtr<FWorldContext>& Ctx : Global::GWorldManager->GetContexts())
-            {
-                if (Ctx->Type == EWorldType::Game)
-                {
-                    OldContext = Ctx.get();
-                    if (Ctx->bPIE)
-                    {
-                        break;
-                    }
-                }
-            }
-        }
-        
         if (OldContext == nullptr)
         {
             CWorld* ColdWorld = CWorld::DuplicateWorld(WorldAsset);
@@ -1638,6 +1653,7 @@ namespace Lumina
         bPendingHostDedicated = URL.bDedicated;
         PendingHostPort       = URL.Port;
         Travel(URL.Map, FromWorld);
+        bPendingStartGame     = URL.bStartGame;
     }
 
     TUniquePtr<INetworkTransport> FEngine::TakeCarriedConnection(FConnectionHandle& OutConnection, uint32& OutLocalPeerId)

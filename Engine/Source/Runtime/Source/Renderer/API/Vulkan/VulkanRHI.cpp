@@ -3317,8 +3317,9 @@ namespace Lumina::RHI
         // The compute rasterizer's depth and ID pairs, so a device without it keeps every meshlet on the hardware raster.
         Features12.shaderBufferInt64Atomics                     = Supported12.shaderBufferInt64Atomics;
         GDevice->bBufferInt64Atomics                            = Supported12.shaderBufferInt64Atomics == VK_TRUE;
-        // Heap indices vary per lane in batched draws, and AMD otherwise samples the first lane's descriptor for the wave.
+        // Heap indices vary per lane in batched draws, and AMD otherwise uses the first lane's descriptor for the wave.
         Features12.shaderSampledImageArrayNonUniformIndexing    = Supported12.shaderSampledImageArrayNonUniformIndexing;
+        Features12.shaderStorageImageArrayNonUniformIndexing    = Supported12.shaderStorageImageArrayNonUniformIndexing;
 
         VkPhysicalDeviceVulkan13Features Features13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
         EnableRequiredFeatures(Features13, kRequiredFeatures13);

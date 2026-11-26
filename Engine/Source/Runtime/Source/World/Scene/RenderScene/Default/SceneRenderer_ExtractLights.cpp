@@ -1,5 +1,6 @@
 ﻿#include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
+#include "World/Scene/RenderScene/SkyAtmosphere.h"
 #include "World/Scene/RenderScene/SunShadowMath.h"
 
 #include <bit>
@@ -69,8 +70,9 @@ namespace Lumina
         #endif
 
         const SDirectionalLightComponent* Sun = SelectActiveSun(DirectionalView, Transforms);
+        const FSkyLightInputs SkyInputs = GatherSkyLightInputs(Registry, Sun);
 
-        BuildSceneCullContext(Sun);
+        BuildSceneCullContext(Sun, SkyInputs);
 
         // Needs the captures and the baking probe, both already extracted.
         BuildLightRelevanceVolumes();
@@ -87,7 +89,7 @@ namespace Lumina
         // Fixed chunk of dense slots per batch keeps light order stable; ten passes read Lights[0] as the sun, so a local light must never win it.
         const uint32 FirstLocalLight = Sun != nullptr ? 1u : 0u;
         Jobs::Spawn(Jobs::EJobPriority::High, ExtractLatch,
-            [this, PointView, SpotView, AreaView, Transforms, Sun, NumChunks, FirstLocalLight]() -> Jobs::TTask<void>
+            [this, PointView, SpotView, AreaView, Transforms, Sun, SkyInputs, NumChunks, FirstLocalLight]() -> Jobs::TTask<void>
         {
             co_await Jobs::Fork(Jobs::ForEach(NumChunks, [this, PointView, SpotView, AreaView, Transforms](const Jobs::FRange& Range)
             {
@@ -100,10 +102,10 @@ namespace Lumina
 
             if (Sun != nullptr)
             {
-                co_await Jobs::Call([this, Sun]
+                co_await Jobs::Call([this, Sun, SkyInputs]
                 {
                     LUMINA_PROFILE_SECTION("Process Directional Light");
-                    ProcessDirectionalLight(*Sun);
+                    ProcessDirectionalLight(*Sun, SkyInputs);
                 });
             }
 
@@ -337,7 +339,43 @@ namespace Lumina
         return false;
     }
 
-    void FDefaultSceneRenderer::BuildSceneCullContext(const SDirectionalLightComponent* Sun)
+    FDefaultSceneRenderer::FSkyLightInputs FDefaultSceneRenderer::GatherSkyLightInputs(ECS::FRegistry& Registry, const SDirectionalLightComponent* Sun)
+    {
+        FSkyLightInputs Inputs;
+        FFrameData& Frame = *ExtractFrame;
+        Frame.Volumetrics.MoonlitSkyRatio = 0.0f;
+        if (Sun == nullptr)
+        {
+            return Inputs;
+        }
+
+        // The last one, as ExtractEnvironment takes it.
+        const SEnvironmentComponent* Env = nullptr;
+        Registry.View<ECS::Read<SEnvironmentComponent>, ECS::Without<SDisabledTag>>().ForEach([&Env](const SEnvironmentComponent& Candidate)
+        {
+            Env = &Candidate;
+        });
+
+        const FVector3 SunDirection = Math::Normalize(Sun->Direction);
+        Inputs.MoonDirection = -SunDirection;
+        Inputs.Altitude      = Frame.ViewVolume.GetViewPosition().y;
+        if (Env != nullptr)
+        {
+            Inputs.MoonDirection       = SkyAtmosphere::MoonDirection(*Env, SunDirection);
+            Inputs.MoonPhaseBrightness = SkyAtmosphere::MoonPhaseBrightness(*Env);
+            Inputs.Aerosol             = Math::Max(Env->AerosolDensity, 0.0f);
+            Inputs.bThroughAtmosphere  = Env->bSunlightThroughAtmosphere && Env->SkyMode == ESkyMode::Dynamic;
+        }
+
+        // Without moonlight on the ground the sky stays unlit too, so the two never disagree.
+        if (Sun->bMoonlight && Sun->Intensity > 0.0f)
+        {
+            Frame.Volumetrics.MoonlitSkyRatio = Sun->MoonIntensity / Sun->Intensity * Inputs.MoonPhaseBrightness;
+        }
+        return Inputs;
+    }
+
+    void FDefaultSceneRenderer::BuildSceneCullContext(const SDirectionalLightComponent* Sun, const FSkyLightInputs& Sky)
     {
         LUMINA_PROFILE_SCOPE();
 
@@ -369,7 +407,7 @@ namespace Lumina
         if (Sun != nullptr)
         {
             constexpr float ShadowSweepDistance = 2000.0f;
-            SceneCullContext.SunDirection     = Sun->GetLightingDirection();
+            SceneCullContext.SunDirection     = Sun->GetLightingDirection(Sky.MoonDirection);
             SceneCullContext.bHasSun          = true;
             SceneCullContext.SunShadowFrustum = SceneCullContext.Frustum.Extruded(SceneCullContext.SunDirection, ShadowSweepDistance);
         }
@@ -669,7 +707,7 @@ namespace Lumina
         SunShadowCache.SetEnabled(DirectionalLight.bCacheStaticShadows && ShadowData != nullptr);
     }
 
-    void FDefaultSceneRenderer::ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight)
+    void FDefaultSceneRenderer::ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight, const FSkyLightInputs& Sky)
     {
         using namespace SceneRendererExtractLightsInternal;
 
@@ -690,16 +728,52 @@ namespace Lumina
         {
             LightColor *= ColorTemperatureToRGB(DirectionalLight.Temperature);
         }
+
+        // A 4 km cloud still sees the sun about 2 degrees after ground sunset, so the moon takes the clouds only once none can.
+        constexpr float CloudSunCutoffY = -0.08f;
+        const FVector3 SunDirection = Math::Normalize(DirectionalLight.Direction);
+        Frame.Lighting.SkyMoonDirection = Math::Normalize(Sky.MoonDirection);
+        if (!DirectionalLight.bMoonlight || SunDirection.y > CloudSunCutoffY)
+        {
+            Frame.Lighting.CloudLightDirection = SunDirection;
+            Frame.Lighting.CloudLightColor     = LightColor * DirectionalLight.Intensity;
+        }
+        else
+        {
+            Frame.Lighting.CloudLightDirection = Math::Normalize(Sky.MoonDirection);
+            Frame.Lighting.CloudLightColor     = DirectionalLight.MoonColor * (DirectionalLight.MoonIntensity * Sky.MoonPhaseBrightness);
+        }
+
         if (DirectionalLight.IsMoonLit())
         {
             LightColor = DirectionalLight.MoonColor;
         }
 
+        const FVector3 LightingDirection = DirectionalLight.GetLightingDirection(Sky.MoonDirection);
+        float LightIntensity = DirectionalLight.GetLightingIntensity(Sky.MoonDirection, Sky.MoonPhaseBrightness);
+        if (Sky.bThroughAtmosphere)
+        {
+            // Full hue but the square root of the dimming, since under a fixed exposure the true falloff blacks out a golden hour scene.
+            const FVector3 Tint      = SkyAtmosphere::SunlightTint(LightingDirection.y, Sky.Altitude, Sky.Aerosol);
+            const float    MaxTint   = Math::Max(Tint.x, Math::Max(Tint.y, Tint.z));
+            const float    Luminance = Tint.x * 0.2126f + Tint.y * 0.7152f + Tint.z * 0.0722f;
+            if (MaxTint > 1e-6f && Luminance > 1e-8f)
+            {
+                // The packed color is 8 bits a channel, so the brightness rides on the intensity and only the hue on the color.
+                LightColor     *= Tint / MaxTint;
+                LightIntensity *= MaxTint / std::sqrt(Luminance);
+            }
+            else
+            {
+                LightIntensity = 0.0f;
+            }
+        }
+
         FLight Light            = {};
         Light.Flags             = ELightFlags::Directional;
         Light.Color             = PackColor(FVector4(LightColor, 1.0));
-        Light.Intensity         = DirectionalLight.GetLightingIntensity();
-        Light.Direction         = DirectionalLight.GetLightingDirection();
+        Light.Intensity         = LightIntensity;
+        Light.Direction         = LightingDirection;
         Light.ShadowDataIndex   = Constants::kIndexNone;
         LightData.SunDirection  = Light.Direction;
         LightData.SkySunDirection = Math::Normalize(DirectionalLight.Direction);

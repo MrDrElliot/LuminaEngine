@@ -62,15 +62,21 @@ static const float2x2 kWeatherRotation = float2x2(0.8572, -0.5150, 0.5150, 0.857
 // How far the weather layer drags the base shape, as a fraction of one shape tile.
 static const float kWeatherWarp = 0.3;
 
-// The most the weather layer scales Coverage and Billow by anywhere.
-static const float kWeatherCoverageMax = 1.75;
+// The most the regional and the broad weather reads scale Coverage by together, and Billow by anywhere.
+static const float kWeatherCoverageMax = 1.75 * 1.45;
 static const float kWeatherBillowMax   = 1.35;
+
+// A second read of the same layout this many times broader opens clear gaps and thick banks tens of kilometers across.
+static const float  kBroadWeatherScale  = 0.29;
+static const float2 kBroadWeatherOffset = float2(0.37, 0.71);
 
 struct FCloudWeather
 {
     float  Coverage;
     float  Billow;
     float2 Warp;
+    // The share of the layer this region's clouds rise through, so towers stand among flat puffs instead of every top matching.
+    float  Top;
 };
 
 // Plays the part of Unreal's cloud layout map and Nubis' weather map, read from the shared noise volume instead of a texture.
@@ -81,13 +87,18 @@ FCloudWeather Cloud_SampleWeather(FCloudMedium M, float3 WorldPos)
     float4 Layout = M.Weather.SampleLevel(Samplers::LinearWrap, P, 0.0);
 
     float Regional = smoothstep(0.3, 0.8, Layout.g * 0.6 + Layout.b * 0.4);
+    float4 Broad   = M.Weather.SampleLevel(Samplers::LinearWrap, P * kBroadWeatherScale + kBroadWeatherOffset, 0.0);
 
     FCloudWeather Weather;
-    Weather.Coverage = saturate(M.Coverage * lerp(0.25, kWeatherCoverageMax, Regional));
+    Weather.Coverage = saturate(M.Coverage * lerp(0.25, 1.75, Regional) * lerp(0.55, 1.45, smoothstep(0.25, 0.75, Broad.g)));
     Weather.Billow   = saturate(M.Billow * lerp(0.55, kWeatherBillowMax, Layout.a));
     Weather.Warp     = (float2(Layout.r, Layout.a) - 0.5) * (M.ShapeScale * kWeatherWarp);
+    Weather.Top      = lerp(0.6, 1.0, smoothstep(0.2, 0.8, Layout.b * 0.5 + Broad.a * 0.5));
     return Weather;
 }
+
+// Domain warp of the erosion by the shape's own Worley octaves, in detail tiles, so billows curl instead of tiling in rows.
+static const float kDetailWarp = 0.18;
 
 // Envelope is the density before the detail erodes it, which says whether the point lies inside a cloud at all.
 float Cloud_SampleDensityEnvelopeM(FCloudMedium M, float3 WorldPos, float HeightFrac, bool bCheap, out float Envelope)
@@ -119,6 +130,7 @@ float Cloud_SampleDensityEnvelopeM(FCloudMedium M, float3 WorldPos, float Height
     float Base    = saturate(Cloud_Remap(Shape.r, LowFreq - 1.0, 1.0, 0.0, 1.0));
 
     Base *= lerp(Profiles.x, Profiles.y, Weather.Billow);
+    Base *= saturate(Cloud_Remap(HeightFrac, Weather.Top * 0.7, Weather.Top, 1.0, 0.0));
 
     // Coverage as the remap floor erodes inward, so puffs shrink rather than uniformly fading out.
     float Floor   = lerp(kCoverageClearFloor, kCoverageOvercastFloor, Weather.Coverage);
@@ -130,7 +142,8 @@ float Cloud_SampleDensityEnvelopeM(FCloudMedium M, float3 WorldPos, float Height
     }
 
     float3 DetailUVW = (WorldPos + float3(M.DetailWindOffset.x, 0.0, M.DetailWindOffset.y))
-                     / max(M.DetailScale, 1.0);
+                     / max(M.DetailScale, 1.0)
+                     + (Shape.gba - 0.5) * kDetailWarp;
 
     float4 Detail    = M.Noise.SampleLevel(Samplers::LinearWrap, DetailUVW, 0.0);
     float  DetailFBM = Detail.g * 0.625 + Detail.b * 0.25 + Detail.a * 0.125;

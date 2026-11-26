@@ -8,7 +8,7 @@
 #include "Core/Math/Math.h"
 
 #include "WorldEditorMode.h"
-#include "World/Entity/Components/TerrainBrushComponent.h"
+#include "World/Subsystems/TerrainSculptSystem.h"
 
 namespace Lumina
 {
@@ -24,7 +24,7 @@ namespace Lumina
         const char* GetIcon() const override { return LE_ICON_TERRAIN; }
         const char* GetTooltip() const override
         {
-            return "Sculpt, smooth, ramp, noise, and paint layers on the active terrain.";
+            return "Sculpt, smooth, flatten, ramp, erode, terrace and paint layers on the active terrain.";
         }
 
         void OnEnter(CWorld* World) override;
@@ -55,31 +55,20 @@ namespace Lumina
     private:
         bool  bShowSettings = true;
 
-        ETerrainBrushMode Mode = ETerrainBrushMode::Sculpt;
-        float Radius          = 512.0f;
-        // World units per second of height change at the brush center.
-        float Strength        = 128.0f;
-        float Falloff         = 0.5f;
-        float FlattenHeight   = 0.0f;
-        int32 ActiveLayer     = 0;
+        // Every tool's settings, which each tick stamps with the cursor and frame time to make the dab.
+        FTerrainSculptDab Brush;
 
-        // Holding LAlt flips the sculpt direction during a stroke, which leaves Shift free for other shortcuts.
-        bool  bInvertSculpt   = false;
+        // Holding Alt flips this for the stroke, and holding Shift swaps any sculpt tool for Smooth.
+        bool  bInvertSculpt = false;
 
-        // Noise brush controls.
-        float NoiseFrequency  = 1.0f / 512.0f;
-        int32 NoiseOctaves    = 4;
+        // Flatten otherwise aims at the height under the cursor where each stroke starts.
+        bool  bFixedFlattenHeight = false;
 
-        // Ramp brush state, capturing Start on mouse down and updating End each frame until release.
-        bool      bRampStarted   = false;
-        FVector3 RampStart      = FVector3(0.0f);
-        FVector3 RampEnd        = FVector3(0.0f);
-        float     RampHalfWidth  = 256.0f;
+        // Ramp captures RampStart on mouse down and drags RampEnd until release.
+        bool      bRampStarted = false;
 
-        // Optional fixed ramp endpoint heights instead of sampling the terrain.
-        bool      bRampExplicitHeights = false;
-        float     RampStartHeight      = 0.0f;
-        float     RampEndHeight        = 0.0f;
+        // Seconds left showing the size and strength beside the cursor after a shortcut changed them.
+        float     ReadoutSeconds = 0.0f;
 
         FVector3 LastHit     = FVector3(0.0f);
         bool      bHitValid   = false;
@@ -100,6 +89,9 @@ namespace Lumina
         void TrackLayerEditTransaction(const char* Name);
         void CloseLayerEditTransaction();
 
+        // Shift held over a sculpt tool, which then smooths for as long as it is down.
+        bool IsMomentarySmooth() const;
+        void DrawToolSettings(CWorld* World);
         void DrawLayerPanel(STerrainComponent& Terrain);
         static void EnsureLayerWeightStorage(STerrainComponent& Terrain);
         static void SwapLayers(STerrainComponent& Terrain, int32 A, int32 B);

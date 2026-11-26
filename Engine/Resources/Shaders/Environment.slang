@@ -2,14 +2,19 @@
 #include "Includes/SceneGlobals.slang"
 #include "Includes/Sky.slang"
 
-// Non-solid modes read SkyCube, which SkyCubeCapturePass fills once per frame.
+// The dynamic sky reads the sky view LUT per pixel, and the gradient reads the cube SkyCubeCapturePass fills.
 
+// Matches FEnvPushConstants in SceneRenderer_Environment.cpp.
 struct FEnvPushConstants
 {
     Ptr<FEnvironmentParams> Env;
     FTextureCube SkyCube;
     FTexture2D   Equirect;
+    float3       SunDirection;
     uint         EquirectWidth;   // equirect base width in texels; drives the anti-aliasing LOD
+    FTexture2D   Transmittance;
+    FTexture2D   SkyView;
+    uint         _Pad0;
     uint         _Pad1;
 };
 FEnvPushConstants* Pass() { return GetPassArgs<FEnvPushConstants>(); }
@@ -35,59 +40,55 @@ FragmentOutput FragmentMain(FragmentInput Input)
     }
     else
     {
-        // HDRI reads its source equirect directly, since the cube is too coarse full-screen.
         float3 RayDir = GetCameraWorldRayDir(Input.UV);
+
+        // RayDir has no seam, so its derivatives give a clean angular footprint, and SkyMode is uniform so they are safe.
+        float3 dRdx       = ddx(RayDir);
+        float3 dRdy       = ddy(RayDir);
+        float  PixelAngle = max(length(dRdx), length(dRdy));
+
         if (SkyMode == SKY_MODE_HDRI)
         {
             // Shared with EquirectToCubemap.slang so the visible sky lines up with the cube-derived IBL under any yaw.
             float2 UV = Sky_EquirectUV(RayDir, uEnvironment.HDRIParams.y, uEnvironment.HDRIParams.z);
-
-            // RayDir has no equirect seam, so its derivatives give a clean angular footprint; SkyMode is uniform so they are safe.
-            float3 dRdx = ddx(RayDir);
-            float3 dRdy = ddy(RayDir);
-            float pixelAngle      = max(length(dRdx), length(dRdy));   // radians per pixel, chord approximates angle
             float texelsPerRadian = float(Pass().EquirectWidth) * (1.0 / TWO_PI);
-            float lod             = log2(max(pixelAngle * texelsPerRadian, 1.0));
+            float lod             = log2(max(PixelAngle * texelsPerRadian, 1.0));
             // An Inf texel from half-float overflow would blow out bloom and flash the screen white.
             Color = SanitizeRadiance(Pass().Equirect.SampleLevel(Samplers::LinearWrap, UV, lod).rgb);
             Color *= max(uEnvironment.HDRIParams.x, 0.0);
         }
-        else
+        else if (SkyMode == SKY_MODE_DYNAMIC)
         {
-            Color = Pass().SkyCube.SampleLevel(Samplers::LinearClamp, RayDir, 0.0).rgb;
-        }
+            float3 SunDir      = normalize(Pass().SunDirection);
+            float3 MoonDir     = Sky_MoonDirection(uEnvironment, SunDir);
+            float  Radius      = Sky_ViewRadius(GetCameraPosition().y);
+            float  Exposure    = max(uEnvironment.Misc.z, 1e-3);
+            FTexture2D TransmittanceLut = Pass().Transmittance;
 
-        // Sun, moon and stars are pixel-scale and blocky in a 256 cube, so they run per pixel.
-        if (SkyMode == SKY_MODE_DYNAMIC)
-        {
-            float3 SunDir      = GetSkySunDirection();
-            float  SunHeight   = SunDir.y;
-            float  NightFactor = smoothstep(0.05, -0.15, SunHeight);
-            float  UpMask      = smoothstep(-0.05, 0.1, RayDir.y);
+            Color = Sky_Dynamic(uEnvironment, Pass().SkyView, TransmittanceLut, Radius, SunDir, MoonDir, RayDir);
 
-            float3 Overlay = float3(0.0);
+            // Sun, moon and stars are pixel-scale and would smear in any LUT, so they run per pixel.
+            float3 ViewTransmittance = Sky_SampleTransmittance(TransmittanceLut, Radius, RayDir.y);
+            float3 Overlay = Sky_RenderSun(RayDir, SunDir, uEnvironment.SunTint.rgb * uEnvironment.SunTint.w, uEnvironment.Misc.y,
+                                           ViewTransmittance, PixelAngle);
 
-            // A single dot product gates the full Sky_RenderSun math.
-            float DiscScale = uEnvironment.Misc.y;
-            float DiscAngle = kSunBaseAngle * max(DiscScale, 0.0);
-            if (dot(RayDir, SunDir) > cos(DiscAngle * 1.8))
-            {
-                float3 SunColor = uEnvironment.SunTint.rgb * uEnvironment.SunTint.w;
-                Overlay += Sky_RenderSun(RayDir, SunDir, SunColor, DiscScale);
-            }
-
-            // Moon + stars only matter at night; stars need UpMask to stay out of the lit ground band.
+            float NightFactor = Sky_NightFactor(SunDir);
+            Overlay += Sky_RenderMoon(RayDir, SunDir, MoonDir, uEnvironment, ViewTransmittance, PixelAngle, NightFactor);
             if (NightFactor > 0.0)
             {
-                Overlay += Sky_RenderMoon(RayDir, SunDir, uEnvironment, NightFactor);
+                // Stars stay out of the ground band below the horizon.
+                float UpMask = smoothstep(-0.05, 0.1, RayDir.y);
                 if (UpMask > 0.0)
                 {
-                    Overlay += Sky_Stars(RayDir, uEnvironment, GetTime(), NightFactor) * UpMask;
+                    Overlay += Sky_Stars(RayDir, uEnvironment, GetTime(), NightFactor, ViewTransmittance) * UpMask;
                 }
             }
 
-            // Same exposure the cube was baked with, so overlays sit consistently against it.
-            Color += Overlay * max(uEnvironment.Misc.z, 1e-3);
+            Color += Overlay * Exposure;
+        }
+        else
+        {
+            Color = Pass().SkyCube.SampleLevel(Samplers::LinearClamp, RayDir, 0.0).rgb;
         }
     }
 

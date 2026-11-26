@@ -98,6 +98,14 @@ namespace Lumina
         PROPERTY(Editable, Category = "Sky|Dynamic", ClampMin = -0.99f, ClampMax = 0.99f)
         float MieAnisotropy = 0.76f;
 
+        // Haze and humidity in the air, which widen the glow around the sun, warm the horizon and redden the sunset light.
+        PROPERTY(Editable, Category = "Sky|Dynamic", ClampMin = 0.0f, ClampMax = 10.0f)
+        float AerosolDensity = 1.0f;
+
+        // Tints and dims the sun's directional light by the air it crosses, so the light warms and fades toward the horizon with the sky.
+        PROPERTY(Editable, Category = "Sky|Dynamic")
+        bool bSunlightThroughAtmosphere = true;
+
         /** Tint distant geometry with the same atmosphere that produces the sky. Dynamic sky only. */
         PROPERTY(Editable, Category = "Sky|Aerial Perspective")
         bool bAerialPerspective = true;
@@ -154,9 +162,13 @@ namespace Lumina
         PROPERTY(Editable, Category = "Sky|Moon", ClampMin = 0.0f, ClampMax = 8.0f)
         float MoonBrightness = 0.6f;
 
-        /** When true, moon anchored opposite sun; phase auto-shaded from sun. */
+        // When true the moon follows the sun by MoonPhase, opposite it at full, and the moonlight comes from wherever the sky draws it.
         PROPERTY(Editable, Category = "Sky|Moon")
         bool bMoonOpposeSun = true;
+
+        // Age of the moon through its month, 0 new and 0.5 full, which sets its shape, its brightness and how far it trails the sun.
+        PROPERTY(Editable, Category = "Sky|Moon", ClampMin = 0.0f, ClampMax = 1.0f)
+        float MoonPhase = 0.5f;
 
         /** Manual moon direction (FROM viewer TO moon) used when bMoonOpposeSun is false. */
         PROPERTY(Editable, Category = "Sky|Moon")

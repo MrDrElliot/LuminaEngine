@@ -355,12 +355,13 @@ bool SampleVirtualShadowPCF(uint Level, float3 WorldPos, float3 Normal, float3 T
             const int2  T    = Base + int2(i, j);
             const int2  Slot = (T >> int(VSM_PAGE_SHIFT)) - PageLo;
             const uint  S    = uint(Slot.y * 2 + Slot.x);
-            float Lit = 1.0;
-            if (bValid[S])
+            // A tap in a page no pixel asked for has no depth, and counting it lit drew a bright line along the page edge inside shadows.
+            if (!bValid[S])
             {
-                const float Occluder = LoadVirtualShadowDepth(Origins[S] + (uint2(T) & (VSM_PAGE_SIZE - 1u)));
-                Lit = Occluder >= RefDepth + dot(Slope, float2(T) + 0.5 - Texel) ? 1.0 : 0.0;
+                continue;
             }
+            const float Occluder = LoadVirtualShadowDepth(Origins[S] + (uint2(T) & (VSM_PAGE_SIZE - 1u)));
+            const float Lit      = Occluder >= RefDepth + dot(Slope, float2(T) + 0.5 - Texel) ? 1.0 : 0.0;
             Sum    += WX * WY * Lit;
             Weight += WX * WY;
         }

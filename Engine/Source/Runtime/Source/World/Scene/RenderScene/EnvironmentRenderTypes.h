@@ -53,6 +53,8 @@ namespace Lumina
         FVector4   GalaxyParams     = FVector4(0.06f, 0.45f, 0.0f, 0.0f);
 
         FVector4   HDRIParams       = FVector4(1.0f, 1.0f, 0.0f, 0.0f);
+        // x = aerosol scale, y = moon phase, z = moonlit sky illuminance, w = camera altitude band, which only rebakes the IBL
+        FVector4   AtmosphereParams = FVector4(1.0f, 0.5f, 0.0f, 0.0f);
     };
     VERIFY_SSBO_ALIGNMENT(FEnvironmentParams);
 

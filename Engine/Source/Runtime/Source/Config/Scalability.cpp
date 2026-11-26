@@ -26,10 +26,10 @@ namespace Lumina::Scalability
                 "Ultra":  { "RendererSettings.ShadowQuality": "Ultra",  "RendererSettings.PointShadowResolution": 1024, "RendererSettings.bCloudShadows": true,  "RendererSettings.CloudShadowSteps": 12 }
             },
             "Effects": {
-                "Low":    { "RendererSettings.bScreenSpaceReflections": false, "RendererSettings.SSRQuality": "Low",    "RendererSettings.bSupersampleVolumetricLights": false },
-                "Medium": { "RendererSettings.bScreenSpaceReflections": false, "RendererSettings.SSRQuality": "Low",    "RendererSettings.bSupersampleVolumetricLights": false },
-                "High":   { "RendererSettings.bScreenSpaceReflections": true,  "RendererSettings.SSRQuality": "Medium", "RendererSettings.bSupersampleVolumetricLights": true },
-                "Ultra":  { "RendererSettings.bScreenSpaceReflections": true,  "RendererSettings.SSRQuality": "Ultra",  "RendererSettings.bSupersampleVolumetricLights": true }
+                "Low":    { "RendererSettings.bScreenSpaceReflections": false, "RendererSettings.SSRQuality": "Low",    "RendererSettings.bSupersampleVolumetricLights": false, "RendererSettings.CloudQuality": "Low" },
+                "Medium": { "RendererSettings.bScreenSpaceReflections": false, "RendererSettings.SSRQuality": "Low",    "RendererSettings.bSupersampleVolumetricLights": false, "RendererSettings.CloudQuality": "Medium" },
+                "High":   { "RendererSettings.bScreenSpaceReflections": true,  "RendererSettings.SSRQuality": "Medium", "RendererSettings.bSupersampleVolumetricLights": true,  "RendererSettings.CloudQuality": "High" },
+                "Ultra":  { "RendererSettings.bScreenSpaceReflections": true,  "RendererSettings.SSRQuality": "Ultra",  "RendererSettings.bSupersampleVolumetricLights": true,  "RendererSettings.CloudQuality": "Ultra" }
             },
             "PostProcess": {
                 "Low":    { "RendererSettings.bEnableGTAO": false, "RendererSettings.GTAOQualityLevel": 0, "RendererSettings.bDistanceFieldAO": false },

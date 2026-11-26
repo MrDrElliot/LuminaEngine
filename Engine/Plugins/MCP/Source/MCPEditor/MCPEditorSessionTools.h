@@ -296,6 +296,29 @@ namespace Lumina
     };
 
     REFLECT()
+    struct MCPEDITOR_API SEditorModeParams
+    {
+        GENERATED_BODY()
+
+        // Display name of the viewport mode to switch to, such as Terrain, and empty only lists them.
+        PROPERTY()
+        FString Mode;
+    };
+
+    REFLECT()
+    struct MCPEDITOR_API SEditorModeResult
+    {
+        GENERATED_BODY()
+
+        // Every viewport mode in the order the mode picker lists them.
+        PROPERTY()
+        TVector<FString> Modes;
+
+        PROPERTY()
+        FString Active;
+    };
+
+    REFLECT()
     struct MCPEDITOR_API SEditorOpenParams
     {
         GENERATED_BODY()
@@ -308,7 +331,7 @@ namespace Lumina
         PROPERTY()
         FString File;
 
-        // World path to travel the running game to, such as /Game/Content/Maps/Venezuela, with ?listen or ?port=N.
+        // World path to travel the running game to, such as /Game/Content/Maps/Venezuela, with ?listen or ?port=N. With nothing playing it opens for editing.
         PROPERTY()
         FString Level;
     };
@@ -318,11 +341,11 @@ namespace Lumina
     {
         GENERATED_BODY()
 
-        // Id of the tab now showing Asset or File.
+        // Id of the tab now showing Asset, File, or a Level opened for editing.
         PROPERTY()
         FString Tab;
 
-        // The map Level is traveling to.
+        // The map Level is traveling to or was opened for editing.
         PROPERTY()
         FString Map;
     };
