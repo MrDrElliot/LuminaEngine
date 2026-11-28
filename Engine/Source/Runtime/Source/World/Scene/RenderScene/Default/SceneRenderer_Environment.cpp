@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "SceneRendererInternal.h"
+#include "Containers/HashPrimitives.h"
 
 namespace Lumina
 {
@@ -68,7 +69,6 @@ namespace Lumina
 
             TerrainCullPass(CL);
             VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
-            ClusterBuildPass(CL);
             LightCullPass(CL);
 
             if (bClearToColor)
@@ -222,8 +222,15 @@ namespace Lumina
             CurrentView->AtmosphereLUTAerosol = Aerosol;
         }
 
-        if (SkyMode == GSkyMode_Dynamic)
+        // The sky view depends on the air, the sun and the camera's height alone, so captures at one height share the last build.
+        const FVector3 SkySun      = GetSkySunDirection();
+        const float    CameraY     = GetCurrentViewGlobals().CameraData.Location.y;
+        const uint64   SkyViewKey  = Containers::CombineHash(Containers::CombineHash(Containers::HashBytes(&Params, sizeof(Params)),
+                                                                                     Containers::HashBytes(&SkySun, sizeof(SkySun))),
+                                                             Containers::HashBytes(&CameraY, sizeof(CameraY)));
+        if (SkyMode == GSkyMode_Dynamic && CurrentView->SkyViewLUTKey != SkyViewKey)
         {
+            CurrentView->SkyViewLUTKey = SkyViewKey;
             struct FSkyViewLUTArgs
             {
                 uint64   EnvAddr;
@@ -238,7 +245,7 @@ namespace Lumina
             Args.EnvAddr       = RHI::CopyTransient(Params);
             Args.OutUAV        = (uint32)SkyView.GetMipUAVIndex(0);
             Args.Transmittance = (uint32)Transmittance.GetResourceID();
-            Args.SunDirection  = GetSkySunDirection();
+            Args.SunDirection  = SkySun;
             Args.MultiScatter  = (uint32)MultiScatter.GetResourceID();
 
             RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(SkyViewCS));
@@ -486,7 +493,8 @@ namespace Lumina
 
     void FDefaultSceneRenderer::EnvironmentPass(RHI::FCmdListH CL)
     {
-        if (!FrameFlags.bHasEnvironment)
+        // A capture over a color or transparent background starts from black, which its resolve reads as empty.
+        if (!FrameFlags.bHasEnvironment || !CaptureHas(FFrameData::ECaptureFeature::Sky))
         {
             const FSceneImage& ColorRT = GetNamedImage(ENamedImage::HDR);
 

@@ -23,8 +23,13 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
 
     const float2 LightRG = UnpackHalf2(Entry.y);
     const float2 LightBF = UnpackHalf2(Entry.z);
-    const float3 Color   = float3(LightRG, LightBF.x) * W.RainTint.rgb * W.RainLook.y;
+    const float3 Water   = RainWaterTint(W, Entry.x);
+    const float3 Color   = float3(LightRG, LightBF.x) * Water * W.RainLook.y + W.RainEmissive.rgb;
     const float  Alpha   = W.RainLook.z * LightBF.y * saturate(WidthWorld * kStreakEnergyScale / StreakLen);
 
-    return ExpandStreak(Drop.Position, Tail, WidthWorld, kRainQuadCorners[VertexIndex % 6u], Color, Alpha);
+    FRainVertexOutput Out = ExpandStreak(Drop.Position, Tail, WidthWorld, kRainQuadCorners[VertexIndex % 6u], Color, Alpha);
+    Out.Lens.z   = W.RainEmissive.w;
+    Out.Lens.w   = W.RainOptics.x;
+    Out.Transmit = Water;
+    return Out;
 }

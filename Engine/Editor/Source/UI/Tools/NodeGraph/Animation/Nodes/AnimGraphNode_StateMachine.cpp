@@ -58,33 +58,14 @@ namespace Lumina
         return StateMachineGraph.Get();
     }
 
-    void CAnimGraphNode_StateMachine::PostCloneFrom(const CEdGraphNode* Source)
-    {
-        const CAnimGraphNode_StateMachine* SourceMachine = Cast<CAnimGraphNode_StateMachine>(Source);
-        CAnimStateMachineGraph* SourceGraph = SourceMachine != nullptr ? SourceMachine->StateMachineGraph.Get() : nullptr;
-
-        StateMachineGraph = nullptr;
-        if (SourceGraph == nullptr)
-        {
-            return;
-        }
-
-        // Cloned before EnsureSetup so the copied Entry node is not joined by a second one.
-        AllocateStateMachineGraph()->CloneContentFrom(SourceGraph);
-    }
-
     CEdNodeGraph* CAnimGraphNode_StateMachine::GetOwnedSubGraph() const
     {
         return StateMachineGraph.Get();
     }
 
-    void CAnimGraphNode_StateMachine::ReplaceSubGraphWithCopy()
+    CEdNodeGraph* CAnimGraphNode_StateMachine::AllocateOwnedSubGraph()
     {
-        CAnimStateMachineGraph* Shared = StateMachineGraph.Get();
-        if (Shared != nullptr)
-        {
-            AllocateStateMachineGraph()->CloneContentFrom(Shared);
-        }
+        return AllocateStateMachineGraph();
     }
 
     CEdNodeGraph* CAnimGraphNode_StateMachine::GetEnterableSubGraph()

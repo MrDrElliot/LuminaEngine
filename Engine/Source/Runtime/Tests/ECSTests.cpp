@@ -181,6 +181,53 @@ TEST(ECSTests, ChildrenLinkedBeforeTheDirtyStateStillResolve)
     EXPECT_FLOAT_EQ(ECS::Utils::ComputeWorldTransform(Registry, B).GetLocation().x, 15.f);
 }
 
+TEST(ECSTests, ReparentKeepingWorldOfFlatEntitiesLandsUnderTheParent)
+{
+    ECS::FRegistry Registry{};
+
+    // Both start flat and resolved, the way a script spawns them before parenting.
+    auto Parent = Registry.Create();
+    auto Child  = Registry.Create();
+    Registry.Emplace<STransformComponent>(Parent).LocalTransform.SetLocation(FVector3(0.f, 300.f, 0.f));
+    Registry.Emplace<STransformComponent>(Child).LocalTransform.SetLocation(FVector3(0.35f, 300.9f, 0.15f));
+    ECS::Utils::MarkTransformDirty(Registry, Parent);
+    ECS::Utils::MarkTransformDirty(Registry, Child);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+    ECS::Utils::ReparentEntity(Registry, Child, Parent, /*bPreserveWorld*/ true);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+    const STransformComponent& ChildTransform = Registry.Get<STransformComponent>(Child);
+    EXPECT_NEAR(ChildTransform.LocalTransform.GetLocation().y, 0.9f, 1e-3f);
+    EXPECT_FALSE(ChildTransform.bIsFlat);
+    EXPECT_NEAR(ChildTransform.GetWorldLocation().y, 300.9f, 1e-3f);
+}
+
+TEST(ECSTests, ReparentInASwappedInRegistryStillComposesWithTheParent)
+{
+    // A loaded level or a play world is built in one registry and swapped into the world's.
+    ECS::FRegistry Loaded{};
+    ECS::Utils::EnsureTransformDirtyGate(Loaded);
+    ECS::FRegistry Registry{};
+    Registry.Swap(Loaded);
+
+    auto Parent = Registry.Create();
+    auto Child  = Registry.Create();
+    Registry.Emplace<STransformComponent>(Parent).LocalTransform.SetLocation(FVector3(0.f, 300.f, 0.f));
+    Registry.Emplace<STransformComponent>(Child).LocalTransform.SetLocation(FVector3(0.35f, 300.9f, 0.15f));
+    ECS::Utils::MarkTransformDirty(Registry, Parent);
+    ECS::Utils::MarkTransformDirty(Registry, Child);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+    ECS::Utils::ReparentEntity(Registry, Child, Parent, /*bPreserveWorld*/ true);
+    ECS::Utils::ResolveAllDirtyTransforms(Registry);
+
+    const STransformComponent& ChildTransform = Registry.Get<STransformComponent>(Child);
+    EXPECT_FALSE(ChildTransform.bIsFlat);
+    EXPECT_NEAR(ChildTransform.GetWorldLocation().y, 300.9f, 1e-3f);
+}
+
 TEST(ECSTests, ComputeWorldTransform_SiblingOfAMovedChainIsCurrent)
 {
     ECS::FRegistry Registry{};

@@ -682,6 +682,8 @@ namespace Lumina
         // The hang watchdog dumps every thread's stack if this stops advancing.
         HangWatchdog::Heartbeat();
 
+        TerrainStores.Collect();
+
         #if !USING(WITH_EDITOR) && !defined(LE_SHIPPING)
         {
             constexpr double TitleRefreshSeconds = 0.5;

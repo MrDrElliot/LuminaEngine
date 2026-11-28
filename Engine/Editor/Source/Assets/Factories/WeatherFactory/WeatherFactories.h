@@ -67,6 +67,21 @@ namespace Lumina
     };
 
     REFLECT()
+    class CEnvironmentWeatherLayerFactory : public CFactory
+    {
+        GENERATED_BODY()
+    public:
+
+        CObject* CreateNew(const FName& Name, CPackage* Package) override;
+
+        FString GetAssetName() const override { return "Environment Weather Layer"; }
+        FStringView GetDefaultAssetCreationName() override { return "NewEnvironmentLayer"; }
+        FString GetAssetDescription() const override { return "Storm sky and sunlight a weather preset applies to the Environment component."; }
+        CClass* GetAssetClass() const override { return CEnvironmentWeatherLayer::StaticClass(); }
+        FString GetCategory() const override { return "Environment"; }
+    };
+
+    REFLECT()
     class CWindWeatherLayerFactory : public CFactory
     {
         GENERATED_BODY()

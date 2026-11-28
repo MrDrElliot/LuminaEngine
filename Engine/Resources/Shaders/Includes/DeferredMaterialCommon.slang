@@ -69,4 +69,12 @@ void WriteDeferredGBuffer(uint2 Texel, FGBufferData G)
     Pass().GBufferB[int2(Texel)] = P.B;
     Pass().GBufferC[int2(Texel)] = P.C;
     Pass().GBufferD[int2(Texel)] = P.D;
+
+    // The extension is written only where it is read, so a plain surface pays nothing for it.
+    if (G.bExtended && !ShadingModelCarriesThickness(G.ShadingModel) && Scene().GBufferEOut.IsValid() && Scene().GBufferFOut.IsValid())
+    {
+        const FGBufferExtension X = PackGBufferExtension(G);
+        Scene().GBufferEOut[int2(Texel)] = X.E;
+        Scene().GBufferFOut[int2(Texel)] = X.F;
+    }
 }

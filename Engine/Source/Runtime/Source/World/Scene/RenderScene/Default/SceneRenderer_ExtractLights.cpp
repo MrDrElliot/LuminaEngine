@@ -9,6 +9,32 @@ namespace Lumina
 {
     namespace SceneRendererExtractLightsInternal
     {
+        // A cube face spans 54.7 degrees from its axis to a corner, so it sees only directions behind the panel once its axis is past 144.7.
+        uint32 EmittingCubeFaces(const FVector3& Forward)
+        {
+            constexpr float kBehindPanelCos = -0.8165f;
+            const FVector3 Axes[6] = { FVector3(1, 0, 0), FVector3(-1, 0, 0), FVector3(0, 1, 0), FVector3(0, -1, 0), FVector3(0, 0, 1), FVector3(0, 0, -1) };
+            uint32 Mask = 0u;
+            for (uint32 Face = 0; Face < 6u; ++Face)
+            {
+                Mask |= Math::Dot(Axes[Face], Forward) > kBehindPanelCos ? (1u << Face) : 0u;
+            }
+            return Mask;
+        }
+
+        // The haze a storm adds tints the sunlight too, so the light agrees with the sky ExtractEnvironment draws.
+        float WeatheredAerosol(ECS::FRegistry& Registry, const SEnvironmentComponent& Env)
+        {
+            const SWeatherState* Weather = Registry.Ctx().Find<SWeatherState>();
+            if (Weather == nullptr || !Weather->bActive || Weather->Params.Environment.Weight <= 0.0f)
+            {
+                return Env.AerosolDensity;
+            }
+            SEnvironmentComponent Weathered = Env;
+            Weather->Params.Environment.ApplyTo(Weathered);
+            return Weathered.AerosolDensity;
+        }
+
         FVector3 ColorTemperatureToRGB(float Kelvin)
         {
             const float Temp = Math::Clamp(Kelvin, 1000.0f, 40000.0f) / 100.0f;
@@ -58,10 +84,10 @@ namespace Lumina
         using namespace SceneRendererExtractLightsInternal;
 
         auto Transforms      = Registry.GetStorage<STransformComponent>();
+        auto Points          = Registry.GetStorage<SPointLightComponent>();
+        auto Spots           = Registry.GetStorage<SSpotLightComponent>();
+        auto Areas           = Registry.GetStorage<SAreaLightComponent>();
         auto DirectionalView = Registry.View<ECS::Read<SDirectionalLightComponent>, ECS::Without<SDisabledTag>>();
-        auto PointView       = Registry.View<ECS::Read<SPointLightComponent>, ECS::Without<SDisabledTag>>();
-        auto SpotView        = Registry.View<ECS::Read<SSpotLightComponent>, ECS::Without<SDisabledTag>>();
-        auto AreaView        = Registry.View<ECS::Read<SAreaLightComponent>, ECS::Without<SDisabledTag>>();
 
         #if USING(WITH_EDITOR)
         bRecordLightIcons = !World->IsGameWorld();
@@ -77,26 +103,36 @@ namespace Lumina
         // Needs the captures and the baking probe, both already extracted.
         BuildLightRelevanceVolumes();
 
-        NumPointLightChunks = ChunksFor(PointView.NumDenseSlots(), FLightBatch::Capacity);
-        NumSpotLightChunks  = ChunksFor(SpotView.NumDenseSlots(), FLightBatch::Capacity);
-        NumAreaLightChunks  = ChunksFor(AreaView.NumDenseSlots(), FLightBatch::Capacity);
-        const uint32 NumChunks = NumPointLightChunks + NumSpotLightChunks + NumAreaLightChunks;
-        if ((uint32)LightBatches.Num() < NumChunks)
+        // Only what changed since the last frame reaches the retained set, and only its shadow casters come back through the CPU below.
+        LightSet.Sync();
+        GatherLightIcons(Registry);
+
+        NumLightChunks = ChunksFor((int32)LightSet.GetCPULights().Num(), FLightBatch::Capacity);
+        if ((uint32)LightBatches.Num() < NumLightChunks)
         {
-            LightBatches.SetNum(NumChunks);
+            LightBatches.SetNum(NumLightChunks);
         }
 
-        // Fixed chunk of dense slots per batch keeps light order stable; ten passes read Lights[0] as the sun, so a local light must never win it.
+        // Ten passes read Lights[0] as the sun, so a local light must never win it, and the sun's job writes it alongside the chunks.
         const uint32 FirstLocalLight = Sun != nullptr ? 1u : 0u;
-        Jobs::Spawn(Jobs::EJobPriority::High, ExtractLatch,
-            [this, PointView, SpotView, AreaView, Transforms, Sun, SkyInputs, NumChunks, FirstLocalLight]() -> Jobs::TTask<void>
+        FFrameData::FLighting& Lighting = ExtractFrame->Lighting;
+        Lighting.Lights.SetNum(FirstLocalLight);
+        Lighting.LightLayers.SetNum(FirstLocalLight);
+        Lighting.LightSlots.SetNum(FirstLocalLight);
+        if (FirstLocalLight != 0u)
         {
-            co_await Jobs::Fork(Jobs::ForEach(NumChunks, [this, PointView, SpotView, AreaView, Transforms](const Jobs::FRange& Range)
+            Lighting.LightSlots[0] = Constants::kIndexNoneU32;
+        }
+
+        Jobs::Spawn(Jobs::EJobPriority::High, ExtractLatch,
+            [this, Transforms, Points, Spots, Areas, Sun, SkyInputs, FirstLocalLight]() -> Jobs::TTask<void>
+        {
+            co_await Jobs::Fork(Jobs::ForEach(NumLightChunks, [this, Transforms, Points, Spots, Areas](const Jobs::FRange& Range)
             {
-                LUMINA_PROFILE_SECTION("Process Local Lights");
+                LUMINA_PROFILE_SECTION("Process CPU Lights");
                 for (uint32 Chunk = Range.Start; Chunk < Range.End; ++Chunk)
                 {
-                    ProcessLightChunk(Chunk, PointView, SpotView, AreaView, Transforms);
+                    ProcessLightChunk(Chunk, Transforms, Points, Spots, Areas);
                 }
             }, 1));
 
@@ -135,42 +171,76 @@ namespace Lumina
         return Sun;
     }
 
-    void FDefaultSceneRenderer::ProcessLightChunk(uint32 Chunk, const auto& PointView, const auto& SpotView, const auto& AreaView, const auto& Transforms)
+    // Editor icons cover every light, which the retained set no longer walks each frame.
+    void FDefaultSceneRenderer::GatherLightIcons(ECS::FRegistry& Registry)
+    {
+        for (TVector<FLightIcon>& Icons : LocalLightIcons)
+        {
+            Icons.Reset();
+        }
+        if (!bRecordLightIcons)
+        {
+            return;
+        }
+
+        auto Transforms = Registry.GetStorage<STransformComponent>();
+        auto Gather = [&]<typename T>(ESceneLightKind Kind, T*)
+        {
+            Registry.View<ECS::Read<T>, ECS::Without<SDisabledTag>>().ForEach([&](ECS::FEntity Entity, const T& Light)
+            {
+                if (const STransformComponent* Transform = Transforms.TryGetUntracked(Entity))
+                {
+                    LocalLightIcons[(uint32)Kind].Emplace(Entity, Transform->GetWorldLocation(), Light.LightColor);
+                }
+            });
+        };
+        Gather(ESceneLightKind::Point, (SPointLightComponent*)nullptr);
+        Gather(ESceneLightKind::Spot,  (SSpotLightComponent*)nullptr);
+        Gather(ESceneLightKind::Area,  (SAreaLightComponent*)nullptr);
+    }
+
+    void FDefaultSceneRenderer::ProcessLightChunk(uint32 Chunk, const auto& Transforms, const auto& Points, const auto& Spots, const auto& Areas)
     {
         FLightBatch& Batch = LightBatches[Chunk];
         Batch.NumLights         = 0;
         Batch.NumShadows        = 0;
         Batch.NumLightFunctions = 0;
         Batch.NumShadowLights   = 0;
-        Batch.NumIcons          = 0;
 
-        constexpr int32 ChunkSize = (int32)FLightBatch::Capacity;
-        if (Chunk < NumPointLightChunks)
+        const TSpan<const FSceneLightSet::FCPULight> CPULights = LightSet.GetCPULights();
+        const uint32 Begin = Chunk * FLightBatch::Capacity;
+        const uint32 End   = Math::Min(Begin + FLightBatch::Capacity, (uint32)CPULights.Num());
+        for (uint32 Index = Begin; Index < End; ++Index)
         {
-            const int32 Begin = (int32)Chunk * ChunkSize;
-            PointView.ForEachInRange(Begin, Begin + ChunkSize, [&](ECS::FEntity Entity, const SPointLightComponent& Light)
+            const FSceneLightSet::FCPULight& Light = CPULights[Index];
+            const STransformComponent* Transform = Transforms.TryGetUntracked(Light.Entity);
+            if (Transform == nullptr)
             {
-                ProcessPointLight(Entity, Light, Transforms.Get(Entity), Batch);
-            });
-            return;
-        }
+                continue;
+            }
 
-        Chunk -= NumPointLightChunks;
-        if (Chunk < NumSpotLightChunks)
-        {
-            const int32 Begin = (int32)Chunk * ChunkSize;
-            SpotView.ForEachInRange(Begin, Begin + ChunkSize, [&](ECS::FEntity Entity, const SSpotLightComponent& Light)
+            switch (Light.Kind)
             {
-                ProcessSpotLight(Entity, Light, Transforms.Get(Entity), Batch);
-            });
-            return;
+            case ESceneLightKind::Point:
+                if (const SPointLightComponent* Point = Points.TryGetUntracked(Light.Entity))
+                {
+                    ProcessPointLight(Light.Slot, *Point, *Transform, Batch);
+                }
+                break;
+            case ESceneLightKind::Spot:
+                if (const SSpotLightComponent* Spot = Spots.TryGetUntracked(Light.Entity))
+                {
+                    ProcessSpotLight(Light.Slot, *Spot, *Transform, Batch);
+                }
+                break;
+            default:
+                if (const SAreaLightComponent* Area = Areas.TryGetUntracked(Light.Entity))
+                {
+                    ProcessAreaLight(Light.Slot, *Area, *Transform, Batch);
+                }
+                break;
+            }
         }
-
-        const int32 Begin = (int32)(Chunk - NumSpotLightChunks) * ChunkSize;
-        AreaView.ForEachInRange(Begin, Begin + ChunkSize, [&](ECS::FEntity Entity, const SAreaLightComponent& Light)
-        {
-            ProcessAreaLight(Entity, Light, Transforms.Get(Entity), Batch);
-        });
     }
 
     void FDefaultSceneRenderer::CommitLightBatches(uint32 FirstLocalLight)
@@ -181,10 +251,17 @@ namespace Lumina
         auto&       Lighting  = Frame.Lighting;
         FSceneCullContext& SceneCull = Frame.Geometry.SceneCullContext;
 
-        const uint32 NumChunks = NumPointLightChunks + NumSpotLightChunks + NumAreaLightChunks;
-        uint32 Count     = FirstLocalLight;
-        bool   bOverflow = false;
-        for (uint32 Chunk = 0; Chunk < NumChunks; ++Chunk)
+        uint32 Count = FirstLocalLight;
+        for (uint32 Chunk = 0; Chunk < NumLightChunks; ++Chunk)
+        {
+            Count += LightBatches[Chunk].NumLights;
+        }
+        Lighting.Lights.SetNum(Count);
+        Lighting.LightLayers.SetNum(Count);
+        Lighting.LightSlots.SetNum(Count);
+
+        uint32 Base = FirstLocalLight;
+        for (uint32 Chunk = 0; Chunk < NumLightChunks; ++Chunk)
         {
             const FLightBatch& Batch = LightBatches[Chunk];
 
@@ -193,38 +270,24 @@ namespace Lumina
                 SceneCull.ShadowLights.Append(Batch.ShadowLights, (int32)Batch.NumShadowLights);
             }
 
-            const uint32 Base = Count;
-            const uint32 Fits = Base >= (uint32)MAX_LIGHTS ? 0u : Math::Min(Batch.NumLights, (uint32)MAX_LIGHTS - Base);
-            bOverflow |= Fits < Batch.NumLights;
-            Count     += Batch.NumLights;
-
-            for (uint32 Slot = 0; Slot < Fits; ++Slot)
+            for (uint32 Slot = 0; Slot < Batch.NumLights; ++Slot)
             {
-                Lighting.Lights[Base + Slot] = Batch.Lights[Slot];
+                Lighting.Lights[Base + Slot]      = Batch.Lights[Slot];
+                Lighting.LightLayers[Base + Slot] = Batch.LightLayers[Slot];
+                Lighting.LightSlots[Base + Slot]  = Batch.Slots[Slot];
             }
-
             for (uint32 Index = 0; Index < Batch.NumShadows; ++Index)
             {
-                if (Batch.Shadows[Index].LightIndex < Fits)
-                {
-                    Lighting.ShadowRequests.AddGetRef(Batch.Shadows[Index]).LightIndex += Base;
-                }
+                Lighting.ShadowRequests.AddGetRef(Batch.Shadows[Index]).LightIndex += Base;
             }
-
             for (uint32 Index = 0; Index < Batch.NumLightFunctions; ++Index)
             {
-                if (Batch.LightFunctions[Index].LightIndex < Fits)
-                {
-                    Lighting.LightFunctionRequests.AddGetRef(Batch.LightFunctions[Index]).LightIndex += Base;
-                }
+                Lighting.LightFunctionRequests.AddGetRef(Batch.LightFunctions[Index]).LightIndex += Base;
             }
+            Base += Batch.NumLights;
         }
 
-        NumLiveLights = Math::Min(Count, (uint32)MAX_LIGHTS);
-        if (bOverflow)
-        {
-            NotifyMaxLightsHit();
-        }
+        NumLiveLights = Count;
     }
 
     uint32 FDefaultSceneRenderer::VisibleCubeFaces(const FVector3& Position, float Radius) const
@@ -363,7 +426,7 @@ namespace Lumina
         {
             Inputs.MoonDirection       = SkyAtmosphere::MoonDirection(*Env, SunDirection);
             Inputs.MoonPhaseBrightness = SkyAtmosphere::MoonPhaseBrightness(*Env);
-            Inputs.Aerosol             = Math::Max(Env->AerosolDensity, 0.0f);
+            Inputs.Aerosol             = Math::Max(SceneRendererExtractLightsInternal::WeatheredAerosol(Registry, *Env), 0.0f);
             Inputs.bThroughAtmosphere  = Env->bSunlightThroughAtmosphere && Env->SkyMode == ESkyMode::Dynamic;
         }
 
@@ -413,16 +476,12 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::ProcessPointLight(ECS::FEntity Entity, const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch)
+    void FDefaultSceneRenderer::ProcessPointLight(uint32 Slot, const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch)
     {
         const FVector3 Position = TransformComponent.GetWorldLocation();
-        if (bRecordLightIcons)
-        {
-            Batch.Icons[Batch.NumIcons++] = FLightIcon{ Entity, Position, PointLight.LightColor };
-        }
 
         // A switched-off light adds nothing to the image, so it should not take a slot or a cluster test either.
-        if (PointLight.Intensity <= 0.0f || !ExtractFrame->ViewLayers.Draws(PointLight.RenderLayers))
+        if (PointLight.Intensity <= 0.0f || !IsLightOnDrawnLayer(PointLight.RenderLayers))
         {
             return;
         }
@@ -443,23 +502,7 @@ namespace Lumina
         }
 
         const uint32 Lights = Batch.NumLights;
-
-        FLight Light                = {};
-        Light.Flags                 = ELightFlags::Point;
-        Light.Falloff               = PointLight.Falloff;
-        Light.Color                 = PackColor(FVector4(PointLight.LightColor, 1.0));
-        Light.Intensity             = PointLight.Intensity;
-        Light.Radius                = Radius;
-        Light.Position              = Position;
-        Light.ShadowDataIndex       = Constants::kIndexNone;
-        if (PointLight.bVolumetric)
-        {
-            Light.Flags             |= ELightFlags::Volumetric;
-            Light.VolumetricIntensity = PointLight.VolumetricIntensity;
-            Light.VolumetricScatteringRadius = PointLight.VolumetricScatteringRadius;
-        }
-        Light.Flags = PackLightContactShadow(Light.Flags, PointLight.bContactShadows, PointLight.ContactShadowLength);
-        Light.Flags = PackLightMinRoughness(Light.Flags, PointLight.MinRoughness);
+        const FLight Light  = FSceneLightSet::MakePointLight(PointLight, TransformComponent);
 
         if (PointLight.LightFunctionMaterial.Get() != nullptr)
         {
@@ -493,18 +536,16 @@ namespace Lumina
             }
         }
 
+        Batch.Slots[Batch.NumLights]       = Slot;
+        Batch.LightLayers[Batch.NumLights] = PointLight.RenderLayers.Bits;
         Batch.Lights[Batch.NumLights++] = Light;
     }
 
-    void FDefaultSceneRenderer::ProcessSpotLight(ECS::FEntity Entity, const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch)
+    void FDefaultSceneRenderer::ProcessSpotLight(uint32 Slot, const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch)
     {
         const FVector3 Position = TransformComponent.GetWorldLocation();
-        if (bRecordLightIcons)
-        {
-            Batch.Icons[Batch.NumIcons++] = FLightIcon{ Entity, Position, SpotLight.LightColor };
-        }
 
-        if (SpotLight.Intensity <= 0.0f || !ExtractFrame->ViewLayers.Draws(SpotLight.RenderLayers))
+        if (SpotLight.Intensity <= 0.0f || !IsLightOnDrawnLayer(SpotLight.RenderLayers))
         {
             return;
         }
@@ -529,30 +570,8 @@ namespace Lumina
         FVector3 UpdatedForward    = WorldRotation * FViewVolume::ForwardAxis;
         FVector3 UpdatedUp         = WorldRotation * FViewVolume::UpAxis;
 
-        float InnerDegrees = SpotLight.InnerConeAngle;
-        float OuterDegrees = SpotLight.OuterConeAngle;
-
-        float InnerCos = Math::Cos(Math::Radians(InnerDegrees));
-        float OuterCos = Math::Cos(Math::Radians(OuterDegrees));
-
-        FLight Light                = {};
-        Light.Flags                 = ELightFlags::Spot;
-        Light.Position              = Position;
-        Light.Direction             = Math::Normalize(-UpdatedForward);
-        Light.Falloff               = SpotLight.Falloff;
-        Light.Color                 = PackColor(FVector4(SpotLight.LightColor, 1.0));
-        Light.Intensity             = SpotLight.Intensity;
-        Light.Radius                = Radius;
-        Light.Angles                = FVector2(InnerCos, OuterCos);
-        Light.ShadowDataIndex       = Constants::kIndexNone;
-        if (SpotLight.bVolumetric)
-        {
-            Light.Flags             |= ELightFlags::Volumetric;
-            Light.VolumetricIntensity = SpotLight.VolumetricIntensity;
-            Light.VolumetricScatteringRadius = SpotLight.VolumetricScatteringRadius;
-        }
-        Light.Flags = PackLightContactShadow(Light.Flags, SpotLight.bContactShadows, SpotLight.ContactShadowLength);
-        Light.Flags = PackLightMinRoughness(Light.Flags, SpotLight.MinRoughness);
+        const float  OuterDegrees = SpotLight.OuterConeAngle;
+        const FLight Light        = FSceneLightSet::MakeSpotLight(SpotLight, TransformComponent);
 
         if (SpotLight.LightFunctionMaterial.Get() != nullptr)
         {
@@ -590,52 +609,63 @@ namespace Lumina
             Req.OuterFOVDegrees  = OuterDegrees;
         }
 
+        Batch.Slots[Batch.NumLights]       = Slot;
+        Batch.LightLayers[Batch.NumLights] = SpotLight.RenderLayers.Bits;
         Batch.Lights[Batch.NumLights++] = Light;
     }
 
-    void FDefaultSceneRenderer::ProcessAreaLight(ECS::FEntity Entity, const SAreaLightComponent& AreaLight, const STransformComponent& TransformComponent, FLightBatch& Batch)
+    void FDefaultSceneRenderer::ProcessAreaLight(uint32 Slot, const SAreaLightComponent& AreaLight, const STransformComponent& TransformComponent, FLightBatch& Batch)
     {
         const FVector3 Position = TransformComponent.GetWorldLocation();
-        if (bRecordLightIcons)
-        {
-            Batch.Icons[Batch.NumIcons++] = FLightIcon{ Entity, Position, AreaLight.LightColor };
-        }
 
-        if (AreaLight.Intensity <= 0.0f || !ExtractFrame->ViewLayers.Draws(AreaLight.RenderLayers))
+        if (AreaLight.Intensity <= 0.0f || !IsLightOnDrawnLayer(AreaLight.RenderLayers))
         {
             return;
         }
 
         const FVector2 HalfSize = FVector2(Math::Max(AreaLight.Width, 0.01f), Math::Max(AreaLight.Height, 0.01f)) * 0.5f;
         // Padded by the half diagonal, so the cluster sphere still covers the reach past the rectangle's corners.
-        const float    Radius   = Math::Max(AreaLight.Attenuation, 0.01f) + Math::Length(HalfSize);
-        if (!IsLightRelevant(Position, Radius, ExtractFrame->CameraFrustum.IntersectsSphere(Position, Radius)))
+        const float    Radius    = Math::Max(AreaLight.Attenuation, 0.01f) + Math::Length(HalfSize);
+        const bool     bInCamera = ExtractFrame->CameraFrustum.IntersectsSphere(Position, Radius);
+
+        // The skinned cull keeps casters this sphere reaches, whether or not the light wins a slot.
+        if (AreaLight.bCastShadows && bInCamera)
+        {
+            Batch.ShadowLights[Batch.NumShadowLights++] = FSceneCullContext::FLightSphere{ Position, Radius };
+        }
+
+        if (!IsLightRelevant(Position, Radius, bInCamera))
         {
             return;
         }
 
+        const uint32   Lights        = Batch.NumLights;
         const FQuat    WorldRotation = TransformComponent.ComputeWorldTransform().GetRotation();
         const FVector3 Forward       = Math::Normalize(WorldRotation * FViewVolume::ForwardAxis);
-        const FVector3 Right         = Math::Normalize(WorldRotation * FViewVolume::RightAxis);
+        const FLight   Light         = FSceneLightSet::MakeAreaLight(AreaLight, TransformComponent);
 
-        FLight Light                = {};
-        Light.Flags                 = ELightFlags::Area;
-        Light.Position              = Position;
-        Light.Direction             = -Forward;
-        Light.Falloff               = AreaLight.Falloff;
-        Light.Color                 = PackColor(FVector4(AreaLight.LightColor, 1.0));
-        Light.Intensity             = AreaLight.Intensity;
-        Light.Radius                = Radius;
-        Light.Angles                = HalfSize;
-        Light.ShadowDataIndex       = Constants::kIndexNone;
-        Light.VolumetricScatteringRadius = std::bit_cast<float>(PackNormal(Right));
-        if (AreaLight.bVolumetric)
+        if (AreaLight.bCastShadows && bInCamera)
         {
-            Light.Flags              |= ELightFlags::Volumetric;
-            Light.VolumetricIntensity = AreaLight.VolumetricIntensity;
-        }
-        Light.Flags = PackLightMinRoughness(Light.Flags, AreaLight.MinRoughness);
+            const uint32 FaceMask = VisibleCubeFaces(Position, Radius) & SceneRendererExtractLightsInternal::EmittingCubeFaces(Forward);
+            if (FaceMask != 0u)
+            {
+                const float Dist = Math::Distance(ExtractFrame->ViewVolume.GetViewPosition(), Position);
+                constexpr float ResolutionScale = 2048.0f;
 
+                FShadowRequest& Req  = Batch.Shadows[Batch.NumShadows++];
+                Req                  = FShadowRequest{};
+                Req.FaceMask         = FaceMask;
+                Req.LightIndex       = Lights;
+                Req.Type             = ELightType::Point;
+                Req.DesiredPixels    = (uint32)((Radius / Math::Max(Dist, 0.01f)) * ResolutionScale);
+                Req.DistanceToCamera = Dist;
+                Req.Position         = Position;
+                Req.Attenuation      = Radius;
+            }
+        }
+
+        Batch.Slots[Batch.NumLights]       = Slot;
+        Batch.LightLayers[Batch.NumLights] = AreaLight.RenderLayers.Bits;
         Batch.Lights[Batch.NumLights++] = Light;
     }
 
@@ -857,7 +887,8 @@ namespace Lumina
         }
 
         // Slot 0 is reserved for the sun by ScheduleLightExtract, which is why no index is taken here.
-        Frame.Lighting.Lights[0] = Light;
+        Frame.Lighting.Lights[0]      = Light;
+        Frame.Lighting.LightLayers[0] = DirectionalLight.RenderLayers.Bits;
     }
 
     void FDefaultSceneRenderer::ResolveLightFunctions()
@@ -1084,8 +1115,4 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::NotifyMaxLightsHit()
-    {
-        LOG_WARN_ONCE("[Rendering] More than {} lights reach the view, so the rest are left out.", MAX_LIGHTS);
-    }
 }

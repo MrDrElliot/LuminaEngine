@@ -3783,7 +3783,6 @@ namespace Lumina
                 FTerrainCPUState& State = World->GetEntityRegistry().Get<STerrainComponent>(Entity).CPUState;
                 State.bFullHeightmapDirty = true;
                 State.bFullWeightsDirty   = true;
-                State.bChunksDirty        = true;
             }
         }
 

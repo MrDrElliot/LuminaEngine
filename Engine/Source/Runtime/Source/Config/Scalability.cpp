@@ -26,10 +26,16 @@ namespace Lumina::Scalability
                 "Ultra":  { "RendererSettings.ShadowQuality": "Ultra",  "RendererSettings.PointShadowResolution": 1024, "RendererSettings.bCloudShadows": true,  "RendererSettings.CloudShadowSteps": 12 }
             },
             "Effects": {
-                "Low":    { "RendererSettings.bScreenSpaceReflections": false, "RendererSettings.SSRQuality": "Low",    "RendererSettings.bSupersampleVolumetricLights": false, "RendererSettings.CloudQuality": "Low" },
-                "Medium": { "RendererSettings.bScreenSpaceReflections": false, "RendererSettings.SSRQuality": "Low",    "RendererSettings.bSupersampleVolumetricLights": false, "RendererSettings.CloudQuality": "Medium" },
-                "High":   { "RendererSettings.bScreenSpaceReflections": true,  "RendererSettings.SSRQuality": "Medium", "RendererSettings.bSupersampleVolumetricLights": true,  "RendererSettings.CloudQuality": "High" },
-                "Ultra":  { "RendererSettings.bScreenSpaceReflections": true,  "RendererSettings.SSRQuality": "Ultra",  "RendererSettings.bSupersampleVolumetricLights": true,  "RendererSettings.CloudQuality": "Ultra" }
+                "Low":    { "RendererSettings.bSupersampleVolumetricLights": false, "RendererSettings.CloudQuality": "Low" },
+                "Medium": { "RendererSettings.bSupersampleVolumetricLights": false, "RendererSettings.CloudQuality": "Medium" },
+                "High":   { "RendererSettings.bSupersampleVolumetricLights": true,  "RendererSettings.CloudQuality": "High" },
+                "Ultra":  { "RendererSettings.bSupersampleVolumetricLights": true,  "RendererSettings.CloudQuality": "Ultra" }
+            },
+            "Reflections": {
+                "Low":    { "RendererSettings.ReflectionQuality": "Low",    "RendererSettings.bScreenSpaceReflections": false, "RendererSettings.SSRQuality": "Low" },
+                "Medium": { "RendererSettings.ReflectionQuality": "Medium", "RendererSettings.bScreenSpaceReflections": false, "RendererSettings.SSRQuality": "Low" },
+                "High":   { "RendererSettings.ReflectionQuality": "High",   "RendererSettings.bScreenSpaceReflections": true,  "RendererSettings.SSRQuality": "Medium" },
+                "Ultra":  { "RendererSettings.ReflectionQuality": "Ultra",  "RendererSettings.bScreenSpaceReflections": true,  "RendererSettings.SSRQuality": "Ultra" }
             },
             "PostProcess": {
                 "Low":    { "RendererSettings.bEnableGTAO": false, "RendererSettings.GTAOQualityLevel": 0, "RendererSettings.bDistanceFieldAO": false },
@@ -159,6 +165,7 @@ namespace Lumina::Scalability
         case EScalabilityGroup::PostProcess:  return "PostProcess";
         case EScalabilityGroup::Textures:     return "Textures";
         case EScalabilityGroup::AntiAliasing: return "AntiAliasing";
+        case EScalabilityGroup::Reflections:  return "Reflections";
         }
         return FString();
     }

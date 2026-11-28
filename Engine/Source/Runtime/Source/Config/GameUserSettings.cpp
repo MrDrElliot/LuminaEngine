@@ -246,6 +246,7 @@ namespace Lumina
         case EScalabilityGroup::PostProcess:  return PostProcessQuality;
         case EScalabilityGroup::Textures:     return TextureQuality;
         case EScalabilityGroup::AntiAliasing: return AntiAliasingQuality;
+        case EScalabilityGroup::Reflections:  return ReflectionQuality;
         }
         return ViewDistanceQuality;
     }

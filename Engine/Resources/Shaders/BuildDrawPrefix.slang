@@ -30,6 +30,8 @@ struct FBuildDrawPrefixArgs
     GPUSpan<uint> OutTotals;
     // One thread per (surviving instance, view), sized here because only the GPU knows the survivor count.
     GPUSpan<FDispatchIndirectArguments> OutBlockDispatchArgs;
+    // Where each view's region of the draw list starts, which its visibility IDs are relative to.
+    GPUSpan<uint> OutViewDrawBases;
 };
 FBuildDrawPrefixArgs* Pass() { return GetPassArgs<FBuildDrawPrefixArgs>(); }
 
@@ -43,49 +45,85 @@ uint ShareOfArena(uint Offset, uint TotalDemand, uint Capacity)
     return (uint)min(uint64_t(Offset) * Capacity / TotalDemand, uint64_t(Capacity));
 }
 
-// Where the last view that writes visibility IDs ends, since only those slots have to fit the ID range.
-groupshared uint gsVisIDEnd;
+static const uint kTierCamera  = 0u;
+static const uint kTierCapture = 1u;
+static const uint kTierShadow  = 2u;
+static const uint kNumTiers    = 3u;
 
-bool IsShadowOnlyBucket(uint BucketIndex)
+// Per view, so a view's region and its visibility ID base are one number the raster and every decode share.
+groupshared uint gsViewTier[MAX_CULL_VIEWS];
+groupshared uint gsViewDemand[MAX_CULL_VIEWS * 2u];
+groupshared uint gsViewAllot[MAX_CULL_VIEWS * 2u];
+groupshared uint gsViewBase[MAX_CULL_VIEWS * 2u];
+// Where each view's first bucket sits in the demand-ordered scan of every bucket.
+groupshared uint gsViewStart[MAX_CULL_VIEWS * 2u];
+// The water level each tier and arena settles at, every view below it keeping its whole demand.
+groupshared uint gsTierLevel[kNumTiers * 2u];
+groupshared uint gsTierCapacity[kNumTiers * 2u];
+groupshared uint gsTierBase[kNumTiers * 2u];
+// Each tier and arena's largest view demand and its whole demand, reduced across the group so no lane walks every view.
+groupshared uint     gsTierMax[kNumTiers * 2u];
+groupshared uint64_t gsTierWaveTotals[(DRAW_PREFIX_THREADS / 4u) * kNumTiers * 2u];
+groupshared uint     gsCameraIDs;
+
+// The camera and its custom depth view, then view captures, then shadow views.
+uint ViewTier(uint ViewIndex)
 {
-    return CullViewHasFlag(BucketIndex / Pass().NumDraws, CULL_VIEW_FLAG_CAST_SHADOW_ONLY);
+    if (CullViewHasFlag(ViewIndex, CULL_VIEW_FLAG_CAST_SHADOW_ONLY))
+    {
+        return kTierShadow;
+    }
+    return CullViews().At(ViewIndex).bCaptureView != 0u ? kTierCapture : kTierCamera;
 }
 
-// Views that write visibility IDs take their whole demand first, since a skinned mesh has no coarser LOD and its share of a short list would drop it from the frame.
-struct FArenaTiers
+// What the tier's views take at water level Level, each the smaller of its demand and the level.
+uint TierTakeAtLevel(uint Tier, uint Arena, uint Level, uint NumViews)
 {
-    uint SceneDemand;
-    uint SceneCapacity;
-    uint ShadowDemand;
-    uint ShadowCapacity;
-
-    uint Position(uint SceneRunning, uint ShadowRunning)
+    uint64_t Taken = 0u;
+    for (uint v = 0u; v < NumViews; ++v)
     {
-        return ShareOfArena(SceneRunning, SceneDemand, SceneCapacity) + ShareOfArena(ShadowRunning, ShadowDemand, ShadowCapacity);
+        if (gsViewTier[v] == Tier)
+        {
+            Taken += min(gsViewDemand[v * 2u + Arena], Level);
+        }
     }
-};
+    return (uint)min(Taken, uint64_t(0xFFFFFFFFu));
+}
 
-FArenaTiers MakeArenaTiers(uint SceneDemand, uint ShadowDemand, uint Capacity)
+// The highest level whose take fits, so small views keep everything and only those above it are trimmed, which is max-min fair.
+uint FindTierLevel(uint Tier, uint Arena, uint Capacity, uint NumViews, uint MaxDemand, uint TotalDemand)
 {
-    FArenaTiers Tiers;
-    Tiers.SceneDemand    = SceneDemand;
-    Tiers.SceneCapacity  = min(SceneDemand, Capacity);
-    Tiers.ShadowDemand   = ShadowDemand;
-    Tiers.ShadowCapacity = Capacity - Tiers.SceneCapacity;
-    return Tiers;
+    // At the largest demand every view keeps all of it, so the take there is the whole demand.
+    if (TotalDemand <= Capacity)
+    {
+        return MaxDemand;
+    }
+
+    // Bounded by the largest demand, so the search ends in at most 32 steps and the midpoint never overflows.
+    uint Lo = 0u;
+    uint Hi = MaxDemand;
+    while (Lo < Hi)
+    {
+        const uint Mid = (uint)((uint64_t(Lo) + uint64_t(Hi) + 1u) >> 1u);
+        if (TierTakeAtLevel(Tier, Arena, Mid, NumViews) <= Capacity)
+        {
+            Lo = Mid;
+        }
+        else
+        {
+            Hi = Mid - 1u;
+        }
+    }
+    return Lo;
 }
 
 [shader("compute")]
 [numthreads(DRAW_PREFIX_THREADS, 1, 1)]
 void ComputeMain(uint ThreadIndex : SV_GroupIndex)
 {
-    if (ThreadIndex == 0u)
-    {
-        gsVisIDEnd = 0u;
-    }
-    GroupMemoryBarrierWithGroupSync();
-
-    const uint NumBuckets = Pass().NumViews * Pass().NumDraws;
+    const uint NumViews   = min(Pass().NumViews, (uint)MAX_CULL_VIEWS);
+    const uint NumDraws   = max(Pass().NumDraws, 1u);
+    const uint NumBuckets = NumViews * NumDraws;
     const uint PerThread  = (NumBuckets + DRAW_PREFIX_THREADS - 1u) / DRAW_PREFIX_THREADS;
     const uint First      = min(ThreadIndex * PerThread, NumBuckets);
     const uint Last       = min(First + PerThread, NumBuckets);
@@ -93,54 +131,136 @@ void ComputeMain(uint ThreadIndex : SV_GroupIndex)
     const uint DrawCapacity  = Pass().DrawList.Count;
     const uint BlockCapacity = Pass().BlockList.Count;
 
-    uint2 LocalScene  = uint2(0u, 0u);
-    uint2 LocalShadow = uint2(0u, 0u);
+    if (ThreadIndex < NumViews)
+    {
+        gsViewTier[ThreadIndex]            = ViewTier(ThreadIndex);
+        gsViewDemand[ThreadIndex * 2u]     = 0u;
+        gsViewDemand[ThreadIndex * 2u + 1u] = 0u;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    uint2 Local = uint2(0u, 0u);
     for (uint i = First; i < Last; ++i)
     {
         FRenderBucket* Bucket = Pass().Buckets.At(i);
         const uint2 Reserved = uint2(Bucket.DrawCapacity, Bucket.BlockCapacity);
-        if (IsShadowOnlyBucket(i))
-        {
-            LocalShadow += Reserved;
-        }
-        else
-        {
-            LocalScene += Reserved;
-        }
+        Local += Reserved;
+        InterlockedAdd(gsViewDemand[(i / NumDraws) * 2u], Reserved.x);
+        InterlockedAdd(gsViewDemand[(i / NumDraws) * 2u + 1u], Reserved.y);
     }
 
-    uint2 SceneDemand;
-    uint2 SceneRunning = GroupExclusiveScan(LocalScene, ThreadIndex, DRAW_PREFIX_THREADS, SceneDemand);
-    // The scan's wave totals are shared, so every thread finishes reading them before the second scan writes.
+    // Demand space, every bucket in index order, which a view's own buckets fill contiguously.
+    uint2 Demand;
+    uint2 Running = GroupExclusiveScan(Local, ThreadIndex, DRAW_PREFIX_THREADS, Demand);
     GroupMemoryBarrierWithGroupSync();
-    uint2 ShadowDemand;
-    uint2 ShadowRunning = GroupExclusiveScan(LocalShadow, ThreadIndex, DRAW_PREFIX_THREADS, ShadowDemand);
 
-    const uint2 Demand = SceneDemand + ShadowDemand;
-    const FArenaTiers DrawTiers  = MakeArenaTiers(SceneDemand.x, ShadowDemand.x, DrawCapacity);
-    const FArenaTiers BlockTiers = MakeArenaTiers(SceneDemand.y, ShadowDemand.y, BlockCapacity);
+    // One thread per view feeds its tier's largest and whole demand, the sums in 64 bits as the clamped take needs.
+    const bool  bView      = ThreadIndex < NumViews;
+    const uint  ViewTierId = bView ? gsViewTier[ThreadIndex] : 0u;
+    const uint2 ViewDemand = bView ? uint2(gsViewDemand[ThreadIndex * 2u], gsViewDemand[ThreadIndex * 2u + 1u]) : uint2(0u, 0u);
+    if (ThreadIndex < kNumTiers * 2u)
+    {
+        gsTierMax[ThreadIndex] = 0u;
+    }
+    if (ThreadIndex == 0u)
+    {
+        gsCameraIDs = 0u;
+    }
+    GroupMemoryBarrierWithGroupSync();
 
-    uint VisIDEnd = 0u;
+    const uint Wave = ThreadIndex / WaveGetLaneCount();
+    [unroll]
+    for (uint Slot = 0u; Slot < kNumTiers * 2u; ++Slot)
+    {
+        const bool     bMine = bView && ViewTierId == (Slot >> 1u);
+        const uint     Value = bMine ? ViewDemand[Slot & 1u] : 0u;
+        const uint64_t Sum   = WaveActiveSum(uint64_t(Value));
+        if (WaveIsFirstLane())
+        {
+            gsTierWaveTotals[Wave * kNumTiers * 2u + Slot] = Sum;
+        }
+        if (bMine)
+        {
+            InterlockedMax(gsTierMax[Slot], Value);
+        }
+    }
+    if (bView && ViewTierId == kTierCamera)
+    {
+        InterlockedMax(gsCameraIDs, ViewDemand.x);
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    // One lane per tier and arena, the camera served first, captures next, and shadows sharing the rest.
+    if (ThreadIndex < kNumTiers * 2u)
+    {
+        const uint NumWaves = (DRAW_PREFIX_THREADS + WaveGetLaneCount() - 1u) / WaveGetLaneCount();
+        const uint Arena = ThreadIndex & 1u;
+        const uint Tier  = ThreadIndex >> 1u;
+        uint64_t Totals[kNumTiers] = { 0u, 0u, 0u };
+        for (uint w = 0u; w < NumWaves; ++w)
+        {
+            [unroll]
+            for (uint t = 0u; t < kNumTiers; ++t)
+            {
+                Totals[t] += gsTierWaveTotals[w * kNumTiers * 2u + t * 2u + Arena];
+            }
+        }
+        const uint Total       = Arena == 0u ? DrawCapacity : BlockCapacity;
+        const uint CameraTake  = min((uint)min(Totals[kTierCamera], uint64_t(0xFFFFFFFFu)), Total);
+        const uint CaptureTake = min((uint)min(Totals[kTierCapture], uint64_t(0xFFFFFFFFu)), Total - CameraTake);
+        const uint Capacity = Tier == kTierCamera ? CameraTake : (Tier == kTierCapture ? CaptureTake : Total - CameraTake - CaptureTake);
+        gsTierCapacity[ThreadIndex] = Capacity;
+        gsTierBase[ThreadIndex]     = Tier == kTierCamera ? 0u : (Tier == kTierCapture ? CameraTake : CameraTake + CaptureTake);
+        gsTierLevel[ThreadIndex]    = FindTierLevel(Tier, Arena, Capacity, NumViews, gsTierMax[ThreadIndex],
+                                                    (uint)min(Totals[Tier], uint64_t(0xFFFFFFFFu)));
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    // Each tier's views are laid out in view order from the tier's base, and each view's start in demand space is the sum before it.
+    const uint2 ViewAllot = bView ? min(ViewDemand, uint2(gsTierLevel[ViewTierId * 2u], gsTierLevel[ViewTierId * 2u + 1u])) : uint2(0u, 0u);
+    uint2 ScanTotal;
+    const uint2 ViewStart = GroupExclusiveScan(ViewDemand, ThreadIndex, DRAW_PREFIX_THREADS, ScanTotal);
+    uint2 TierCursor = uint2(0u, 0u);
+    [unroll]
+    for (uint t = 0u; t < kNumTiers; ++t)
+    {
+        GroupMemoryBarrierWithGroupSync();
+        const uint2 Cursor = GroupExclusiveScan(ViewTierId == t ? ViewAllot : uint2(0u, 0u), ThreadIndex, DRAW_PREFIX_THREADS, ScanTotal);
+        TierCursor = ViewTierId == t ? Cursor : TierCursor;
+    }
+    if (bView)
+    {
+        gsViewAllot[ThreadIndex * 2u]      = ViewAllot.x;
+        gsViewAllot[ThreadIndex * 2u + 1u] = ViewAllot.y;
+        gsViewBase[ThreadIndex * 2u]       = gsTierBase[ViewTierId * 2u] + TierCursor.x;
+        gsViewBase[ThreadIndex * 2u + 1u]  = gsTierBase[ViewTierId * 2u + 1u] + TierCursor.y;
+        gsViewStart[ThreadIndex * 2u]      = ViewStart.x;
+        gsViewStart[ThreadIndex * 2u + 1u] = ViewStart.y;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    if (ThreadIndex < NumViews && Pass().OutViewDrawBases.Contains(ThreadIndex))
+    {
+        Pass().OutViewDrawBases.Set(ThreadIndex, gsViewBase[ThreadIndex * 2u]);
+    }
+
     for (uint i = First; i < Last; ++i)
     {
         FRenderBucket* Bucket = Pass().Buckets.At(i);
+        const uint View = i / NumDraws;
 
-        const uint DrawCount   = Bucket.DrawCapacity;
-        const uint BlockCount  = Bucket.BlockCapacity;
-        const bool bShadowOnly = IsShadowOnlyBucket(i);
-        if (!bShadowOnly)
-        {
-            VisIDEnd = max(VisIDEnd, SceneRunning.x + ShadowRunning.x + DrawCount);
-        }
+        const uint DrawCount  = Bucket.DrawCapacity;
+        const uint BlockCount = Bucket.BlockCapacity;
+        const uint2 Start = Running - uint2(gsViewStart[View * 2u], gsViewStart[View * 2u + 1u]);
+        const uint2 End   = Start + uint2(DrawCount, BlockCount);
 
-        const uint2 SceneEnd  = SceneRunning + (bShadowOnly ? uint2(0u, 0u) : uint2(DrawCount, BlockCount));
-        const uint2 ShadowEnd = ShadowRunning + (bShadowOnly ? uint2(DrawCount, BlockCount) : uint2(0u, 0u));
-
-        // Every bucket keeps a share of its tier, so a short arena drops static batches to coarse LODs instead of vanishing.
-        const uint DrawStart  = DrawTiers.Position(SceneRunning.x, ShadowRunning.x);
-        const uint DrawEnd    = DrawTiers.Position(SceneEnd.x, ShadowEnd.x);
-        const uint BlockStart = BlockTiers.Position(SceneRunning.y, ShadowRunning.y);
-        const uint BlockEnd   = BlockTiers.Position(SceneEnd.y, ShadowEnd.y);
+        // Every bucket keeps a share of its view's allotment, so a short arena drops static batches to coarse LODs instead of vanishing.
+        const uint DrawDemand  = gsViewDemand[View * 2u];
+        const uint BlockDemand = gsViewDemand[View * 2u + 1u];
+        const uint DrawStart  = gsViewBase[View * 2u]      + ShareOfArena(Start.x, DrawDemand,  gsViewAllot[View * 2u]);
+        const uint DrawEnd    = gsViewBase[View * 2u]      + ShareOfArena(End.x,   DrawDemand,  gsViewAllot[View * 2u]);
+        const uint BlockStart = gsViewBase[View * 2u + 1u] + ShareOfArena(Start.y, BlockDemand, gsViewAllot[View * 2u + 1u]);
+        const uint BlockEnd   = gsViewBase[View * 2u + 1u] + ShareOfArena(End.y,   BlockDemand, gsViewAllot[View * 2u + 1u]);
 
         Bucket.DrawDemand    = DrawCount;
         Bucket.BlockDemand   = BlockCount;
@@ -149,17 +269,16 @@ void ComputeMain(uint ThreadIndex : SV_GroupIndex)
         Bucket.BlockBase     = BlockStart;
         Bucket.BlockCapacity = BlockEnd - BlockStart;
 
-        SceneRunning  = SceneEnd;
-        ShadowRunning = ShadowEnd;
+        Running += uint2(DrawCount, BlockCount);
     }
 
-    InterlockedMax(gsVisIDEnd, VisIDEnd);
-    GroupMemoryBarrierWithGroupSync();
     if (ThreadIndex != 0u)
     {
         return;
     }
-    Pass().OutTotals.Set(9u, gsVisIDEnd);
+
+    // The camera's largest view, since its IDs are what the shared LOD pressure has to keep inside the range.
+    Pass().OutTotals.Set(9u, gsCameraIDs);
 
     // Demand, from the unclamped counts, since the CPU sizes the next allocation from what was needed.
     const uint DrawRunning  = Demand.x;

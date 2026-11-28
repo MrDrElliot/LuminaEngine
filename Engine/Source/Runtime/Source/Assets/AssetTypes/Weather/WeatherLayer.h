@@ -61,17 +61,47 @@ namespace Lumina
         PROPERTY(Editable, Category = "Rain|Look", ClampMin = 0.0f, ClampMax = 1.0f)
         float Opacity = 1.0f;
 
-        PROPERTY(Editable, Category = "Rain|Look", Color)
+        PROPERTY(Editable, Category = "Rain|Look", ClampMin = 0.0f, ClampMax = 2.0f, ToolTip = "How strongly each drop bends the scene behind it, like a tiny lens.")
+        float Refraction = 1.0f;
+
+        PROPERTY(Editable, Category = "Rain|Look", ClampMin = 0.0f, ClampMax = 4.0f, ToolTip = "Bright reflective rim along each drop's edges.")
+        float Reflection = 1.0f;
+
+        PROPERTY(Editable, Category = "Rain|Look", ClampMin = 0.0f, ClampMax = 4.0f, ToolTip = "How much drops light up when looking toward the sun or a lamp behind them.")
+        float Glint = 1.0f;
+
+        PROPERTY(Editable, Category = "Rain|Color", Color, ToolTip = "Color of the water, which tints the light through and off every drop, splash and the haze.")
         FVector3 Tint = FVector3(1.0f);
 
-        PROPERTY(Editable, Category = "Rain|Look", ClampMin = 0.0f, ClampMax = 4.0f, ToolTip = "Veil of distant rain beyond the drawn drops.")
+        PROPERTY(Editable, Category = "Rain|Color", Color, ToolTip = "Second water color that individual drops drift toward by Color Variation.")
+        FVector3 SecondaryTint = FVector3(1.0f);
+
+        PROPERTY(Editable, Category = "Rain|Color", ClampMin = 0.0f, ClampMax = 1.0f, ToolTip = "How far each drop picks at random between Tint and Secondary Tint.")
+        float ColorVariation = 0.0f;
+
+        PROPERTY(Editable, Category = "Rain|Color", Color, ToolTip = "Light the drops give off themselves, for glowing or stylized rain.")
+        FVector3 EmissiveColor = FVector3(1.0f);
+
+        PROPERTY(Editable, Category = "Rain|Color", ClampMin = 0.0f, ClampMax = 100.0f, ToolTip = "Brightness of Emissive Color, 0 for ordinary rain.")
+        float EmissiveIntensity = 0.0f;
+
+        PROPERTY(Editable, Category = "Rain|Distance", ClampMin = 0.0f, ClampMax = 4.0f, ToolTip = "Veil of distant rain beyond the drawn drops.")
         float HazeDensity = 0.5f;
+
+        PROPERTY(Editable, Category = "Rain|Distance", ClampMin = 0.0f, ClampMax = 4.0f, ToolTip = "Moving sheets of rain streaks drawn past the individual drops.")
+        float CurtainDensity = 1.0f;
 
         PROPERTY(Editable, Category = "Rain|Splashes", ClampMin = 0.0f, ClampMax = 4.0f)
         float SplashDensity = 1.0f;
 
         PROPERTY(Editable, Category = "Rain|Splashes", ClampMin = 0.1f, ClampMax = 4.0f)
         float SplashSize = 1.0f;
+
+        PROPERTY(Editable, Category = "Rain|Splashes", ClampMin = 0.0f, ClampMax = 4.0f, ToolTip = "Low spray kicked up where heavy rain hits hard ground.")
+        float SplashMist = 1.0f;
+
+        PROPERTY(Editable, Category = "Rain|Splashes", ClampMin = 0.0f, ClampMax = 4.0f, ToolTip = "Water dripping from roof edges and overhangs, which keeps going while surfaces are still wet.")
+        float EdgeDrips = 1.0f;
 
         PROPERTY(Editable, Category = "Rain|Surfaces", ClampMin = 0.0f, ClampMax = 1.0f, ToolTip = "Wetness surfaces reach after soaking in this rain.")
         float MaxWetness = 1.0f;
@@ -176,6 +206,34 @@ namespace Lumina
 
         PROPERTY(Editable, Category = "Clouds|Lighting", ClampMin = 0.0f, ClampMax = 2.0f)
         float AmbientScale = 0.8f;
+    };
+
+    REFLECT(ToolTip = "Darkens and hazes the sky and sun for a storm, applied to the Environment component when the Weather component allows it.")
+    class RUNTIME_API CEnvironmentWeatherLayer : public CWeatherLayer
+    {
+        GENERATED_BODY()
+
+    public:
+
+        void ApplyTo(FWeatherParams& Params) const override;
+
+        PROPERTY(Editable, Category = "Environment|Sun", ClampMin = 0.0f, ClampMax = 2.0f, ToolTip = "Scales the sun's light on the ground, below 1 for an overcast day.")
+        float SunlightScale = 0.45f;
+
+        PROPERTY(Editable, Category = "Environment|Sun", ClampMin = 0.0f, ClampMax = 2.0f, ToolTip = "Scales the sun disc and its glow in the sky.")
+        float SunDiscScale = 0.2f;
+
+        PROPERTY(Editable, Category = "Environment|Sun", Color, ToolTip = "Multiplies the sun's color, cooler for a storm.")
+        FVector3 SunTint = FVector3(0.85f, 0.9f, 1.0f);
+
+        PROPERTY(Editable, Category = "Environment|Sky", ClampMin = 0.0f, ClampMax = 2.0f, ToolTip = "Scales the sky's brightness, which also dims the ambient light and reflections it bakes.")
+        float SkyBrightness = 0.55f;
+
+        PROPERTY(Editable, Category = "Environment|Sky", ClampMin = 0.0f, ClampMax = 10.0f, ToolTip = "Haze and humidity the air holds during this weather, replacing the Environment's own.")
+        float AerosolDensity = 3.0f;
+
+        PROPERTY(Editable, Category = "Environment|Sky", ClampMin = 0.0f, ClampMax = 1.0f, ToolTip = "How much of the stars, galaxy and moon still show through, 0 under full cloud.")
+        float StarVisibility = 0.0f;
     };
 
     REFLECT(ToolTip = "Wind that tilts the rain, drifts the clouds and gusts over time.")

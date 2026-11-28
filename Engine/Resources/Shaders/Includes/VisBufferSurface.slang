@@ -151,7 +151,7 @@ uint ResolveVisInstance(uint VisRaw, uint DrawListCount)
         return ~0u;
     }
 
-    const uint MeshletSlot = (VisRaw - 1u) >> VISBUFFER_TRI_BITS;
+    const uint MeshletSlot = ((VisRaw - 1u) >> VISBUFFER_TRI_BITS) + VisDrawBase();
     if (MeshletSlot >= DrawListCount)
     {
         return ~0u;
@@ -228,7 +228,7 @@ FVisTriangle ResolveVisTriangle(uint VisRaw, uint DrawListCount)
 
     const uint InstCount   = Scene().CullData.InstanceNum;
     const uint VisID       = VisRaw - 1u;
-    const uint MeshletSlot = VisID >> VISBUFFER_TRI_BITS;
+    const uint MeshletSlot = (VisID >> VISBUFFER_TRI_BITS) + VisDrawBase();
     const uint TriId       = VisID & VISBUFFER_TRI_MASK;
 
     // A proxy or terrain pixel or an empty draw list has no meshlet draw array to index, so bail before any BDA load touches it.
@@ -410,6 +410,26 @@ FVisSurface ReconstructVisSurfaceNoWPO(FVisTriangle T, uint2 Texel, float2 Scree
     }
 
     return InterpolateVisSurface(W, WorldPos, VisPixelNdc(Texel, ScreenSize), ScreenSize);
+}
+
+// The terrain triangle's corners before any material offset, rebuilt from the heightmap the way TerrainVisBuffer rastered them.
+void TerrainVisWorldVertices(FTerrainVisTriangle T, out FMeshletWorldVertex W[3])
+{
+    const FTerrainRenderParams Params  = GetTerrainParams();
+    const uint3                Corners = TerrainTriangleCorners(T.Tri);
+    FTerrainPage Cache = (FTerrainPage)0;
+    [unroll]
+    for (int k = 0; k < 3; ++k)
+    {
+        const FTerrainVertex V = TerrainNodeVertex(Params, T.Node, Corners[k], Cache);
+        W[k].WorldPos  = V.WorldPos;
+        W[k].NormalWS  = V.NormalWS;
+        W[k].TangentWS = float4(TerrainTangent(V.NormalWS), 1.0);
+        // UV is world XZ, and set 1 carries the heightmap UV so it gets exact gradients too.
+        W[k].UV        = V.WorldPos.xz;
+        W[k].UV1       = V.HeightUV;
+        W[k].Color     = float4(1.0, 1.0, 1.0, 1.0);
+    }
 }
 
 // There is no SV_IsFrontFace outside the rasterizer, so the triangle's own face, turned to its authored side, decides which side the camera sees.

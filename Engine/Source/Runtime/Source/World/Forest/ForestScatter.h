@@ -22,20 +22,15 @@ namespace Lumina::Forest
         uint32   Species  = 0;
     };
 
-    // A copy of the terrain's heights, which build threads sample while the editor may be sculpting the original.
+    // The terrain as build threads sample it, through its store, whose tiles are swapped whole so a sculpt never tears a read.
     struct RUNTIME_API FTerrainSnapshot
     {
-        // Quantized across the copy's own range, half a float copy and finer than the 16-bit heightmaps terrains come from.
-        TVector<uint16> Heights;
-        float           HeightMin     = 0.0f;
-        float           HeightStep    = 0.0f;
-        int32           Resolution    = 0;
-        float           TileWorldSize = 0.0f;
-        float           MaxHeight     = 0.0f;
-        FVector3        Origin        = FVector3(0.0f);
-        uint64          Hash          = 0;
+        FTerrainHeightView View;
+        FVector3           Origin = FVector3(0.0f);
+        // Changes with every edit and the terrain's shape, which is what makes a forest rebuild.
+        uint64             Hash   = 0;
 
-        // Null when the view holds no heights.
+        // Null when the view has no store.
         static TSharedPtr<FTerrainSnapshot> Capture(const FTerrainHeightView& Source);
 
         // The same bilinear height and central-difference normal as FTerrainHeightView.

@@ -5,8 +5,6 @@ namespace Lumina
 {
     namespace
     {
-        // Covers a 4x4 open-world terrain tiling with shadow casting enabled on every tile.
-        constexpr uint32 kMaxTerrainHeightfields = 16u;
         constexpr uint32 kTerrainShadowSteps      = 48u;
 
         // How far past a receiver a distance-field caster can still shade it.
@@ -70,19 +68,6 @@ namespace Lumina
             RHI::TGPUSpan<uint32> CellCounts;
         };
 
-        // Mirror of FTerrainHeightfield in TerrainHeightfield.slang.
-        struct FTerrainHeightfieldGPU
-        {
-            FVector2 OriginXZ;
-            float    Stride;
-            float    OriginY;
-            float    MaxHeight;
-            float    Resolution;
-            uint32   HeightmapIndex;
-            float    _Pad;
-        };
-        static_assert(sizeof(FTerrainHeightfieldGPU) == 32);
-
         // Mirror of FPushConstants in WorldDistanceFieldUpdate.slang.
         struct FWorldDFUpdateArgs
         {
@@ -91,11 +76,8 @@ namespace Lumina
             uint32                          Levels[FWorldDistanceField::kLevels];
             uint32                          _Pad;
             FDFObjectGrid                   Grid;
-            uint32                          NumTerrains;
-            uint32                          _Pad1[3];
-            FTerrainHeightfieldGPU          Terrains[kMaxTerrainHeightfields];
         };
-        static_assert(offsetof(FWorldDFUpdateArgs, Grid) == 160 && offsetof(FWorldDFUpdateArgs, Terrains) == 288);
+        static_assert(offsetof(FWorldDFUpdateArgs, Grid) == 160);
 
         // Mirror of FPushConstants in DistanceFieldAO.slang.
         struct FDistanceFieldAOArgs
@@ -109,8 +91,6 @@ namespace Lumina
             float         MaxDistance;
             float         ViewDistance;
             FWorldDistanceFieldGPU Field;
-            uint32        NumTerrains;
-            FTerrainHeightfieldGPU Terrains[kMaxTerrainHeightfields];
         };
 
         // The field update reads a built grid's spans, and a grid of no cells, which no brick column falls inside, when there is none.
@@ -136,39 +116,6 @@ namespace Lumina
         }
 
 
-        // Every casting terrain, not only those in view, since a ridge behind the camera still shades and occludes what is in front. Returns how many there were.
-        template<typename TExtracts, typename TStates>
-        uint32 GatherTerrainHeightfields(const TExtracts& Extracts, const TStates& States, FTerrainHeightfieldGPU (&Out)[kMaxTerrainHeightfields], uint32& OutCount)
-        {
-            OutCount = 0u;
-            uint32 NumCasting = 0u;
-            for (const auto& Terrain : Extracts)
-            {
-                if (!Terrain.bCastShadow || Terrain.Resolution < 2)
-                {
-                    continue;
-                }
-                ++NumCasting;
-                const auto StateIt = States.Find(Terrain.Entity);
-                if (OutCount >= kMaxTerrainHeightfields || StateIt == nullptr || !StateIt->HeightmapTexture)
-                {
-                    continue;
-                }
-
-                const FVector3 Origin = FVector3(Terrain.WorldMatrix[3]);
-                const float    Half   = Terrain.TileWorldSize * 0.5f;
-
-                FTerrainHeightfieldGPU& Record = Out[OutCount++];
-                Record.OriginXZ       = FVector2(Origin.x - Half, Origin.z - Half);
-                Record.Stride         = Terrain.TileWorldSize / (float)(Terrain.Resolution - 1);
-                Record.OriginY        = Origin.y;
-                Record.MaxHeight      = Terrain.MaxHeight;
-                Record.Resolution     = (float)Terrain.Resolution;
-                Record.HeightmapIndex = (uint32)StateIt->HeightmapTexture.GetResourceID();
-            }
-            return NumCasting;
-        }
-
         // Mirror of FPushConstants in SunFarShadow.slang.
         struct FSunFarShadowArgs
         {
@@ -179,14 +126,12 @@ namespace Lumina
             float    TanHalfAngle;
             float    TerrainMaxDistance;
             uint32   TerrainSteps;
-            uint32   NumTerrains;
-            float    _Pad;
+            uint32   _Pad[2];
             FWorldDistanceFieldGPU Field;
             float    DFNear;
             float    DFFar;
             float    DFMaxTrace;
             uint32   bDistanceField;
-            FTerrainHeightfieldGPU Terrains[kMaxTerrainHeightfields];
         };
 
         // Mirror of FPushConstants in SunContactShadow.slang.
@@ -278,18 +223,13 @@ namespace Lumina
         Args.ToSun              = Settings.ToSun;
         Args.TanHalfAngle       = Settings.TanHalfAngle;
         Args.TerrainMaxDistance = Settings.TerrainDistance;
-        Args.TerrainSteps       = kTerrainShadowSteps;
+        // The pass also runs for distance field shadows alone, so the light's terrain switch has to reach the shader.
+        Args.TerrainSteps       = Settings.bTerrain ? kTerrainShadowSteps : 0u;
         Args.DFNear             = Settings.DFNear;
         Args.DFFar              = Settings.DFFar;
         Args.DFMaxTrace         = kSunDFMaxTrace;
         Args.Field              = MakeWorldDistanceFieldArgs();
         Args.bDistanceField     = (Settings.bDistanceField && Args.Field.NumLevels > 0u) ? 1u : 0u;
-
-        const uint32 NumCastingTerrains = GatherTerrainHeightfields(Frame.Extracts.TerrainExtracts, TerrainGPUStates, Args.Terrains, Args.NumTerrains);
-        if (NumCastingTerrains > kMaxTerrainHeightfields)
-        {
-            LOG_WARN_ONCE("Renderer: the sun far shadow needed {} casting terrains but can only hold {}, so far shadows lose casters.", NumCastingTerrains, kMaxTerrainHeightfields);
-        }
 
         // Runs even with nothing to trace yet, since the lighting reads whatever this leaves in the mask.
         DispatchCompute(CL, TraceCS, Args,
@@ -442,11 +382,11 @@ namespace Lumina
                 Known->Min = Min;
                 Known->Max = Max;
             }
-            else if (Terrain.HeightUpload == 1u)
+            else if (Terrain.HeightChange == FFrameData::EHeightChange::Full)
             {
                 WorldDistanceField.TouchBox(Min, Max);
             }
-            else if (Terrain.HeightUpload == 2u)
+            else if (Terrain.HeightChange == FFrameData::EHeightChange::Rect)
             {
                 const float Stride = Terrain.TileWorldSize / (float)(Terrain.Resolution - 1);
                 WorldDistanceField.TouchBox(FVector3(Min.x + Terrain.HeightRectMin.x * Stride, Min.y, Min.z + Terrain.HeightRectMin.y * Stride),
@@ -554,8 +494,6 @@ namespace Lumina
             Placement.Dimension = FWorldDistanceField::kBricksPerAxis;
             Placement.SpherePad = FWorldDistanceField::Band(Level) + FWorldDistanceField::VoxelSize(Level);
             Placement.MinRadius = FWorldDistanceField::MinCasterRadius(Level);
-
-            GatherTerrainHeightfields(RenderFrame->Extracts.TerrainExtracts, TerrainGPUStates, Args.Terrains, Args.NumTerrains);
 
             // An empty scene has no grid to build and no caster to merge, so its bricks rightly come out empty.
             if (BuildDistanceFieldGrid(CL, WorldDFGrid, Placement))
@@ -768,7 +706,6 @@ namespace Lumina
         Args.MaxDistance   = MaxDistance;
         Args.ViewDistance  = ViewDistance;
         Args.Field         = MakeWorldDistanceFieldArgs();
-        GatherTerrainHeightfields(RenderFrame->Extracts.TerrainExtracts, TerrainGPUStates, Args.Terrains, Args.NumTerrains);
 
         DispatchCompute(CL, TraceCS, Args,
             RenderUtils::GetGroupCount(Args.OutputSize[0], 8u),

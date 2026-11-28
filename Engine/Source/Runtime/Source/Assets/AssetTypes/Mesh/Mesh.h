@@ -22,6 +22,9 @@ namespace Lumina
 
         // Republishes the distance field and impostor textures on the same header slot, so cached instances need no new address.
         RUNTIME_API void RefreshTextures(FMeshResource& Resource);
+
+        // Rewrites the header alone, for a setting it carries that needs no new texture.
+        RUNTIME_API void RefreshHeader(FMeshResource& Resource);
     }
 
     REFLECT()
@@ -35,6 +38,7 @@ namespace Lumina
 
         void Serialize(FArchive& Ar) override;
         void PostLoad() override;
+        void PostPropertyChange(FProperty* ChangedProperty) override;
         void OnReferencesReplaced() override;
         void OnDestroy() override;
 
@@ -119,6 +123,10 @@ namespace Lumina
         // Seeded from the import dialog and applied by the mesh editor's Build Distance Field, so a field changes without the source file.
         PROPERTY(Editable, Category = "Distance Field", DisplayName = "Settings")
         SDistanceFieldBuildSettings DistanceFieldSettings;
+
+        // Views, resolution and coverage take effect on the next bake, and the transition scale at once.
+        PROPERTY(Editable, Category = "Impostor", DisplayName = "Settings")
+        SImpostorSettings ImpostorSettings;
 
         // The file this mesh was last imported from, which Reimport From File opens on, empty for procedural meshes.
         PROPERTY(Hidden)

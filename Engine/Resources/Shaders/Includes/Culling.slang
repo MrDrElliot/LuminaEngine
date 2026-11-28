@@ -388,10 +388,15 @@ bool IsShadowCacheSplitRejected(FCullView View, bool bShadowCached, bool bMover)
 }
 
 // CullInstances sizes buckets from this and BuildMeshletBlocks appends against it, so they must agree.
-bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool bNoCull, bool bCaster,
-                             bool bShadowOnly, bool bFoliage, bool bCustomDepth, uint Layers, bool bShadowCached, bool bMover)
+bool PassesCaptureFilter(FCullView View, uint CaptureMask)
 {
-    if ((View.LayerMask & Layers) == 0u)
+    return (View.CaptureInclude == 0u || (CaptureMask & View.CaptureInclude) != 0u) && (CaptureMask & View.CaptureExclude) == 0u;
+}
+
+bool IsInstanceVisibleToView(FCullView View, float3 Center, float Radius, bool bNoCull, bool bCaster,
+                             bool bShadowOnly, bool bFoliage, bool bCustomDepth, uint Layers, bool bShadowCached, bool bMover, uint CaptureMask)
+{
+    if ((View.LayerMask & Layers) == 0u || !PassesCaptureFilter(View, CaptureMask))
     {
         return false;
     }

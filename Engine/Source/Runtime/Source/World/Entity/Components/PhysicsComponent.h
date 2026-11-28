@@ -414,7 +414,7 @@ namespace Lumina
         uint32 TakenGeometryVersion = 0;
     };
 
-    /** Static collider built from an STerrainComponent's heightmap (height field). Requires both components on the same entity. */
+    // Streams static height field patches of the STerrainComponent on the same entity, around cameras, characters and moving bodies.
     REFLECT(Component, Category = "Physics")
     struct RUNTIME_API STerrainColliderComponent
     {
@@ -432,10 +432,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Navigation")
         bool bAffectsNavigation = true;
 
-        // Heightmap versions collision was built from and last polled, so a sculpt rebuilds it once the stroke ends.
-        uint32 BuiltHeightmapVersion = 0;
-        uint32 SeenHeightmapVersion  = 0;
-        bool   bHeightmapTracked     = false;
+        // Collision reaches this far around each camera, while characters and moving bodies keep only the patches under them.
+        PROPERTY(Editable, ClampMin = 0.0f, Category = "Streaming")
+        float StreamingRadius = 512.0f;
     };
 
     /** Primitive type for one child of a compound collider. */

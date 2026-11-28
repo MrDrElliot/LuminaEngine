@@ -24,7 +24,10 @@ namespace Lumina
 
         //~ Ray and shape queries.
 
-        // A miss keeps Start and End, while bHit marks whether the remaining hit fields are valid.
+        // The nearest terrain the segment meets through its heights rather than its bodies, every terrain when there is no physics scene and otherwise only those streaming their collision.
+        bool TraceTerrainHeights(const FVector3& Start, const FVector3& End, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask, bool bEveryTerrain, SRayResult& OutHit) const;
+
+        // A miss keeps Start and End, while bHit marks whether the remaining hit fields are valid. Ground where terrain collision has not streamed in still hits.
         FUNCTION()
         SRayResult Raycast(FVector3 Start, FVector3 End,
             ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask = ECollisionProfiles::All);

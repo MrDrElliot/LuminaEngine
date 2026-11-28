@@ -149,6 +149,10 @@ namespace Lumina
 
         const SPostProcessSettings* GetActivePostProcess(const FDefaultSceneRenderer::FFrameData& Frame)
         {
+            if (Frame.PostProcess.ViewOverride != nullptr)
+            {
+                return Frame.PostProcess.ViewOverride;
+            }
             return Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
         }
 

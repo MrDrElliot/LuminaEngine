@@ -13,6 +13,7 @@
 #include "Core/Object/Cast.h"
 #include "Core/Object/Package/Package.h"
 #include "Core/Profiler/Profile.h"
+#include "Core/Serialization/Structured/JsonStructuredArchive.h"
 #include "Tools/UI/ImGui/ImGuiDesignIcons.h"
 #include "Tools/UI/ImGui/EditorColors.h"
 #include "Tools/UI/ImGui/ImGuiFonts.h"
@@ -24,22 +25,6 @@ namespace Lumina
 {
     namespace
     {
-        // Raw pointers deliberately, since a TStrongObjectPtr clipboard would outlive its graph at teardown.
-        TVector<CEdGraphNode*>& GetNodeClipboard()
-        {
-            static TVector<CEdGraphNode*> Clipboard;
-            return Clipboard;
-        }
-
-        // Canvas-space center of the copied set, so a paste lands relative to the cursor.
-        ImVec2 GClipboardPivot(0.0f, 0.0f);
-
-        void ForgetClipboardNode(CEdGraphNode* Node)
-        {
-            TVector<CEdGraphNode*>& Clipboard = GetNodeClipboard();
-            Clipboard.Remove(Node);
-        }
-
         const TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>* FindLink(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links, uint64 LinkID)
         {
             if (LinkID == 0)
@@ -120,15 +105,6 @@ namespace Lumina
 
     void CEdNodeGraph::Shutdown()
     {
-        // Otherwise closing the editor you copied from leaves a paste pointing at freed nodes.
-        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
-        {
-            if (Node.IsValid())
-            {
-                ForgetClipboardNode(Node.Get());
-            }
-        }
-
         // The tool owning that history is going away with the canvas.
         TransactionManager = nullptr;
         UndoImage = FNodeGraphImage();
@@ -466,91 +442,305 @@ namespace Lumina
         return nullptr;
     }
 
-    // Runs once every clone exists, since a link can point forwards in the list as easily as backwards.
-    static void RelinkClones(const TVector<CEdGraphNode*>& SourceOrder, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones)
+    static constexpr const char* GGraphTextType    = "LuminaGraphNodes";
+    static constexpr int32       GGraphTextVersion = 1;
+
+    // Position and id travel beside the properties, so the record holds only the node's own settings.
+    static constexpr const char* GNodePlacementProperties[] = { "GridX", "GridY", "NodeID" };
+
+    static bool IsGraphText(const FJsonValue& Exported)
     {
-        // Walking input pins only visits each link once, so nothing gets connected twice.
-        for (CEdGraphNode* Source : SourceOrder)
+        const FJsonValue* Type = Exported.Find("Type");
+        return Type != nullptr && Type->AsString() == FStringView(GGraphTextType);
+    }
+
+    static FJsonValue ExportLink(const CEdNodeGraphPin* Output, const CEdNodeGraphPin* Input)
+    {
+        FJsonValue Link = FJsonValue::MakeObject();
+        Link.Set("From", FJsonValue(Output->GetOwningNode()->GetNodeID()));
+        Link.Set("Output", FJsonValue(Output->GetPinName()));
+        Link.Set("To", FJsonValue(Input->GetOwningNode()->GetNodeID()));
+        Link.Set("Input", FJsonValue(Input->GetPinName()));
+        return Link;
+    }
+
+    // The pasted output and input pins an exported link names, or a null pair when either end did not paste.
+    static TPair<CEdNodeGraphPin*, CEdNodeGraphPin*> ImportLink(const FJsonValue& Link, const THashMap<int64, CEdGraphNode*>& Created)
+    {
+        auto From = Created.Find(Link.GetValue<int64>("From", 0));
+        auto To   = Created.Find(Link.GetValue<int64>("To", 0));
+        if (From == nullptr || To == nullptr)
         {
-            const auto CloneItr = Clones.Find(Source);
-            if (CloneItr == nullptr)
+            return { nullptr, nullptr };
+        }
+        return { FindPinByName(*From, Link.GetString("Output"), ENodePinDirection::Output),
+                 FindPinByName(*To, Link.GetString("Input"), ENodePinDirection::Input) };
+    }
+
+    FJsonValue CEdNodeGraph::ExportNodes(const TVector<CEdGraphNode*>& SourceNodes, ImVec2 Pivot) const
+    {
+        THashSet<int64> NodeIDs;
+        for (const CEdGraphNode* Node : SourceNodes)
+        {
+            if (Node != nullptr)
+            {
+                NodeIDs.Add(Node->GetNodeID());
+            }
+        }
+
+        FJsonValue ExportedNodes = FJsonValue::MakeArray();
+        FJsonValue Links         = FJsonValue::MakeArray();
+        for (CEdGraphNode* Node : SourceNodes)
+        {
+            if (Node == nullptr)
             {
                 continue;
             }
 
-            for (const TStrongObjectPtr<CEdNodeGraphPin>& SourceInput : Source->GetInputPins())
+            FJsonValue Properties;
+            FJsonStructuredArchive::SaveStruct(Properties, Node->GetClass(), Node, true);
+            for (const char* Placement : GNodePlacementProperties)
             {
-                if (!SourceInput.IsValid())
+                Properties.Remove(Placement);
+            }
+
+            FJsonValue Exported = FJsonValue::MakeObject();
+            Exported.Set("Class", FJsonValue(Node->GetClass()->GetName().ToString()));
+            Exported.Set("Id", FJsonValue(Node->GetNodeID()));
+            Exported.Set("X", FJsonValue(FJsonLeafArchive::ShortestDouble(Node->GetNodeX() - Pivot.x)));
+            Exported.Set("Y", FJsonValue(FJsonLeafArchive::ShortestDouble(Node->GetNodeY() - Pivot.y)));
+            const CEdNodeGraph* SubGraph = Node->GetOwnedSubGraph();
+            if (SubGraph != nullptr)
+            {
+                // The field naming the original's canvas would only alias it, since SubGraph carries the copy.
+                const FString SubGraphGuid = SubGraph->GetGUID().ToString();
+                for (int32 Index = Properties.Num() - 1; Index >= 0; --Index)
+                {
+                    if (Properties.Members()[Index].Value.AsString() == SubGraphGuid.View())
+                    {
+                        Properties.RemoveAt(Index);
+                    }
+                }
+            }
+            Exported.Set("Properties", Move(Properties));
+            if (SubGraph != nullptr)
+            {
+                Exported.Set("SubGraph", SubGraph->ExportAllNodes());
+            }
+            ExportedNodes.Add(Move(Exported));
+
+            // Walking input pins visits each link once, and a link leaving the set would hang the copy off the original's neighbor.
+            for (const TStrongObjectPtr<CEdNodeGraphPin>& Input : Node->GetInputPins())
+            {
+                if (!Input.IsValid())
                 {
                     continue;
                 }
 
-                for (CEdNodeGraphPin* Upstream : SourceInput->GetConnections())
+                for (CEdNodeGraphPin* Upstream : Input->GetConnections())
                 {
-                    if (Upstream == nullptr)
+                    if (Upstream == nullptr || !NodeIDs.Contains(Upstream->GetOwningNode()->GetNodeID()))
                     {
                         continue;
                     }
 
-                    // A link reaching outside the set would hang the clone off the original's neighbor.
-                    const auto UpstreamItr = Clones.Find(Upstream->GetOwningNode());
-                    if (UpstreamItr == nullptr)
-                    {
-                        continue;
-                    }
-
-                    CEdNodeGraphPin* CloneInput  = FindPinByName((*CloneItr), SourceInput->GetPinName(), ENodePinDirection::Input);
-                    CEdNodeGraphPin* CloneOutput = FindPinByName((*UpstreamItr), Upstream->GetPinName(), ENodePinDirection::Output);
-                    if (CloneInput == nullptr || CloneOutput == nullptr)
-                    {
-                        continue;
-                    }
-
-                    CloneOutput->AddConnection(CloneInput);
-                    CloneInput->AddConnection(CloneOutput);
+                    Links.Add(ExportLink(Upstream, Input.Get()));
                 }
             }
         }
+
+        // Extras belong to the graph the nodes came from, which a cross-graph clone does not share.
+        const CEdNodeGraph* SourceGraph = SourceNodes.IsEmpty() || SourceNodes[0] == nullptr || SourceNodes[0]->GetOwningGraph() == nullptr
+            ? this : SourceNodes[0]->GetOwningGraph();
+        FJsonValue Extras = FJsonValue::MakeObject();
+        SourceGraph->ExportExtras(NodeIDs, Extras);
+
+        // A tie travels with whichever of its wires the set holds both ends of.
+        THashMap<uint32, const CEdNodeGraphPin*> CopiedPins;
+        for (const CEdGraphNode* Node : SourceNodes)
+        {
+            if (Node == nullptr)
+            {
+                continue;
+            }
+            for (const auto* Pins : { &Node->GetInputPins(), &Node->GetOutputPins() })
+            {
+                for (const TStrongObjectPtr<CEdNodeGraphPin>& Pin : *Pins)
+                {
+                    if (Pin.IsValid())
+                    {
+                        CopiedPins.TryAdd(Pin->GetPinGUID(), Pin.Get());
+                    }
+                }
+            }
+        }
+        FJsonValue ZipTieList = FJsonValue::MakeArray();
+        for (const SGraphZipTie& Tie : SourceGraph->ZipTies)
+        {
+            FJsonValue Wires = FJsonValue::MakeArray();
+            for (int32 Pair = 0; Pair + 1 < Tie.Links.Num(); Pair += 2)
+            {
+                auto Output = CopiedPins.Find(Tie.Links[Pair]);
+                auto Input  = CopiedPins.Find(Tie.Links[Pair + 1]);
+                if (Output != nullptr && Input != nullptr)
+                {
+                    Wires.Add(ExportLink(*Output, *Input));
+                }
+            }
+            if (!Wires.IsEmpty())
+            {
+                FJsonValue ExportedTie = FJsonValue::MakeObject();
+                ExportedTie.Set("X", FJsonValue(FJsonLeafArchive::ShortestDouble(Tie.X - Pivot.x)));
+                ExportedTie.Set("Y", FJsonValue(FJsonLeafArchive::ShortestDouble(Tie.Y - Pivot.y)));
+                ExportedTie.Set("Links", Move(Wires));
+                ZipTieList.Add(Move(ExportedTie));
+            }
+        }
+
+        FJsonValue Exported = FJsonValue::MakeObject();
+        Exported.Set("Type", FJsonValue(GGraphTextType));
+        Exported.Set("Version", FJsonValue(GGraphTextVersion));
+        Exported.Set("Graph", FJsonValue(SourceGraph->GetClass()->GetName().ToString()));
+        Exported.Set("Nodes", Move(ExportedNodes));
+        Exported.Set("Links", Move(Links));
+        if (!ZipTieList.IsEmpty())
+        {
+            Exported.Set("ZipTies", Move(ZipTieList));
+        }
+        if (!Extras.IsEmpty())
+        {
+            Exported.Set("Extras", Move(Extras));
+        }
+        return Exported;
+    }
+
+    FJsonValue CEdNodeGraph::ExportAllNodes() const
+    {
+        TVector<CEdGraphNode*> All;
+        All.Reserve(Nodes.Num());
+        for (const TStrongObjectPtr<CEdGraphNode>& Node : Nodes)
+        {
+            if (Node.IsValid())
+            {
+                All.Add(Node.Get());
+            }
+        }
+        return ExportNodes(All, ImVec2(0.0f, 0.0f));
+    }
+
+    THashMap<int64, CEdGraphNode*> CEdNodeGraph::ImportNodes(const FJsonValue& Exported, ImVec2 Offset, EGraphImport Mode)
+    {
+        THashMap<int64, CEdGraphNode*> Created;
+        const FJsonValue* ExportedNodes = Exported.Find("Nodes");
+        if (!IsGraphText(Exported) || ExportedNodes == nullptr || !ExportedNodes->IsArray())
+        {
+            return Created;
+        }
+
+        const bool bPaste = Mode == EGraphImport::Paste;
+        uint32 Rejected = 0;
+        for (const FJsonValue& ExportedNode : ExportedNodes->AsArray())
+        {
+            // The text can come from anywhere, so a nested canvas checks the node family and a paste the palette as well.
+            CClass* NodeClass = FindObject<CClass>(FName(ExportedNode.GetString("Class")));
+            const bool bNodeClass = NodeClass != nullptr && NodeClass->IsChildOf(CEdGraphNode::StaticClass());
+            const bool bAccepted  = bNodeClass && (GetSupportedNodes().Contains(NodeClass)
+                || (!bPaste && NodeClass->GetDefaultObject<CEdGraphNode>()->IsSupportedInGraph(GetClass())));
+            if (!bAccepted)
+            {
+                ++Rejected;
+                continue;
+            }
+
+            // Loaded before AddNode builds the pins, as a saved graph loads, so variant and dynamic pins come back.
+            CEdGraphNode* Node = NewObject<CEdGraphNode>(NodeClass, GetNodeOuter());
+            if (const FJsonValue* Properties = ExportedNode.Find("Properties"))
+            {
+                FJsonValue Record = *Properties;
+                FJsonStructuredArchive::LoadStruct(Record, NodeClass, Node, true);
+            }
+            AddNode(Node);
+            Node->SetGridPos(ExportedNode.GetValue<float>("X", 0.0f) + Offset.x, ExportedNode.GetValue<float>("Y", 0.0f) + Offset.y);
+
+            // Filled before any EnsureSetup, so the copied Output or Entry node is not joined by a second one.
+            if (const FJsonValue* SubGraph = ExportedNode.Find("SubGraph"))
+            {
+                if (CEdNodeGraph* Fresh = Node->AllocateOwnedSubGraph())
+                {
+                    Fresh->ImportNodes(*SubGraph, ImVec2(0.0f, 0.0f), EGraphImport::Whole);
+                }
+            }
+
+            Created.TryAdd(ExportedNode.GetValue<int64>("Id", 0), Node);
+            if (bPaste)
+            {
+                Editor.SelectNode(Node->GetNodeID(), true);
+            }
+        }
+
+        if (const FJsonValue* Links = Exported.Find("Links"); Links != nullptr && Links->IsArray())
+        {
+            // Held to the same rules as a dragged wire, so edited text cannot pair pins the graph refuses.
+            const FEdGraphSchema& Schema = GetSchema();
+            for (const FJsonValue& Link : Links->AsArray())
+            {
+                const auto [Output, Input] = ImportLink(Link, Created);
+                const bool bAllowed = Output != nullptr && Input != nullptr && Schema.CanCreateConnection(Output, Input)
+                                   && (!Input->HasConnection() || Schema.AllowsMultipleConnections(Input));
+                if (bAllowed)
+                {
+                    Output->AddConnection(Input);
+                    Input->AddConnection(Output);
+                }
+            }
+        }
+
+        ValidateGraph();
+
+        if (const FJsonValue* ZipTieList = Exported.Find("ZipTies"); ZipTieList != nullptr && ZipTieList->IsArray())
+        {
+            for (const FJsonValue& Tie : ZipTieList->AsArray())
+            {
+                TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>> Wires;
+                for (const FJsonValue& Link : Tie["Links"].AsArray())
+                {
+                    const auto [Output, Input] = ImportLink(Link, Created);
+                    if (Output != nullptr && Input != nullptr)
+                    {
+                        Wires.Add({ Input, Output });
+                    }
+                }
+                AddZipTie(Wires, ImVec2(Tie.GetValue<float>("X", 0.0f) + Offset.x, Tie.GetValue<float>("Y", 0.0f) + Offset.y));
+            }
+        }
+
+        if (const FJsonValue* Extras = Exported.Find("Extras"))
+        {
+            ImportExtras(*Extras, Created);
+        }
+
+        if (bPaste && Rejected > 0)
+        {
+            ImGuiX::Notifications::NotifyWarning("Skipped {0} node(s) this graph does not support.", Rejected);
+        }
+        return Created;
     }
 
     THashMap<CEdGraphNode*, CEdGraphNode*> CEdNodeGraph::CloneNodes(const TVector<CEdGraphNode*>& SourceNodes, ImVec2 Delta)
     {
-        // Source -> clone, so the link pass can map an original endpoint onto its copy.
-        THashMap<CEdGraphNode*, CEdGraphNode*> Clones;
-        Clones.Reserve(SourceNodes.Num());
+        const THashMap<int64, CEdGraphNode*> Created = ImportNodes(ExportNodes(SourceNodes, ImVec2(0.0f, 0.0f)), Delta, EGraphImport::Paste);
 
+        THashMap<CEdGraphNode*, CEdGraphNode*> Clones;
+        Clones.Reserve(Created.Num());
         for (CEdGraphNode* Source : SourceNodes)
         {
             if (Source == nullptr)
             {
                 continue;
             }
-
-            CEdGraphNode* Clone = CreateNode(Source->GetClass());
-            if (Clone == nullptr)
+            if (const auto Found = Created.Find(Source->GetNodeID()))
             {
-                continue;
-            }
-
-            Source->CopyPropertiesTo(Clone);
-            Clone->PostCloneFrom(Source);
-            Clones.TryAdd(Source, Clone);
-
-            Clone->SetGridPos(Source->GetNodeX() + Delta.x, Source->GetNodeY() + Delta.y);
-            Editor.SelectNode(Clone->GetNodeID(), true);
-        }
-
-        RelinkClones(SourceNodes, Clones);
-
-        ValidateGraph();
-
-        // Without this a pasted state pair keeps its wire but loses the transition's conditions and blend.
-        for (CEdGraphNode* Source : SourceNodes)
-        {
-            if (Source != nullptr && Source->GetOwningGraph() != nullptr)
-            {
-                PostCloneContent(Source->GetOwningGraph(), Clones);
-                break;
+                Clones.TryAdd(Source, *Found);
             }
         }
         return Clones;
@@ -584,47 +774,6 @@ namespace Lumina
     {
         const ImVec2 Min(Node->GetNodeX(), Node->GetNodeY());
         return ImRect(Min, Min + Editor.GetNodeSize(Node->GetNodeID()));
-    }
-
-    void CEdNodeGraph::CloneContentFrom(const CEdNodeGraph* Source)
-    {
-        if (Source == nullptr)
-        {
-            return;
-        }
-
-        THashMap<CEdGraphNode*, CEdGraphNode*> Clones;
-        Clones.Reserve(Source->Nodes.Num());
-
-        TVector<CEdGraphNode*> SourceOrder;
-        SourceOrder.Reserve(Source->Nodes.Num());
-
-        for (const TStrongObjectPtr<CEdGraphNode>& SourceNode : Source->Nodes)
-        {
-            if (!SourceNode.IsValid())
-            {
-                continue;
-            }
-
-            CEdGraphNode* Clone = CreateNode(SourceNode->GetClass());
-            if (Clone == nullptr)
-            {
-                continue;
-            }
-
-            SourceNode->CopyPropertiesTo(Clone);
-            Clone->PostCloneFrom(SourceNode.Get());
-
-            // Positions are DuplicateTransient and the copy has no saved editor layout to key off.
-            Clone->SetGridPos(SourceNode->GetNodeX(), SourceNode->GetNodeY());
-            Clones.TryAdd(SourceNode.Get(), Clone);
-            SourceOrder.Add(SourceNode.Get());
-        }
-
-        RelinkClones(SourceOrder, Clones);
-
-        ValidateGraph();
-        PostCloneContent(Source, Clones);
     }
 
     uint64 CEdNodeGraph::GetTreeContentVersion() const
@@ -677,7 +826,10 @@ namespace Lumina
 
             if (!Visited.TryAdd(SubGraph))
             {
-                Node->ReplaceSubGraphWithCopy();
+                if (CEdNodeGraph* Fresh = Node->AllocateOwnedSubGraph())
+                {
+                    Fresh->ImportNodes(SubGraph->ExportAllNodes(), ImVec2(0.0f, 0.0f), EGraphImport::Whole);
+                }
                 ++Repaired;
 
                 SubGraph = Node->GetOwnedSubGraph();
@@ -1602,7 +1754,7 @@ namespace Lumina
 
         if (Editor.WasShortcutPressed(EGraphShortcut::Copy) || Editor.WasShortcutPressed(EGraphShortcut::Cut))
         {
-            CollectSelectedNodesForClone(GetNodeClipboard(), GClipboardPivot);
+            CopyToClipboard({});
         }
 
         if (Editor.WasShortcutPressed(EGraphShortcut::Cut) || Editor.WasShortcutPressed(EGraphShortcut::Delete))
@@ -1612,12 +1764,12 @@ namespace Lumina
 
         if (Editor.WasShortcutPressed(EGraphShortcut::Paste))
         {
-            PasteClipboard(Editor.ScreenToCanvas(ImGui::GetMousePos()));
+            PasteText({}, Editor.ScreenToCanvas(ImGui::GetMousePos()));
         }
 
         if (Editor.WasShortcutPressed(EGraphShortcut::Duplicate))
         {
-            // A local pivot, since duplicate never leaves this graph and must not disturb the shared one.
+            // Leaves the system clipboard alone, so a copied set survives a duplicate.
             TVector<CEdGraphNode*> DuplicateNodes;
             ImVec2 DuplicatePivot;
             CollectSelectedNodesForClone(DuplicateNodes, DuplicatePivot);
@@ -2219,38 +2371,45 @@ namespace Lumina
         }
     }
 
-    void CEdNodeGraph::PasteClipboard(ImVec2 CanvasPos)
+    FString CEdNodeGraph::CopyToClipboard(const TVector<int64>& NodeIDs)
     {
-        // The clipboard is shared, so filter to what this graph's registered node classes accept.
-        const THashSet<CClass*>& Supported = GetSupportedNodes();
-        TVector<CEdGraphNode*> Pastable;
-        Pastable.Reserve(GetNodeClipboard().Num());
-        uint32 Rejected = 0;
-        for (CEdGraphNode* Copied : GetNodeClipboard())
+        if (!NodeIDs.IsEmpty())
         {
-            if (Copied == nullptr)
+            Editor.ClearSelection();
+            for (int64 NodeID : NodeIDs)
             {
-                continue;
-            }
-
-            if (Supported.Contains(Copied->GetClass()))
-            {
-                Pastable.Add(Copied);
-            }
-            else
-            {
-                ++Rejected;
+                Editor.SelectNode(NodeID, true);
             }
         }
 
-        if (Rejected > 0)
+        TVector<CEdGraphNode*> Selected;
+        ImVec2 Pivot;
+        CollectSelectedNodesForClone(Selected, Pivot);
+        if (Selected.IsEmpty())
         {
-            ImGuiX::Notifications::NotifyWarning("Skipped {0} node(s) this graph does not support.", Rejected);
+            return FString();
+        }
+
+        const FString Text = ExportNodes(Selected, Pivot).ToString(2);
+        ImGui::SetClipboardText(*Text);
+        return Text;
+    }
+
+    THashMap<int64, CEdGraphNode*> CEdNodeGraph::PasteText(FStringView Text, ImVec2 CanvasPos)
+    {
+        const char* Clipboard = Text.IsEmpty() ? ImGui::GetClipboardText() : nullptr;
+        const FStringView Source = Text.IsEmpty() ? FStringView(Clipboard != nullptr ? Clipboard : "") : Text;
+
+        // Anything else on the clipboard, such as a copied sentence, is not a paste for the canvas.
+        FJsonValue Exported;
+        if (!FJsonValue::Parse(Source, Exported) || !IsGraphText(Exported))
+        {
+            return {};
         }
 
         Editor.ClearSelection();
         SetPendingEditLabel("Paste Nodes");
-        CloneNodes(Pastable, CanvasPos - GClipboardPivot);
+        return ImportNodes(Exported, CanvasPos, EGraphImport::Paste);
     }
 
     void CEdNodeGraph::DrawCanvasPopups(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links)
@@ -3174,9 +3333,6 @@ namespace Lumina
                 Pin->ClearConnections();
             }
 
-            // The copy buffer holds raw pointers, so a node deleted between copy and paste would be cloned dead.
-            ForgetClipboardNode(Node);
-
             Nodes.RemoveAll([Node](const TStrongObjectPtr<CEdGraphNode>& N) { return N.Get() == Node; });
         }
 
@@ -3305,7 +3461,6 @@ namespace Lumina
                 {
                     PreNodeDeletedCallback(Node);
                 }
-                ForgetClipboardNode(Node);
             }
         }
 

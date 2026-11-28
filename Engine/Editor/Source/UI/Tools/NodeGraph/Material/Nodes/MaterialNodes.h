@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 // Aggregates every material-graph node header in one include.
 
@@ -20,6 +20,7 @@
 #include "MaterialNode_Conditional.h"
 #include "MaterialNode_StaticSwitch.h"
 #include "MaterialNode_Shading.h"
+#include "MaterialNode_Surface.h"
 #include "MaterialNodeGetTime.h"
 #include "MaterialNode_PrimitiveData.h"
 #include "MaterialNode_TextureSample.h"

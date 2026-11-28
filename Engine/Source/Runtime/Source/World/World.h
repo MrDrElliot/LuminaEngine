@@ -22,6 +22,7 @@
 #include "World/Entity/Systems/SystemContext.h"
 #include "World/Scene/RenderScene/RenderScene.h"
 #include "World/Scene/RenderScene/TexturePaintTypes.h"
+#include "World/Scene/RenderScene/VirtualTextureTypes.h"
 #include "World/Subsystems/WorldSubsystem.h"
 #include "World/WorldContext.h"
 #include "World/WorldDebugInterface.h"
@@ -171,6 +172,7 @@ namespace Lumina
 
         void PreLoad() override;
         void PostLoad() override;
+        void PreSave() override;
 
         bool IsAsset() const override { return true; }
 
@@ -724,6 +726,15 @@ namespace Lumina
         // The render scene's Extract moves the queued paints into its frame snapshot.
         void DrainRenderTargetPaints(TVector<FTexturePaintOp>& OutOps);
 
+        //~ Runtime virtual texture writes, queued here and run during the next render.
+
+        // A soft round brush swept from From to To over the texture's world plane, where Opacity scales the write and Hardness is the share of Radius at full strength.
+        FUNCTION()
+        void StampVirtualTexture(CRuntimeVirtualTexture* Texture, FVector3 From, FVector3 To, float Radius, FVector4 Value,
+                                 EVirtualTextureBlend Blend = EVirtualTextureBlend::Max, float Hardness = 0.5f, float Opacity = 1.0f);
+
+        void DrainVirtualTextureStamps(TVector<FVirtualTextureStamp>& OutStamps);
+
         //~ Debug drawing, where the drawing calls themselves live on GetDebug.
 
         NODISCARD FWorldDebugInterface* GetDebugInterface() { return &DebugInterface; }
@@ -880,6 +891,7 @@ namespace Lumina
         FTriangleBatcherComponent*          TriangleBatcherComponent;
         TVector<FDebugTextLine>             DebugTextLines;
         TBoundedMPSCQueue<FTexturePaintOp>  RenderTargetPaintQueue;
+        TBoundedMPSCQueue<FVirtualTextureStamp> VirtualTextureStampQueue;
 
         // Bound under World.Debug, with its World pointing back here.
         FWorldDebugInterface                DebugInterface;

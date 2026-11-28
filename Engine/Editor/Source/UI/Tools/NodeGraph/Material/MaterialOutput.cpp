@@ -39,6 +39,7 @@ namespace Lumina
             case EMaterialInputType::Float4:        return IM_COL32(225, 135, 205, 255);
             case EMaterialInputType::Texture:       return IM_COL32(185, 135, 250, 255);
             case EMaterialInputType::TextureHandle: return IM_COL32(235, 185, 70, 255);
+            case EMaterialInputType::Surface:       return IM_COL32(90, 215, 195, 255);
         }
         return PinColor;
     }

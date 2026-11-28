@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Assets/AssetTypes/Mesh/StaticMesh/StaticMesh.h"
+#include "Assets/AssetTypes/Textures/RuntimeVirtualTexture.h"
 #include "Core/Object/Object.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Core/Object/ObjectMacros.h"
@@ -70,6 +71,16 @@ namespace Lumina
         // Ambient occlusion at the root, fading linearly to none at the tip of the mesh bounds.
         PROPERTY(Editable, Category = "Shading", ClampMin = 0.0f, ClampMax = 1.0f)
         float RootDarkening = 0.5f;
+
+        // Blades shrink where this virtual texture's MaskChannel is high and vanish where it reaches one over MaskStrength, such as along a trail.
+        PROPERTY(Editable, Category = "Mask")
+        TStrongObjectPtr<CRuntimeVirtualTexture> DensityMask;
+
+        PROPERTY(Editable, Category = "Mask", ClampMin = 0, ClampMax = 3)
+        int32 MaskChannel = 0;
+
+        PROPERTY(Editable, Category = "Mask", ClampMin = 0.0f)
+        float MaskStrength = 1.0f;
 
         PROPERTY(Editable, Category = "Rendering")
         bool bCastShadow = false;

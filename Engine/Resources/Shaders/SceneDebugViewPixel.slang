@@ -61,13 +61,15 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
     const float3 ViewPosition  = ReconstructViewPos(In.UV, RawDepth, GetInverseCameraProjection());
     const float3 WorldPosition = mul(GetInverseCameraView(), float4(ViewPosition, 1.0)).xyz;
 
-    const FVisTriangle T = ResolveVisTriangle(Raw, Pass().DrawListCount);
+    const FVisTriangle        T       = ResolveVisTriangle(Raw, Pass().DrawListCount);
+    const FTerrainVisTriangle Terrain = ResolveTerrainVisTriangle(Raw);
 
     // Triangle identity only exists in the VisBuffer, so it is resolved here rather than in ApplyDebugView.
     const uint DebugMode = Scene().CullData.DebugMode;
     if (DebugMode == DEBUG_MODE_TRIANGLE_ID)
     {
-        return float4(MeshletDebugColor(T.Ref.GlobalMeshletIdx * 131u + T.TriIndex), 1.0);
+        const uint Identity = Terrain.bValid ? Terrain.Node.Node * 131u + Terrain.Tri : T.Ref.GlobalMeshletIdx * 131u + T.TriIndex;
+        return float4(MeshletDebugColor(Identity), 1.0);
     }
 
     // Reads its 2x2 neighbors, so it belongs here with the VisBuffer rather than in ApplyDebugView.
@@ -92,6 +94,21 @@ float4 FragmentMain(FragmentInput In) : SV_Target0
         Info.GeometricNormalWS = S.NormalWS;
         Info.MaterialIndex     = T.Ref.Inst.MaterialIndex;
         // Free here since the reconstruction already produced the barycentrics and their derivatives.
+        Info.EdgeDistancePixels = TriangleEdgeDistancePixels(S.Bary);
+    }
+    else if (Terrain.bValid)
+    {
+        FMeshletWorldVertex W[3];
+        TerrainVisWorldVertices(Terrain, W);
+        const float3      WorldPos[3] = { W[0].WorldPos, W[1].WorldPos, W[2].WorldPos };
+        const float2      ScreenSize  = float2(Scene().ScreenSize.xy);
+        const FVisSurface S           = InterpolateVisSurface(W, WorldPos, VisPixelNdc(uint2(Texel), ScreenSize), ScreenSize);
+
+        Info.UV                 = S.UV;
+        Info.GeometricNormalWS  = S.NormalWS;
+        // The quadtree node stands in for the meshlet, so the Meshlets view shows the terrain's LOD cut.
+        Info.MeshletIndex       = Terrain.Node.Node;
+        Info.MaterialIndex      = GetTerrainParams().MaterialIndex;
         Info.EdgeDistancePixels = TriangleEdgeDistancePixels(S.Bary);
     }
 

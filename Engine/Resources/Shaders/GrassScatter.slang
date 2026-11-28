@@ -17,10 +17,11 @@ struct FGrassScatterPushConstants
     GPUSpan<FInstanceStatic>    OutStatic;
     GPUSpan<uint>               OutCursor;      // blades wanted so far, which can run past the block's capacity
 
-    FTexture2D      Heightmap;
-    FTexture2D      NormalMap;
-    FTexture2DArray LayerWeights;
-    uint            LayerIndex;            // slice gating this species
+    // The terrain's record in the scene root, which holds its pages.
+    uint            TerrainIndex;
+    uint            _Pad0;
+    uint            _Pad1;
+    uint            LayerIndex;            // layer gating this species
 
     float2 CameraXZ;
     float  Radius;              // cull distance; the grid is a square inscribing this circle
@@ -56,6 +57,11 @@ struct FGrassScatterPushConstants
     uint   Resolution;          // heightmap samples per side
     float  FullDensityDistance; // blades thin past this with the square of distance; 0 keeps full density
     float  RootDarkening;
+    // A runtime virtual texture whose MaskChannel shrinks blades, ~0u for none.
+    uint   MaskTexture;
+    uint   MaskChannel;
+    float  MaskStrength;
+    uint   _MaskPad;
 };
 
 FGrassScatterPushConstants* Pass() { return GetPassArgs<FGrassScatterPushConstants>(); }
@@ -136,17 +142,21 @@ void main(uint3 Tid : SV_DispatchThreadID)
         return;
     }
 
-    // Terrain vertex i sits on texel center i, so the lattice maps onto centers exactly as the terrain draws it.
-    const float2 HeightUV = (Local * float(P->Resolution - 1u) + 0.5) / float(P->Resolution);
+    // Terrain vertex i sits on sample i, so the lattice maps onto samples exactly as the terrain draws it.
+    FTerrainRecord* Terrain = GetSceneRoot().Terrains.At(min(P->TerrainIndex, max(GetSceneRoot().Terrains.Count, 1u) - 1u));
+    const float2 SamplePos = Local * float(P->Resolution - 1u);
 
-    float Weight = P->LayerWeights.SampleLevel(Samplers::LinearClamp, float3(HeightUV, (float)P->LayerIndex), 0).r;
-    // Layer 0 fills whatever the others leave unpainted, as the terrain material shades it, so a fresh terrain grows its base grass.
-    if (P->LayerIndex == 0u)
+    // One page walk serves the weights, normal and height below.
+    const FTerrainMipPair Pages = TerrainFindMipPair(Terrain, SamplePos, 0.0);
+    const float4 Weights = TerrainPairWeights(Terrain, Pages, SamplePos);
+    float Weight = Weights[min(P->LayerIndex, 3u)];
+    // A missing page zeroes Weights too, so gate on bValid or this would read absent data as unpainted ground and still fill base grass.
+    if (P->LayerIndex == 0u && Pages.Near.bValid)
     {
         float Painted = 0.0;
-        for (uint Layer = 1u; Layer < P->LayerCount; ++Layer)
+        for (uint Layer = 1u; Layer < min(P->LayerCount, 4u); ++Layer)
         {
-            Painted += P->LayerWeights.SampleLevel(Samplers::LinearClamp, float3(HeightUV, (float)Layer), 0).r;
+            Painted += Weights[Layer];
         }
         Weight = max(Weight, 1.0 - Painted);
     }
@@ -163,24 +173,28 @@ void main(uint3 Tid : SV_DispatchThreadID)
     }
     const float WeightFade = ThinningFade(saturate(Weight), WeightHash);
 
-    // Packed as world X and Z like the terrain vertex shader reads it, with Y rebuilt from unit length.
-    const float2 PackedXZ = P->NormalMap.SampleLevel(Samplers::LinearClamp, HeightUV, 0).rg * 2.0 - 1.0;
-    const float3 Normal = float3(PackedXZ.x, sqrt(saturate(1.0 - dot(PackedXZ, PackedXZ))), PackedXZ.y);
+    const float3 Normal = TerrainPairNormal(Terrain, Pages, SamplePos);
     if (Normal.y < P->MaxSlopeCos)
     {
         return;
     }
 
-    const float Height = P->Heightmap.SampleLevel(Samplers::LinearClamp, HeightUV, 0).r;
+    const float Height = Pages.Near.bValid ? TerrainPageHeight(Terrain, Pages.Near, SamplePos) : 0.0;
 
     const float3 Position = float3(WorldXZ.x,
-                                   P->TerrainBaseY + Height * P->MaxHeight + P->ZOffset,
+                                   P->TerrainBaseY + Height + P->ZOffset,
                                    WorldXZ.y);
 
     // Survivors grow to cover for the thinned ones, and everything shrinks away over the last stretch so the edge never pops.
     const float Coverage = min(rsqrt(Keep), kMaxThinnedScale);
     const float EdgeFade = 1.0 - smoothstep(P->Radius * kEdgeFadeStart, P->Radius, CameraDistance);
-    const float Scale = lerp(P->ScaleMin, P->ScaleMax, Hash01(CellHash ^ 0x9E3779B9u)) * Coverage * EdgeFade * KeepFade * WeightFade;
+    float Scale = lerp(P->ScaleMin, P->ScaleMax, Hash01(CellHash ^ 0x9E3779B9u)) * Coverage * EdgeFade * KeepFade * WeightFade;
+    if (P->MaskTexture != ~0u)
+    {
+        // Outside the texture's window Valid is zero, so blades there keep their full size.
+        const FVirtualTextureSample Mask = SampleVirtualTexture(P->MaskTexture, WorldXZ);
+        Scale *= saturate(1.0 - Mask.Value[P->MaskChannel] * Mask.Valid * P->MaskStrength);
+    }
     if (Scale <= 0.001)
     {
         return;
@@ -248,7 +262,7 @@ void main(uint3 Tid : SV_DispatchThreadID)
     Static.RenderLayers            = RENDER_LAYER_DEFAULT_MASK;
     Static.WPODisableDistance      = 0.0;
     Static.TransformOffset         = 0u;
-    Static.Reserved1               = 0u;
+    Static.CaptureFilterMask       = 0u;
     Static.Reserved2               = 0u;
     (P->OutStatic).Set(Slot, Static);
 }

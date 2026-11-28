@@ -21,6 +21,8 @@
 // Whether any material on screen uses the model, so the deferred lighting dispatch drops the branch and its registers otherwise.
 [vk::constant_id(18)] const uint SPEC_SHADING_CLEARCOAT  = 1;
 [vk::constant_id(19)] const uint SPEC_SHADING_FOLIAGE    = 1;
+[vk::constant_id(20)] const uint SPEC_SHADING_EXTENDED   = 1;
+[vk::constant_id(21)] const uint SPEC_SHADING_SUBSURFACE = 1;
 
 float3 MeshletDebugColor(uint Index)
 {
@@ -104,6 +106,60 @@ float3 ProjectToCubeFace(float3 D, uint Face, float Radius)
     return float3(P.xy * InvDepth, Radius * InvRange - Radius * Near * InvRange * InvDepth);
 }
 
+static const uint  kAreaShadowBlockerTaps = 8u;
+static const uint  kAreaShadowFilterTaps  = 12u;
+static const float kAreaShadowMaxTexels   = 24.0;
+
+// Percentage-closer soft shadows, since a panel the size of a wall darkens a contact sharply and smears what lies far from its caster.
+float AreaLightShadow(FLight Light, FShadowTex Atlas, float2 BaseUV, float2 TexelUV, float2 TileMin, float2 TileMax,
+                      float RefDepth, float ReceiverDepth, float TileTexels, float Rotation)
+{
+    const float Near      = max(Light.Radius * 0.01, 0.1);
+    const float LightSize = Light.Angles.x + Light.Angles.y;
+    // A face spans two units of position over depth, so one meter at the receiver covers this many texels.
+    const float TexelsPerMeter = TileTexels / (2.0 * max(ReceiverDepth, Near));
+    const float2 Step          = float2(cos(kVogelGoldenAngle), sin(kVogelGoldenAngle));
+
+    const float SearchTexels = clamp(LightSize * 0.5 * TexelsPerMeter, 1.0, kAreaShadowMaxTexels);
+    float  BlockerDepth = 0.0;
+    float  Blockers     = 0.0;
+    float2 Dir          = float2(cos(Rotation), sin(Rotation));
+    for (uint Tap = 0u; Tap < kAreaShadowBlockerTaps; ++Tap)
+    {
+        const float2 Offset = Dir * sqrt((float(Tap) + 0.5) / float(kAreaShadowBlockerTaps)) * SearchTexels;
+        const float  Stored = Atlas.SampleLevel(clamp(BaseUV + Offset * TexelUV, TileMin, TileMax), 0.0).r;
+        if (Stored < RefDepth)
+        {
+            // Inverts ProjectToCubeFace's depth back to the distance along the face axis.
+            BlockerDepth += Light.Radius * Near / max(Light.Radius - Stored * (Light.Radius - Near), 1e-4);
+            Blockers     += 1.0;
+        }
+        Dir = RotateVogel(Dir, Step);
+    }
+    // Every tap blocked or none blocked means the pixel sits deep in umbra or fully lit, and filtering would not change it.
+    if (Blockers == 0.0)
+    {
+        return 1.0;
+    }
+    if (Blockers == float(kAreaShadowBlockerTaps))
+    {
+        return 0.0;
+    }
+    BlockerDepth /= Blockers;
+
+    const float PenumbraTexels = clamp(LightSize * max(ReceiverDepth - BlockerDepth, 0.0) / max(BlockerDepth, Near) * TexelsPerMeter,
+                                       1.0, kAreaShadowMaxTexels);
+    float Lit = 0.0;
+    Dir = float2(cos(Rotation), sin(Rotation));
+    for (uint Tap = 0u; Tap < kAreaShadowFilterTaps; ++Tap)
+    {
+        const float2 Offset = Dir * sqrt((float(Tap) + 0.5) / float(kAreaShadowFilterTaps)) * PenumbraTexels;
+        Lit += Atlas.SampleCmpLevelZero(clamp(BaseUV + Offset * TexelUV, TileMin, TileMax), RefDepth);
+        Dir = RotateVogel(Dir, Step);
+    }
+    return Lit / float(kAreaShadowFilterTaps);
+}
+
 float ComputeLocalShadow(FLight Light, float3 FragmentPos, float3 Normal)
 {
     const bool   bSpot          = HasFlag(Light.Flags, ELightFlags::Spot);
@@ -160,6 +216,15 @@ float ComputeLocalShadow(FLight Light, float3 FragmentPos, float3 Normal)
     // Taps clamp half a texel inside the face rect so the comparison footprint never reads a neighboring tile.
     const float2 TileMin  = ShadowTile.AtlasUVOffset + TexelUV * 0.5;
     const float2 TileMax  = ShadowTile.AtlasUVOffset + ShadowTile.AtlasUVScale - TexelUV * 0.5;
+    if (HasFlag(Light.Flags, ELightFlags::Area))
+    {
+        const float3 A = abs(OffsetPos - Light.Position);
+        const float4 Clip = WorldToClip(FragmentPos);
+        const float2 Pixel = (Clip.xy / max(Clip.w, 1e-6) * 0.5 + 0.5) * float2(GetScreenSize());
+        return AreaLightShadow(Light, ShadowAtlas(), BaseUV, TexelUV, TileMin, TileMax, RefDepth, max(A.x, max(A.y, A.z)),
+                               AtlasTileTexels, InterleavedGradientNoise(Pixel) * TWO_PI);
+    }
+
     const FShadowPCF PCF = { ShadowAtlas(), BaseUV, TexelUV, RefDepth, float2(0.0, 0.0), TileMin, TileMax };
     return PCF.FilterRadius(kLocalShadowRadiusTexels, ShadowKernelSizeForTaps(kLocalShadowTaps));
 }
@@ -207,7 +272,7 @@ float LocalContactShadow(FLight Light, float3 FragmentPos, float3 Normal)
     const float3 ViewL = normalize(NormalWorldToView(normalize(Light.Position - FragmentPos)));
 
     // Unjittered, since nothing filters this per-light march afterward and noise would stay on screen.
-    return ContactShadow(ViewP, ViewN, ViewL, 0.5, Reach, Steps);
+    return ContactGrazingFade(ContactShadow(ViewP, ViewN, ViewL, 0.5, Reach, Steps), dot(ViewN, ViewL));
 }
 
 // Debug visualizers stay out of the compute lane; the deferred renderer resolves them in SceneDebugViewPixel.slang.
@@ -220,16 +285,9 @@ int FindSunShadowDataIndex()
     {
         return INDEX_NONE;
     }
-    uint Count = GetNumLights();
-    for (uint i = 0; i < Count; ++i)
-    {
-        FLight L = GetLightAt(i);
-        if (HasFlag(L.Flags, ELightFlags::Directional) && L.ShadowDataIndex != INDEX_NONE)
-        {
-            return L.ShadowDataIndex;
-        }
-    }
-    return INDEX_NONE;
+    // The sun always holds slot 0 of the sorted list.
+    const FLight Sun = GetLightAt(0u);
+    return GetNumLights() > 0u && HasFlag(Sun.Flags, ELightFlags::Directional) ? Sun.ShadowDataIndex : INDEX_NONE;
 }
 
 // Dark gray means no sun shadow, light gray past the shadowed range, a tint per level, and dim where the level holds no page.
@@ -340,57 +398,143 @@ float3 IntegrateRectEdge(float3 A, float3 B)
     return cross(A, B) * ThetaOverSin;
 }
 
-// An area light split into a diffuse and a specular direction, each with the radiance a point light there would carry.
-struct FAreaLightTerms
+// Corners relative to the shaded point, wound around the light's forward axis.
+struct FAreaLightRect
 {
-    float3 DiffuseL;
-    float3 DiffuseRadiance;
-    float3 SpecularL;
-    float3 SpecularRadiance;
+    float3 C0;
+    float3 C1;
+    float3 C2;
+    float3 C3;
+    float  Area;
 };
 
-// Radiance is the light's color and intensity after its window, spread here over the rectangle's area.
-FAreaLightTerms EvaluateAreaLight(FLight Light, float3 Radiance, float3 P, float3 N, float3 V, float Roughness)
+FAreaLightRect GetAreaLightRect(FLight Light, float3 P)
 {
     const float3 Forward  = -normalize(Light.Direction.xyz);
     const float3 Right    = UnpackNormal(asuint(Light.VolumetricScatteringRadius));
     const float3 Up       = cross(Forward, Right);
     const float2 HalfSize = max(Light.Angles, float2(1e-3, 1e-3));
-    const float  Area     = 4.0 * HalfSize.x * HalfSize.y;
-    const float3 Emitted  = Radiance / Area;
     const float3 ToCenter = Light.Position - P;
+    const float3 X        = Right * HalfSize.x;
+    const float3 Y        = Up * HalfSize.y;
 
-    const float3 X  = Right * HalfSize.x;
-    const float3 Y  = Up * HalfSize.y;
-    const float3 C0 = normalize(ToCenter - X - Y);
-    const float3 C1 = normalize(ToCenter + X - Y);
-    const float3 C2 = normalize(ToCenter + X + Y);
-    const float3 C3 = normalize(ToCenter - X + Y);
-    float3 FormFactor = 0.5 * (IntegrateRectEdge(C0, C1) + IntegrateRectEdge(C1, C2) + IntegrateRectEdge(C2, C3) + IntegrateRectEdge(C3, C0));
-    FormFactor = dot(FormFactor, ToCenter) < 0.0 ? -FormFactor : FormFactor;
+    FAreaLightRect Rect;
+    Rect.C0   = ToCenter - X - Y;
+    Rect.C1   = ToCenter + X - Y;
+    Rect.C2   = ToCenter + X + Y;
+    Rect.C3   = ToCenter - X + Y;
+    Rect.Area = 4.0 * HalfSize.x * HalfSize.y;
+    return Rect;
+}
 
-    FAreaLightTerms Terms;
-    Terms.DiffuseL        = FormFactor * rsqrt(max(dot(FormFactor, FormFactor), 1e-12));
-    Terms.DiffuseRadiance = Emitted * (max(dot(FormFactor, N), 0.0) / max(dot(N, Terms.DiffuseL), 1e-3));
+// Takes unit vectors, so each corner is normalized once rather than once per edge it bounds.
+float LTCEdge(float3 A, float3 B)
+{
+    return IntegrateRectEdge(A, B).z;
+}
 
-    // The reflection ray's hit on the plane, clamped into the rectangle, stands in for the whole light.
+// A convex quad crosses the horizon at most once each way, so the clipped polygon is its upper edges plus one horizon edge.
+float LTCClippedQuad(float3 L0, float3 L1, float3 L2, float3 L3)
+{
+    const float3 Points[4] = { L0, L1, L2, L3 };
+    const float3 Units[4]  = { normalize(L0), normalize(L1), normalize(L2), normalize(L3) };
+    float  Sum    = 0.0;
+    float3 Exit   = float3(0.0);
+    float3 Entry  = float3(0.0);
+    bool   bExits = false;
+    [unroll]
+    for (uint Index = 0u; Index < 4u; ++Index)
+    {
+        const uint   Next    = (Index + 1u) & 3u;
+        const float3 A       = Points[Index];
+        const float3 B       = Points[Next];
+        const bool   bAbove  = A.z >= 0.0;
+        const bool   bBAbove = B.z >= 0.0;
+        if (bAbove && bBAbove)
+        {
+            Sum += LTCEdge(Units[Index], Units[Next]);
+        }
+        else if (bAbove != bBAbove)
+        {
+            const float3 Cross = normalize(A + (B - A) * (A.z / (A.z - B.z)));
+            if (bAbove)
+            {
+                Sum   += LTCEdge(Units[Index], Cross);
+                Exit   = Cross;
+                bExits = true;
+            }
+            else
+            {
+                Sum  += LTCEdge(Cross, Units[Next]);
+                Entry = Cross;
+            }
+        }
+    }
+    if (bExits)
+    {
+        Sum += LTCEdge(Exit, Entry);
+    }
+    return abs(Sum);
+}
+
+static const float kLTCTableSize = 64.0;
+
+// Heitz et al. 2016, the rectangle carried into the space where the GGX lobe is a clamped cosine and integrated there.
+float3 AreaLightLTCSpecular(FAreaLightRect Rect, float3 N, float3 V, float NdotV, float Roughness, float3 F0)
+{
+    const float2 UV  = (float2(saturate(Roughness), sqrt(saturate(1.0 - NdotV))) * (kLTCTableSize - 1.0) + 0.5) / kLTCTableSize;
+    const float4 T   = GetSceneRoot().LTCMatrix.SampleLevel(Samplers::LinearClamp, UV, 0.0);
+    const float2 Amp = GetSceneRoot().LTCAmplitude.SampleLevel(Samplers::LinearClamp, UV, 0.0).rg;
+    const float3x3 InvM = float3x3(float3(T.x, 0.0, T.z), float3(0.0, 1.0, 0.0), float3(T.y, 0.0, T.w));
+
+    // Looking straight down the normal the fitted lobe is isotropic, so any tangent works there.
+    float3 T1 = V - N * dot(V, N);
+    T1 = dot(T1, T1) > 1e-8 ? normalize(T1) : normalize(cross(N, abs(N.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0)));
+    const float3x3 ToLobe = mul(InvM, float3x3(T1, cross(N, T1), N));
+
+    const float Integral = LTCClippedQuad(mul(ToLobe, Rect.C0), mul(ToLobe, Rect.C1), mul(ToLobe, Rect.C2), mul(ToLobe, Rect.C3));
+    return Integral * (F0 * Amp.x + (1.0 - F0) * Amp.y);
+}
+
+// The form factor's direction and the radiance a point light there would need to deliver the rectangle's diffuse light.
+void AreaLightDiffuse(FAreaLightRect Rect, float3 Emitted, float3 N, out float3 OutL, out float3 OutRadiance)
+{
+    const float3 C0 = normalize(Rect.C0);
+    const float3 C1 = normalize(Rect.C1);
+    const float3 C2 = normalize(Rect.C2);
+    const float3 C3 = normalize(Rect.C3);
+    // The edge fit already folds in one over two pi, so pi times the sum is irradiance per unit radiance.
+    float3 FormFactor = PI * (IntegrateRectEdge(C0, C1) + IntegrateRectEdge(C1, C2) + IntegrateRectEdge(C2, C3) + IntegrateRectEdge(C3, C0));
+    FormFactor = dot(FormFactor, Rect.C0 + Rect.C2) < 0.0 ? -FormFactor : FormFactor;
+
+    OutL        = FormFactor * rsqrt(max(dot(FormFactor, FormFactor), 1e-12));
+    OutRadiance = Emitted * (max(dot(FormFactor, N), 0.0) / max(dot(N, OutL), 1e-3));
+}
+
+// Extended lobes have no fitted tables, so the reflection ray's hit clamped into the rectangle stands in for the whole light.
+void AreaLightRepresentativePoint(FLight Light, FAreaLightRect Rect, float3 Emitted, float3 N, float3 V, float Roughness,
+                                  out float3 OutL, out float3 OutRadiance)
+{
+    const float3 Forward  = -normalize(Light.Direction.xyz);
+    const float3 Right    = UnpackNormal(asuint(Light.VolumetricScatteringRadius));
+    const float3 Up       = cross(Forward, Right);
+    const float2 HalfSize = max(Light.Angles, float2(1e-3, 1e-3));
+    const float3 ToCenter = (Rect.C0 + Rect.C2) * 0.5;
+
     const float3 Reflected = reflect(-V, N);
     const float  RdotF     = dot(Reflected, Forward);
-    const float  Depth     = dot(-ToCenter, Forward);
-    const float  RayT      = RdotF < -1e-4 ? Depth / -RdotF : length(ToCenter);
-    const float3 Local     = P + Reflected * RayT - Light.Position;
-    const float3 OnRect    = Light.Position + Right * clamp(dot(Local, Right), -HalfSize.x, HalfSize.x)
-                                            + Up * clamp(dot(Local, Up), -HalfSize.y, HalfSize.y);
-    const float3 ToRect    = OnRect - P;
+    const float  RayT      = RdotF < -1e-4 ? dot(ToCenter, Forward) / RdotF : length(ToCenter);
+    const float3 Local     = Reflected * RayT - ToCenter;
+    const float3 ToRect    = ToCenter + Right * clamp(dot(Local, Right), -HalfSize.x, HalfSize.x)
+                                      + Up * clamp(dot(Local, Up), -HalfSize.y, HalfSize.y);
     const float  DistSq    = max(dot(ToRect, ToRect), 1e-8);
-    Terms.SpecularL        = ToRect * rsqrt(DistSq);
+    OutL = ToRect * rsqrt(DistSq);
 
     // Karis's widening, with the rectangle as the disk of equal area, keeps the lobe's energy as it spreads.
     const float Alpha     = max(Roughness * Roughness, 1e-3);
-    const float WideAlpha = saturate(Alpha + sqrt(Area / PI) * 0.5 * rsqrt(DistSq));
+    const float WideAlpha = saturate(Alpha + sqrt(Rect.Area / PI) * 0.5 * rsqrt(DistSq));
     const float Energy    = (Alpha / WideAlpha) * (Alpha / WideAlpha);
-    Terms.SpecularRadiance = Emitted * (Area * max(dot(-Terms.SpecularL, Forward), 0.0) / DistSq * Energy);
-    return Terms;
+    OutRadiance = Emitted * (Rect.Area * max(dot(-OutL, Forward), 0.0) / DistSq * Energy);
 }
 
 // Shared by the base BRDF and the clearcoat lobe so the two layers cannot disagree.
@@ -463,6 +607,9 @@ float BurleyDiffuseScale(float NdotL, float NdotV, float LdotH, float Roughness)
     return LightScatter * ViewScatter * EnergyFactor;
 }
 
+#include "Includes/SurfaceLobes.slang"
+#include "Includes/MetallicFlakes.slang"
+
 // Diffuse and specular return separately so translucency keeps reflections un-premultiplied.
 void EvaluateRadianceContributionSplit(FLight Light, FShadingContext S, float3 L, float3 Radiance,
                                        out float3 OutDiffuse, out float3 OutSpecular)
@@ -516,6 +663,19 @@ float3 EvaluateLightContribution(FLight Light, FShadingContext S, float3 L, floa
     return EvaluateRadianceContribution(Light, S, L, ComputeLightRadiance(Light, L, Distance));
 }
 
+// One light through whichever lobes this pixel has, the extended ones only where the material asked for them.
+void EvaluateSurfaceLight(FLight Light, FShadingContext S, FExtendedLobes X, bool bLobes, float3 L, float3 Radiance,
+                          out float3 OutDiffuse, out float3 OutSpecular)
+{
+    if (bLobes)
+    {
+        EvaluateExtendedContributionSplit(X, S.N, S.V, S.NdotV, max(S.Roughness, GetLightMinRoughness(Light)), S.F0,
+                                          S.DiffuseBase, S.EnergyComp, L, Radiance, OutDiffuse, OutSpecular);
+        return;
+    }
+    EvaluateRadianceContributionSplit(Light, S, L, Radiance, OutDiffuse, OutSpecular);
+}
+
 struct FShadedSurface
 {
     float3 Color;       // translucent holds only the transmission-modulated terms (diffuse, ambient diffuse, emissive)
@@ -528,7 +688,7 @@ struct FShadedSurface
 // DBuffer decals composite here so they receive lights and shadows like the surface under them.
 FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Material)
 {
-    FGBufferData G;
+    FGBufferData G = DefaultGBufferData();
     G.BaseColor        = Material.Diffuse;
     G.AmbientOcclusion = Material.AmbientOcclusion;
     G.WorldNormal      = GetWorldNormal(normalize(Input.NormalWS.xyz), Input.TangentWS, Material.Normal);
@@ -542,12 +702,48 @@ FGBufferData BuildGBufferData(FBaseVertexOutput Input, FMaterialPixelInputs Mate
 
     G.Clearcoat          = Material.Clearcoat;
     G.ClearcoatRoughness = Material.ClearcoatRoughness;
+    G.BottomNormal       = G.WorldNormal;
     G.Transmission       = Material.Transmission;
     G.Thickness          = Material.Thickness;
 
     // Read from the material flags at runtime, since models that only reinterpret GBuffer channels do not justify a variant each.
     const uint MatFlags = GetMaterialFlags(Input.MaterialIndex);
     G.ShadingModel = GetMaterialShadingModel(MatFlags);
+
+    if (G.ShadingModel == ShadingModel_Subsurface)
+    {
+        G.Transmission = Material.SubsurfaceColor;
+        G.Thickness    = Material.SubsurfaceRadius;
+    }
+
+    // Only a graph that drives an extended input pays for building the lobes, and a thickness model has no room for them.
+    if ((MatFlags & MatFlag_Extended) != 0u && !ShadingModelCarriesThickness(G.ShadingModel))
+    {
+        G.Anisotropy        = clamp(Material.Anisotropy, -1.0, 1.0);
+        G.HazeWeight        = saturate(Material.SecondRoughnessWeight);
+        G.HazeRoughness     = max(Material.SecondRoughness, 0.045);
+        G.Fuzz              = saturate(Material.FuzzColor) * saturate(Material.FuzzAmount);
+        G.FuzzRoughness     = saturate(Material.FuzzRoughness);
+        G.ThinFilmThickness = clamp(Material.ThinFilmThickness, 0.0, kThinFilmMaxMicrons);
+        G.ThinFilmIOR       = clamp(Material.ThinFilmIOR, kThinFilmMinIOR, kThinFilmMaxIOR);
+
+        // The mesh tangent turned about the normal, so a brushed pattern can follow the UVs or spin to any angle.
+        const float3 N     = G.WorldNormal;
+        float3       T     = Input.TangentWS.xyz - N * dot(N, Input.TangentWS.xyz);
+        if (dot(T, T) < 1e-8)
+        {
+            float3 B1;
+            GBufferTangentBasis(N, T, B1);
+        }
+        T = normalize(T);
+        const float Turn = Material.AnisotropyRotation * TWO_PI;
+        G.Tangent   = T * cos(Turn) + cross(N, T) * sin(Turn);
+        if (G.ShadingModel == ShadingModel_Clearcoat)
+        {
+            G.BottomNormal = GetWorldNormal(normalize(Input.NormalWS.xyz), Input.TangentWS, Material.BottomNormal);
+        }
+        G.bExtended = HasExtendedLobes(G);
+    }
 
     // Unlit is a runtime test, so an instance that overrode its model is honored here too.
 #ifndef TRANSLUCENT
@@ -597,6 +793,13 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     // Under ortho every ray is parallel, so the eye vector is constant.
     float3 V  = IsCameraOrthographic() ? -GetCameraForward() : normalize(GetCameraPosition() - WorldPosition);
 
+    // The coat and screen AO keep the smooth normal, while the base beneath a coat lights with its own.
+    const float3 SmoothN = N;
+    if (SPEC_SHADING_CLEARCOAT != 0u && SPEC_SHADING_EXTENDED != 0u && G.ShadingModel == ShadingModel_Clearcoat && G.bExtended)
+    {
+        N = G.BottomNormal;
+    }
+
     // Dielectric F0 = 0.08 * Specular (UE4 convention; default 0.5 -> 0.04). Metals override F0 with albedo.
     float3 F0_DIELECTRIC = float3(0.08 * G.Specular);
     float3 F0 = lerp(F0_DIELECTRIC, Albedo, Metallic);
@@ -621,9 +824,9 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     float3 EnergyComp = 1.0 + F0 * (1.0 / max(DFG_EC.x + DFG_EC.y, 1e-4) - 1.0);
     Ctx.EnergyComp  = EnergyComp;
 
-    // Clamps to ZNear, since a fragment below it wraps ZTile past Clusters() and faults the MMU.
-    uint  ClusterIndex = ComputeClusterIndex(ViewPosition.z, ScreenPos);
-    uint2 ClusterWords = GetClusterWordRange(ClusterIndex);
+    // The pixel's tile and depth bin, so the walk below loads only mask words some light at this depth can reach.
+    const FLightCell LightCell = GetLightCell(ViewPosition.z, ScreenPos);
+    const uint2      CellWords = GetLightCellWords(LightCell);
 
     // A non-clearcoat pixel leaves Coat at 0 and skips every clearcoat block.
     const bool  bClearcoat = SPEC_SHADING_CLEARCOAT != 0u && (G.ShadingModel == ShadingModel_Clearcoat);
@@ -632,6 +835,12 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 
     // Gates the back-facing light paths below; every other model keeps its early-out intact.
     const bool  bFoliage   = SPEC_SHADING_FOLIAGE != 0u && (G.ShadingModel == ShadingModel_Foliage) && (G.Thickness > 0.0);
+
+    // Each is false for the whole frame when no material on screen uses it, which drops its lobes from the register budget.
+    const bool  bSubsurface = SPEC_SHADING_SUBSURFACE != 0u && (G.ShadingModel == ShadingModel_Subsurface);
+    const bool  bExtended   = SPEC_SHADING_EXTENDED != 0u && G.bExtended;
+    const bool  bLobes      = bExtended || bSubsurface;
+    const FExtendedLobes X  = MakeExtendedLobes(G, N, Ctx.NdotV, bExtended, bSubsurface);
 
     float3 Lo = float3(0.0);
 #ifdef TRANSLUCENT
@@ -657,6 +866,12 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
             Lo += EvaluateTransmission(Ctx, SunL, ComputeLightRadiance(Light, SunL, 0.0),
                                        G.Transmission, G.Thickness) * (TransmissionShadow * SunMask);
         }
+        if (bSubsurface)
+        {
+            const float OccluderDepth = bReceiveShadow ? SunOccluderDepthWS(Light, WorldPosition) : 0.0;
+            Lo += EvaluateSubsurfaceTransmission(X, N, V, SunL, ComputeLightRadiance(Light, SunL, 0.0), OccluderDepth)
+                * (G.SelfShadow * SunMask);
+        }
 
         if (SunNdotL > 0.0)
         {
@@ -666,17 +881,19 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
             {
 #ifdef TRANSLUCENT
                 float3 SunDiffuse, SunSpec;
-                EvaluateLightContributionSplit(Light, Ctx, SunL, 0.0, SunDiffuse, SunSpec);
+                EvaluateSurfaceLight(Light, Ctx, X, bLobes, SunL, ComputeLightRadiance(Light, SunL, 0.0), SunDiffuse, SunSpec);
                 Lo     += SunDiffuse * (Shadow * SunMask);
                 LoSpec += SunSpec * (Shadow * SunMask);
 #else
-                float3 SunBase = EvaluateLightContribution(Light, Ctx, SunL, 0.0);
+                float3 SunDiffuse, SunSpec;
+                EvaluateSurfaceLight(Light, Ctx, X, bLobes, SunL, ComputeLightRadiance(Light, SunL, 0.0), SunDiffuse, SunSpec);
+                float3 SunBase = SunDiffuse + SunSpec;
 
                 if (Coat > 0.0)
                 {
                     // The coat reflects some light before it reaches the base, so the base loses exactly what the coat took.
                     float CoatF;
-                    const float CoatSpec = EvaluateClearcoatLobe(N, V, SunL, G.ClearcoatRoughness, CoatF);
+                    const float CoatSpec = EvaluateClearcoatLobe(SmoothN, V, SunL, G.ClearcoatRoughness, CoatF);
                     SunBase *= (1.0 - Coat * CoatF);
                     LoCoat  += ComputeLightRadiance(Light, SunL, 0.0) * (CoatSpec * Coat) * (Shadow * SunMask);
                 }
@@ -688,23 +905,22 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     }
 
     uint    NumLights   = GetNumLights();
-    const GPUSpan<FLight> Lights = LightData().Lights;
-    const uint MaskWords = GetClusterMaskWords();
+    const GPUSpan<FLight> Lights = ViewLights();
 
 #ifdef SHADING_COMPUTE
     // The wave walks the union of its lanes' masks, so each light index is uniform and its fetch scalar.
-    const uint FirstWord = WaveActiveMin(ClusterWords.x);
-    const uint EndWord   = WaveActiveMax(ClusterWords.y);
+    const uint FirstWord = WaveActiveMin(CellWords.x);
+    const uint EndWord   = WaveActiveMax(CellWords.y);
 #else
-    const uint FirstWord = ClusterWords.x;
-    const uint EndWord   = ClusterWords.y;
+    const uint FirstWord = CellWords.x;
+    const uint EndWord   = CellWords.y;
 #endif
 
     [loop]
     for (uint Word = FirstWord; Word < EndWord; ++Word)
     {
-        const bool bLaneWord = Word >= ClusterWords.x && Word < ClusterWords.y;
-        const uint LaneMask  = bLaneWord ? GetClusterMaskWord(ClusterIndex, Word, MaskWords) : 0u;
+        const bool bLaneWord = Word >= CellWords.x && Word < CellWords.y;
+        const uint LaneMask  = bLaneWord ? GetLightCellMaskWord(LightCell, Word) : 0u;
 #ifdef SHADING_COMPUTE
         uint Pending = WaveActiveBitOr(LaneMask);
 #else
@@ -735,7 +951,7 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
             const bool bBackFacing = dot(N, LightToFrag) <= 0.0;
             const bool bLit        = bLaneListed
                                   && (DistSq < PositionRadius.w * PositionRadius.w)
-                                  && (!bBackFacing || bFoliage);
+                                  && (!bBackFacing || bFoliage || bSubsurface);
 
 #ifdef SHADING_COMPUTE
             if (!WaveActiveAnyTrue(bLit))
@@ -758,19 +974,15 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
                 float3 Radiance = GetLightColor(Light).rgb * Light.Intensity * Attenuation
                                 * LightFunctionMask(Light, L, WorldPosition);
 
-                // An area light lights diffuse and specular from different directions; every other light uses L for both.
-                float3       DiffuseL         = L;
-                float3       SpecularL        = L;
-                float3       SpecularRadiance = Radiance;
-                const bool   bArea            = HasFlag(Light.Flags, ELightFlags::Area);
+                // Only an area light's emitted radiance stays live through the shadow, and its specular is integrated after it.
+                float3     DiffuseL  = L;
+                float3     Emitted   = Radiance;
+                const bool bArea     = HasFlag(Light.Flags, ELightFlags::Area);
                 if (bArea)
                 {
-                    const FAreaLightTerms Terms = EvaluateAreaLight(Light, Radiance, WorldPosition, N, V,
-                                                                    max(Ctx.Roughness, GetLightMinRoughness(Light)));
-                    DiffuseL         = Terms.DiffuseL;
-                    Radiance         = Terms.DiffuseRadiance;
-                    SpecularL        = Terms.SpecularL;
-                    SpecularRadiance = Terms.SpecularRadiance;
+                    const FAreaLightRect Rect = GetAreaLightRect(Light, WorldPosition);
+                    Emitted = Radiance / Rect.Area;
+                    AreaLightDiffuse(Rect, Emitted, N, DiffuseL, Radiance);
                 }
 
                 float Shadow = 1.0;
@@ -791,13 +1003,29 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
                     {
                         Lo += EvaluateTransmission(Ctx, DiffuseL, Radiance, G.Transmission, G.Thickness) * Shadow;
                     }
+                    // Without a shadow map nothing stops the light at the far side of a thick body, so only shadowed lights shine through.
+                    if (bSubsurface && Light.ShadowDataIndex != INDEX_NONE)
+                    {
+                        Lo += EvaluateSubsurfaceTransmission(X, N, V, DiffuseL, Radiance, 0.0) * Shadow;
+                    }
 
                     float3 LightDiffuse, LightSpec;
-                    EvaluateRadianceContributionSplit(Light, Ctx, DiffuseL, Radiance, LightDiffuse, LightSpec);
+                    EvaluateSurfaceLight(Light, Ctx, X, bLobes, DiffuseL, Radiance, LightDiffuse, LightSpec);
                     if (bArea)
                     {
-                        float3 Unused;
-                        EvaluateRadianceContributionSplit(Light, Ctx, SpecularL, SpecularRadiance, Unused, LightSpec);
+                        // Rebuilt rather than carried, since it is cheap and would otherwise hold thirteen registers through the shadow.
+                        const FAreaLightRect Rect = GetAreaLightRect(Light, WorldPosition);
+                        const float Rough = max(Ctx.Roughness, GetLightMinRoughness(Light));
+                        if (bLobes)
+                        {
+                            float3 PointL, PointRadiance, Unused;
+                            AreaLightRepresentativePoint(Light, Rect, Emitted, N, V, Rough, PointL, PointRadiance);
+                            EvaluateSurfaceLight(Light, Ctx, X, bLobes, PointL, PointRadiance, Unused, LightSpec);
+                        }
+                        else
+                        {
+                            LightSpec = Emitted * AreaLightLTCSpecular(Rect, N, V, Ctx.NdotV, Rough, Ctx.F0) * Ctx.EnergyComp;
+                        }
                     }
 
 #ifdef TRANSLUCENT
@@ -808,10 +1036,21 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
 
                     if (Coat > 0.0)
                     {
-                        float CoatF;
-                        const float CoatSpec = EvaluateClearcoatLobe(N, V, SpecularL, G.ClearcoatRoughness, CoatF);
+                        float  CoatF;
+                        float3 CoatLight;
+                        if (bArea)
+                        {
+                            const float CoatNdotV = max(dot(SmoothN, V), 1e-4);
+                            CoatF     = 0.04 + 0.96 * pow(1.0 - CoatNdotV, 5.0);
+                            CoatLight = Emitted * AreaLightLTCSpecular(GetAreaLightRect(Light, WorldPosition), SmoothN, V, CoatNdotV,
+                                                                       max(G.ClearcoatRoughness, 0.045), float3(0.04));
+                        }
+                        else
+                        {
+                            CoatLight = Emitted * EvaluateClearcoatLobe(SmoothN, V, L, G.ClearcoatRoughness, CoatF);
+                        }
                         LightBase *= (1.0 - Coat * CoatF);
-                        LoCoat    += SpecularRadiance * (CoatSpec * Coat) * Shadow;
+                        LoCoat    += CoatLight * (Coat * Shadow);
                     }
 
                     Lo += LightBase * Shadow;
@@ -824,12 +1063,12 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     // Translucent skips GTAO, which comes from opaque depth and holds what is behind the glass.
     FScreenAO ScreenAO;
     ScreenAO.Visibility = 1.0;
-    ScreenAO.BentNormal = N;
+    ScreenAO.BentNormal = SmoothN;
     float4 IndirectDiffuse = float4(0.0, 0.0, 0.0, 0.0);
 #ifndef TRANSLUCENT
     // Explicit LOD inside, since the deferred lighting lane is compute and has no implicit derivatives.
     const float2 ScreenUV = ScreenPos / float2(Scene().ScreenSize.xy);
-    ScreenAO = SampleScreenAO(ScreenUV, N);
+    ScreenAO = SampleScreenAO(ScreenUV, SmoothN);
 
     // Only ever traced alongside GTAO, whose working depth it marches.
     if (Scene().GTAOSettings.IndirectDiffuse.IsValid())
@@ -850,14 +1089,20 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
         // NdotV and DFG are recomputed here so the top-of-shader copies are not held across the light loop.
         float  NdotV_IBL  = saturate(dot(N, V));
         float2 DFG_IBL    = SampleBRDFLUT(NdotV_IBL, Roughness);
-#ifdef TRANSLUCENT
         float3 IBLDiffuse, IBLSpec;
-        EvaluateIBLAmbientSplit(WorldPosition, N, ScreenAO.BentNormal, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO, IBLDiffuse, IBLSpec);
+        if (bLobes)
+        {
+            EvaluateIBLAmbientExtendedSplit(X, WorldPosition, N, ScreenAO.BentNormal, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO, IBLDiffuse, IBLSpec);
+        }
+        else
+        {
+            EvaluateIBLAmbientSplit(WorldPosition, N, ScreenAO.BentNormal, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO, IBLDiffuse, IBLSpec);
+        }
+#ifdef TRANSLUCENT
         Ambient = IBLDiffuse;
         LoSpec += IBLSpec;
 #else
-        float3 IBLAmbient = EvaluateIBLAmbient(WorldPosition, N, ScreenAO.BentNormal, V, NdotV_IBL, DFG_IBL, Albedo, F0, Roughness, Metallic, AmbientAO);
-        Ambient = IBLAmbient;
+        Ambient = IBLDiffuse + IBLSpec;
 #endif
     }
     else
@@ -870,19 +1115,20 @@ FShadedSurface ShadeGBuffer(FGBufferData G, float3 WorldPosition, float3 ViewPos
     // The coat reflects the environment too, which is most of the read on car paint.
     if (Coat > 0.0 && HasIBL())
     {
-        const float  CoatNdotV = saturate(dot(N, V));
-        const float3 CoatR     = reflect(-V, N);
+        const float  CoatNdotV = saturate(dot(SmoothN, V));
+        const float3 CoatR     = reflect(-V, SmoothN);
         const float  CoatRough = max(G.ClearcoatRoughness, 0.045);
         const float2 CoatDFG   = SampleBRDFLUT(CoatNdotV, CoatRough);
 
-        const float3 CoatPrefiltered = SamplePrefilter(CoatR, CoatRough);
+        // Probes first like the base lobe, or a coat indoors mirrors the open sky instead of the room.
+        const float3 CoatPrefiltered = SampleSpecularRadiance(WorldPosition, CoatR, CoatRough);
         const float  CoatF           = 0.04 + 0.96 * pow(1.0 - CoatNdotV, 5.0);
         const float3 CoatIBL         = CoatPrefiltered * (0.04 * CoatDFG.x + CoatDFG.y);
 
         Ambient *= (1.0 - Coat * CoatF);
         Lo      *= (1.0 - Coat * CoatF);
-        LoCoat  += CoatIBL * Coat * GetAmbientLightIntensity()
-                 * ComputeBentSpecularOcclusion(ScreenAO.BentNormal, N, CoatR, CoatNdotV, AmbientAO, CoatRough);
+        LoCoat  += CoatIBL * Coat
+                 * ComputeBentSpecularOcclusion(ScreenAO.BentNormal, SmoothN, CoatR, CoatNdotV, AmbientAO, CoatRough);
     }
 
     Out.Color = Ambient + Lo + LoCoat + G.Emissive;
@@ -957,14 +1203,13 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
         break;
     case DEBUG_MODE_LIGHT_COMPLEXITY:
     {
-        uint DbgIndex = ComputeClusterIndex(ViewPosition.z, ScreenPos);
-        Color = LightComplexityColor(GetClusterLightCount(DbgIndex));
+        Color = LightComplexityColor(GetLightCellCount(GetLightCell(ViewPosition.z, ScreenPos)));
         break;
     }
     case DEBUG_MODE_CLUSTER_GRID:
     {
-        uint DbgIndex = ComputeClusterIndex(ViewPosition.z, ScreenPos);
-        Color = ClusterDebugColor(DbgIndex, GetClusterLightCount(DbgIndex));
+        const FLightCell Cell = GetLightCell(ViewPosition.z, ScreenPos);
+        Color = LightCellDebugColor(Cell, GetLightCellCount(Cell));
         break;
     }
     case DEBUG_MODE_SHADOW_LEVELS:
@@ -1012,6 +1257,8 @@ float3 ApplyDebugView(uint DebugMode, float3 Color, FGBufferData G, FDebugSurfac
             case ShadingModel_Default:   Color = float3(0.25, 0.35, 0.55); break;
             case ShadingModel_Unlit:     Color = float3(0.95, 0.55, 0.10); break;
             case ShadingModel_Clearcoat: Color = float3(0.10, 0.85, 0.85); break;
+            case ShadingModel_Foliage:   Color = float3(0.30, 0.80, 0.20); break;
+            case ShadingModel_Subsurface: Color = float3(0.90, 0.35, 0.40); break;
             default:                     Color = float3(1.0, 0.0, 1.0);    break;   // unmapped model
         }
         break;

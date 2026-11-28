@@ -96,6 +96,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
             FMeshletHeader* Header    = MeshletHeaderAt(P.Static.MeshletHeaderSlot);
             const bool      bImpostor = Header.bHasImpostor;
             FImpostorSample Impostor  = (FImpostorSample)0;
+            float3          ImpostorEmissive = float3(0.0, 0.0, 0.0);
             if (bImpostor)
             {
                 const float4x4 Model   = ProxyWidenedModel(P.Model, GroundWiden);
@@ -109,15 +110,18 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
                 // Moved along the pixel's ray to the plane the raster's quad lies in, so the mesh-local origin stays small at any distance.
                 const float3 QuadPoint = RayStart + PixelRay * (dot(Center - RayStart, Forward) / max(dot(PixelRay, Forward), 1.0e-4));
                 const FImpostorRay   Ray   = MakeImpostorRay(Header, Model, QuadPoint);
-                const FImpostorViews Views = SelectImpostorViews(Ray.ToEye, Header.ImpostorFrames);
+                const FImpostorViews Views = SelectImpostorViews(Header, Ray.ToEye);
                 const float3 Scale  = GetInstanceScale(P.Model);
-                const float  Mip    = ImpostorMipLevel(Header, Center, Header.ImpostorRadius * max(Scale.x, max(Scale.y, Scale.z)));
-                Impostor = SampleImpostor(Header, Views, Ray.Origin, Ray.Dir, Mip);
+                float         Mip    = ImpostorMipLevel(Header, Center, Header.ImpostorRadius * max(Scale.x, max(Scale.y, Scale.z)));
+                FImpostorTaps Taps   = GatherImpostorTaps(Header, Views, Ray.Origin, Ray.Dir, Mip);
                 // A pixel the raster kept can still miss every texel here, and the view's average beats the black an empty sample normalizes to.
-                if (Impostor.Coverage < kImpostorMissCoverage)
+                if (Taps.Coverage < kImpostorMissCoverage)
                 {
-                    Impostor = SampleImpostor(Header, Views, Ray.Origin, Ray.Dir, log2(float(Header.ImpostorFrameSize)));
+                    Mip  = log2(float(Header.ImpostorFrameSize));
+                    Taps = GatherImpostorTaps(Header, Views, Ray.Origin, Ray.Dir, Mip);
                 }
+                Impostor         = ResolveImpostorTaps(Header, Views, Taps, Mip);
+                ImpostorEmissive = ResolveImpostorEmissive(Header, Views, Taps, Mip);
 
                 const float3 ImpostorNormal = mul(CalculateNormalMatrix(Model), Impostor.Normal);
                 NormalWS = dot(ImpostorNormal, ImpostorNormal) > 1e-12 ? normalize(ImpostorNormal) : NormalWS;
@@ -185,6 +189,11 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
                 G.BaseColor        = Impostor.BaseColor;
                 G.WorldNormal      = NormalWS;
                 G.AmbientOcclusion = Impostor.AmbientOcclusion;
+                // Foliage spends the emissive channels on transmission, and a mesh baked before emission keeps the material's.
+                if (Header.ImpostorEmissiveIndex != 0u && G.ShadingModel != ShadingModel_Foliage)
+                {
+                    G.Emissive = ImpostorEmissive;
+                }
             }
         }
     }

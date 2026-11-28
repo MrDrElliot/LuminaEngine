@@ -14,6 +14,10 @@
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Systems/TerrainCollisionSystem.h"
+#include "WorldTestAccess.h"
+
+#include <thread>
 
 using namespace Lumina;
 
@@ -33,6 +37,7 @@ namespace
     {
         CWorld* World = nullptr;
         TStrongObjectPtr<CWorld> WorldOwner;
+        TStrongObjectPtr<CTerrainCollisionSystem> Collision;
 
         int32    Resolution = 0;
         float    TileWorldSize = 0.0f;
@@ -42,6 +47,7 @@ namespace
 
         ECS::FRegistry& Registry() const { return World->GetEntityRegistry(); }
         Physics::IPhysicsScene& Scene() const { return *World->GetPhysicsScene(); }
+        SExclusiveContext Context() const { return SExclusiveContext(FWorldTestAccess::SystemContext(*World)); }
 
         FTerrainWorld()
         {
@@ -56,11 +62,27 @@ namespace
                 Physics::Initialize();
             }
             World->EnsurePhysicsScene();
+            Collision = NewObject<CTerrainCollisionSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+            Collision->SetOwningWorld(World);
+            Collision->OnStartup(Context());
         }
 
         ~FTerrainWorld()
         {
+            Collision->OnTeardown(Context());
             WorldOwner.Reset();
+        }
+
+        // Collision patches cook on workers, so the terrain is solid before anything stands on it.
+        void SettleCollision()
+        {
+            // A few frames first, since an edit waits for one unchanged frame before its patches start cooking.
+            for (int32 Attempt = 0; Attempt < 4000 && (Attempt < 3 || Collision->HasPendingBuilds()); ++Attempt)
+            {
+                Frame(1.0 / 60.0);
+                std::this_thread::yield();
+            }
+            Frame(1.0 / 60.0);
         }
 
         ECS::FEntity SpawnTerrain(int32 InResolution, float InTileWorldSize, float InMaxHeight, const FVector3& InOrigin, FHeightFn Height,
@@ -81,7 +103,7 @@ namespace
             Terrain.Resolution = Resolution;
             Terrain.TileWorldSize = TileWorldSize;
             Terrain.MaxHeight = MaxHeight;
-            Terrain.Heightmap.SetNum(Resolution * Resolution);
+            TVector<float> Normalized(Resolution * Resolution);
             Heights.SetNum(Resolution * Resolution);
             const float Stride = TileWorldSize / float(Resolution - 1);
             for (int32 Z = 0; Z < Resolution; ++Z)
@@ -89,12 +111,14 @@ namespace
                 for (int32 X = 0; X < Resolution; ++X)
                 {
                     const float H = Height(-TileWorldSize * 0.5f + X * Stride, -TileWorldSize * 0.5f + Z * Stride);
-                    Terrain.Heightmap[Z * Resolution + X] = H / MaxHeight;
+                    Normalized[Z * Resolution + X] = H / MaxHeight;
                     Heights[Z * Resolution + X] = H;
                 }
             }
+            Terrain.SetStore(FTerrainStore::CreateFromArrays(Resolution, Normalized, {}, 0));
             R.Emplace<STerrainComponent>(Entity, std::move(Terrain));
             R.Emplace<STerrainColliderComponent>(Entity);
+            SettleCollision();
             return Entity;
         }
 
@@ -152,6 +176,7 @@ namespace
         void Frame(double Dt)
         {
             ECS::Utils::ResolveAllDirtyTransforms(Registry());
+            Collision->OnExclusiveUpdate(Context());
             Scene().Update(Dt);
             Scene().DispatchPendingEvents();
             ECS::Utils::ResolveAllDirtyTransforms(Registry());
@@ -387,12 +412,17 @@ TEST(CharacterTerrain, CollisionFollowsAHeightmapEdit)
 
     // Raise the whole tile by a meter, the way a sculpt stroke rewrites samples and bumps the version.
     STerrainComponent& Terrain = W.Registry().Get<STerrainComponent>(TerrainEntity);
-    for (int32 i = 0; i < Terrain.Heightmap.Num(); ++i)
+    const FIntVector2 Full(Terrain.Resolution);
+    TVector<float> Raised(Full.x * Full.y);
+    Terrain.GetStore()->ReadHeights(0, FIntVector2(0), Full, Raised.GetData());
+    for (int32 i = 0; i < Raised.Num(); ++i)
     {
-        Terrain.Heightmap[i] += 1.0f / Terrain.MaxHeight;
+        Raised[i] += 1.0f / Terrain.MaxHeight;
         W.Heights[i] += 1.0f;
     }
+    Terrain.EnsureStore()->WriteHeights(FIntVector2(0), Full, Raised.GetData());
     Terrain.MarkHeightDirty(FIntVector2(0, 0), FIntVector2(Terrain.Resolution - 1, Terrain.Resolution - 1));
+    W.SettleCollision();
     for (int32 i = 0; i < 90; ++i) { W.Frame(kDt); }
 
     const SCharacterPhysicsComponent& Physics = W.Registry().Get<SCharacterPhysicsComponent>(Character);

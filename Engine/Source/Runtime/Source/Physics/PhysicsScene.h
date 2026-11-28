@@ -135,6 +135,20 @@ namespace Lumina::Physics
         SCollisionProfile       Profile = { .Layer = ECollisionProfiles::Static };
         bool                    bConvex = true;
         int32                   SourceIndex = -1;       // Echoed back as the InstanceIndex of ray and overlap results.
+        // A cooked shape, such as a height field, which takes the place of Collision and Mesh.
+        TSharedPtr<const FCollisionShape> Shape;
+    };
+
+    // Heights in world units above the body, row z of CountX samples after row z - 1, spaced Spacing apart in X and Z.
+    struct FHeightFieldDesc
+    {
+        TVector<float> Heights;
+        int32          CountX  = 0;
+        int32          CountZ  = 0;
+        float          Spacing = 1.0f;
+        // Every patch of one terrain quantizes over the same range, so their shared edges meet exactly.
+        float          MinHeight = 0.0f;
+        float          MaxHeight = 0.0f;
     };
 
     // A body no entity owns, for procedural or tool geometry. Shapes come from Collision when set, else from the raw triangles, three indices each.

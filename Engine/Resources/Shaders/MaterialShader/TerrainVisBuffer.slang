@@ -2,7 +2,7 @@
 #include "Includes/TerrainData.slang"
 #include "Includes/MeshletGeometry.slang"
 
-// Terrain rasters into the VisBuffer like any mesh, one workgroup per visible meshlet of one terrain per draw.
+// Terrain rasters into the VisBuffer like any mesh, one workgroup per visible quadtree node of one terrain per draw.
 
 struct FTerrainDrawPush
 {
@@ -20,9 +20,10 @@ FMaterialVertexInputs EvalTerrainVertex(FTerrainRenderParams TerrainParams, floa
     return Material;
 }
 
-float4 TerrainClipPosition(FTerrainRenderParams Params, FTerrainMeshletInfo Meshlet, FTerrainChunkInfo Chunk, uint GridIndex)
+float4 TerrainClipPosition(FTerrainRenderParams Params, FTerrainVisibleNode Vis, uint GridIndex, inout FTerrainPage Cache)
 {
-    const FTerrainVertex V = TerrainMeshletVertex(Params, Meshlet, Chunk, GridIndex);
+    const FTerrainVertex V = TerrainNodeVertex(Params, Vis, GridIndex, Cache);
+    GTerrainShadingMip = float(TerrainNodeLevel(Params, UnpackTerrainNode(Vis.Node).Depth));
     const FMaterialVertexInputs Material = EvalTerrainVertex(Params, V.WorldPos, V.NormalWS, V.HeightUV);
     return CameraClipPosition(CameraViewPosition(V.WorldPos + Material.WorldPositionOffset));
 }
@@ -61,19 +62,18 @@ void MeshMain(
         return;
     }
 
-    const FTerrainRenderParams   Params  = Record.Params;
-    const FTerrainVisibleMeshlet Vis     = Record.Visible.Get(GroupID.x);
-    const FTerrainMeshletInfo    Meshlet = Record.Meshlets.Get(Vis.MeshletIndex);
-    const FTerrainChunkInfo      Chunk   = Record.Chunks.Get(Meshlet.ChunkIndex);
-    const uint                   Slot    = Record.VisibleBase + GroupID.x;
+    const FTerrainRenderParams Params = Record.Params;
+    const FTerrainVisibleNode  Vis    = Record.Visible.Get(GroupID.x);
+    const uint                 Slot   = Record.VisibleBase + GroupID.x;
 
+    FTerrainPage Cache = (FTerrainPage)0;
     [ForceUnroll]
     for (uint v = 0; v < TERRAIN_VERT_ITERS; ++v)
     {
         const uint Index = ThreadID + v * MESHLET_MESH_GROUP_SIZE;
         if (Index < TERRAIN_MESHLET_MAX_VERTICES)
         {
-            Verts[Index].Position = TerrainClipPosition(Params, Meshlet, Chunk, Index);
+            Verts[Index].Position = TerrainClipPosition(Params, Vis, Index, Cache);
         }
     }
 
@@ -96,7 +96,7 @@ struct FTerrainVisVertexStageOutput
     nointerpolation uint VisBase  : TERRAIN_VIS_BASE;
 };
 
-// The fallback without mesh shading, drawn indexed over one meshlet's grid with one instance per visible meshlet.
+// The fallback without mesh shading, drawn indexed over one node's grid with one instance per visible node.
 [shader("vertex")]
 FTerrainVisVertexStageOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint InstanceIndex : SV_VulkanInstanceID)
 {
@@ -109,11 +109,10 @@ FTerrainVisVertexStageOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, ui
         return Out;
     }
 
-    const FTerrainVisibleMeshlet Vis     = Record.Visible.Get(InstanceIndex);
-    const FTerrainMeshletInfo    Meshlet = Record.Meshlets.Get(Vis.MeshletIndex);
-    const FTerrainChunkInfo      Chunk   = Record.Chunks.Get(Meshlet.ChunkIndex);
+    const FTerrainVisibleNode Vis = Record.Visible.Get(InstanceIndex);
 
-    Out.Position = TerrainClipPosition(Record.Params, Meshlet, Chunk, VertexIndex);
+    FTerrainPage Cache = (FTerrainPage)0;
+    Out.Position = TerrainClipPosition(Record.Params, Vis, VertexIndex, Cache);
     Out.VisBase  = PackTerrainVisID(Record.VisibleBase + InstanceIndex, 0u);
     return Out;
 }

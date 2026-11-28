@@ -205,6 +205,14 @@ namespace Lumina
             }
         }
 
+        void BakeSceneImpostorsCommand()
+        {
+            if (Global::GEditorEngine != nullptr)
+            {
+                static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI())->BakeSceneImpostors();
+            }
+        }
+
         // Leaves every changed package dirty rather than saving, like the impostor bake, so the user decides what to keep.
         void BuildMeshDistanceFieldsCommand()
         {
@@ -565,6 +573,8 @@ namespace Lumina
 
         FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("Impostor.BakeFoliage",
             "Bakes an impostor for every mesh the open world's forests and painted foliage scatter, leaving their packages dirty.", &BakeFoliageImpostorsCommand));
+        FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("Impostor.BakeScene",
+            "Bakes an impostor for every foliage mesh and every project static mesh a component in the open world draws, unless the component disallows it, leaving their packages dirty.", &BakeSceneImpostorsCommand));
         FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("Mesh.BuildDistanceFields",
             "Turns on and builds the distance field of every static mesh in /Game that lacks one, leaving their packages dirty.", &BuildMeshDistanceFieldsCommand));
         FConsoleRegistry::Get().RegisterCommand(FConsoleCommand("Asset.ResaveAll",
@@ -1138,6 +1148,15 @@ namespace Lumina
         if (WorldEditorTool != nullptr && WorldEditorTool->GetWorld() != nullptr)
         {
             ImpostorBaker.EnqueueFoliage(*WorldEditorTool->GetWorld());
+        }
+    }
+
+    void FEditorUI::BakeSceneImpostors()
+    {
+        if (WorldEditorTool != nullptr && WorldEditorTool->GetWorld() != nullptr)
+        {
+            ImpostorBaker.EnqueueFoliage(*WorldEditorTool->GetWorld());
+            ImpostorBaker.EnqueueStaticMeshes(*WorldEditorTool->GetWorld());
         }
     }
 

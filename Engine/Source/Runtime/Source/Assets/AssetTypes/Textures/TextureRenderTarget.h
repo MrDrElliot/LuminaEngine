@@ -27,7 +27,8 @@ namespace Lumina
         void Serialize(FArchive& Ar) override;
         void PostLoad() override;
 
-        /** (Re)allocates the GPU image from the current Width/Height/Format and clears it to ClearColor. */
+        // Allocates the GPU image again from Width, Height and Format and clears it to ClearColor, which a script calls after creating or resizing one.
+        FUNCTION()
         void BuildResource();
 
         /**

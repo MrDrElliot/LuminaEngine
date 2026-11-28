@@ -53,4 +53,20 @@ namespace Lumina
         Output->SetInputType(EMaterialInputType::Float3);
     }
     void CMaterialExpression_BlendNormals::GenerateDefinition(FMaterialCompiler& C) { C.BlendNormals(A, B); }
+
+    void CMaterialExpression_MetallicFlakes::BuildNode()
+    {
+        Position = MakeIn(this, "Position", EMaterialInputType::Float3);
+        Size     = MakeIn(this, "Size");
+        Tilt     = MakeIn(this, "Tilt");
+
+        NormalOut     = MakeOut(this, "Normal", EMaterialInputType::Float3);
+        GlintOut      = MakeOut(this, "Glint", EMaterialInputType::Float);
+        VisibilityOut = MakeOut(this, "Visibility", EMaterialInputType::Float);
+    }
+
+    void CMaterialExpression_MetallicFlakes::GenerateDefinition(FMaterialCompiler& C)
+    {
+        C.MetallicFlakes(this, Position, Size, Tilt, NormalOut, GlintOut, VisibilityOut);
+    }
 }

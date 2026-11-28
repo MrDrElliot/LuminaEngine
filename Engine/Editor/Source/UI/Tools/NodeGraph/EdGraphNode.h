@@ -137,14 +137,11 @@ namespace Lumina
         // Commits an F2 rename. Only reached when GetRenameText returned true.
         virtual void SetRenameText(const FString& InText) {}
 
-        // A clone copies object references as references, so a node owning a sub-graph re-copies it here.
-        virtual void PostCloneFrom(const CEdGraphNode* Source) {}
-
         // The sub-graph this node owns, or null. Unlike GetEnterableSubGraph this never creates one.
         virtual CEdNodeGraph* GetOwnedSubGraph() const { return nullptr; }
 
-        // Swaps the owned sub-graph for a private deep copy, repairing one shared with another node.
-        virtual void ReplaceSubGraphWithCopy() {}
+        // Replaces the owned sub-graph with a fresh, un-set-up one for an import to fill. Null for leaf nodes.
+        virtual CEdNodeGraph* AllocateOwnedSubGraph() { return nullptr; }
 
         void SetDebugExecutionOrder(uint32 Order) { DebugExecutionOrder = Order; }
         uint32 GetDebugExecutionOrder() const { return DebugExecutionOrder; }

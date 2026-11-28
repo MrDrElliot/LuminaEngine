@@ -62,7 +62,7 @@
 #include "World/Scene/RenderScene/EnvironmentRenderTypes.h"
 #include "World/Scene/RenderScene/MeshDrawCommand.h"
 #include "World/Scene/RenderScene/MeshResolveCache.h"
-#include "World/Scene/RenderScene/TerrainMeshletBuilder.h"
+#include "World/Terrain/TerrainStoreRegistry.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
 #include "Core/Threading/Sync.h"
 #include "Log/Log.h"
@@ -210,7 +210,7 @@ namespace Lumina
     struct FSunShadowFilter
     {
         float  RadiusTexels;  // in virtual shadow texels, which are about a screen pixel each
-        uint32 ContactSteps;  // the sun's screen-space contact march, 0 when it is off
+        uint32 ContactSteps;  // most steps the sun's screen-space contact march takes, fewer where its reach spans few pixels, 0 when it is off
     };
 
     inline FSunShadowFilter GetSunShadowFilter()
@@ -219,9 +219,9 @@ namespace Lumina
         switch (Settings != nullptr ? Settings->ShadowQuality : EShadowQuality::High)
         {
         case EShadowQuality::Low:    return { 0.0f, 0u };
-        case EShadowQuality::Medium: return { 1.0f, 8u };
-        case EShadowQuality::High:   return { 1.0f, 12u };
-        case EShadowQuality::Ultra:  return { 1.5f, 16u };
+        case EShadowQuality::Medium: return { 1.0f, 12u };
+        case EShadowQuality::High:   return { 1.0f, 24u };
+        case EShadowQuality::Ultra:  return { 1.5f, 32u };
         }
         return { 1.0f, 12u };
     }

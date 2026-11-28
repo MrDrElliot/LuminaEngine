@@ -612,7 +612,21 @@ namespace Lumina::Physics
         for (const FStaticInstanceDesc& Instance : Instances)
         {
             FRigidBodyBuildResult Build = MakeEntityFreeBuild(EBodyType::Static, Instance.Position, Instance.Rotation, Instance.Profile, Instance.Material, Instance.SourceIndex);
-            if (Instance.Collision)
+            const FBox3DCollisionShape* Cooked = static_cast<const FBox3DCollisionShape*>(Instance.Shape.Get());
+            if (Cooked != nullptr && Cooked->HeightField)
+            {
+                // b3CreateHeightFieldShape takes no transform, so the turned grid's corner and turn go on the body.
+                const b3Vec3 Corner = b3RotateVector(Build.BodyDef.rotation, b3Vec3{ 0.0f, 0.0f, Cooked->LocalMax.z });
+                Build.BodyDef.position = b3Add(Build.BodyDef.position, Corner);
+                Build.BodyDef.rotation = b3MulQuat(Build.BodyDef.rotation, Box3DUtils::kHeightFieldGridTurn);
+                FPendingShape Shape;
+                Shape.Type = b3_heightShape;
+                Shape.HeightField = Cooked->HeightField.Get();
+                Build.Shapes.Add(Shape);
+                Build.Geometry.Shape = Instance.Shape;
+                Request.HeightFieldAreas.Add(FVector4(Instance.Position.x, Instance.Position.z, Instance.Position.x + Cooked->LocalMax.x, Instance.Position.z + Cooked->LocalMax.z));
+            }
+            else if (Instance.Collision)
             {
                 BuildMeshCollision(*Instance.Collision, Instance.Scale, Build);
             }
@@ -748,6 +762,7 @@ namespace Lumina::Physics
                     case b3_capsuleShape: b3CreateCapsuleShape(Body, &Build.ShapeDef, &Shape.Capsule); break;
                     case b3_hullShape: b3CreateTransformedHullShape(Body, &Build.ShapeDef, Shape.Hull, Shape.Transform, Shape.Scale); break;
                     case b3_meshShape: b3CreateMeshShape(Body, &Build.ShapeDef, Shape.Mesh, Shape.Scale); break;
+                    case b3_heightShape: b3CreateHeightFieldShape(Body, &Build.ShapeDef, Shape.HeightField); break;
                     default: break;
                 }
             }

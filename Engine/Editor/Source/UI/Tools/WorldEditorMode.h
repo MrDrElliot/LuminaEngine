@@ -30,6 +30,9 @@ namespace Lumina
         // One step snapshotting Object around Edit, or part of the step already open.
         virtual void RunModeObjectTransaction(const char* Name, CObject* Object, const FObjectSnapshotCommand::FSerializer& Serializer, const TFunction<void()>& Edit) = 0;
 
+        // Joins the open transaction, for state the world snapshot does not hold, such as a terrain's tiles.
+        virtual void RecordModeCommand(TUniquePtr<IUndoableCommand> Command) = 0;
+
         virtual ECS::FEntity GetModeSelectionFocus() const = 0;
         virtual void SetModeSelection(ECS::FEntity Entity) = 0;
     };

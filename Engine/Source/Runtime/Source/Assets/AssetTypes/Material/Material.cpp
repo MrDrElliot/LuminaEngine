@@ -141,6 +141,7 @@ namespace Lumina
             { "_VBVM", ERHIShaderType::Vertex   },
             { "_MSSMV", ERHIShaderType::Vertex  },
             { "_MVBPV", ERHIShaderType::Fragment },
+            { "_VTC",  ERHIShaderType::Compute  },
         };
         static_assert(std::size(GMaterialStages) == (size_t)EMaterialShaderStage::Count, "GMaterialStages must cover every EMaterialShaderStage");
 
@@ -837,6 +838,7 @@ namespace Lumina
         case EMaterialShaderStage::MeshBase:
         case EMaterialShaderStage::MeshBaseVertex:       return bMeshlet && bForward;
         case EMaterialShaderStage::Deferred:             return (bMeshlet && !bForward) || bTerrain;
+        case EMaterialShaderStage::VirtualTextureCapture: return bTerrain;
         case EMaterialShaderStage::VisBufferMesh:
         case EMaterialShaderStage::VisBufferVertex:      return bMeshlet || bTerrain;
         case EMaterialShaderStage::MeshShadow:
@@ -1232,6 +1234,7 @@ namespace Lumina
         Flags |= BlendMode == EBlendMode::Translucent ? EMaterialGPUFlags::Translucent : EMaterialGPUFlags::None;
         Flags |= BlendMode == EBlendMode::Additive    ? EMaterialGPUFlags::Additive    : EMaterialGPUFlags::None;
         Flags |= bReceivesDecals                      ? EMaterialGPUFlags::None        : EMaterialGPUFlags::NoDecals;
+        Flags |= bExtendedSurface                     ? EMaterialGPUFlags::Extended    : EMaterialGPUFlags::None;
 
         // A 3-bit field, so the GBuffer stamps the model at runtime rather than specializing the shader.
         const uint32 ShadingModelBits = ((uint32)ShadingModel & kMaterialShadingModelMask) << kMaterialShadingModelShift;
@@ -1417,6 +1420,8 @@ namespace Lumina
 
         CompileBuiltinGeometryStage(*Compiler, Material, EMaterialShaderStage::VisBufferMesh, "TerrainVisBuffer.slang", nullptr, { { kVertexInputsToken, &NoOffset } });
         CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::Deferred, "TerrainDeferredMaterial.slang", nullptr,
+                            { { kVertexInputsToken, &NoOffset }, { kPixelInputsToken, &PixelInputs } });
+        CompileBuiltinStage(*Compiler, Material, EMaterialShaderStage::VirtualTextureCapture, "TerrainVirtualTextureCapture.slang", nullptr,
                             { { kVertexInputsToken, &NoOffset }, { kPixelInputsToken, &PixelInputs } });
 
         Compiler->Flush();

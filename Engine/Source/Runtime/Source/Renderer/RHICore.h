@@ -61,6 +61,14 @@ namespace Lumina::RHI
     // True once after an async present was rejected, so the swapchain owner rebuilds.
     bool TakePresentRejected();
 
+#if !defined(LE_SHIPPING)
+    // What r.Debug.Stats turns on, which counts submitted commands and keeps the GPU profiler and the scene's stats pass running.
+    RUNTIME_API void SetStatsCollection(bool bEnabled);
+    RUNTIME_API bool IsCollectingStats();
+    // Draws and dispatches submitted during the last whole frame, an indirect command counting once as issued.
+    RUNTIME_API void GetLastFrameCommandCounts(uint32& OutDraws, uint32& OutDispatches);
+#endif
+
     RUNTIME_API FTextureHeapH GetGlobalHeap();
     
     RUNTIME_API FTransientAlloc AllocTransient(uint64 Size, uint64 Alignment = kDefaultAlign);

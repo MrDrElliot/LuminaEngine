@@ -63,7 +63,9 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
 
     // Thins the field toward its edge so the wrap at the tile boundary never pops.
     const float Fade = saturate((Radius - Dist) / (Radius * 0.25)) * saturate((Dist - kRainNearClip) / 1.2);
-    const float3 Light = RainLightAt(Drop.Position);
+    // Flakes are opaque scatterers with no forward lobe worth drawing, drops throw a glint toward the eye.
+    const float3 ToEye = (Camera - Drop.Position) / Dist;
+    const float3 Light = RainLightAt(Drop.Position, ToEye, bSnow ? 0.0 : W.RainOptics.y);
 
     const uint Slot = WaveInterlockedAdd(Pass().Args.At(1u), 1u);
     Pass().Visible.Set(Slot, uint4(Index, PackHalf2(Light.rg), PackHalf2(float2(Light.b, Fade)), 0u));

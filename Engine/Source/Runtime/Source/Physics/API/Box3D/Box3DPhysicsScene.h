@@ -88,13 +88,14 @@ namespace Lumina::Physics
 
         TOwnedGeometry<b3MeshData> Mesh;
         TOwnedGeometry<b3HullData> Hull;
+        // Turned a quarter about Y with its first sample on the patch's maximum Z edge, which the body placement undoes.
+        TOwnedGeometry<b3HeightFieldData> HeightField;
     };
 
     // Box3D keeps pointing at a mesh or height field while the shape lives, so the body holds what was built for it, or a ref on what it shares.
     struct FBodyGeometry
     {
         TOwnedGeometry<b3MeshData>          Mesh;
-        TOwnedGeometry<b3HeightFieldData>   HeightField;
         TSharedPtr<const FCollisionShape>   Shape;
     };
 
@@ -472,6 +473,8 @@ namespace Lumina::Physics
             uint32 GroupID = 0;
             ECS::FEntity Owner = ECS::NullEntity;
             TVector<FRigidBodyBuildResult> Builds;
+            // The XZ rectangle of each height field, min x and z then max x and z.
+            TVector<FVector4> HeightFieldAreas;
         };
         TVector<FPendingStaticGroup> PendingStaticGroups;
 

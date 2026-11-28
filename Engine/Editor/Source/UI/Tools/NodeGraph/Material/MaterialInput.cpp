@@ -26,7 +26,7 @@ namespace Lumina
 
     EGraphPinShape CMaterialInput::ShapeFor(EMaterialInputType Type, EComponentMask Mask)
     {
-        if (Type == EMaterialInputType::TextureHandle)
+        if (Type == EMaterialInputType::TextureHandle || Type == EMaterialInputType::Surface)
         {
             return EGraphPinShape::Hexagon;
         }

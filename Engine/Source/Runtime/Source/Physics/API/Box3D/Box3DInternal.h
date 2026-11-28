@@ -186,7 +186,7 @@ namespace Lumina::Physics
 
     using FColliderTypes = ECS::TTypeList<SSphereColliderComponent, SBoxColliderComponent, SCapsuleColliderComponent, SCylinderColliderComponent,
         STaperedCapsuleColliderComponent, STaperedCylinderColliderComponent, SPlaneColliderComponent, SCompoundColliderComponent,
-        SMeshColliderComponent, STerrainColliderComponent, SDynamicMeshColliderComponent>;
+        SMeshColliderComponent, SDynamicMeshColliderComponent>;
 
     template<typename TFunc>
     void ForEachColliderType(TFunc&& Func)

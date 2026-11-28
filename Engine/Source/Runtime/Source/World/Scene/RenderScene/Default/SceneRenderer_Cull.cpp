@@ -960,7 +960,9 @@ namespace Lumina
         const SIZE_T MeshletDrawListSize = Math::Clamp<SIZE_T>((SIZE_T)DrawListWanted * sizeof(FUIntVector2), sizeof(FUIntVector2), kMaxDrawListBytes);
         MeshletDrawListRing[Slot].MaxBytes = kMaxDrawListBytes;
         ReserveBuffer(CL, MeshletDrawListRing[Slot], MeshletDrawListSize);
-        // Shadow views follow the camera in the list and write no visibility IDs, so the list may run past the ID range the camera's slots stay inside.
+        // Ahead of PublishSceneRoot, which hands every view's decode this table's address.
+        ReserveBuffer(CL, ViewDrawBaseRing[Slot], (uint64)GMaxCullViews * sizeof(uint32), /*bAllowShrink*/ false);
+        // Visibility IDs count from each view's region, so the list may run past the ID range as far as memory allows.
         DrawListCapacity = Math::Min<uint32>(MeshletDrawListRing[Slot].CapacityOf<FUIntVector2>(), kMaxDrawListEntries);
         if (SceneRendererCullInternal::IsDebugCapacityScaled())
         {
@@ -1115,8 +1117,9 @@ namespace Lumina
     {
         auto& LightData = Frame.Lighting.LightData;
 
-        // Only the live prefix of each array reaches the ring; the header carries where they landed.
-        LightData.Lights  = RHI::CopyTransientArray(Frame.Lighting.Lights.GetData(),  NumLiveLights);
+        // Only the sun goes up per frame, since every local light lives in the retained set the cull copies from.
+        const bool bSun   = !Frame.Lighting.Lights.IsEmpty() && EnumHasAnyFlags(Frame.Lighting.Lights[0].Flags, ELightFlags::Directional);
+        LightData.Lights  = RHI::CopyTransientArray(Frame.Lighting.Lights.GetData(), bSun ? 1u : 0u);
         LightData.Shadows = RHI::CopyTransientArray(Frame.Lighting.Shadows.GetData(), NumLiveShadows);
         const uint32 NumLightFunctions = (uint32)Frame.Lighting.LightFunctionDraws.Num();
         if (NumLightFunctions != 0 && !LightFunctionAtlas)
@@ -1131,6 +1134,7 @@ namespace Lumina
         }
         LightData.LightFunctions     = RHI::CopyTransientArray(Frame.Lighting.LightFunctions.GetData(), NumLightFunctions);
         LightData.LightFunctionAtlas = LightFunctionAtlas ? (uint32)LightFunctionAtlas.GetResourceID() : 0u;
+        LightData.ViewLayerMask      = Frame.ViewLayers.CullMask;
         SceneBindings.Lights = RHI::CopyTransient(LightData);
     }
 
@@ -1228,13 +1232,14 @@ namespace Lumina
         ProbeBufferSpan  = {};
         if (NumActiveProbes > 0)
         {
-            InitReflectionProbeTargets();
+            SyncReflectionProbeArray(Frame.ReflectionProbes.ArrayFaceSize, Frame.ReflectionProbes.ArrayProbes);
             ProbeBufferSpan = RHI::CopyTransientArray(Frame.ReflectionProbes.Probes.GetData(), Frame.ReflectionProbes.Probes.Num());
         }
 
         SceneRootShared.Materials            = Render().GetMaterialManager().GetMaterialTable();
         SceneRootShared.Collections          = Render().GetCollectionManager().GetSpan();
         SceneRootShared.MeshletDrawList      = { GetMeshletDrawList(), DrawListCapacity };
+        SceneRootShared.ViewDrawBases        = { GetViewDrawBases(), (uint32)GMaxCullViews };
         SceneRootShared.PreSkinnedVertices   = { GetPreSkinnedVerticesBuffer(), PreSkinnedVertexCapacity };
         SceneRootShared.PreSkinnedPrevPositions = { PreSkinnedPrevPositionsBuffer, PreSkinnedPrevCapacity };
         SceneRootShared.SkinnedFrameData     = { SkinnedFrameDataBuffer };
@@ -1245,6 +1250,7 @@ namespace Lumina
         PublishViewImageIndices(Frame);
         PublishFogGlobals(SceneGlobalData);
         PublishWeatherGlobals(SceneGlobalData);
+        PublishVirtualTextureGlobals(SceneGlobalData);
 
         SetSceneRoot(CL, *CurrentView, RHI::CopyTransient(SceneGlobalData));
     }
@@ -1272,6 +1278,14 @@ namespace Lumina
         }
 
         SceneGlobalData.SceneDepthIndex = (uint32)Images[(int)ENamedImage::DepthAttachment].GetResourceID();
+
+        const FSceneImage& GBufferE = Images[(int)ENamedImage::GBufferE];
+        const FSceneImage& GBufferF = Images[(int)ENamedImage::GBufferF];
+        const bool bExtension = GBufferE.IsValid() && GBufferF.IsValid() && GBufferE.GetMipUAVIndex(0) >= 0 && GBufferF.GetMipUAVIndex(0) >= 0;
+        SceneGlobalData.GBufferEIndex = bExtension ? (uint32)GBufferE.GetResourceID() : Constants::kIndexNoneU32;
+        SceneGlobalData.GBufferFIndex = bExtension ? (uint32)GBufferF.GetResourceID() : Constants::kIndexNoneU32;
+        SceneGlobalData.GBufferEUAV   = bExtension ? (uint32)GBufferE.GetMipUAVIndex(0) : Constants::kIndexNoneU32;
+        SceneGlobalData.GBufferFUAV   = bExtension ? (uint32)GBufferF.GetMipUAVIndex(0) : Constants::kIndexNoneU32;
 
         const bool bDecals = !Frame.Primitives.DecalExtracts.IsEmpty();
         SceneGlobalData.DBufferAIndex = bDecals ? (uint32)Images[(int)ENamedImage::DBufferA].GetResourceID() : Constants::kIndexNoneU32;
@@ -1522,9 +1536,24 @@ namespace Lumina
             LastPreSkinRequested     = Mapped[6];
             LastVisIDRequired        = Mapped[9];
             LastCameraRasterDemand   = Mapped[kCameraRasterDemandSlot];
+
+#if !defined(LE_SHIPPING)
+            if (RHI::IsCollectingStats())
+            {
+                // In RenderStats.slang's word order; a listed retained slot is a proxy, so it is neither drawn nor culled.
+                const uint32* Stats = Mapped + kReadbackSlots;
+                RenderStats.NumInstancesDrawn      = Stats[1];
+                RenderStats.NumInstancesCulled     = Stats[0] - Math::Min(Stats[0], Stats[1] + Stats[2]);
+                RenderStats.NumMeshletsDrawn       = Stats[3];
+                RenderStats.NumTrianglesDrawn      = Stats[4];
+                RenderStats.NumShadowMeshletsDrawn = Stats[5];
+                RenderStats.NumImpostorsDrawn      = Stats[6];
+                RenderStats.NumFarProxiesDrawn     = Stats[7];
+            }
+#endif
         }
 
-        // Shadow views write no visibility IDs, so only the views that do push the cut coarser as they near the ID range.
+        // Each view has its own ID range, and the camera's is the one this shared cut keeps inside it, so a busy capture never coarsens the camera.
         using namespace SceneRendererCullInternal;
         const float Fill = (float)LastVisIDRequired / (float)VISBUFFER_MAX_MESHLET_SLOTS;
         float Divisor = DrawPressureLODDivisor.load(std::memory_order_relaxed);
@@ -1924,10 +1953,13 @@ namespace Lumina
         // Blades are appended into the retained block between its upload and the cull that reads it, so grass is just more instances downstream.
         GrassScatterPass(CL);
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullInstancesShader));
-        // CullInstances.slang undoes the fold with GroupID.y * MAX_DISPATCH_AXIS * LOCAL_SIZE_X.
-        const FUIntVector2 Grid = RenderUtils::FoldGroupCount(RenderUtils::GetGroupCount(RetainedSlots, 64u));
-        RHI::CmdDispatch(CL, MakeArgs(PC), Grid.x, Grid.y, 1u);
+        {
+            SCENE_GPU_SCOPE(CL, "Cull Retained Slots");
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullInstancesShader));
+            // CullInstances.slang undoes the fold with GroupID.y * MAX_DISPATCH_AXIS * LOCAL_SIZE_X.
+            const FUIntVector2 Grid = RenderUtils::FoldGroupCount(RenderUtils::GetGroupCount(RetainedSlots, 64u));
+            RHI::CmdDispatch(CL, MakeArgs(PC), Grid.x, Grid.y, 1u);
+        }
 
         // Appends to the same list and count, which needs no barrier since both only add through the counter.
         if (bProxies)
@@ -1954,8 +1986,9 @@ namespace Lumina
             RHI::TGPUSpan<uint32>            InstanceCount;
             RHI::TGPUSpan<uint32>            OutTotals;
             RHI::TGPUSpan<RHI::FDispatchIndirectArguments> OutBlockDispatchArgs;
+            RHI::TGPUSpan<uint32>            OutViewDrawBases;
         };
-        static_assert(sizeof(FBuildDrawPrefixPC) == 136, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
+        static_assert(sizeof(FBuildDrawPrefixPC) == 152, "FBuildDrawPrefixPC must match BuildDrawPrefix.slang.");
 
         FBuildDrawPrefixPC PC = {};
         PC.NumViews             = Math::Max((uint32)Frame.Views.CullViews.Num(), 1u);
@@ -1968,6 +2001,7 @@ namespace Lumina
         PC.InstanceCount        = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address, 4u);
         PC.OutTotals            = { GetTotals(), kTotalsSlots };
         PC.OutBlockDispatchArgs = { GetBlockDispatchArgs() };
+        PC.OutViewDrawBases     = { GetViewDrawBases(), (uint32)GMaxCullViews };
 
         DispatchCompute(CL, DrawPrefixShader, PC, 1u, 1u, 1u);
 
@@ -2278,4 +2312,72 @@ namespace Lumina
         }
         RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite, RHI::EStageFlags::Host, RHI::EAccessFlags::HostRead);
     }
+
+#if !defined(LE_SHIPPING)
+    // Before CopyCullTotalsForReadback, whose host barrier also covers the copy made here.
+    void FDefaultSceneRenderer::RenderStatsPass(RHI::FCmdListH CL)
+    {
+        static const FShaderH StatsShader = FShaderLibrary::Get("RenderStats.slang");
+        const uint8 Slot = CurrentFrameSlot;
+        if (!RHI::IsCollectingStats() || StatsShader == nullptr || RenderFrame == nullptr || !bCullBucketsValid
+            || MeshletBoundReadback[Slot].Gpu == 0 || !GetTotals())
+        {
+            return;
+        }
+
+        SCENE_GPU_SCOPE(CL, "Render Stats");
+
+        struct FRenderStatsPC
+        {
+            uint32 NumViews;
+            uint32 NumDraws;
+            uint32 NumWorkerGroups;
+            uint32 ShadowComputeLayerCapacity;
+            RHI::TGPUSpan<FRenderBucketGPU>   Buckets;
+            RHI::TGPUSpan<FInstanceCullEntry> RetainedCullEntries;
+            RHI::TGPUSpan<uint32>             InstanceCount;
+            RHI::TGPUSpan<FUIntVector2>       InstanceViewRanges;
+            RHI::TGPUSpan<uint32>             ProxyDrawArgs;
+            RHI::TGPUSpan<uint32>             ShadowComputeCursors;
+            RHI::TGPUSpan<uint32>             OutStats;
+        };
+        static_assert(sizeof(FRenderStatsPC) == 128, "FRenderStatsPC must match RenderStats.slang.");
+
+        const FFrameData& Frame = *RenderFrame;
+        const RHI::FGPURange Stats = GetTotals().Sub(sizeof(uint32) * kTotalsSlots, sizeof(uint32) * kRenderStatsWords);
+        constexpr uint32 DrawArgsWords = sizeof(RHI::FDrawIndirectArguments) / sizeof(uint32);
+        const bool bProxies = ProxyDrawArgsRing[Slot] && !SceneRootShared.ProxyList.IsEmpty();
+
+        FRenderStatsPC PC = {};
+        PC.NumViews            = (uint32)Frame.Views.CullViews.Num();
+        PC.NumDraws            = Math::Max(Frame.Views.NumDrawsPerView, 1u);
+        PC.NumWorkerGroups     = 64u;
+        PC.Buckets             = { GetRenderBuckets(), PC.NumViews * PC.NumDraws };
+        PC.RetainedCullEntries = { RetainedCullEntryBuffer, Math::Min(Frame.Geometry.RetainedUpload.SlotCount, RetainedCullEntryBuffer.CapacityOf<FInstanceCullEntry>()) };
+        PC.InstanceCount       = RHI::TGPUSpan<uint32>::FromAddress(GetCullCounters().Address, 1u);
+        PC.InstanceViewRanges  = { GetInstanceViewRanges() };
+        // The args DrawFarProxies draws with, which count the half SceneRootShared.ProxyList points at.
+        PC.ProxyDrawArgs       = bProxies ? RHI::TGPUSpan<uint32>::Slice(ProxyDrawArgsRing[Slot], IsTwoPhaseView(Frame, 0u) ? DrawArgsWords : 0u, DrawArgsWords)
+                                          : RHI::TGPUSpan<uint32>{};
+        // Meshlets the shadow compute raster took never reach a bucket, and its cursors count demand even while it is off.
+        if (bVirtualShadowsThisFrame && VirtualShadowResources.bComputeRasterActive)
+        {
+            PC.ShadowComputeCursors       = GetVirtualShadowComputeCursors();
+            PC.ShadowComputeLayerCapacity = VSM_COMPUTE_RASTER_CAPACITY;
+        }
+        PC.OutStats            = RHI::TGPUSpan<uint32>::FromAddress(Stats.Address, kRenderStatsWords);
+
+        RHI::CmdMemset(CL, Stats, 0u);
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::Compute | RHI::EStageFlags::Transfer, RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::TransferWrite,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+
+        // One group per camera bucket, then the workers that stride over the instance and proxy lists.
+        const FUIntVector2 Grid = RenderUtils::FoldGroupCount(PC.NumDraws + PC.NumWorkerGroups);
+        DispatchCompute(CL, StatsShader, PC, Grid.x, Grid.y, 1u);
+
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead);
+        RHI::CmdMemcpy(CL, { MeshletBoundReadback[Slot].Gpu + sizeof(uint32) * kReadbackSlots, Stats.Size }, Stats);
+    }
+#endif
 }

@@ -17,34 +17,62 @@ namespace Lumina
         }
     }
 
-    void FDefaultSceneRenderer::ClusterBuildPass(RHI::FCmdListH CL)
+    namespace LightsInternal
     {
-        if (!LightsInternal::HasClusterReaders(*RenderFrame))
+        struct FLightUploadArgs
+        {
+            RHI::TGPUSpan<FSceneLightSet::FUpload> Uploads;
+        };
+
+        void ComputeToCompute(RHI::FCmdListH CL)
+        {
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        }
+    }
+
+    void FDefaultSceneRenderer::UploadRetainedLights(RHI::FCmdListH CL)
+    {
+        FFrameData::FLighting& Lighting = RenderFrame->Lighting;
+        if (!Lighting.bRetainedUploadPending)
+        {
+            return;
+        }
+        Lighting.bRetainedUploadPending = false;
+
+        if (bRetainedLightsFresh)
+        {
+            bRetainedLightsFresh = false;
+            RHI::CmdMemset(CL, RetainedLightBuffer, 0u);
+            RHI::CmdMemset(CL, RetainedLightBoundsBuffer, 0u);
+            RHI::CmdMemset(CL, RetainedLightLayerBuffer, 0u);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        }
+
+        const uint32 NumUploads = (uint32)Lighting.RetainedUploads.Num();
+        if (NumUploads == 0u)
         {
             return;
         }
 
-        LUMINA_PROFILE_SECTION_COLORED("Cluster Build Pass", tracy::Color::Pink2);
-        
-        static const FShaderH ComputeShader = FShaderLibrary::Get("ClusterBuild.slang");
+        static const FShaderH ComputeShader = FShaderLibrary::Get("LightUpload.slang");
         if (!ComputeShader)
         {
             return;
         }
 
+        SCENE_GPU_SCOPE(CL, "Light Upload");
+        LightsInternal::FLightUploadArgs Args;
+        Args.Uploads = RHI::TGPUSpan<FSceneLightSet::FUpload>(RHI::CopyTransientArray(Lighting.RetainedUploads.GetData(), NumUploads));
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
-
-        constexpr uint32 ClusterBuildGroupSize = 64;
-        constexpr uint32 ClusterDispatchGroups = RenderUtils::GetGroupCount(MaxClusters, ClusterBuildGroupSize);
-        RHI::CmdDispatch(CL, MakeArgs(), ClusterDispatchGroups, 1, 1);
-
-        // LightCull consumes the cluster AABBs next.
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            RHI::EStageFlags::Compute,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        RHI::CmdDispatch(CL, MakeArgs(Args), RenderUtils::GetGroupCount(NumUploads, LIGHT_CULL_GROUP_SIZE), 1, 1);
+        LightsInternal::ComputeToCompute(CL);
     }
 
+    // Cull, bin, clear, scatter and grid build, all sized on the GPU, so no pass waits on the CPU to learn how many lights a view sees.
     void FDefaultSceneRenderer::LightCullPass(RHI::FCmdListH CL)
     {
         if (!LightsInternal::HasClusterReaders(*RenderFrame))
@@ -54,18 +82,70 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION_COLORED("Light Cull Pass", tracy::Color::Pink2);
 
-        static const FShaderH ComputeShader = FShaderLibrary::Get("LightCull.slang");
-        if (!ComputeShader)
+        static const FShaderH CullShader    = FShaderLibrary::Get("LightCull.slang");
+        static const FShaderH ScanShader    = FShaderLibrary::Get("LightBinScan.slang");
+        static const FShaderH ClearShader   = FShaderLibrary::Get("LightMaskClear.slang");
+        static const FShaderH ScatterShader = FShaderLibrary::Get("LightScatter.slang");
+        static const FShaderH GridShader    = FShaderLibrary::Get("LightGridBuild.slang");
+        if (!CullShader || !ScanShader || !ClearShader || !ScatterShader || !GridShader || CurrentView == nullptr)
         {
             return;
         }
 
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ComputeShader));
+        UploadRetainedLights(CL);
 
-        // One group per cull block of the largest grid a view can have; groups past this view's grid exit at once.
-        RHI::CmdDispatch(CL, MakeArgs(), MaxClusterCullBlocks, 1, 1);
+        FSceneView& View = *CurrentView;
 
-        // Cluster light lists feed the lit pixel shaders, and particles light in the vertex stage.
+        // A probe bake culls each face into the same grid the face before it just shaded from.
+        RHI::CmdBarrier(CL,
+            RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead,
+            RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite);
+
+        if (View.bLightGridFresh)
+        {
+            View.bLightGridFresh = false;
+            RHI::CmdMemset(CL, View.LightGridBuffer, 0u);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
+        }
+
+        const uint32 Capacity = RenderFrame->Lighting.RetainedCapacity;
+        {
+            SCENE_GPU_SCOPE(CL, "Light Cull");
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
+            RHI::CmdDispatch(CL, MakeArgs(), RenderUtils::GetGroupCount(Capacity, LIGHT_CULL_GROUP_SIZE), 1, 1);
+            LightsInternal::ComputeToCompute(CL);
+        }
+        {
+            SCENE_GPU_SCOPE(CL, "Light Bin Scan");
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ScanShader));
+            RHI::CmdDispatch(CL, MakeArgs(), 1, 1, 1);
+            RHI::CmdBarrier(CL,
+                RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
+        }
+        {
+            SCENE_GPU_SCOPE(CL, "Light Mask Clear");
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ClearShader));
+            RHI::CmdDispatchIndirect(CL, MakeArgs(), View.LightGridBuffer.Sub(LIGHT_GRID_CLEAR_ARGS * sizeof(uint32), sizeof(uint32) * 3u));
+            LightsInternal::ComputeToCompute(CL);
+        }
+        const RHI::FGPURange PerLightArgs = View.LightGridBuffer.Sub(LIGHT_GRID_SCATTER_ARGS * sizeof(uint32), sizeof(uint32) * 3u);
+        {
+            SCENE_GPU_SCOPE(CL, "Light Scatter");
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(ScatterShader));
+            RHI::CmdDispatchIndirect(CL, MakeArgs(), PerLightArgs);
+            LightsInternal::ComputeToCompute(CL);
+        }
+        {
+            SCENE_GPU_SCOPE(CL, "Light Grid Build");
+            RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(GridShader));
+            RHI::CmdDispatchIndirect(CL, MakeArgs(), PerLightArgs);
+        }
+
+        // The sorted list and its grid feed the lit pixel shaders, and particles light in the vertex stage.
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
             RHI::EStageFlags::VertexShader | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,

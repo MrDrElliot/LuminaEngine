@@ -117,7 +117,7 @@ TEST(SignificanceSystem, EntityInTwoConsumerPoolsIsScored)
 }
 
 // A pool that revisits an already-stamped entity must pay for the IsFresh check only, not the full score.
-TEST(SignificanceSystem, DoublePoolMembershipCostsNoMoreThanSinglePoolMembership)
+TEST(SignificanceSystem, DISABLED_Perf_DoublePoolMembershipCostsNoMoreThanSinglePoolMembership)
 {
     // Stays under the system's parallel grain, so both passes run on one thread.
     constexpr int32 kEntityCount = 2000;

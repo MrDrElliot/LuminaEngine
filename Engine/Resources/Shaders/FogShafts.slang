@@ -42,7 +42,7 @@ float4 MarchShafts(float2 UV, float2 TexelPos, float Depth)
     float3 RayDir  = GetCameraWorldRayDir(UV);
     float  ZPerT   = max(ViewRay.z, 1e-4) / length(ViewRay);
 
-    const bool bHasSun = GetNumLights() > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional);
+    const bool bHasSun = HasSunLight();
     const FLight Sun   = GetLightAt(0);
     if (!bHasSun || !HasFlag(Sun.Flags, ELightFlags::Volumetric))
     {

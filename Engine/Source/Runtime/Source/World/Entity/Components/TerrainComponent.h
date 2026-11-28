@@ -4,6 +4,8 @@
 #include "Core/Object/ObjectHandleTyped.h"
 #include "Renderer/RenderResource.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
+#include "World/Terrain/TerrainStore.h"
+#include "World/Entity/Components/VirtualTextureComponent.h"
 #include "TerrainComponent.generated.h"
 
 namespace Lumina
@@ -34,9 +36,6 @@ namespace Lumina
         bool    bFullHeightmapDirty = true;
         bool    bFullWeightsDirty   = true;
 
-        /** Chunk + meshlet metadata need a rebuild before the next cull. */
-        bool    bChunksDirty = true;
-
         /** Inclusive dirty rects awaiting upload. */
         FIntVector2  HeightDirtyMin = FIntVector2(INT32_MAX);
         FIntVector2  HeightDirtyMax = FIntVector2(INT32_MIN);
@@ -47,31 +46,29 @@ namespace Lumina
 
         /** Dimensions last handed to the renderer; a mismatch is a structural change. */
         int32   PreparedResolution      = 0;
-        int32   PreparedChunkResolution = 0;
         int32   PreparedLayerCount      = -1;
-
-        // World origin the chunk and meshlet bounds were built at; a translated terrain shifts them instead of rebuilding.
-        FVector3 PreparedOrigin = FVector3(0.0f);
 
         /** Bumped on every height edit. Foliage compares against this to know when to re-project. */
         uint32  HeightmapVersion = 0;
+
+        // The store's edit serial the renderer last saw, so an edit that marked nothing still reaches it.
+        uint64  SeenEditSerial = 0;
 
         /** Sample-space rect of height changes not yet consumed by the foliage follow pass (union of edits). */
         FIntVector2  FoliageDirtyMin = FIntVector2(INT32_MAX);
         FIntVector2  FoliageDirtyMax = FIntVector2(INT32_MIN);
 
-        /** CPU mirror of the per-chunk/meshlet metadata; partial edits re-bound in place. */
-        TVector<FTerrainChunkInfo>      Chunks;
-        TVector<FTerrainMeshletInfo>    Meshlets;
+        // Height changes the collision patches have not rebuilt from yet.
+        FIntVector2  CollisionDirtyMin = FIntVector2(INT32_MAX);
+        FIntVector2  CollisionDirtyMax = FIntVector2(INT32_MIN);
+
 
         // A new render scene holds none of this terrain's GPU data, so everything uploads again.
         void MarkRendererLost()
         {
             bFullHeightmapDirty     = true;
             bFullWeightsDirty       = true;
-            bChunksDirty            = true;
             PreparedResolution      = 0;
-            PreparedChunkResolution = 0;
             PreparedLayerCount      = -1;
         }
     };
@@ -86,16 +83,16 @@ namespace Lumina
 
         ~STerrainComponent() = default;
         STerrainComponent(const STerrainComponent& Other)
-            : Heightmap(Other.Heightmap)
-            , LayerWeights(Other.LayerWeights)
+            : DataFile(Other.DataFile)
             , Layers(Other.Layers)
             , Material(Other.Material)
             , Resolution(Other.Resolution)
-            , ChunkResolution(Other.ChunkResolution)
             , TileWorldSize(Other.TileWorldSize)
             , MaxHeight(Other.MaxHeight)
             , bCastShadow(Other.bCastShadow)
             , bReceiveShadow(Other.bReceiveShadow)
+            , VirtualTextureOutputs(Other.VirtualTextureOutputs)
+            , Store(Other.Store)
         {
         }
 
@@ -103,16 +100,16 @@ namespace Lumina
         {
             if (this != &Other)
             {
-                Heightmap       = Other.Heightmap;
-                LayerWeights    = Other.LayerWeights;
+                DataFile        = Other.DataFile;
+                Store           = Other.Store;
                 Layers          = Other.Layers;
                 Material        = Other.Material;
                 Resolution      = Other.Resolution;
-                ChunkResolution = Other.ChunkResolution;
                 TileWorldSize   = Other.TileWorldSize;
                 MaxHeight       = Other.MaxHeight;
                 bCastShadow     = Other.bCastShadow;
                 bReceiveShadow  = Other.bReceiveShadow;
+                VirtualTextureOutputs = Other.VirtualTextureOutputs;
                 // Transient CPU mirror never carries across a copy, and the target terrain rebuilds from its own data.
                 CPUState        = FTerrainCPUState{};
             }
@@ -122,11 +119,14 @@ namespace Lumina
         STerrainComponent(STerrainComponent&&) noexcept            = default;
         STerrainComponent& operator=(STerrainComponent&&) noexcept = default;
 
-        /** Row-major; values normalized [0, 1] scaled by MaxHeight on GPU. */
+        // The project path of the tiled file the heights and weights save to, beside the world rather than in it.
+        PROPERTY(Hidden, Category = "Terrain|Data")
+        FString DataFile;
+
+        // Worlds saved before the data file kept heights here, which EnsureStore moves into a store and clears.
         PROPERTY(Hidden, Category = "Terrain|Data")
         TVector<float> Heightmap;
 
-        /** Per-layer weights, row-major uint8 [0, 255]. */
         PROPERTY(Hidden, Category = "Terrain|Data")
         TVector<uint8> LayerWeights;
 
@@ -138,13 +138,9 @@ namespace Lumina
         PROPERTY(Editable, Category = "Terrain|Material")
         TStrongObjectPtr<CMaterialInterface> Material;
 
-        /** Must be (pow2 + 1) for clean chunking (513, 1025). */
+        // Power of two plus one (513, 1025) fills the quadtree exactly.
         PROPERTY(Editable, Category = "Terrain|Layout", ClampMin = 33, NoDrag, Delta = 32)
         int32 Resolution = 513;
-
-        /** Cull/draw dispatch unit. */
-        PROPERTY(Editable, Category = "Terrain|Layout", ClampMin = 16, NoDrag, Delta = 16)
-        int32 ChunkResolution = 64;
 
         PROPERTY(Editable, Category = "Terrain|Layout", ClampMin = 1.0f, NoDrag, Delta = 64.0f)
         float TileWorldSize = 4096.0f;
@@ -159,22 +155,36 @@ namespace Lumina
         PROPERTY(Editable, Category = "Terrain|Shadows")
         bool bReceiveShadow = true;
 
+        // Runtime virtual textures this terrain's material fills from above, so grass and other surfaces can sample the ground under them.
+        PROPERTY(Editable, Category = "Terrain|Virtual Texture")
+        TVector<SVirtualTextureOutput> VirtualTextureOutputs;
+
         /**
          * Game-thread-owned CPU mirror + dirty tracking; transient. The matching GPU
          * resources are render-owned in FDefaultSceneRenderer::TerrainGPUStates, keyed by entity.
          */
         FTerrainCPUState CPUState;
 
+        // Shared with copies of this component, such as a PIE world's, and found again by DataFile through the engine's registry.
+        TSharedPtr<FTerrainStore> Store;
+
+        // The store, opened from DataFile or migrated from the old arrays or started flat, on the thread that owns the component.
+        FTerrainStore* EnsureStore();
+        FTerrainStore* GetStore() const { return Store.Get(); }
+        // Replaces the data, under InDataFile or a fresh data file when that is empty.
+        void SetStore(TSharedPtr<FTerrainStore> NewStore, FStringView InDataFile = {});
+        // Writes unsaved edits, or the whole store when it has never been written, to DataFile.
+        bool SaveStore() const;
+
         void MarkHeightDirty(const FIntVector2& Min, const FIntVector2& Max)
         {
             CPUState.HeightDirtyMin = Math::Min(CPUState.HeightDirtyMin, Min);
             CPUState.HeightDirtyMax = Math::Max(CPUState.HeightDirtyMax, Max);
-            // Heights drive chunk/meshlet bounds; cull must test against fresh geometry.
-            CPUState.bChunksDirty = true;
-
             // Foliage follow: accumulate the changed region + bump the version it watches.
             CPUState.FoliageDirtyMin = Math::Min(CPUState.FoliageDirtyMin, Min);
             CPUState.FoliageDirtyMax = Math::Max(CPUState.FoliageDirtyMax, Max);
+            CPUState.CollisionDirtyMin = Math::Min(CPUState.CollisionDirtyMin, Min);
+            CPUState.CollisionDirtyMax = Math::Max(CPUState.CollisionDirtyMax, Max);
             ++CPUState.HeightmapVersion;
         }
 
@@ -182,9 +192,10 @@ namespace Lumina
         void MarkHeightmapReplaced()
         {
             CPUState.bFullHeightmapDirty = true;
-            CPUState.bChunksDirty        = true;
             CPUState.FoliageDirtyMin     = FIntVector2(0, 0);
             CPUState.FoliageDirtyMax     = FIntVector2(Resolution - 1, Resolution - 1);
+            CPUState.CollisionDirtyMin   = FIntVector2(0, 0);
+            CPUState.CollisionDirtyMax   = FIntVector2(Resolution - 1, Resolution - 1);
             ++CPUState.HeightmapVersion;
         }
 

@@ -60,6 +60,11 @@ namespace Lumina
 
         FWeatherParams Target = Preset != nullptr ? Preset->Resolve() : FWeatherParams();
         Target.Rain.Intensity *= Weather->Intensity;
+        Target.Wind.Speed     *= Math::Max(Weather->WindScale, 0.0f);
+        if (!Weather->bControlEnvironment)
+        {
+            Target.Environment.Weight = 0.0f;
+        }
 
         if (!bHasActivePreset || !State->bActive)
         {
@@ -77,6 +82,13 @@ namespace Lumina
         const float Blend = Math::SmoothStep(0.0f, 1.0f, TransitionAlpha);
 
         State->Params  = TransitionAlpha >= 1.0f ? Target : FWeatherParams::Lerp(TransitionFrom, Target, Blend);
+        if (TransitionAlpha < 1.0f)
+        {
+            // Each environment step rebakes the sky lighting, so the blend moves in a few dozen steps rather than every frame.
+            constexpr float kEnvironmentBlendSteps = 32.0f;
+            const float Stepped = std::round(Blend * kEnvironmentBlendSteps) / kEnvironmentBlendSteps;
+            State->Params.Environment = FEnvironmentWeatherParams::Lerp(TransitionFrom.Environment, Target.Environment, Stepped);
+        }
         State->bActive = true;
 
         const FWindParams& Wind = State->Params.Wind;
@@ -87,6 +99,7 @@ namespace Lumina
         const FVector2 Direction(Wind.Direction.x * Math::Cos(Veer) - Wind.Direction.y * Math::Sin(Veer),
                                  Wind.Direction.x * Math::Sin(Veer) + Wind.Direction.y * Math::Cos(Veer));
         State->Wind = Direction * GustSpeed;
+        State->GustTime = GustTime;
         State->CloudWindOffset += State->Wind * (Wind.CloudSpeedScale * DeltaTime);
         State->Time         += DeltaTime;
         State->FallDistance += (double)State->Params.Rain.FallSpeed * DeltaTime;

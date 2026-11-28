@@ -410,17 +410,16 @@ namespace Lumina::DefaultScene
             const float  Stride = kRangeTerrainSize / (float)(kRangeTerrainRes - 1);
             const float  MinX   = -kRangeTerrainSize * 0.5f;
             const float  MinZ   = kRangeTerrainZ - kRangeTerrainSize * 0.5f;
-            Terrain.Heightmap.SetNum(Count);
+            TVector<float> Heights((int32)Count);
             for (int32 Row = 0; Row < kRangeTerrainRes; ++Row)
             {
                 for (int32 Col = 0; Col < kRangeTerrainRes; ++Col)
                 {
                     const float Height = RangeHeight(MinX + (float)Col * Stride, MinZ + (float)Row * Stride);
-                    Terrain.Heightmap[Row * kRangeTerrainRes + Col] = Height / kRangeMaxHeight;
+                    Heights[Row * kRangeTerrainRes + Col] = Height / kRangeMaxHeight;
                 }
             }
-            Terrain.LayerWeights.Init(uint8(0), Count * Terrain.Layers.Num());
-            Terrain.MarkHeightmapReplaced();
+            Terrain.SetStore(FTerrainStore::CreateFromArrays(kRangeTerrainRes, Heights, {}, 0));
         }
 
         ECS::FEntity SpawnOnGround(CWorld* World, const char* Name, CStaticMesh* Mesh, float X, float Z, float BaseY,

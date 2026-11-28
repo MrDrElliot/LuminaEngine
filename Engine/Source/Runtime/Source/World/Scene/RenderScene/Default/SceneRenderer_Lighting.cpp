@@ -49,6 +49,7 @@ namespace Lumina
         BinnedDeferredSlotKinds.Reset();
         BinnedDeferredSlotLookup.Reset();
         BinnedShadingModelMask = 0u;
+        bBinnedExtendedSurface = false;
 
         const RHI::FMaterialManager& MaterialManager = Render().GetMaterialManager();
         uint32 MaxMaterialIndex = 0u;
@@ -58,8 +59,10 @@ namespace Lumina
             {
                 MaxMaterialIndex = Math::Max(MaxMaterialIndex, M.MaterialIndex);
 
-                const uint32 ShadingModel = (MaterialManager.GetSlotFlags(M.MaterialIndex) >> kMaterialShadingModelShift) & kMaterialShadingModelMask;
+                const uint32 SlotFlags    = MaterialManager.GetSlotFlags(M.MaterialIndex);
+                const uint32 ShadingModel = (SlotFlags >> kMaterialShadingModelShift) & kMaterialShadingModelMask;
                 BinnedShadingModelMask |= 1u << ShadingModel;
+                bBinnedExtendedSurface |= (SlotFlags & (uint32)EMaterialGPUFlags::Extended) != 0u;
             }
         }
 
@@ -544,17 +547,12 @@ namespace Lumina
         PC.SlotImageIndex = (uint32)GetNamedImage(ENamedImage::MaterialSlot).GetResourceID();
 
         // Frame-uniform features the light loop would otherwise carry registers for on every pixel.
+        // Only CPU-resolved lights carry a shadow slot, so the short list answers that, and the retained set counts contact shadows.
         bool bLocalShadows = false;
-        bool bLocalContact = false;
-        for (uint32 Index = 0; Index < NumLiveLights && Index < (uint32)RenderFrame->Lighting.Lights.Num(); ++Index)
+        const bool bLocalContact = RenderFrame->Lighting.bAnyLocalContact;
+        for (const FLight& Light : RenderFrame->Lighting.Lights)
         {
-            const FLight& Light = RenderFrame->Lighting.Lights[Index];
-            if (EnumHasAnyFlags(Light.Flags, ELightFlags::Directional))
-            {
-                continue;
-            }
-            bLocalShadows |= Light.ShadowDataIndex != Constants::kIndexNone;
-            bLocalContact |= EnumHasAnyFlags(Light.Flags, ELightFlags::ContactShadow);
+            bLocalShadows |= !EnumHasAnyFlags(Light.Flags, ELightFlags::Directional) && Light.ShadowDataIndex != Constants::kIndexNone;
         }
 
         auto HasShadingModel = [this](EMaterialShadingModel Model) -> uint32
@@ -569,8 +567,10 @@ namespace Lumina
             RHI::FSpecializationConstant{ .ConstantID = 12u, .AsInt = NumActiveProbes > 0 ? 1u : 0u, .Type = RHI::ESpecializationConstantType::UInt32 },
             RHI::FSpecializationConstant{ .ConstantID = 18u, .AsInt = HasShadingModel(EMaterialShadingModel::Clearcoat), .Type = RHI::ESpecializationConstantType::UInt32 },
             RHI::FSpecializationConstant{ .ConstantID = 19u, .AsInt = HasShadingModel(EMaterialShadingModel::Foliage), .Type = RHI::ESpecializationConstantType::UInt32 },
+            RHI::FSpecializationConstant{ .ConstantID = 20u, .AsInt = bBinnedExtendedSurface ? 1u : 0u, .Type = RHI::ESpecializationConstantType::UInt32 },
+            RHI::FSpecializationConstant{ .ConstantID = 21u, .AsInt = HasShadingModel(EMaterialShadingModel::Subsurface), .Type = RHI::ESpecializationConstantType::UInt32 },
         };
-        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS, TSpan<const RHI::FSpecializationConstant>(LightingConsts, 5)));
+        RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(LightingCS, TSpan<const RHI::FSpecializationConstant>(LightingConsts, std::size(LightingConsts))));
         // Screen tiles rather than the material-sorted pixel list, so a wave shares its clusters, shadow texels and GBuffer lines.
         RHI::CmdDispatch(CL, MakeArgs(PC), RenderUtils::GetGroupCount(Layout.ScreenW, (uint32)MATERIAL_CLASSIFY_TILE),
                          RenderUtils::GetGroupCount(Layout.ScreenH, (uint32)MATERIAL_CLASSIFY_TILE), 1u);

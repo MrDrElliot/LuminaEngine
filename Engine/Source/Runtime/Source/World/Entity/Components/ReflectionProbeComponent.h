@@ -39,8 +39,7 @@ namespace Lumina
         SolidColor,
     };
 
-    /** Per-probe capture face size. Higher tiers cost VRAM in the shared cube array (every probe
-        allocates at the array's face size, which is the max over all probes) and bake time. */
+    // Face size at High reflection quality, which each step halves or doubles, and every probe's array slice shares the largest.
     REFLECT()
     enum class EReflectionProbeResolution : uint8
     {

@@ -156,7 +156,7 @@ TEST(MeshQuantization, StructLayoutsMatchTheGPUMirrors)
     EXPECT_EQ(sizeof(FMeshVertexAttributes), 12u);
     EXPECT_EQ(sizeof(FMeshVertexPosition), 8u);
     EXPECT_EQ(sizeof(FMeshletSkinnedVertex), 36u);
-    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 224u);
+    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 240u);
 }
 
 // The shader unpacks the last word with the MESHLET_* shifts, so the bitfield order is part of the format.

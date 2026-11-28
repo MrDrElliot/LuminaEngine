@@ -16,14 +16,12 @@ struct FPushConstants
     float                TanHalfAngle;
     float                TerrainMaxDistance;
     uint                 TerrainSteps;
-    uint                 NumTerrains;
-    float                _Pad;
+    uint2                _Pad;
     FWorldDistanceField  Field;
     float                DFNear;
     float                DFFar;
     float                DFMaxTrace;
     uint                 bDistanceField;
-    FTerrainHeightfield Terrains[kMaxTerrainHeightfields];
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -62,22 +60,23 @@ float TraceSunField(FWorldDistanceField* Field, float3 P, float3 ToSun, float Ta
 }
 
 // Entry and exit distances of a ray through the terrain's square footprint, empty when it misses.
-float2 TerrainFootprintRange(FTerrainHeightfield T, float3 Origin, float3 Dir)
+float2 TerrainFootprintRange(FTerrainRecord* T, float3 Origin, float3 Dir)
 {
-    const float  Extent = T.Stride * (T.Resolution - 1.0);
+    const float  Extent = T.Params.TileWorldSize;
     const float2 D  = float2(abs(Dir.x) < 1e-6 ? 1e-6 : Dir.x, abs(Dir.z) < 1e-6 ? 1e-6 : Dir.z);
-    const float2 T0 = (T.OriginXZ - Origin.xz) / D;
-    const float2 T1 = (T.OriginXZ + Extent - Origin.xz) / D;
+    const float2 T0 = (T.Params.OriginXZ - Origin.xz) / D;
+    const float2 T1 = (T.Params.OriginXZ + Extent - Origin.xz) / D;
     const float2 Near = min(T0, T1);
     const float2 Far  = max(T0, T1);
     return float2(max(Near.x, Near.y), min(Far.x, Far.y));
 }
 
 // Unreal's distance-field penumbra applied to a height field, the closest the ray passes over the ground relative to its cone.
-float TraceTerrainShadow(FTerrainHeightfield T, float3 P, float ViewDistance)
+float TraceTerrainShadow(FTerrainRecord* T, float3 P, float ViewDistance)
 {
-    const float3 Dir = Pass().ToSun;
-    const float  TopY = T.OriginY + T.MaxHeight;
+    const float3 Dir    = Pass().ToSun;
+    const float  Stride = T.Params.SampleSpacing;
+    const float  TopY   = T.Params.WorldOriginY.x + max(T.Params.MaxHeight, 0.0);
     if (P.y >= TopY)
     {
         return 1.0;
@@ -87,7 +86,7 @@ float TraceTerrainShadow(FTerrainHeightfield T, float3 P, float ViewDistance)
     const float  TopExit   = (TopY - P.y) / max(Dir.y, 1e-4);
 
     // Bilinear heights sit a little off the triangulated surface, so the march starts past a texel and a hair above it.
-    const float StartBias = max(T.Stride, ViewDistance * 0.002);
+    const float StartBias = max(Stride, ViewDistance * 0.002);
     const float TStart    = max(Footprint.x, StartBias);
     const float TEnd      = min(min(Footprint.y, TopExit), Pass().TerrainMaxDistance);
     if (TStart >= TEnd)
@@ -95,18 +94,31 @@ float TraceTerrainShadow(FTerrainHeightfield T, float3 P, float ViewDistance)
         return 1.0;
     }
 
-    const float HeightBias = T.Stride * 0.25;
+    const float HeightBias = Stride * 0.25;
     const float Ratio      = TEnd / TStart;
-    const uint  Steps      = max(Pass().TerrainSteps, 1u);
+    const uint  Steps      = Pass().TerrainSteps;
+    const float3 Camera    = GetCameraPosition();
+    const float  PixelPerUnitDistance = TerrainViewFootprint(1.0);
+    const float  BaseY     = T.Params.WorldOriginY.x;
 
+    FTerrainPage Cache = (FTerrainPage)0;
     float Visibility = 1.0;
     [loop]
     for (uint i = 0; i < Steps; ++i)
     {
         const float  t  = TStart * pow(Ratio, (float(i) + 0.5) / float(Steps));
         const float3 Q  = P + Dir * t;
-        const float  Clearance = Q.y + HeightBias - T.HeightAt(Q.xz);
-        Visibility = min(Visibility, saturate(Clearance / (t * Pass().TanHalfAngle + HeightBias)));
+        const uint   Mip    = (uint)TerrainFootprintMip(T, length(Q - Camera) * PixelPerUnitDistance);
+        const float2 Sample = TerrainSamplePos(T, Q.xz);
+        const float  Cone   = t * Pass().TanHalfAngle + HeightBias;
+        // Most steps pass well above their node's highest ground, which already rules out a darker step without reading the page.
+        if (Q.y + HeightBias - TerrainMaxHeightAt(T, Sample, Mip) >= Visibility * Cone)
+        {
+            continue;
+        }
+        const float  Ground = BaseY + TerrainHeightAt(T, Sample, Mip, Cache);
+        const float  Clearance = Q.y + HeightBias - Ground;
+        Visibility = min(Visibility, saturate(Clearance / Cone));
         if (Visibility <= 0.0)
         {
             break;
@@ -131,13 +143,18 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     if (Raw > 0.0 && Pass().ToSun.y > 0.0)
     {
         const float2 UV = (float2(Pixel) + 0.5) / float2(Pass().ScreenSize);
-        const float3 P  = LiftOntoTerrains(ReconstructWorldPos(UV, Raw), &Pass().Terrains[0], Pass().NumTerrains);
+        const float3 P  = LiftOntoTerrains(ReconstructWorldPos(UV, Raw));
         const float  ViewDistance = length(P - GetCameraPosition());
 
+        const GPUSpan<FTerrainRecord> Terrains = GetSceneRoot().Terrains;
         [loop]
-        for (uint i = 0; i < min(Pass().NumTerrains, kMaxTerrainHeightfields) && Visibility > 0.0; ++i)
+        for (uint i = 0; i < Terrains.Count && Pass().TerrainSteps > 0u && Visibility > 0.0; ++i)
         {
-            Visibility = min(Visibility, TraceTerrainShadow(Pass().Terrains[i], P, ViewDistance));
+            FTerrainRecord* Terrain = Terrains.At(i);
+            if (TerrainIsHeightfield(Terrain))
+            {
+                Visibility = min(Visibility, TraceTerrainShadow(Terrain, P, ViewDistance));
+            }
         }
 
         // Meshes take over from the virtual shadow levels here and dissolve over the last tenth of their range.

@@ -52,6 +52,10 @@ namespace Lumina
         PROPERTY(Editable, Category = "Shadows")
         bool bAffectDistanceField = true;
 
+        // Far away the mesh draws its baked impostor in place of its meshlets. Off keeps the full mesh at every distance, for a hero prop seen through a scope.
+        PROPERTY(Editable, Category = "Rendering")
+        bool bAllowImpostor = true;
+
         // Shadows follow the material's world position offset. Off casts from the still mesh, which is cheaper and keeps the shadow cacheable.
         PROPERTY(Editable, Category = "Shadows")
         bool bShadowWorldPositionOffset = true;

@@ -23,20 +23,30 @@ namespace Lumina
     // The single live backend instance, so the static ImGuiPlatformIO::Renderer_* hooks can reach it.
     static FVulkanImGuiRender* GImGuiBackend = nullptr;
 
-    // Mirrors FImGuiArgs in ImGuiVert/Pixel.slang (48 B scalar).
-    struct FNewImGuiArgs
+    // Mirrors FImGuiArgs in Includes/ImGuiCommon.slang, scalar layout.
+    struct FImGuiArgs
     {
         float  Scale[2];
         float  Translate[2];
-        uint32 TextureID;
+        float  ClipOffset[2];
+        float  ClipScale[2];
         uint32 SamplerIndex;
+        uint64 VertexAddr;
+        uint64 DrawsAddr;
+    };
+    static_assert(sizeof(FImGuiArgs) == 56, "FImGuiArgs must match ImGuiCommon.slang.");
+
+    // Mirrors FImGuiDraw in Includes/ImGuiCommon.slang, one per ImGui command.
+    struct FImGuiDraw
+    {
+        float  ClipRect[4];
+        uint32 TextureID;
         uint32 DisplayMode;
         float  Exposure;
         uint32 ArraySlice;
         uint32 bIsArray;
-        uint64 VertexAddr;
     };
-    static_assert(sizeof(FNewImGuiArgs) == 48, "FNewImGuiArgs must match ImGuiCommon.slang::FImGuiArgs.");
+    static_assert(sizeof(FImGuiDraw) == 36, "FImGuiDraw must match ImGuiCommon.slang.");
 
     void FVulkanImGuiRender::Initialize()
     {
@@ -237,102 +247,144 @@ namespace Lumina
     void FVulkanImGuiRender::RecordDrawLists(RHI::FCmdListH CL, ImDrawData* DrawData, EFormat TargetFormat, float FBW, float FBH)
     {
         const RHI::FPipelineH BlendedPipeline = GetPipeline(TargetFormat, false);
-        if (DrawData != nullptr && DrawData->TotalVtxCount > 0 && DrawData->TotalIdxCount > 0 && FBW > 0.0f && FBH > 0.0f && BlendedPipeline)
+        if (DrawData == nullptr || DrawData->TotalVtxCount <= 0 || DrawData->TotalIdxCount <= 0 || FBW <= 0.0f || FBH <= 0.0f || !BlendedPipeline)
         {
-            const int32 TotalVtx = DrawData->TotalVtxCount;
-            const int32 TotalIdx = DrawData->TotalIdxCount;
-
-            RHI::FTransientAlloc VB = RHI::AllocTransient((size_t)TotalVtx * sizeof(ImDrawVert), 16);
-            RHI::FTransientAlloc IB = RHI::AllocTransient((size_t)TotalIdx * sizeof(ImDrawIdx), 4);
-
-            ImDrawVert* VtxDst = static_cast<ImDrawVert*>(VB.Cpu);
-            ImDrawIdx*  IdxDst = static_cast<ImDrawIdx*>(IB.Cpu);
-            for (int32 n = 0; n < DrawData->CmdLists.Size; ++n)
-            {
-                const ImDrawList* List = DrawData->CmdLists[n];
-                Memory::Memcpy(VtxDst, List->VtxBuffer.Data, (size_t)List->VtxBuffer.Size * sizeof(ImDrawVert));
-                Memory::Memcpy(IdxDst, List->IdxBuffer.Data, (size_t)List->IdxBuffer.Size * sizeof(ImDrawIdx));
-                VtxDst += List->VtxBuffer.Size;
-                IdxDst += List->IdxBuffer.Size;
-            }
-
-            FNewImGuiArgs Args;
-            Args.Scale[0]     = 2.0f / DrawData->DisplaySize.x;
-            Args.Scale[1]     = 2.0f / DrawData->DisplaySize.y;
-            Args.Translate[0] = -1.0f - DrawData->DisplayPos.x * Args.Scale[0];
-            Args.Translate[1] = -1.0f - DrawData->DisplayPos.y * Args.Scale[1];
-            Args.SamplerIndex = (uint32)RHI::EStockSampler::LinearWrap;
-            Args.DisplayMode  = 0;      // UI atlases hold display-encoded bytes
-            Args.Exposure     = 1.0f;
-            Args.ArraySlice   = 0;
-            Args.bIsArray     = 0;      // the overwhelming majority of ImGui draws are plain Texture2D
-            Args.VertexAddr   = VB.Gpu;
-
-            // Resolved once, since the preview stamps this marker and the draws match on identity.
-            const ImDrawCallback DisplayStateCallback = ImGuiX::Detail::GetDisplayStateCallback();
-
-            RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
-            RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
-            RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CCW);
-            RHI::CmdSetPipeline(CL, BlendedPipeline);
-            RHI::FPipelineH BoundPipeline = BlendedPipeline;
-
-            const ImVec2 ClipOff   = DrawData->DisplayPos;
-            const ImVec2 ClipScale = DrawData->FramebufferScale;
-            const uint32 DefaultTex = RHI::Textures::DefaultResourceID();
-
-            uint32 GlobalVtx = 0, GlobalIdx = 0;
-            for (int32 n = 0; n < DrawData->CmdLists.Size; ++n)
-            {
-                const ImDrawList* List = DrawData->CmdLists[n];
-                for (int32 c = 0; c < List->CmdBuffer.Size; ++c)
-                {
-                    const ImDrawCmd& Cmd = List->CmdBuffer[c];
-                    if (Cmd.UserCallback != nullptr)
-                    {
-                        // It carries no geometry, so it updates state for the draws that follow and contributes nothing.
-                        if (Cmd.UserCallback == DisplayStateCallback &&
-                            Cmd.UserCallbackData != nullptr &&
-                            Cmd.UserCallbackDataSize == (int)sizeof(ImGuiX::Detail::FImGuiDisplayState))
-                        {
-                            const auto* State = static_cast<const ImGuiX::Detail::FImGuiDisplayState*>(Cmd.UserCallbackData);
-                            Args.DisplayMode = State->DisplayMode;
-                            Args.Exposure    = State->Exposure;
-                            Args.ArraySlice  = State->ArraySlice;
-                            Args.bIsArray    = State->bIsArray;
-
-                            const bool bOpaque = State->DisplayMode == ImGuiX::Detail::GDisplayModeScene;
-                            const RHI::FPipelineH Wanted = bOpaque ? GetPipeline(TargetFormat, true) : BlendedPipeline;
-                            if (Wanted && Wanted != BoundPipeline)
-                            {
-                                RHI::CmdSetPipeline(CL, Wanted);
-                                BoundPipeline = Wanted;
-                            }
-                        }
-                        continue;
-                    }
-
-                    float MinX = Math::Max((Cmd.ClipRect.x - ClipOff.x) * ClipScale.x, 0.0f);
-                    float MinY = Math::Max((Cmd.ClipRect.y - ClipOff.y) * ClipScale.y, 0.0f);
-                    float MaxX = Math::Min((Cmd.ClipRect.z - ClipOff.x) * ClipScale.x, FBW);
-                    float MaxY = Math::Min((Cmd.ClipRect.w - ClipOff.y) * ClipScale.y, FBH);
-                    if (MaxX <= MinX || MaxY <= MinY)
-                    {
-                        continue;
-                    }
-
-                    RHI::CmdSetScissor(CL, RHI::FRect{ (int)MinX, (int)MaxX, (int)MinY, (int)MaxY });
-
-                    const int32 RawTexID = (int32)Cmd.GetTexID();
-                    Args.TextureID = (RawTexID >= 0) ? (uint32)RawTexID : DefaultTex;
-                    const RHI::GPUPtr ArgsPtr = RHI::CopyTransient(Args);
-
-                    RHI::CmdDrawIndexed(CL, IB, ArgsPtr, Cmd.ElemCount, 1, Cmd.IdxOffset + GlobalIdx, (int32)(Cmd.VtxOffset + GlobalVtx), 0, RHI::EIndexType::Uint16);
-                }
-                GlobalVtx += List->VtxBuffer.Size;
-                GlobalIdx += List->IdxBuffer.Size;
-            }
+            return;
         }
+
+        int32 MaxDraws = 0;
+        for (const ImDrawList* List : DrawData->CmdLists)
+        {
+            MaxDraws += List->CmdBuffer.Size;
+        }
+
+        RHI::FTransientAlloc VB       = RHI::AllocTransient((size_t)DrawData->TotalVtxCount * sizeof(ImDrawVert), 16);
+        RHI::FTransientAlloc IB       = RHI::AllocTransient((size_t)DrawData->TotalIdxCount * sizeof(ImDrawIdx), 4);
+        RHI::FTransientAlloc DrawRows = RHI::AllocTransient((size_t)MaxDraws * sizeof(FImGuiDraw), 16);
+        RHI::FTransientAlloc Indirect = RHI::AllocTransient((size_t)MaxDraws * sizeof(RHI::FDrawIndexedIndirectArguments), 16);
+
+        ImDrawVert* VtxDst = static_cast<ImDrawVert*>(VB.Cpu);
+        ImDrawIdx*  IdxDst = static_cast<ImDrawIdx*>(IB.Cpu);
+        for (const ImDrawList* List : DrawData->CmdLists)
+        {
+            Memory::Memcpy(VtxDst, List->VtxBuffer.Data, (size_t)List->VtxBuffer.Size * sizeof(ImDrawVert));
+            Memory::Memcpy(IdxDst, List->IdxBuffer.Data, (size_t)List->IdxBuffer.Size * sizeof(ImDrawIdx));
+            VtxDst += List->VtxBuffer.Size;
+            IdxDst += List->IdxBuffer.Size;
+        }
+
+        const ImVec2 ClipOff   = DrawData->DisplayPos;
+        const ImVec2 ClipScale = DrawData->FramebufferScale;
+
+        FImGuiArgs Args;
+        Args.Scale[0]      = 2.0f / DrawData->DisplaySize.x;
+        Args.Scale[1]      = 2.0f / DrawData->DisplaySize.y;
+        Args.Translate[0]  = -1.0f - ClipOff.x * Args.Scale[0];
+        Args.Translate[1]  = -1.0f - ClipOff.y * Args.Scale[1];
+        Args.ClipOffset[0] = ClipOff.x;
+        Args.ClipOffset[1] = ClipOff.y;
+        Args.ClipScale[0]  = ClipScale.x;
+        Args.ClipScale[1]  = ClipScale.y;
+        Args.SamplerIndex  = (uint32)RHI::EStockSampler::LinearWrap;
+        Args.VertexAddr    = VB.Gpu;
+        Args.DrawsAddr     = DrawRows.Gpu;
+        const RHI::GPUPtr ArgsPtr = RHI::CopyTransient(Args);
+
+        // UI atlases hold display-encoded bytes in plain Texture2Ds until a display state callback says otherwise.
+        FImGuiDraw State = {};
+        State.Exposure = 1.0f;
+
+        RHI::CmdSetDepthStencil(CL, RHI::FDepthStencilDesc{});
+        RHI::CmdSetCullMode(CL, RHI::ECullMode::None);
+        RHI::CmdSetFrontFace(CL, RHI::EFrontFace::CCW);
+        RHI::CmdSetScissor(CL, RHI::FRect{ 0, (int)FBW, 0, (int)FBH });
+        RHI::CmdSetPipeline(CL, BlendedPipeline);
+        RHI::FPipelineH BoundPipeline = BlendedPipeline;
+
+        auto* Rows = static_cast<FImGuiDraw*>(DrawRows.Cpu);
+        auto* Commands = static_cast<RHI::FDrawIndexedIndirectArguments*>(Indirect.Cpu);
+        uint32 NumDraws = 0;
+        uint32 FirstUnissued = 0;
+        auto IssueDraws = [&]()
+        {
+            const uint32 Count = NumDraws - FirstUnissued;
+            if (Count == 0)
+            {
+                return;
+            }
+            constexpr uint32 Stride = sizeof(RHI::FDrawIndexedIndirectArguments);
+            const RHI::FGPURange Range { Indirect.Gpu + (uint64)FirstUnissued * Stride, (uint64)Count * Stride };
+            RHI::CmdDrawIndexedIndirect(CL, IB, ArgsPtr, Range, Count, Stride, RHI::EIndexType::Uint16);
+            FirstUnissued = NumDraws;
+        };
+
+        // Resolved once, since the preview stamps this marker and the draws match on identity.
+        const ImDrawCallback DisplayStateCallback = ImGuiX::Detail::GetDisplayStateCallback();
+        const uint32 DefaultTex = RHI::Textures::DefaultResourceID();
+
+        uint32 GlobalVtx = 0, GlobalIdx = 0;
+        for (const ImDrawList* List : DrawData->CmdLists)
+        {
+            for (const ImDrawCmd& Cmd : List->CmdBuffer)
+            {
+                if (Cmd.UserCallback != nullptr)
+                {
+                    // It carries no geometry, so it updates state for the draws that follow and contributes nothing.
+                    if (Cmd.UserCallback == DisplayStateCallback &&
+                        Cmd.UserCallbackData != nullptr &&
+                        Cmd.UserCallbackDataSize == (int)sizeof(ImGuiX::Detail::FImGuiDisplayState))
+                    {
+                        const auto* Display = static_cast<const ImGuiX::Detail::FImGuiDisplayState*>(Cmd.UserCallbackData);
+                        State.DisplayMode = Display->DisplayMode;
+                        State.Exposure    = Display->Exposure;
+                        State.ArraySlice  = Display->ArraySlice;
+                        State.bIsArray    = Display->bIsArray;
+
+                        const bool bOpaque = Display->DisplayMode == ImGuiX::Detail::GDisplayModeScene;
+                        const RHI::FPipelineH Wanted = bOpaque ? GetPipeline(TargetFormat, true) : BlendedPipeline;
+                        if (Wanted && Wanted != BoundPipeline)
+                        {
+                            IssueDraws();
+                            RHI::CmdSetPipeline(CL, Wanted);
+                            BoundPipeline = Wanted;
+                        }
+                    }
+                    continue;
+                }
+
+                // Whole pixels, so the clip distances keep exactly the pixels a scissor of this rect would.
+                const float MinX = Math::Floor(Math::Max((Cmd.ClipRect.x - ClipOff.x) * ClipScale.x, 0.0f));
+                const float MinY = Math::Floor(Math::Max((Cmd.ClipRect.y - ClipOff.y) * ClipScale.y, 0.0f));
+                const float MaxX = Math::Floor(Math::Min((Cmd.ClipRect.z - ClipOff.x) * ClipScale.x, FBW));
+                const float MaxY = Math::Floor(Math::Min((Cmd.ClipRect.w - ClipOff.y) * ClipScale.y, FBH));
+                if (MaxX <= MinX || MaxY <= MinY || Cmd.ElemCount == 0)
+                {
+                    continue;
+                }
+
+                const int32 RawTexID = (int32)Cmd.GetTexID();
+                FImGuiDraw& Row = Rows[NumDraws];
+                Row = State;
+                Row.ClipRect[0] = MinX;
+                Row.ClipRect[1] = MinY;
+                Row.ClipRect[2] = MaxX;
+                Row.ClipRect[3] = MaxY;
+                Row.TextureID   = (RawTexID >= 0) ? (uint32)RawTexID : DefaultTex;
+
+                Commands[NumDraws] = RHI::FDrawIndexedIndirectArguments
+                {
+                    .IndexCount    = Cmd.ElemCount,
+                    .InstanceCount = 1,
+                    .FirstIndex    = Cmd.IdxOffset + GlobalIdx,
+                    .VertexOffset  = (int32)(Cmd.VtxOffset + GlobalVtx),
+                    .FirstInstance = NumDraws,
+                };
+                ++NumDraws;
+            }
+            GlobalVtx += List->VtxBuffer.Size;
+            GlobalIdx += List->IdxBuffer.Size;
+        }
+        IssueDraws();
     }
 
     void FVulkanImGuiRender::OnRendererCreateWindow(ImGuiViewport* Viewport)

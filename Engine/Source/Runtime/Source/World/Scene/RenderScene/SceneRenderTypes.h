@@ -27,16 +27,8 @@
 #define VERIFY_SSBO_ALIGNMENT(Type) \
 static_assert(sizeof(Type) % 16 == 0, #Type " must be 16-byte aligned")
 
-constexpr int ClusterGridSizeZ = 24;
-
-// Screen pixels per cluster edge, fine enough that a cluster's list holds the lights its pixels can actually reach.
-constexpr int ClusterTilePixels = 64;
-
-// Every view's cluster buffer holds this many, which is 64 pixel tiles over 3840x2160; bigger views widen their tiles.
-constexpr int MaxClusters = 64 * 32 * ClusterGridSizeZ;
-constexpr int MaxClusterCullBlocks = 512;
-
-static_assert(ClusterGridSizeZ % CLUSTER_CULL_BLOCK_Z == 0, "Z slices must fill whole cull blocks");
+// Screen pixels per light tile edge, fine enough that a tile's mask holds the lights its pixels can actually reach.
+constexpr int LightTilePixels = 64;
 
 constexpr int GShadowAtlasResolution    = 4096;
 
@@ -44,22 +36,19 @@ constexpr int GMaxCullViews             = MAX_CULL_VIEWS;
 
 namespace Lumina
 {
-    // Cluster counts per axis for a view, with the tile widened until the grid fits the buffer and the cull dispatch.
-    inline FUIntVector4 ComputeClusterGrid(FUIntVector2 ScreenSize)
+    // Light tiles per axis for a view, the tile widened until the grid fits LIGHT_MAX_TILES, and the depth bins it slices.
+    inline FUIntVector4 ComputeLightGrid(FUIntVector2 ScreenSize)
     {
         const uint32 Width  = Math::Max(ScreenSize.x, 1u);
         const uint32 Height = Math::Max(ScreenSize.y, 1u);
         constexpr uint32 TileStep = 16;
-        for (uint32 Tile = ClusterTilePixels; ; Tile += TileStep)
+        for (uint32 Tile = LightTilePixels; ; Tile += TileStep)
         {
             const uint32 X = RenderUtils::GetGroupCount(Width, Tile);
             const uint32 Y = RenderUtils::GetGroupCount(Height, Tile);
-            const uint32 Blocks = RenderUtils::GetGroupCount(X, CLUSTER_CULL_BLOCK_X)
-                                * RenderUtils::GetGroupCount(Y, CLUSTER_CULL_BLOCK_Y)
-                                * (ClusterGridSizeZ / CLUSTER_CULL_BLOCK_Z);
-            if (X * Y * ClusterGridSizeZ <= (uint32)MaxClusters && Blocks <= (uint32)MaxClusterCullBlocks)
+            if (X * Y <= LIGHT_MAX_TILES)
             {
-                return FUIntVector4(X, Y, ClusterGridSizeZ, 0);
+                return FUIntVector4(X, Y, LIGHT_ZBIN_COUNT, 0);
             }
         }
     }
@@ -596,7 +585,7 @@ namespace Lumina
 
     // Frees any tile it already got rather than committing when the face allocation or MAX_SHADOWS slot budget fails.
     inline void AllocateShadowSlot(FShadowAtlas& ShadowAtlas, const FShadowRequest& Req, uint32 TileSize, TAtomic<uint32>& ShadowDataCount,
-        TArray<FLight, MAX_LIGHTS>& Lights, TArray<FLightShadowData, MAX_SHADOWS>& Shadows,
+        TVector<FLight>& Lights, TArray<FLightShadowData, MAX_SHADOWS>& Shadows,
         TArray<TVector<FLightShadow>, (uint32)ELightType::Num>& PackedShadows)
     {
         if (Req.Type == ELightType::Point)
@@ -768,7 +757,9 @@ namespace Lumina
 
         // Bindless SRV of the light-function atlas, read only by lights flagged LightFunction.
         uint32                          LightFunctionAtlas{};
-        uint32                          _LightFunctionPad[3]{};
+        // Render layers of the view this copy lights, matched against each retained light's layers in the light cull.
+        uint32                          ViewLayerMask = ~0u;
+        uint32                          _Pad[2]{};
     };
 
     static_assert(sizeof(FSceneLightData) == 160, "FSceneLightData layout must match FLightData in Common.slang");
@@ -984,15 +975,6 @@ namespace Lumina
     static_assert(sizeof(FGPUSpline) == 160, "FGPUSpline layout must match Includes/Spline.slang");
     VERIFY_SSBO_ALIGNMENT(FGPUSpline);
 
-    // Only LightCull reads the bounds, so shading's per-pixel word range lives in its own dense array.
-    struct alignas(16) FCluster
-    {
-        FVector4 MinPoint;
-        FVector4 MaxPoint;
-    };
-
-    VERIFY_SSBO_ALIGNMENT(FCluster);
-    static_assert(sizeof(FCluster) == 32, "FCluster layout must match FCluster in Common.slang");
     
     struct FLightClusterPC
     {
@@ -1244,7 +1226,9 @@ namespace Lumina
         float       WPODisableDistance;
         // Slots back to the one holding this instance's transform, since a mesh's surfaces share the first surface's.
         uint32      TransformOffset;
-        uint32      Reserved[2];
+        // Read only with INSTANCE_CUSTOM_LAYERS_BIT, the view capture filter slots the entity belongs to.
+        uint32      CaptureFilterMask;
+        uint32      Reserved;
     };
     // Word 0 is never handed out, so a zeroed payload reads as an instance with no meshlet visibility.
     constexpr uint32 kNoMeshletVisibility = 0u;
@@ -1347,9 +1331,11 @@ namespace Lumina
 
     // The custom layer and shadow offset bits, the custom depth word, and the foliage thinning start distance as a half float in the high half.
     inline uint32 PackFlagsAndThinning(float ThinningStartDistance, uint32 RenderLayers = RENDER_LAYER_DEFAULT_MASK,
-                                       uint32 CustomDepthStencil = 0u, bool bShadowWPO = true, bool bShadowCacheable = false)
+                                       uint32 CustomDepthStencil = 0u, bool bShadowWPO = true, bool bShadowCacheable = false,
+                                       bool bCaptureFiltered = false)
     {
-        const uint32 Layers = RenderLayers != RENDER_LAYER_DEFAULT_MASK ? INSTANCE_CUSTOM_LAYERS_BIT : 0u;
+        // A capture filter rides the custom layer read, since both live in the static payload.
+        const uint32 Layers = RenderLayers != RENDER_LAYER_DEFAULT_MASK || bCaptureFiltered ? INSTANCE_CUSTOM_LAYERS_BIT : 0u;
         const uint32 Shadow = (bShadowWPO ? 0u : INSTANCE_NO_SHADOW_WPO_BIT) | (bShadowCacheable ? INSTANCE_SHADOW_CACHEABLE_BIT : 0u);
         return Layers | Shadow | (CustomDepthStencil << INSTANCE_CUSTOM_DEPTH_SHIFT)
              | ((uint32)FHalf(Math::Clamp(ThinningStartDistance, 0.0f, 65000.0f)).Bits << 16);
@@ -1471,6 +1457,12 @@ namespace Lumina
         float       MinBoundsDiameter;          // Reject bounds thinner than this (world units); 0 = off
         float       LODErrorScale;              // MakeLODErrorScale; 0 keeps every instance at LOD 0
         uint32      LayerMask;                  // Render layers the view draws
+        // Capture filter slots, an instance needs one of the include bits when any are set and none of the exclude bits.
+        uint32      CaptureInclude;
+        uint32      CaptureExclude;
+        // Nonzero for a view capture, which cuts skinned clusters from its own camera and yields draw budget to the camera and shadows.
+        uint32      bCaptureView;
+        uint32      CapturePad;
     };
 
     FORCEINLINE uint32 GetCullViewFlags(const FCullView& View)
@@ -1478,7 +1470,13 @@ namespace Lumina
         return std::bit_cast<uint32>(View.ViewOriginAndFlags.w);
     }
 
-    static_assert(sizeof(FCullView) == 128, "FCullView layout must match shader");
+    static_assert(sizeof(FCullView) == 144, "FCullView layout must match shader");
+
+    // Mirrors PassesCaptureFilter in Culling.slang.
+    FORCEINLINE bool PassesCaptureFilter(const FCullView& View, uint32 CaptureMask)
+    {
+        return (View.CaptureInclude == 0u || (CaptureMask & View.CaptureInclude) != 0u) && (CaptureMask & View.CaptureExclude) == 0u;
+    }
     VERIFY_SSBO_ALIGNMENT(FCullView);
 
     // Sim flag bitmask, must match constants in ParticleSimulate(.Template).slang
@@ -1553,14 +1551,6 @@ namespace Lumina
     };
     static_assert(sizeof(FParticleShapeGPU) == 96, "FParticleShapeGPU layout must match shader");
 
-    struct alignas(16) FParticleTerrainGPU
-    {
-        FVector4  OriginSize;          // x origin X, y origin Z, z tile world size, w base height
-        FVector4  HeightParams;        // x max height
-        FUIntVector4 Textures;         // x heightmap, y normal map
-    };
-    static_assert(sizeof(FParticleTerrainGPU) == 48, "FParticleTerrainGPU layout must match shader");
-
     // 48 byte layout. must match FParticleRenderParams in ParticleVertex.slang.
     struct alignas(16) FParticleRenderParamsGPU
     {
@@ -1609,11 +1599,15 @@ namespace Lumina
         // Last frame's pose and transforms, copied before this frame's uploads, so their counts can trail the live arrays.
         RHI::TGPUSpan<FBoneTransform>       PrevBones;
         RHI::TGPUSpan<FTransform3x4>        PrevRetainedTransforms;
-        RHI::TGPUSpan<FCluster>          Clusters;              // per-view, GPU-written
-        // Per-view light bitmasks, ClusterMaskWords words per cluster.
-        RHI::TGPUSpan<uint32>            ClusterLightMasks;
-        // Per cluster, its first non-empty mask word in the low 16 bits and one past its last in the high 16.
-        RHI::TGPUSpan<uint32>            ClusterWordRanges;
+        // Every local light in a stable slot, with free slots at zero radius.
+        RHI::TGPUSpan<FLight>            RetainedLights;
+        RHI::TGPUSpan<FVector4>          RetainedLightBounds;
+        RHI::TGPUSpan<uint32>            RetainedLightLayers;
+        // This view's visible lights sorted near to far behind slot 0, which holds the sun or an empty record.
+        RHI::TGPUSpan<FLight>            ViewLights;
+        RHI::TGPUSpan<uint32>            LightTileMasks;
+        // The header, depth bins and visible list the light cull writes, at the LIGHT_GRID offsets.
+        RHI::TGPUSpan<uint32>            LightGrid;
         FMaterialTableGPU                Materials;
         RHI::TGPUSpan<FMaterialCollectionUniforms> Collections;         // slot 0 is the reserved zero one
         RHI::TGPUSpan<FBillboardInstance> Billboards;
@@ -1667,11 +1661,14 @@ namespace Lumina
         uint32 VirtualShadowPoolRWIndex = 0;
         // Page rows per layer of the pool, with the dynamic layer below the static one.
         uint32 VirtualShadowPoolRows    = 0;
-        uint32 _Pad0                    = 0;
-        uint32 _Pad1                    = 0;
-        uint32 _Pad2                    = 0;
+        // The cull view whose visibility buffer this root's passes write and decode.
+        uint32 VisCullView              = 0;
+        uint32 LTCMatrixIndex           = 0;
+        uint32 LTCAmplitudeIndex        = 0;
+        // Where each cull view's region of the draw list starts, written by BuildDrawPrefix.
+        RHI::TGPUSpan<uint32>             ViewDrawBases;
     };
-    static_assert(sizeof(FSceneRoot) == 608, "FSceneRoot must match SceneGlobals.slang");
+    static_assert(sizeof(FSceneRoot) == 672, "FSceneRoot must match SceneGlobals.slang");
 
     struct FParallaxSettings
     {
@@ -1764,12 +1761,45 @@ namespace Lumina
         FVector4 SnowLook = FVector4(0.0f);
         // x = cover, y = drift pattern size in meters, z = print depth, w = unused.
         FVector4 SnowSurface = FVector4(0.0f);
+        // rgb = secondary tint, w = how far each drop picks toward it.
+        FVector4 RainTint2 = FVector4(1.0f, 1.0f, 1.0f, 0.0f);
+        // rgb = light the drops give off themselves, w = refraction strength.
+        FVector4 RainEmissive = FVector4(0.0f);
+        // x = rim reflection, y = glint toward lights, z = distant curtain density, w = splash mist.
+        FVector4 RainOptics = FVector4(0.0f);
         // Entity id and record index pairs, open addressed by entity id, empty slots holding kIndexNoneU32.
         RHI::TGPUSpan<FUIntVector2>         InteractorTable;
         // x = root height, y = rain soak, z = water line above the root, w = wetness under the water line.
         RHI::TGPUSpan<FVector4>             Interactors;
     };
-    static_assert(sizeof(FWeatherGPU) == 416, "FWeatherGPU must match FWeatherData in Common.slang.");
+    static_assert(sizeof(FWeatherGPU) == 464,"FWeatherGPU must match FWeatherData in Common.slang.");
+
+    // A wind blocker box as the extract placed it, matching FWindBlocker in Common.slang.
+    struct FWindBlockerGPU
+    {
+        // Rows of the world to box transform, rotation and translation only, so the box space is still in meters.
+        FVector4 WorldToBoxX = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
+        FVector4 WorldToBoxY = FVector4(0.0f, 1.0f, 0.0f, 0.0f);
+        FVector4 WorldToBoxZ = FVector4(0.0f, 0.0f, 1.0f, 0.0f);
+        // xyz = half size in meters, w = falloff in meters.
+        FVector4 HalfExtent  = FVector4(1.0f);
+        // x = share of the wind stopped, yzw unused.
+        FVector4 Params      = FVector4(0.0f);
+    };
+    static_assert(sizeof(FWindBlockerGPU) == 80, "FWindBlockerGPU must match FWindBlocker in Common.slang.");
+
+    // A runtime virtual texture as this frame placed it, matching FVirtualTextureData in Common.slang.
+    struct FVirtualTextureGPU
+    {
+        uint32      Texture    = Constants::kIndexNoneU32;
+        uint32      Resolution = 0;
+        float       TexelSize  = 1.0f;
+        float       _Pad0      = 0.0f;
+        FIntVector2 Origin     = FIntVector2(0);
+        uint32      _Pad1[2]   = {};
+        FVector4    Clear      = FVector4(0.0f);
+    };
+    static_assert(sizeof(FVirtualTextureGPU) == 48 && offsetof(FVirtualTextureGPU, Clear) == 32, "FVirtualTextureGPU must match FVirtualTextureData in Common.slang.");
 
     struct FSceneGlobalData
     {
@@ -1827,7 +1857,25 @@ namespace Lumina
 
         // Empty unless weather is rendering, which is the one check every surface pays.
         RHI::TGPUSpan<FWeatherGPU> Weather;
+
+        // Every runtime virtual texture something wrote this frame.
+        RHI::TGPUSpan<FVirtualTextureGPU> VirtualTextures;
+
+        // xy = steady wind direction on XZ, z = steady speed in meters per second, w = gustiness.
+        FVector4        WindDirection = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
+        // x = wrapped gust phase, y = gusts per second, zw unused.
+        FVector4        WindGust      = FVector4(0.0f);
+        // The blockers nearest the camera, empty when nothing shelters the wind.
+        RHI::TGPUSpan<FWindBlockerGPU> WindBlockers;
+
+        // The GBuffer's extension targets, which only pixels with extended lobes write or read.
+        uint32          GBufferEIndex = Constants::kIndexNoneU32;
+        uint32          GBufferFIndex = Constants::kIndexNoneU32;
+        uint32          GBufferEUAV   = Constants::kIndexNoneU32;
+        uint32          GBufferFUAV   = Constants::kIndexNoneU32;
     };
+    static_assert(offsetof(FSceneGlobalData, WindDirection) == offsetof(FSceneGlobalData, VirtualTextures) + sizeof(FSceneGlobalData::VirtualTextures),
+                  "WindDirection must follow VirtualTextures with no C++ padding, since the shader's scalar layout has none.");
     static_assert(offsetof(FSceneGlobalData, Weather) % 16 == 0, "Weather must follow DBufferDIndex with no C++ padding.");
     // alignas(16) here but 4-byte aligned in scalar layout, so C++ must not pad in front of it, which the 16 check alone cannot see.
     static_assert(offsetof(FSceneGlobalData, FogParams) % 16 == 0 &&
@@ -1841,18 +1889,21 @@ namespace Lumina
         uint32 IndirectDrawOffset;
     };
     
-    // CPU-side scene stats. Draw-time counters come from FPipelineStats / FGPUProfileFrame.
+#if !defined(LE_SHIPPING)
+    // The main view's counts r.Debug.Stats shows, filled only while it is on; the GPU ones arrive through the cull readback, frames late.
     struct FSceneRenderStats
     {
-        uint64 NumBatches = 0;
-        uint64 NumMeshes = 0;
-        uint64 NumMaterials = 0;
-        uint64 NumDrawCallsCulled = 0;
-        uint64 NumInstancesCulled = 0;
-        uint64 NumShadowDraws = 0;
-        uint64 NumSkinnedMeshes = 0;
-        uint64 NumStaticMeshes = 0;
+        uint32 NumDraws = 0;
+        uint32 NumDispatches = 0;
+        uint32 NumInstancesDrawn = 0;
+        uint32 NumInstancesCulled = 0;
+        uint32 NumMeshletsDrawn = 0;
+        uint32 NumTrianglesDrawn = 0;
+        uint32 NumImpostorsDrawn = 0;
+        uint32 NumFarProxiesDrawn = 0;
+        uint32 NumShadowMeshletsDrawn = 0;
     };
+#endif
     
     // Recomputed by the renderer every extract, so it is deliberately not part of the world's settings.
     struct FSceneFrameFlags

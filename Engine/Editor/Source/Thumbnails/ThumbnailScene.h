@@ -34,13 +34,14 @@ namespace Lumina
         void End();
 
         // Renderers spawn through this instead of World->ConstructEntity so ResetContents can remove them.
-        ECS::FEntity SpawnEntity(FName Name);
+        ECS::FEntity SpawnEntity(FName Name, const FTransform& Transform = FTransform());
 
         // Destroys every entity spawned via SpawnEntity and keeps the camera, so the scene can be reused.
         void ResetContents();
 
         CWorld* GetWorld() const { return World.Get(); }
         ECS::FEntity GetCameraEntity() const { return CameraEntity; }
+        uint32 GetRenderTargetSize() const { return RTSize; }
 
         // Recomputes the view matrix immediately because the thumbnail world is never ticked.
         void SetCameraTransform(const FVector3& Position, const FVector3& Target, float FOVDegrees = 35.0f);

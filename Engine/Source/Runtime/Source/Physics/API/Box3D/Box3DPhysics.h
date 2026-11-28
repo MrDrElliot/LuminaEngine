@@ -75,6 +75,7 @@ namespace Lumina::Physics
         void Initialize() override;
         void Shutdown() override;
         TUniquePtr<IPhysicsScene> CreatePhysicsScene(CWorld* World) override;
+        TSharedPtr<const FCollisionShape> CookHeightField(const FHeightFieldDesc& Desc) const override;
 
         static FBox3DDebugRenderer* GetDebugRenderer();
         static b3DebugDraw MakeDebugDraw();

@@ -19,6 +19,7 @@ namespace Lumina
             Prim.BoundsScale        = Component.BoundsScale;
             Prim.bCastShadow        = Component.bCastShadow;
             Prim.bAffectDistanceField = Component.bAffectDistanceField;
+            Prim.bAllowImpostor       = Component.bAllowImpostor;
             Prim.bShadowWPO         = Component.bShadowWorldPositionOffset;
             Prim.WPODisableDistance = Component.WorldPositionOffsetDisableDistance;
             Prim.RenderLayers       = Component.RenderLayers.Bits;
@@ -27,6 +28,31 @@ namespace Lumina
             Cull.MaxDrawDistance = Component.MaxDrawDistance;
             Cull.bCastShadow     = Component.bCastShadow ? 1u : 0u;
         }
+    }
+
+    void FScenePrimitiveSet::SetCaptureFilterMasks(THashMap<ECS::FEntity, uint32>&& Masks, ECS::FRegistry& Registry)
+    {
+        if (Masks.IsEmpty() && CaptureFilterMasks.IsEmpty())
+        {
+            return;
+        }
+
+        const FRenderDirtyTracker& Tracker = FRenderDirtyTracker::Ensure(Registry);
+        for (const auto& Pair : CaptureFilterMasks)
+        {
+            if (Masks.FindRef(Pair.Key) != Pair.Value)
+            {
+                Tracker.MarkAllSources(Pair.Key, EPrimitiveDirty::Data);
+            }
+        }
+        for (const auto& Pair : Masks)
+        {
+            if (!CaptureFilterMasks.Contains(Pair.Key))
+            {
+                Tracker.MarkAllSources(Pair.Key, EPrimitiveDirty::Data);
+            }
+        }
+        CaptureFilterMasks = Move(Masks);
     }
 
     //~ Primitive sync
@@ -138,6 +164,8 @@ namespace Lumina
         {
             return;
         }
+
+        Prim.CaptureFilterMask = CaptureFilterMasks.FindRef(Prim.Entity);
 
         if (const STransformComponent* Transform = Pools.Transform->TryGet(Prim.Entity))
         {

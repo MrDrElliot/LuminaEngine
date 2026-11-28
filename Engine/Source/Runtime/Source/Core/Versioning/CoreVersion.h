@@ -117,6 +117,9 @@ enum class ELuminaEngineVersion : uint32
 	// An impostor records whether its atlases hold BC7 blocks, and older ones are RGBA8.
 	MESH_IMPOSTOR_BC7,
 
+	// An impostor records whether its views cover the whole sphere, and carries an optional emissive atlas.
+	MESH_IMPOSTOR_SPHERE_EMISSIVE,
+
 	AUTOMATIC_VERSION_PLUS_ONE,
 	AUTOMATIC_VERSION = AUTOMATIC_VERSION_PLUS_ONE - 1
 };

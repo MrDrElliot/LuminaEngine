@@ -208,10 +208,11 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         Radius *= Scale.x;
     }
 
-    const uint Layers = Cull.bCustomLayers ? Pass().RetainedStatic.At(SlotIdx).RenderLayers : RENDER_LAYER_DEFAULT_MASK;
+    const uint Layers      = Cull.bCustomLayers ? Pass().RetainedStatic.At(SlotIdx).RenderLayers : RENDER_LAYER_DEFAULT_MASK;
+    const uint CaptureMask = Cull.bCustomLayers ? Pass().RetainedStatic.At(SlotIdx).CaptureFilterMask : 0u;
 
     // Too small for its meshlets, the camera sees the instance as one splat the proxy pass draws off the retained slot alone.
-    const bool bProxyCandidate = !bSkinned && !bNoCull && !Cull.HasFlag(EInstanceFlags::ShadowOnly) && Cull.HasFlag(EInstanceFlags::HasGeometry)
+    const bool bProxyCandidate = !bSkinned && !bNoCull && !Cull.HasFlag(EInstanceFlags::ShadowOnly) && Cull.HasFlag(EInstanceFlags::HasGeometry) && !Cull.bNoProxy
                               && Pass().OutProxyList.Count > 0u && (Scene().CullData.VirtualGeometryFlags & VG_FLAG_PROXIES) != 0u;
     bool   bProxied     = false;
     bool   bDrawsProxy  = true;
@@ -241,7 +242,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     {
         // Only what the camera could see, since the proxy pass draws the list without a cull of its own.
         const FCullView Camera = GetCullView(0u);
-        if (NumViews > 0u && (Camera.LayerMask & Layers) != 0u && !Camera.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY)
+        if (NumViews > 0u && (Camera.LayerMask & Layers) != 0u && PassesCaptureFilter(Camera, CaptureMask) && !Camera.HasFlag(CULL_VIEW_FLAG_CAST_SHADOW_ONLY)
             && FrustumContainsSphere(Camera.FrustumPlanes, ProxyCenter, ProxyRadius))
         {
             const uint ProxySlot = AppendReserve(Pass().OutProxyDrawArgs.At(1u), Pass().OutProxyList.Count, 0u);
@@ -305,7 +306,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
     {
         const FCullView View = GetCullView(v);
         if (!IsCameraProxyView(View, v, bProxied)
-            && IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFoliage, bCustomDepth, Layers, bShadowCached, bMover))
+            && IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFoliage, bCustomDepth, Layers, bShadowCached, bMover, CaptureMask))
         {
             FirstVisibleView = v;
             break;
@@ -362,7 +363,7 @@ void ComputeMain(uint3 GlobalID : SV_DispatchThreadID, uint3 GroupID : SV_GroupI
         // Views before the first visible one already failed the test above, and that view already passed it.
         const bool bVisible = v == FirstVisibleView
                            || (v > FirstVisibleView && !IsCameraProxyView(View, v, bProxied)
-                               && IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFoliage, bCustomDepth, Layers, bShadowCached, bMover));
+                               && IsInstanceVisibleToView(View, Center, Radius, bNoCull, bCaster, bShadowOnly, bFoliage, bCustomDepth, Layers, bShadowCached, bMover, CaptureMask));
         if (bVisible)
         {
             // View 0 reuses the camera's pick above.

@@ -24,10 +24,15 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
+// Screen pixels each step may cover, so a near receiver gets enough steps to find thin occluders and a far one stops wasting them.
+static const float kContactPixelsPerStep = 2.0;
+static const uint  kContactMinSteps      = 4u;
+
 float TraceContact(int2 Pixel, float Raw, float3 ViewP)
 {
-    const float2 Size = float2(Pass().ScreenSize);
-    if (ContactReachPixels(Pass().Length, ViewP.z, Size.y) < Pass().MinPixels)
+    const float2 Size        = float2(Pass().ScreenSize);
+    const float  ReachPixels = ContactReachPixels(Pass().Length, ViewP.z, Size.y);
+    if (ReachPixels < Pass().MinPixels)
     {
         return 1.0;
     }
@@ -49,11 +54,15 @@ float TraceContact(int2 Pixel, float Raw, float3 ViewP)
     }
 
     const float3 ViewL = NormalWorldToView(Pass().ToSun);
-    if (dot(ViewN, ViewL) <= 0.0)
+    const float  NdotL = dot(ViewN, ViewL);
+    if (NdotL <= 0.0)
     {
         return 1.0;
     }
-    return ContactShadow(ViewP, ViewN, ViewL, OrderedContactJitter(Pixel), Pass().Length, Pass().Steps);
+
+    const uint  Steps   = clamp(uint(ReachPixels / kContactPixelsPerStep), min(kContactMinSteps, Pass().Steps), Pass().Steps);
+    const float Contact = ContactShadow(ViewP, ViewN, ViewL, OrderedContactJitter(Pixel), Pass().Length, Steps);
+    return ContactGrazingFade(Contact, NdotL);
 }
 
 // One trace per pixel, kept in green beside the far mask so SunContactResolve.slang can box it without tracing its apron again.

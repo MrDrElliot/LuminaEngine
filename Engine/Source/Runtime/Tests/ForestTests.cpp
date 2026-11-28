@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "Containers/Algorithm.h"
+#include "World/Terrain/TerrainStore.h"
 #include "World/Entity/Components/ForestComponent.h"
 #include "World/Forest/ForestScatter.h"
 
@@ -128,9 +129,8 @@ TEST(ForestScatter, PlantsStandOnTheFinestTerrainUnderThem)
 {
     auto MakeFlat = [](float Size, float Height)
     {
-        const float Heights[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
         FTerrainHeightView View;
-        View.Heights       = Heights;
+        View.Store         = FTerrainStore::CreateFlat(2, 1.0f);
         View.Resolution    = 2;
         View.TileWorldSize = Size;
         View.MaxHeight     = Height;

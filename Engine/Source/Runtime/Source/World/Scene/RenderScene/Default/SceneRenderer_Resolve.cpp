@@ -272,7 +272,8 @@ namespace Lumina
         uint32 RefreshFoliage(FResolveContext& Context, ECS::FEntity Entity, SFoliageComponent& Foliage)
         {
             uint32 Refreshed = 0;
-            Context.KeyScratch->Reset();
+            TVector<uint64>& Keys = *Context.KeyScratch;
+            Keys.Reset();
             for (SFoliageType& Type : Foliage.Types)
             {
                 if (!IsResolveCurrent(Type, Type.Mesh.Get(), *Context.Cache))
@@ -283,11 +284,16 @@ namespace Lumina
 
                 if (Type.ResolveHandle != INVALID_MESH_RESOLVE_HANDLE)
                 {
-                    Context.KeyScratch->AddUnique(FMeshResolveQueue::HandleKey(Type.ResolveHandle));
+                    Keys.Add(FMeshResolveQueue::HandleKey(Type.ResolveHandle));
                 }
             }
 
-            Context.Queue->Watch(Entity, EMeshResolveSource::Foliage, *Context.KeyScratch);
+            if (Keys.Num() > 1)
+            {
+                Algo::Sort(Keys);
+                Keys.SetNum(static_cast<int32>(Algo::Unique(Keys) - Keys.begin()));
+            }
+            Context.Queue->Watch(Entity, EMeshResolveSource::Foliage, Keys);
 
             // Every instance of a changed type re-binds, and an incomplete bake retries on the same mark.
             if (Refreshed != 0)

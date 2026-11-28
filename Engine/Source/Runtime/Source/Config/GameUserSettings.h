@@ -65,6 +65,9 @@ namespace Lumina
         PROPERTY(Hidden)
         EQualityLevel AntiAliasingQuality = EQualityLevel::Default;
 
+        PROPERTY(Hidden)
+        EQualityLevel ReflectionQuality = EQualityLevel::Default;
+
         // Off leaves anti-aliasing and render resolution to the project's renderer settings, which is where a new player starts.
         PROPERTY(Hidden)
         bool bOverrideAntiAliasing = false;

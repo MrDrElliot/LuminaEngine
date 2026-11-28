@@ -590,6 +590,8 @@ namespace Lumina
             RHI::Textures::Release(SharedRenderResources.BRDFLut);
             RHI::Textures::Release(SharedRenderResources.SMAAArea);
             RHI::Textures::Release(SharedRenderResources.SMAASearch);
+            RHI::Textures::Release(SharedRenderResources.LTCMatrix);
+            RHI::Textures::Release(SharedRenderResources.LTCAmplitude);
             #if WITH_EDITOR
             for (RHI::FManagedTexture& Icon : SharedRenderResources.EditorIcons)
             {

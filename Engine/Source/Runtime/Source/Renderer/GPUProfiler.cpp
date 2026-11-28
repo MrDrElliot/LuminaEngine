@@ -114,6 +114,13 @@ namespace Lumina
 
     bool FGPUProfiler::IsEnabled() const
     {
+#if !defined(LE_SHIPPING)
+        // The stats block shows the pass timings, so it runs the profiler for as long as it is up.
+        if (RHI::IsCollectingStats())
+        {
+            return RHI::SupportsTimestamps();
+        }
+#endif
         return GGPUProfilerEnabled && RHI::SupportsTimestamps();
     }
 

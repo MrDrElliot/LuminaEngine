@@ -4,6 +4,7 @@
 #include "Core/Object/ObjectCore.h"
 #include "Log/Log.h"
 #include "LogCountTestHelpers.h"
+#include "Physics/Physics.h"
 #include "Physics/API/Box3D/Box3DPhysicsScene.h"
 #include "Physics/API/Box3D/Box3DRagdollHandle.h"
 #include "Physics/API/Box3D/Box3DCharacterHandle.h"
@@ -386,15 +387,19 @@ TEST_F(PhysicsSceneLifecycle, RebuiltAndDestroyedBodiesFreeTheGeometryBuiltForTh
     Registry->Emplace<SRigidBodyComponent>(MeshBody).BodyType = EBodyType::Static;
     Registry->Emplace<SMeshColliderComponent>(MeshBody).Mesh = Mesh;
 
+    Physics::FHeightFieldDesc Field;
+    Field.Heights   = { 0.0f, 0.0f, 0.0f, 0.0f };
+    Field.CountX    = 2;
+    Field.CountZ    = 2;
+    Field.Spacing   = 8.0f;
+    Field.MaxHeight = 1.0f;
+    Physics::FStaticInstanceDesc Patch[1];
+    Patch[0].Position = FVector3(20.0f, 0.0f, 0.0f);
+    Patch[0].Shape    = Physics::GetPhysicsContext()->CookHeightField(Field);
+    ASSERT_NE(Patch[0].Shape, nullptr);
     const ECS::FEntity Terrain = Registry->Create();
-    Registry->Emplace<STransformComponent>(Terrain).SetLocalLocation(FVector3(20.0f, 0.0f, 0.0f));
-    Registry->Emplace<SRigidBodyComponent>(Terrain).BodyType = EBodyType::Static;
-    STerrainComponent& Tile = Registry->Emplace<STerrainComponent>(Terrain);
-    Tile.Resolution = 2;
-    Tile.TileWorldSize = 8.0f;
-    Tile.MaxHeight = 1.0f;
-    Tile.Heightmap = { 0.0f, 0.0f, 0.0f, 0.0f };
-    Registry->Emplace<STerrainColliderComponent>(Terrain);
+    const uint32 TerrainGroup = Scene->CreateStaticBodyGroup(Terrain, Patch);
+    Patch[0].Shape = nullptr;
 
     Scene->Update(Dt);
     ASSERT_EQ(Scene->GetBodyGeometryCount(), 2);
@@ -407,7 +412,6 @@ TEST_F(PhysicsSceneLifecycle, RebuiltAndDestroyedBodiesFreeTheGeometryBuiltForTh
     for (int32 Round = 0; Round < 8; ++Round)
     {
         Registry->Patch<SMeshColliderComponent>(MeshBody, [](auto&) {});
-        Registry->Patch<STerrainColliderComponent>(Terrain, [](auto&) {});
         const uint32 Group = Scene->CreateStaticBodyGroup(Owner, Instances);
         ASSERT_NE(Group, 0u);
         Scene->Update(Dt);
@@ -420,7 +424,7 @@ TEST_F(PhysicsSceneLifecycle, RebuiltAndDestroyedBodiesFreeTheGeometryBuiltForTh
     }
 
     Registry->Destroy(MeshBody);
-    Registry->Destroy(Terrain);
+    Scene->DestroyStaticBodyGroup(TerrainGroup);
     Scene->Update(Dt);
     EXPECT_EQ(Scene->GetBodyGeometryCount(), 0);
 }

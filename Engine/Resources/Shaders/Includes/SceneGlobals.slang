@@ -21,18 +21,24 @@ struct FMippedTextureCubeArray
     uint MipCount()             { return Packed >> 24; }
 };
 
-// Must match FSceneRoot in SceneRenderTypes.h (576 B, scalar layout).
+// Must match FSceneRoot in SceneRenderTypes.h (672 B, scalar layout).
 struct FSceneRoot
 {
     GPUSpan<FBoneTransform>      Bones;
     // Last frame's copies, which can be shorter than the live arrays.
     GPUSpan<FBoneTransform>      PrevBones;
     GPUSpan<FTransform3x4>       PrevRetainedTransforms;
-    GPUSpan<FCluster>            Clusters;
-    // Per-view light bitmasks, GetClusterMaskWords() words per cluster.
-    GPUSpan<uint>                ClusterLightMasks;
-    // Per cluster, its first non-empty mask word in the low 16 bits and one past its last in the high 16.
-    GPUSpan<uint>                ClusterWordRanges;
+    // Every local light the scene holds, one stable slot each, with free slots at zero radius.
+    GPUSpan<FLight>              RetainedLights;
+    // Each slot's cull sphere, packed apart from its record so the cull reads 16 contiguous bytes a light.
+    GPUSpan<float4>              RetainedLightBounds;
+    GPUSpan<uint>                RetainedLightLayers;
+    // This view's visible lights sorted near to far, behind the sun or an empty record in slot 0.
+    GPUSpan<FLight>              ViewLights;
+    // One bit per ViewLights entry for each screen tile, LIGHT_GRID_MASK_WORDS words a tile.
+    GPUSpan<uint>                LightTileMasks;
+    // The header, depth bins and visible list the light cull writes, at the LIGHT_GRID offsets.
+    GPUSpan<uint>                LightGrid;
     FMaterialTable               Materials;
     GPUSpan<FMaterialCollection> Collections;
     GPUSpan<FBillboardInstance>  Billboards;
@@ -86,9 +92,13 @@ struct FSceneRoot
     FRWTexture2DUInt        VirtualShadowPoolRW;
     // Page rows per layer of the pool, with the dynamic layer below the static one.
     uint                    VirtualShadowPoolRows;
-    uint                    _Pad0;
-    uint                    _Pad1;
-    uint                    _Pad2;
+    // The cull view whose visibility buffer this root's passes write and decode.
+    uint                    VisCullView;
+    // Rect light LTC tables, the inverse transforms and their magnitude and Fresnel terms.
+    FTexture2D              LTCMatrix;
+    FTexture2D              LTCAmplitude;
+    // Where each cull view's region of the draw list starts, written by BuildDrawPrefix.
+    GPUSpan<uint>           ViewDrawBases;
 };
 
 FSceneRoot* GetSceneRoot() { return GetSceneRootPointer<FSceneRoot>(); }
@@ -116,9 +126,12 @@ FGPUInstance*       Instances()             { return GetInstancesPointer<FGPUIns
 GPUSpan<FBoneTransform>      Bones()                 { return GetSceneRoot().Bones; }
 GPUSpan<FBoneTransform>      PrevBones()             { return GetSceneRoot().PrevBones; }
 GPUSpan<FTransform3x4>       PrevRetainedTransforms(){ return GetSceneRoot().PrevRetainedTransforms; }
-GPUSpan<FCluster>            Clusters()              { return GetSceneRoot().Clusters; }
-GPUSpan<uint>                ClusterLightMasks()     { return GetSceneRoot().ClusterLightMasks; }
-GPUSpan<uint>                ClusterWordRanges()     { return GetSceneRoot().ClusterWordRanges; }
+GPUSpan<FLight>              RetainedLights()        { return GetSceneRoot().RetainedLights; }
+GPUSpan<float4>              RetainedLightBounds()   { return GetSceneRoot().RetainedLightBounds; }
+GPUSpan<uint>                RetainedLightLayers()   { return GetSceneRoot().RetainedLightLayers; }
+GPUSpan<FLight>              ViewLights()            { return GetSceneRoot().ViewLights; }
+GPUSpan<uint>                LightTileMasks()        { return GetSceneRoot().LightTileMasks; }
+GPUSpan<uint>                LightGrid()             { return GetSceneRoot().LightGrid; }
 FMaterialTable               Materials()             { return GetSceneRoot().Materials; }
 GPUSpan<FMaterialCollection> Collections()           { return GetSceneRoot().Collections; }
 GPUSpan<FBillboardInstance>  Billboards()            { return GetSceneRoot().Billboards; }
@@ -153,6 +166,13 @@ extension FInstanceStatic
     property FMeshletHeader* MeshletHeader { get { return MeshletHeaderAt(MeshletHeaderSlot); } }
 }
 GPUSpan<FMeshletDraw>        MeshletDrawList()       { return GetSceneRoot().MeshletDrawList; }
+
+// Visibility IDs count from the view's own region of the draw list, so each view has the whole ID range to itself.
+uint VisDrawBase()
+{
+    const uint View = GetSceneRoot().VisCullView;
+    return GetSceneRoot().ViewDrawBases.Contains(View) ? GetSceneRoot().ViewDrawBases.Get(View) : 0u;
+}
 GPUSpan<FPreSkinnedVertex>   PreSkinnedVertices()    { return GetSceneRoot().PreSkinnedVertices; }
 GPUSpan<FPrevSkinnedPosition> PreSkinnedPrevPositions() { return GetSceneRoot().PreSkinnedPrevPositions; }
 
@@ -563,8 +583,11 @@ FGPUInstance GetInstance(uint InstanceID) { return Instances()[InstanceID]; }
 uint GetInstanceMaterialIndex(uint InstanceID) { return Instances()[InstanceID].MaterialIndex; }
 uint GetInstanceEntityID(uint InstanceID)      { return Instances()[InstanceID].EntityID; }
 
-FLight GetLightAt(uint Index)       { return LightData().Lights.GetAligned(Index); }
-uint   GetNumLights()               { return LightData().Lights.Count;  }
+// Zero for a word past the buffer, which reads as an empty grid on a view the cull never ran for.
+uint LightGridWord(uint Index)      { return LightGrid().Contains(Index) ? LightGrid().At(Index)[0] : 0u; }
+
+FLight GetLightAt(uint Index)       { return ViewLights().GetAligned(Index); }
+uint   GetNumLights()               { return min(LightGridWord(LIGHT_GRID_NUM_LIGHTS), ViewLights().Count); }
 
 // Where a direction or world position lands in a light function's tile, in that tile's own 0-1 space.
 float2 LightFunctionTileUV(FLight Light, FLightFunction Function, float3 L, float3 WorldPos)
@@ -611,6 +634,8 @@ float3 GetSkySunDirection()         { return LightData().SkySunDirection; }
 float3 GetAmbientLightColor()       { return LightData().AmbientLight.xyz; }
 float  GetAmbientLightIntensity()   { return LightData().AmbientLight.w;   }
 bool   HasIBL()                     { return LightData().bHasIBL != 0u;     }
+// Slot 0 holds the sun when there is one, and a view capture whose layers leave the sun out clears bHasSun for itself alone.
+bool   HasSunLight()                { return LightData().bHasSun != 0u && GetNumLights() > 0u && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional); }
 
 // AmbientLight.xyz is only a sun-height lerp, so prefer the baked skylight cube.
 float3 GetVolumetricAmbientRadiance()
@@ -826,56 +851,87 @@ float3 GetCameraWorldRayDir(float2 UV)
     return normalize(mul(GetInverseCameraView(), float4(GetCameraViewRay(UV), 0.0)).xyz);
 }
 
-// Mirrors the tile math in ClusterBuild/LightCull, and the clamps keep fragments nearer than ZNear inside Clusters().
-uint ComputeClusterIndex(float ViewZ, float2 ScreenPos)
+// The smallest sphere around what a light can reach, which for a spot is its cone out to the range rather than the whole range around the apex.
+float4 LightBoundingSphere(FLight Light)
 {
-    uint3  Grid       = Scene().GridSize.xyz;
-    uint2  ScreenSize = Scene().ScreenSize.xy;
-    float  ZNear      = GetNearPlane();
-    float  ZFar       = GetFarPlane();
+    const float CosOuter = Light.Angles.y;
+    if (!HasFlag(Light.Flags, ELightFlags::Spot) || CosOuter <= 0.0)
+    {
+        return float4(Light.Position, Light.Radius);
+    }
 
-    float  ZForTile = max(abs(ViewZ), ZNear);
-    float  ZTileF   = (log(ZForTile / ZNear) * float(Grid.z)) / log(ZFar / ZNear);
-    uint   ZTile    = (uint)clamp(ZTileF, 0.0, float(Grid.z) - 1.0);
-    float2 TileSize = float2(ScreenSize) / float2(Grid.xy);
-    uint2  TileXY   = (uint2)clamp(ScreenPos / TileSize, float2(0.0, 0.0), float2(Grid.xy) - float2(1.0, 1.0));
-    return TileXY.x + TileXY.y * Grid.x + ZTile * Grid.x * Grid.y;
+    // A cone wider than 45 degrees is bounded by its rim circle, a narrower one by the sphere through its apex and rim.
+    const bool  bWide  = CosOuter < 0.70710678;
+    const float Offset = bWide ? Light.Radius * CosOuter : Light.Radius / (2.0 * CosOuter);
+    const float Radius = bWide ? Light.Radius * sqrt(1.0 - CosOuter * CosOuter) : Offset;
+    return float4(Light.Position - normalize(Light.Direction) * Offset, Radius);
 }
 
-// One bit per light, rounded up to whole words and clamped to what the pool holds for this grid, as LightCull wrote them.
-uint GetClusterMaskWords()
+// Log-spaced over the camera's range, so a light's depth extent and a pixel's depth land in bins the same way.
+uint LightZBin(float Depth)
 {
-    const uint3 Grid        = Scene().GridSize.xyz;
-    const uint  NumClusters = max(Grid.x * Grid.y * Grid.z, 1u);
-    return min((GetNumLights() + 31u) / 32u, ClusterLightMasks().Count / NumClusters);
+    const float ZNear = max(GetNearPlane(), LIGHT_ZBIN_START);
+    const float Scale = float(LIGHT_ZBIN_COUNT) / log2(max(GetFarPlane() / ZNear, 1.0001));
+    return (uint)clamp(log2(max(Depth, ZNear) / ZNear) * Scale, 0.0, float(LIGHT_ZBIN_COUNT - 1u));
 }
 
-// The cluster's non-empty mask words as [first, end), so a walk never loads a word with no light in it.
-uint2 GetClusterWordRange(uint ClusterIndex)
+// The screen tile a pixel falls in and the index range of lights its depth bin holds, empty when First passes Last.
+struct FLightCell
 {
-    if (!ClusterWordRanges().Contains(ClusterIndex))
+    uint Tile;
+    uint First;
+    uint Last;
+    uint MaskWords;
+};
+
+FLightCell GetLightCell(float ViewZ, float2 ScreenPos)
+{
+    const uint2  Grid     = max(Scene().GridSize.xy, uint2(1u, 1u));
+    const float2 TileSize = float2(Scene().ScreenSize.xy) / float2(Grid);
+    const uint2  TileXY   = (uint2)clamp(ScreenPos / TileSize, float2(0.0, 0.0), float2(Grid) - float2(1.0, 1.0));
+    const uint   Bin      = LightZBin(abs(ViewZ));
+
+    FLightCell Cell;
+    Cell.Tile      = TileXY.x + TileXY.y * Grid.x;
+    Cell.MaskWords = LightGridWord(LIGHT_GRID_MASK_WORDS);
+    Cell.First     = 1u;
+    Cell.Last      = 0u;
+    if (LightGrid().Contains(LIGHT_GRID_ZBINS + 2u * Bin + 1u))
+    {
+        Cell.First = LightGrid().At(LIGHT_GRID_ZBINS + 2u * Bin)[0];
+        Cell.Last  = ~LightGrid().At(LIGHT_GRID_ZBINS + 2u * Bin + 1u)[0];
+    }
+    return Cell;
+}
+
+// The cell's mask words as [first, end), so a walk loads only words its depth bin can reach.
+uint2 GetLightCellWords(FLightCell Cell)
+{
+    if (Cell.First > Cell.Last)
     {
         return uint2(0u, 0u);
     }
-    const uint Packed = ClusterWordRanges().At(ClusterIndex)[0];
-    return uint2(Packed & 0xFFFFu, min(Packed >> 16u, GetClusterMaskWords()));
+    return uint2(Cell.First >> 5u, min((Cell.Last >> 5u) + 1u, Cell.MaskWords));
 }
 
-// Bit b of word w is light 32 * w + b.
-uint GetClusterMaskWord(uint ClusterIndex, uint Word, uint MaskWords)
+// Bit b of word w is light 32 * w + b, trimmed at either end to the depth bin's index range.
+uint GetLightCellMaskWord(FLightCell Cell, uint Word)
 {
-    const uint Index = ClusterIndex * MaskWords + Word;
-    return ClusterLightMasks().Contains(Index) ? ClusterLightMasks().At(Index)[0] : 0u;
+    const uint Index = Cell.Tile * Cell.MaskWords + Word;
+    const uint Mask  = LightTileMasks().Contains(Index) ? LightTileMasks().At(Index)[0] : 0u;
+    const uint Base  = Word << 5u;
+    const uint Low   = Cell.First > Base ? Cell.First - Base : 0u;
+    const uint High  = Cell.Last - Base < 32u ? Cell.Last - Base : 31u;
+    return Mask & (0xFFFFFFFFu << Low) & (0xFFFFFFFFu >> (31u - High));
 }
 
-uint GetClusterLightCount(uint ClusterIndex)
+uint GetLightCellCount(FLightCell Cell)
 {
-    const uint  MaskWords = GetClusterMaskWords();
-    const uint2 Range     = GetClusterWordRange(ClusterIndex);
+    const uint2 Words = GetLightCellWords(Cell);
     uint Count = 0u;
-    for (uint Word = Range.x; Word < Range.y; ++Word)
+    for (uint Word = Words.x; Word < Words.y; ++Word)
     {
-        Count += countbits(GetClusterMaskWord(ClusterIndex, Word, MaskWords));
+        Count += countbits(GetLightCellMaskWord(Cell, Word));
     }
     return Count;
 }
@@ -900,9 +956,9 @@ float3 QuadEfficiencyColor(float Efficiency)
     return float3(1.0, 0.0, 0.0);
 }
 
-float3 ClusterDebugColor(uint ClusterIndex, uint LightCount)
+float3 LightCellDebugColor(FLightCell Cell, uint LightCount)
 {
-    uint H = ClusterIndex * 2654435761u;
+    uint H = (Cell.Tile ^ (Cell.First << 11u)) * 2654435761u;
     H ^= H >> 16; H *= 2246822519u;
     H ^= H >> 13; H *= 3266489917u;
     H ^= H >> 16;
@@ -916,3 +972,6 @@ float3 ClusterDebugColor(uint ClusterIndex, uint LightCount)
 }
 
 #include "MaterialSampling.slang"
+// Last, since they read Scene() and the material graph calls them from every template.
+#include "VirtualTexture.slang"
+#include "GlobalWind.slang"

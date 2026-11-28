@@ -167,6 +167,16 @@ namespace Lumina
         PROPERTY(Editable, Category = "Light")
         SRenderLayerMask RenderLayers;
 
+        // Rendered from the rectangle's center and softened by its size, so a large panel casts a wide penumbra away from contact.
+        PROPERTY(Editable, Category = "Shadows")
+        bool bCastShadows = false;
+
+        PROPERTY(Editable, Category = "Shadows")
+        bool bContactShadows = false;
+
+        PROPERTY(Editable, Category = "Shadows", ClampMin = 0.01f, ClampMax = 2.55f, Delta = 0.01f, Units = "m")
+        float ContactShadowLength = 0.15f;
+
         PROPERTY(Editable, Category = "Advanced")
         bool bVolumetric = false;
 
@@ -190,6 +200,10 @@ namespace Lumina
         // Brightness multiplier of the directional light.
         PROPERTY(Editable, Category = "Light", ClampMin = 0.0f)
         float Intensity = 2.4f;
+
+        // The primary camera is always sunlit, while a view capture is only when its CullMask shares one of these layers.
+        PROPERTY(Editable, Category = "Light")
+        SRenderLayerMask RenderLayers;
 
         // When true, Color is tinted by a physical black-body color from Temperature.
         PROPERTY(Editable, Category = "Light|Temperature")

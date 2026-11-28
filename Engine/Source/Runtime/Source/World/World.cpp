@@ -13,6 +13,9 @@
 #include "Assets/AssetTypes/Prefabs/Prefab.h"
 #include "Assets/AssetTypes/Textures/TextureRenderTarget.h"
 #include "Renderer/RHITexture.h"
+#include "Renderer/RHICore.h"
+#include "Renderer/GPUProfiler.h"
+#include "Containers/Algorithm.h"
 #include "Core/Console/ConsoleVariable.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/ObjectCore.h"
@@ -135,6 +138,7 @@ namespace Lumina
 
     // Generous for the handful of paint ops a frame issues, and drained every Extract.
     static constexpr uint32 kRenderTargetPaintQueueCapacity = 1024;
+    static constexpr uint32 kVirtualTextureStampQueueCapacity = 4096;
 
     namespace
     {
@@ -195,6 +199,62 @@ namespace Lumina
             Registry.Emplace<SDefaultWorldSettings>(Entity).bExternalEntities = GetDefault<CProjectSettings>()->bNewWorldsUseExternalEntities;
         }
     }
+
+#if !defined(LE_SHIPPING)
+    namespace
+    {
+        FAutoConsoleCommand GDebugStatsCommand(
+            "r.Debug.Stats",
+            "Toggle the render stats block in the viewport corner, with the main view's draws, culling, GPU passes and memory.",
+            [] { RHI::SetStatsCollection(!RHI::IsCollectingStats()); });
+
+        constexpr int32 kStatsTopPasses = 5;
+
+        // Tab separated, so the debug text lays the block out in aligned columns.
+        void DrawRenderStats(FWorldDebugInterface& Debug, const FSceneRenderStats& Stats)
+        {
+            RHI::FGPUMemoryStats Memory;
+            RHI::GetGPUMemoryStats(Memory);
+            uint64 DeviceUsage  = 0;
+            uint64 DeviceBudget = 0;
+            for (const RHI::FGPUMemoryHeapStats& Heap : Memory.Heaps)
+            {
+                DeviceUsage  += Heap.bDeviceLocal ? Heap.UsageBytes : 0u;
+                DeviceBudget += Heap.bDeviceLocal ? Heap.BudgetBytes : 0u;
+            }
+
+            FString Block = Format("Draws\t{}\tDispatches\t{}\n"
+                                   "Instances\t{}\tCulled\t{}\n"
+                                   "Meshlets\t{}\tTriangles\t{}\n"
+                                   "Impostors\t{}\tFar proxies\t{}\n"
+                                   "Shadow meshlets\t{}\tVRAM\t{} / {} MB",
+                                   Stats.NumDraws, Stats.NumDispatches,
+                                   Stats.NumInstancesDrawn, Stats.NumInstancesCulled,
+                                   Stats.NumMeshletsDrawn, Stats.NumTrianglesDrawn,
+                                   Stats.NumImpostorsDrawn, Stats.NumFarProxiesDrawn,
+                                   Stats.NumShadowMeshletsDrawn, DeviceUsage / Constants::kMiB, DeviceBudget / Constants::kMiB);
+
+#if defined(LUMINA_WITH_GPU_PROFILING)
+            const FGPUProfileFrame& Frame = FGPUProfiler::Get().GetLatest();
+            TVector<const FGPUProfileScope*> Passes;
+            for (const FGPUProfileScope& Scope : Frame.Scopes)
+            {
+                Passes.Add(&Scope);
+            }
+            const int32 NumTop = Math::Min(kStatsTopPasses, Passes.Num());
+            Algo::PartialSort(Passes.begin(), Passes.begin() + NumTop, Passes.end(),
+                              [](const FGPUProfileScope* A, const FGPUProfileScope* B) { return A->SelfMs > B->SelfMs; });
+
+            Block += Format("\nGPU frame\t{:.2f} ms", Frame.TotalMs);
+            for (int32 i = 0; i < NumTop; ++i)
+            {
+                Block += Format("\n{}\t{:.2f} ms", *Passes[i]->Name, Passes[i]->SelfMs);
+            }
+#endif
+            Debug.DrawText(Block, FVector4(0.85f, 0.95f, 0.85f, 1.0f));
+        }
+    }
+#endif
 
     void FWorldDebugInterface::DrawBillboard(int32 ResourceID, const FVector3& Location, float Scale)
     {
@@ -315,6 +375,7 @@ namespace Lumina
     {
         DebugInterface.World = this;
         RenderTargetPaintQueue.Initialize(kRenderTargetPaintQueueCapacity);
+        VirtualTextureStampQueue.Initialize(kVirtualTextureStampQueueCapacity);
     }
 
     void CWorld::EnqueueRenderTargetPaint(FTexturePaintOp&& Op)
@@ -371,6 +432,37 @@ namespace Lumina
         }
     }
 
+    void CWorld::StampVirtualTexture(CRuntimeVirtualTexture* Texture, FVector3 From, FVector3 To, float Radius, FVector4 Value,
+                                     EVirtualTextureBlend Blend, float Hardness, float Opacity)
+    {
+        if (Texture == nullptr || !(Radius > 0.0f))
+        {
+            return;
+        }
+        FVirtualTextureStamp Stamp;
+        Stamp.Texture  = Texture;
+        Stamp.From     = FVector2(From.x, From.z);
+        Stamp.To       = FVector2(To.x, To.z);
+        Stamp.Value    = Value;
+        Stamp.Radius   = Radius;
+        Stamp.Hardness = Math::Saturate(Hardness);
+        Stamp.Opacity  = Math::Max(Opacity, 0.0f);
+        Stamp.Blend    = Blend;
+        if (!VirtualTextureStampQueue.TryEnqueue(Stamp))
+        {
+            LOG_WARN_ONCE("World: the virtual texture stamp queue is full; dropping stamps");
+        }
+    }
+
+    void CWorld::DrainVirtualTextureStamps(TVector<FVirtualTextureStamp>& OutStamps)
+    {
+        FVirtualTextureStamp Stamp;
+        while (VirtualTextureStampQueue.TryDequeue(Stamp))
+        {
+            OutStamps.Add(Move(Stamp));
+        }
+    }
+
     void CWorld::Serialize(FArchive& Ar)
     {
         LUMINA_PROFILE_SCOPE();
@@ -424,6 +516,14 @@ namespace Lumina
     void CWorld::PostLoad()
     {
     }
+
+    void CWorld::PreSave()
+    {
+        GetAuthoredRegistry().View<STerrainComponent>().ForEach([](ECS::FEntity, STerrainComponent& Terrain)
+        {
+            Terrain.SaveStore();
+        });
+    }
     
     void CWorld::InitializeWorld(EWorldType InWorldType)
     {
@@ -448,6 +548,14 @@ namespace Lumina
         {
             LUMINA_PROFILE_SECTION("RefreshPrefabInstances");
             CPrefab::RefreshAllInstancesInWorld(this);
+        }
+
+        {
+            LUMINA_PROFILE_SECTION("OpenTerrainStores");
+            EntityRegistry.View<STerrainComponent>().ForEach([](ECS::FEntity, STerrainComponent& Terrain)
+            {
+                Terrain.EnsureStore();
+            });
         }
 
         // A tag serializes as its component, but FindByTag reads the per-tag storage, so refill it here.
@@ -850,7 +958,15 @@ namespace Lumina
         {
             return;
         }
-        
+
+#if !defined(LE_SHIPPING)
+        // Queued ahead of the render scene's extract, which drains this frame's debug text.
+        if (RHI::IsCollectingStats())
+        {
+            DrawRenderStats(DebugInterface, RenderScene->GetRenderStats());
+        }
+#endif
+
         const FResolvedSceneView& View = EntityRegistry.Ctx().Get<FResolvedSceneView>();
 
         if (View.bHasView)

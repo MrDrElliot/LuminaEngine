@@ -61,6 +61,27 @@ namespace Lumina
         };
         static_assert(sizeof(FRainSplashGPU) == 32, "FRainSplashGPU must match FRainSplash in RainCommon.slang.");
 
+        struct FRainDripGPU
+        {
+            FVector3 Origin;
+            float    SpawnTime;
+            float    FallHeight;
+            uint32   PackedLightRG;
+            uint32   PackedLightB;
+            uint32   Seed;
+        };
+        static_assert(sizeof(FRainDripGPU) == 32, "FRainDripGPU must match FRainDrip in RainCommon.slang.");
+
+        struct FRainDripSpawnPC
+        {
+            RHI::TGPUSpan<FRainDripGPU> Drips;
+            uint32                      Cursor;
+            uint32                      Count;
+            uint32                      FrameSeed;
+            float                       SearchExtent;
+        };
+        static_assert(sizeof(FRainDripSpawnPC) == 32, "FRainDripSpawnPC must match RainDripSpawn.slang.");
+
         struct FRainDropsPC
         {
             RHI::TGPUSpan<FUIntVector4> Visible;
@@ -90,12 +111,13 @@ namespace Lumina
         {
             RHI::TGPUSpan<FUIntVector4>   Visible;
             RHI::TGPUSpan<FRainSplashGPU> Splashes;
+            RHI::TGPUSpan<FRainDripGPU>   Drips;
             float                         Exposure;
             float                         SoftFadeDistance;
+            uint32                        SceneColor = Constants::kIndexNoneU32;
             uint32                        _Pad0;
-            uint32                        _Pad1;
         };
-        static_assert(sizeof(FRainDrawPC) == 48, "FRainDrawPC must match FRainDrawArgs in RainCommon.slang.");
+        static_assert(sizeof(FRainDrawPC) == 64, "FRainDrawPC must match FRainDrawArgs in RainCommon.slang.");
 
         struct FRainHazePC
         {
@@ -136,7 +158,11 @@ namespace Lumina
         };
         static_assert(sizeof(FWeatherImpactSpawnPC) == 48, "FWeatherImpactSpawnPC must match WeatherImpactSpawn.slang.");
 
-        constexpr uint32 kSplashVertices     = 30u;
+        // Match kSplashVertices and kDripVertices in Includes/RainCommon.slang.
+        constexpr uint32 kSplashVertices     = 54u;
+        constexpr uint32 kDripVertices       = 36u;
+        // Frames a drip site may still be dripping after the last one was found.
+        constexpr uint32 kDripDrawFrames     = 600u;
 
         RHI::FBlendDesc PremultipliedBlend()
         {
@@ -157,6 +183,22 @@ namespace Lumina
         const FFrameData::FWeather& Weather = RenderFrame->Weather;
         const FFrameData::FWeatherInteraction& Interaction = RenderFrame->WeatherInteraction;
         Globals.Weather = {};
+
+        Globals.WindDirection = FVector4(1.0f, 0.0f, 0.0f, 0.0f);
+        Globals.WindGust      = FVector4(0.0f);
+        Globals.WindBlockers  = {};
+        if (Weather.bActive)
+        {
+            // Wrapped well past any gust period, so the phase keeps its precision in float.
+            constexpr double kGustPhaseWrap = 4096.0;
+            const FWindParams& Wind = Weather.State.Params.Wind;
+            Globals.WindDirection = FVector4(Wind.Direction.x, Wind.Direction.y, Math::Max(Wind.Speed, 0.0f), Math::Max(Wind.Gustiness, 0.0f));
+            Globals.WindGust      = FVector4((float)std::fmod(Weather.State.GustTime, kGustPhaseWrap), Math::Max(Wind.GustFrequency, 0.0f), 0.0f, 0.0f);
+            if (!RenderFrame->WindBlockers.IsEmpty())
+            {
+                Globals.WindBlockers = RHI::CopyTransientArray(RenderFrame->WindBlockers.GetData(), RenderFrame->WindBlockers.Num());
+            }
+        }
 
         const bool bInteraction = Interaction.bField || !Interaction.InteractorRecords.IsEmpty();
         if (!Weather.bActive && !bInteraction)
@@ -210,6 +252,11 @@ namespace Lumina
             GPU.SnowMotion  = FVector4(Snow.FallSpeed, Snow.Flutter, Snow.WindInfluence, (float)std::fmod(State.SnowFallDistance, SnowTile * kFieldWrapTiles));
             GPU.SnowLook    = FVector4(Snow.Brightness, Snow.Opacity, Snow.Radius, (float)SnowTile);
             GPU.SnowSurface = FVector4(State.SnowCover, Snow.CoverScale, Snow.PrintDepth, 0.0f);
+
+            GPU.RainTint2    = FVector4(Rain.SecondaryTint, Math::Clamp(Rain.ColorVariation, 0.0f, 1.0f));
+            GPU.RainEmissive = FVector4(Rain.EmissiveColor * Math::Max(Rain.EmissiveIntensity, 0.0f), Math::Max(Rain.Refraction, 0.0f));
+            GPU.RainOptics   = FVector4(Math::Max(Rain.Reflection, 0.0f), Math::Max(Rain.Glint, 0.0f),
+                                        Math::Max(Rain.CurtainDensity, 0.0f), Math::Max(Rain.SplashMist, 0.0f));
         }
         GPU.DebugMode = (uint32)Math::Clamp(CVarWeatherDebug.GetValue(), 0, 7);
 
@@ -377,6 +424,24 @@ namespace Lumina
                         RHI::EAccessFlags::ShaderRead);
     }
 
+    uint32 FDefaultSceneRenderer::CopySceneColorForRain(RHI::FCmdListH CL, RHI::ELoadOp HDRLoadOp)
+    {
+        const FSceneImage& HDR        = GetNamedImage(ENamedImage::HDR);
+        const FSceneImage& SceneColor = GetNamedImage(ENamedImage::WaterRefraction);
+        if (RenderFrame->Weather.State.Params.Rain.Refraction <= 0.0f || HDRLoadOp != RHI::ELoadOp::Load || !SceneColor)
+        {
+            return Constants::kIndexNoneU32;
+        }
+
+        // The refraction copy is free again once the water has drawn, and the drops cannot sample the image they blend into.
+        Barriers::SceneToTransfer(CL);
+        RHI::CmdCopyTexture(CL, HDR.Texture, RHI::FTextureSlice{}, SceneColor.Texture, RHI::FTextureSlice{});
+        Barriers::TransferToShaders(CL);
+        RHI::CmdBarrier(CL, RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferRead,
+                        RHI::EStageFlags::RasterColorOut, RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite);
+        return (uint32)SceneColor.GetResourceID();
+    }
+
     void FDefaultSceneRenderer::WeatherDrawPass(RHI::FCmdListH CL)
     {
         const FFrameData& Frame = *RenderFrame;
@@ -384,7 +449,9 @@ namespace Lumina
         uint32 NumDrops  = Weather.bActive && Weather.bDrops ? Weather.NumDrops : 0u;
         uint32 NumFlakes = Weather.bActive ? Weather.NumFlakes : 0u;
         const bool bImpactSplashes = WeatherSplashBuffer && WeatherSplashQuietFrames <= kSplashDrawFrames;
-        if (NumDrops == 0u && NumFlakes == 0u && !bImpactSplashes)
+        const bool bRainMap        = Weather.bActive && Weather.OcclusionShadowDataIndex != Constants::kIndexNone && RainOcclusionImage.IsValid();
+        uint32 NumDripSpawns = bRainMap ? Weather.NumDripSpawns : 0u;
+        if (NumDrops == 0u && NumFlakes == 0u && !bImpactSplashes && NumDripSpawns == 0u && RainDripQuietFrames > kDripDrawFrames)
         {
             return;
         }
@@ -397,7 +464,10 @@ namespace Lumina
         static const FShaderH ImpactSplashShader = FShaderLibrary::Get("WeatherSplashVertex.slang");
         static const FShaderH PixelShader        = FShaderLibrary::Get("RainPixel.slang");
         static const FShaderH HazeShader         = FShaderLibrary::Get("RainHaze.slang");
-        if (!CullShader || !SpawnShader || !StreakShader || !RainSplashShader || !FlakeShader || !ImpactSplashShader || !PixelShader || !HazeShader)
+        static const FShaderH DripSpawnShader    = FShaderLibrary::Get("RainDripSpawn.slang");
+        static const FShaderH DripShader         = FShaderLibrary::Get("RainDripVertex.slang");
+        if (!CullShader || !SpawnShader || !StreakShader || !RainSplashShader || !FlakeShader || !ImpactSplashShader || !PixelShader || !HazeShader
+            || !DripSpawnShader || !DripShader)
         {
             return;
         }
@@ -421,12 +491,22 @@ namespace Lumina
         {
             ++WeatherSplashQuietFrames;
         }
+        if (NumDripSpawns > 0u)
+        {
+            ReserveBuffer(CL, RainDripBuffer, (uint64)kWeatherRainDripCapacity * sizeof(FRainDripGPU));
+            NumDripSpawns = RainDripBuffer ? NumDripSpawns : 0u;
+        }
+        RainDripQuietFrames = NumDripSpawns > 0u ? 0u : Math::Min(RainDripQuietFrames, kDripDrawFrames) + 1u;
+        const bool bDrips = RainDripBuffer && RainDripQuietFrames <= kDripDrawFrames;
 
         const FSceneImage& HDR   = GetNamedImage(ENamedImage::HDR);
         const FSceneImage& Depth = GetNamedImage(ENamedImage::DepthAttachment);
 
+        const RHI::ELoadOp HDRLoadOp = TakeHDRLoadOp(/*bAfterParticles*/ true);
+
         const FRainParams& Rain = Weather.State.Params.Rain;
-        if (NumDrops > 0u && Rain.HazeDensity * Rain.Intensity > 0.0f && HDR.GetMipUAVIndex(0) >= 0)
+        const bool bHaze = Rain.Intensity * (Rain.HazeDensity + Rain.CurtainDensity) > 0.0f;
+        if (NumDrops > 0u && bHaze && HDR.GetMipUAVIndex(0) >= 0)
         {
             FRainHazePC PC = {};
             PC.HDRUAV = (uint32)HDR.GetMipUAVIndex(0);
@@ -438,13 +518,15 @@ namespace Lumina
                             RHI::EAccessFlags::ColorRead | RHI::EAccessFlags::ColorWrite | RHI::EAccessFlags::ShaderRead);
         }
 
+        const uint32 SceneColorIndex = NumDrops > 0u || bDrips ? CopySceneColorForRain(CL, HDRLoadOp) : Constants::kIndexNoneU32;
+
         const RHI::FGPURange RainArgs{ RainArgsBuffer.Gpu, sizeof(RHI::FDrawIndirectArguments) };
         const RHI::FGPURange SnowArgs{ SnowArgsBuffer.Gpu, sizeof(RHI::FDrawIndirectArguments) };
         const float RainExposure = CVarWeatherStreakExposure.GetValue() * Math::Max(Rain.StreakLength, 0.0f);
 
         FRainDrawPC RainPC = {};
         FRainDrawPC SnowPC = {};
-        if (NumDrops > 0u || NumFlakes > 0u)
+        if (NumDrops > 0u || NumFlakes > 0u || NumDripSpawns > 0u)
         {
             if (NumDrops > 0u)
             {
@@ -475,6 +557,7 @@ namespace Lumina
                 RainPC.Splashes         = RHI::TGPUSpan<FRainSplashGPU>::FromAddress(RainSplashBuffer.Gpu, kWeatherRainSplashCapacity);
                 RainPC.Exposure         = RainExposure;
                 RainPC.SoftFadeDistance = 0.1f;
+                RainPC.SceneColor       = SceneColorIndex;
 
                 if (Weather.NumSplashes > 0u)
                 {
@@ -491,6 +574,17 @@ namespace Lumina
                     RainSplashCursor = (RainSplashCursor + Weather.NumSplashes) % kWeatherRainSplashCapacity;
                 }
             }
+            if (NumDripSpawns > 0u)
+            {
+                FRainDripSpawnPC PC = {};
+                PC.Drips        = RHI::TGPUSpan<FRainDripGPU>::FromAddress(RainDripBuffer.Gpu, kWeatherRainDripCapacity);
+                PC.Cursor       = RainDripCursor;
+                PC.Count        = NumDripSpawns;
+                PC.FrameSeed    = (uint32)(Frame.SceneGlobalData.Time * 1000.0f) * 2246822519u;
+                PC.SearchExtent = Math::Clamp(2.0f * Rain.Radius / Math::Max(Weather.OcclusionTexelWorld * (float)Weather.OcclusionResolution, 1.0f), 0.05f, 1.0f);
+                DispatchCompute(CL, DripSpawnShader, PC, RenderUtils::GetGroupCount(NumDripSpawns, 64u));
+                RainDripCursor = (RainDripCursor + NumDripSpawns) % kWeatherRainDripCapacity;
+            }
             if (NumFlakes > 0u)
             {
                 SnowPC.Visible          = CullField(SnowVisibleBuffer, SnowArgsBuffer, NumFlakes, kSnowExposure, 1u);
@@ -505,7 +599,7 @@ namespace Lumina
 
         RHI::FRenderAttachment Color;
         Color.Texture = HDR.Texture;
-        Color.LoadOp  = TakeHDRLoadOp(/*bAfterParticles*/ true);
+        Color.LoadOp  = HDRLoadOp;
         Color.StoreOp = RHI::EStoreOp::Store;
 
         RHI::FRenderPassDesc Pass;
@@ -548,6 +642,15 @@ namespace Lumina
         {
             RHI::CmdDraw(CL, MakeArgs(RainPC), kSplashVertices, kWeatherRainSplashCapacity, 0u, 0u);
         }
+        if (bDrips && DrawWith(DripShader))
+        {
+            FRainDrawPC DripPC = {};
+            DripPC.Drips            = RHI::TGPUSpan<FRainDripGPU>::FromAddress(RainDripBuffer.Gpu, kWeatherRainDripCapacity);
+            DripPC.Exposure         = RainExposure;
+            DripPC.SoftFadeDistance = 0.1f;
+            DripPC.SceneColor       = SceneColorIndex;
+            RHI::CmdDraw(CL, MakeArgs(DripPC), kDripVertices, kWeatherRainDripCapacity, 0u, 0u);
+        }
         if (NumFlakes > 0u && DrawWith(FlakeShader))
         {
             RHI::CmdDrawIndirect(CL, MakeArgs(SnowPC), SnowArgs, 1u, sizeof(RHI::FDrawIndirectArguments));
@@ -567,11 +670,12 @@ namespace Lumina
     void FDefaultSceneRenderer::ReleaseIdleWeatherResources()
     {
         const bool bInteraction = RenderFrame != nullptr && (RenderFrame->WeatherInteraction.bField || !RenderFrame->WeatherInteraction.InteractorRecords.IsEmpty());
-        if ((RenderFrame != nullptr && RenderFrame->Weather.bActive) || bInteraction || WeatherSplashQuietFrames <= kSplashDrawFrames)
+        if ((RenderFrame != nullptr && RenderFrame->Weather.bActive) || bInteraction || WeatherSplashQuietFrames <= kSplashDrawFrames
+            || RainDripQuietFrames <= kDripDrawFrames)
         {
             return;
         }
-        if (!RainOcclusionImage.IsValid() && !RainVisibleBuffer && !RainSplashBuffer && !WeatherSplashBuffer && !SnowVisibleBuffer
+        if (!RainOcclusionImage.IsValid() && !RainVisibleBuffer && !RainSplashBuffer && !RainDripBuffer && !WeatherSplashBuffer && !SnowVisibleBuffer
             && !WeatherFieldImages[0].IsValid() && !WeatherFieldImages[1].IsValid())
         {
             return;
@@ -587,10 +691,12 @@ namespace Lumina
         RainVisibleBuffer.Release();
         RainArgsBuffer.Release();
         RainSplashBuffer.Release();
+        RainDripBuffer.Release();
         WeatherSplashBuffer.Release();
         SnowVisibleBuffer.Release();
         SnowArgsBuffer.Release();
         RainSplashCursor    = 0u;
+        RainDripCursor      = 0u;
         WeatherSplashCursor = 0u;
         WeatherIdleFrames   = 0u;
     }

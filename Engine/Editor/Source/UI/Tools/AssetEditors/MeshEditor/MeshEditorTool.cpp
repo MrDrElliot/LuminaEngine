@@ -663,8 +663,8 @@ namespace Lumina
             {
                 static_cast<FEditorUI*>(Global::GEditorEngine->GetDevelopmentToolsUI())->GetImpostorBaker().Enqueue(Mesh);
             }
-            ImGuiX::TextTooltip("{}", Mesh->HasImpostor() ? "Rebake the views far instances draw in place of their meshlets."
-                                                          : "Bake the views far instances draw in place of their meshlets.");
+            ImGuiX::TextTooltip("{}", Mesh->HasImpostor() ? "Rebake the views far instances draw in place of their meshlets, from Mesh Properties > Impostor."
+                                                          : "Bake the views far instances draw in place of their meshlets, from Mesh Properties > Impostor.");
 
             ImGui::EndMenu();
         }

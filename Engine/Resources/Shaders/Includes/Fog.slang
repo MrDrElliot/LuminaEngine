@@ -299,7 +299,7 @@ float4 Fog_EvaluateAtPoint(float3 CamPos, float3 RayDir, float ViewDist, float Z
         float3 ToCam  = -RayDir;
         float3 Light  = GetVolumetricAmbientRadiance();
         float  CosSun = -1.0;
-        bool   bHasSun = GetNumLights() > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional);
+        bool   bHasSun = HasSunLight();
         if (bHasSun)
         {
             FLight Sun = GetLightAt(0);

@@ -24,6 +24,12 @@ namespace Lumina
         PROPERTY(Editable, Category = "Weather", ClampMin = 0.0f, ClampMax = 600.0f, ToolTip = "Seconds to blend from one preset to the next.")
         float TransitionTime = 8.0f;
 
+        PROPERTY(Editable, Category = "Weather|Environment", ToolTip = "Lets the preset's Environment layer darken and haze the sky and sun of the world's Environment component.")
+        bool bControlEnvironment = true;
+
+        PROPERTY(Editable, Category = "Weather|Wind", ClampMin = 0.0f, ClampMax = 4.0f, ToolTip = "Scales the preset's wind speed, which the rain, the clouds and every material sampling Global Wind follow.")
+        float WindScale = 1.0f;
+
         PROPERTY(Editable, Category = "Weather|Surfaces", ToolTip = "Holds surface wetness at a fixed value instead of soaking and drying over time.")
         bool bOverrideWetness = false;
 

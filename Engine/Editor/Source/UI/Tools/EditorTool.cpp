@@ -1118,8 +1118,16 @@ namespace Lumina
 
         ImGui::Dummy(ImStyle.ItemSpacing);
         ImGui::SetCursorPos(Origin + ImStyle.ItemSpacing);
+        ViewportToolbarBottom = WindowPosition.y;
         DrawViewportToolbar(UpdateContext);
-        
+
+        // The scene measures its corner text in its own pixels rather than the panel's.
+        if (Scene != nullptr && ViewportSize.y > 0.0f)
+        {
+            const float ToolbarBottom = Math::Max(ViewportToolbarBottom - WindowPosition.y, 0.0f);
+            Scene->SetDebugTextTopInset(ToolbarBottom * (float)Scene->GetRenderExtent().y / ViewportSize.y);
+        }
+
         // Not while ejected, since the editor owns the camera and a click is a selection.
         if (World != nullptr && World->IsGameWorld() && !HasEditorCameraControl() && bViewportHovered
             && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
@@ -1170,6 +1178,7 @@ namespace Lumina
 
     void FEditorTool::EndViewportToolbarWindow()
     {
+        ViewportToolbarBottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
         ImGui::End();
         ImGui::PopStyleVar(4);
     }

@@ -22,9 +22,23 @@ namespace Lumina
             return HashExtractValue(Spline.bClosedLoop, Key);
         }
 
-        uint64 ProbeInputKey(const SReflectionProbeComponent& Probe, const FTransform& World)
+        uint64 ProbeInputKey(const SReflectionProbeComponent& Probe, const FTransform& World, EReflectionQuality Quality)
         {
-            return HashExtractValue(World, HashExtractValue(Probe, 0));
+            return HashExtractValue(Quality, HashExtractValue(World, HashExtractValue(Probe, 0)));
+        }
+
+        // Each quality step doubles the face size, and High keeps the probe's own resolution.
+        uint32 ScaleProbeFaceSize(uint32 FaceSize, EReflectionQuality Quality, uint32 MinSize, uint32 MaxSize)
+        {
+            const int32 Steps = (int32)Quality - (int32)EReflectionQuality::High;
+            const uint32 Scaled = Steps >= 0 ? FaceSize << Steps : FaceSize >> -Steps;
+            return Math::Clamp(Scaled, MinSize, MaxSize);
+        }
+
+        // R11G11B10 at four bytes a texel, six faces per probe, and a third more for the mip chain.
+        uint64 ProbeArrayBytes(uint32 FaceSize, uint32 NumProbes)
+        {
+            return (uint64)FaceSize * FaceSize * 6u * NumProbes * 4u * 4u / 3u;
         }
 
         bool MatrixNearlyEqual(const FMatrix4& A, const FMatrix4& B, float Epsilon)
@@ -153,7 +167,7 @@ namespace Lumina
         }
     }
 
-    FDefaultSceneRenderer::FProbeSortEntry FDefaultSceneRenderer::MakeProbeSortEntry(const SReflectionProbeComponent& Probe, const FMatrix4& WorldMatrix)
+    FDefaultSceneRenderer::FProbeSortEntry FDefaultSceneRenderer::MakeProbeSortEntry(const SReflectionProbeComponent& Probe, const FMatrix4& WorldMatrix, uint32 CaptureFaceSize)
     {
         const FVector3 Extent = (Probe.Shape == EReflectionProbeShape::Sphere)
                                     ? FVector3(Math::Max(Probe.Extent.x, 0.001f))
@@ -174,7 +188,7 @@ namespace Lumina
         Entry.Capture.Position      = CaptureWorld;
         Entry.Capture.NearPlane     = Math::Max(Probe.CaptureNearPlane, 0.001f);
         Entry.Capture.FarPlane      = Math::Max(Probe.CaptureFarPlane, Entry.Capture.NearPlane + 1.0f);
-        Entry.Capture.FaceSize      = GetReflectionProbeFaceSize(Probe.Resolution);
+        Entry.Capture.FaceSize      = CaptureFaceSize;
         Entry.Capture.bAlwaysUpdate = (Probe.UpdateMode == EReflectionProbeUpdateMode::Always);
         Entry.Capture.bClearToColor = (Probe.ClearMode == EReflectionProbeClearMode::SolidColor);
         Entry.Capture.ClearColor    = Probe.BackgroundColor;
@@ -193,6 +207,7 @@ namespace Lumina
 
         bool  bChanged = false;
         int32 Visited  = 0;
+        const EReflectionQuality Quality = GetDefault<CRendererSettings>()->ReflectionQuality;
         ProbeView.ForEach([&](ECS::FEntity Entity, const SReflectionProbeComponent& Probe, const STransformComponent& Transform)
         {
             if (!Probe.bEnabled)
@@ -211,10 +226,11 @@ namespace Lumina
 
             // Computed rather than cached, since probes extract before this frame's transforms resolve.
             const FTransform WorldTransform = Transform.ComputeWorldTransform();
-            const uint64     Key   = ProbeInputKey(Probe, WorldTransform);
+            const uint64     Key   = ProbeInputKey(Probe, WorldTransform, Quality);
             if (!Cache.bValid || Cache.Key != Key)
             {
-                Cache.Entry  = MakeProbeSortEntry(Probe, WorldTransform.GetMatrix());
+                const uint32 FaceSize = ScaleProbeFaceSize(GetReflectionProbeFaceSize(Probe.Resolution), Quality, MinProbeFaceSize, MaxProbeFaceSize);
+                Cache.Entry  = MakeProbeSortEntry(Probe, WorldTransform.GetMatrix(), FaceSize);
                 Cache.Key    = Key;
                 Cache.bValid = true;
                 bChanged     = true;
@@ -274,6 +290,7 @@ namespace Lumina
 
             DiffReflectionProbesAgainstBake(Frame);
         }
+        SizeReflectionProbeArray(Frame);
 
         const uint32 RebakeRequests = GReflectionProbeRebakeRequests.load(std::memory_order_relaxed);
         if (RebakeRequests != LastSeenRebakeRequest)
@@ -304,6 +321,40 @@ namespace Lumina
         }
 
         ScheduleReflectionProbeBake(Frame);
+    }
+
+    void FDefaultSceneRenderer::SizeReflectionProbeArray(FFrameData& Frame)
+    {
+        using namespace SceneRendererExtractProbesInternal;
+
+        auto& Bake = Frame.ReflectionProbes;
+        uint32 FaceSize = MinProbeFaceSize;
+        for (const FReflectionProbeCapture& Capture : Bake.Captures)
+        {
+            FaceSize = Math::Max(FaceSize, Capture.FaceSize);
+        }
+
+        // A power of two, so growing the set rarely reallocates and rebakes the whole array, while one probe pays for one slice.
+        uint32 NumProbes = 1;
+        while (NumProbes < (uint32)Bake.Captures.Num() && NumProbes < MaxReflectionProbes)
+        {
+            NumProbes <<= 1;
+        }
+        while (FaceSize > MinProbeFaceSize && ProbeArrayBytes(FaceSize, NumProbes) > ProbeArrayBudgetBytes)
+        {
+            FaceSize >>= 1;
+        }
+
+        Bake.ArrayFaceSize = FaceSize;
+        Bake.ArrayProbes   = NumProbes;
+        if (FaceSize != RequestedProbeArrayFaceSize || NumProbes != RequestedProbeArrayProbes)
+        {
+            RequestedProbeArrayFaceSize = FaceSize;
+            RequestedProbeArrayProbes   = NumProbes;
+            // A new array starts black, so every probe bakes again into it.
+            Bake.bNeedsRebake   = true;
+            Bake.bLayoutChanged = true;
+        }
     }
 
     void FDefaultSceneRenderer::DiffReflectionProbesAgainstBake(FFrameData& Frame)

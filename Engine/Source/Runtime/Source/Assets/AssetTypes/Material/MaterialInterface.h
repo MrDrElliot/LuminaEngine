@@ -62,6 +62,9 @@ namespace Lumina
 
         // Thin two-sided translucency for leaves and grass, paid for with the emissive channels.
         Foliage   = 3,
+
+        // Light scattered inside skin, wax, jade or marble, which softens the terminator and glows where thin.
+        Subsurface = 4,
     };
 
     // Every compiled stage a material can carry, each named by a row of the stage table in Material.cpp.
@@ -83,6 +86,7 @@ namespace Lumina
         VisBufferVertexMasked,      // The VertexMain entry of VisBufferMeshMasked.
         MeshShadowMaskedVertex,     // The VertexMain entry of MeshShadowMasked.
         MaskedVisBufferPixelVertex, // MaskedVisBufferPixel reading VisID as the vertex path writes it.
+        VirtualTextureCapture,      // TerrainVirtualTextureCapture.slang, a terrain material drawn from above into a runtime virtual texture.
 
         Count,
     };

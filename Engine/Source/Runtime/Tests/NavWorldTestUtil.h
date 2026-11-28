@@ -59,16 +59,17 @@ namespace Lumina::NavTest
         Terrain.Resolution = (int32)Size + 1;
         Terrain.TileWorldSize = Size;
         Terrain.MaxHeight = kTerrainRange;
-        Terrain.Heightmap.SetNum(Lumina::IntCastChecked<Lumina::int32>(static_cast<int64>(Terrain.Resolution) * Terrain.Resolution));
+        Lumina::TVector<float> Heights(Lumina::IntCastChecked<Lumina::int32>(static_cast<int64>(Terrain.Resolution) * Terrain.Resolution));
         const float Stride = Size / (float)(Terrain.Resolution - 1);
         for (int32 Row = 0; Row < Terrain.Resolution; ++Row)
         {
             for (int32 Col = 0; Col < Terrain.Resolution; ++Col)
             {
                 const float Height = GroundHeight(-Size * 0.5f + Col * Stride, -Size * 0.5f + Row * Stride);
-                Terrain.Heightmap[Row * Terrain.Resolution + Col] = (Height - kTerrainBase) / kTerrainRange;
+                Heights[Row * Terrain.Resolution + Col] = (Height - kTerrainBase) / kTerrainRange;
             }
         }
+        Terrain.SetStore(Lumina::FTerrainStore::CreateFromArrays(Terrain.Resolution, Heights, {}, 0));
         Registry.Emplace<STerrainComponent>(Entity, std::move(Terrain));
         Registry.Emplace<STerrainColliderComponent>(Entity);
         return Entity;

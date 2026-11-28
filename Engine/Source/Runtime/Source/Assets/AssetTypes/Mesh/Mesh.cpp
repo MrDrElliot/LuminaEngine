@@ -169,6 +169,7 @@ namespace Lumina
             FMeshResource::FMeshBuffers& MB = Resource.MeshBuffers;
             RHI::Textures::Release(MB.ImpostorBaseColorTexture);
             RHI::Textures::Release(MB.ImpostorNormalDepthTexture);
+            RHI::Textures::Release(MB.ImpostorEmissiveTexture);
             if (!Resource.Impostor.IsValid() || Resource.bSkinnedMesh)
             {
                 return;
@@ -176,11 +177,17 @@ namespace Lumina
 
             MB.ImpostorBaseColorTexture   = CreateImpostorAtlas(Resource.Impostor, Resource.Impostor.BaseColor, "Mesh.ImpostorBaseColor");
             MB.ImpostorNormalDepthTexture = CreateImpostorAtlas(Resource.Impostor, Resource.Impostor.NormalDepth, "Mesh.ImpostorNormalDepth");
-            if (!MB.ImpostorBaseColorTexture.IsValid() || !MB.ImpostorNormalDepthTexture.IsValid())
+            if (Resource.Impostor.HasEmissive())
+            {
+                MB.ImpostorEmissiveTexture = CreateImpostorAtlas(Resource.Impostor, Resource.Impostor.Emissive, "Mesh.ImpostorEmissive");
+            }
+            if (!MB.ImpostorBaseColorTexture.IsValid() || !MB.ImpostorNormalDepthTexture.IsValid()
+                || (Resource.Impostor.HasEmissive() && !MB.ImpostorEmissiveTexture.IsValid()))
             {
                 LOG_ERROR("Impostor texture creation failed for mesh '{}', which draws its far proxies as splats.", *Resource.Name);
                 RHI::Textures::Release(MB.ImpostorBaseColorTexture);
                 RHI::Textures::Release(MB.ImpostorNormalDepthTexture);
+                RHI::Textures::Release(MB.ImpostorEmissiveTexture);
             }
         }
 
@@ -235,6 +242,12 @@ namespace Lumina
             }
         }
 
+        // Shared by the header and the CPU swap test, so both agree on when the mesh swaps.
+        float ImpostorTransitionScale(const FMeshResource& Resource)
+        {
+            return Lumina::Impostor::TransitionScale(Resource.GetSourceTriangleCount()) * Resource.Impostor.TransitionMultiplier;
+        }
+
         // Split out so a texture refresh can rewrite the header without rebuilding anything else.
         FMeshletHeaderGPU MakeMeshletHeader(const FMeshResource& Resource)
         {
@@ -271,7 +284,8 @@ namespace Lumina
             Header.DistanceFieldMaxDistance = Volume.MaxDistance;
             Header.ConesAddress             = MB.MeshletConeBuffer;
             Header.LODBoundsAddress         = MB.MeshletLODBoundsBuffer;
-            Header.Flags                    = MB.MeshletLODBoundsBuffer != 0 ? MESH_HEADER_FLAG_CLUSTER_LOD : 0u;
+            Header.Flags                    = (MB.MeshletLODBoundsBuffer != 0 ? MESH_HEADER_FLAG_CLUSTER_LOD : 0u)
+                                            | (Resource.Impostor.bFullSphere ? MESH_HEADER_FLAG_IMPOSTOR_FULL_SPHERE : 0u);
             Header.BonePalettesAddress      = MB.MeshletBonePaletteBuffer;
             Header.BoneIndicesAddress       = MB.MeshletBoneIndexBuffer;
             Header.MeshletCount             = MB.MeshletCount;
@@ -296,7 +310,9 @@ namespace Lumina
             Header.ImpostorCenterZ          = Impostor.Center.z;
             Header.ImpostorRadius           = Impostor.Radius;
             Header.ImpostorFrameSize        = Impostor.FrameSize;
-            Header.ImpostorTransitionScale  = Lumina::Impostor::TransitionScale(Resource.GetSourceTriangleCount());
+            Header.ImpostorTransitionScale  = ImpostorTransitionScale(Resource);
+            Header.ImpostorEmissiveIndex    = bHasImpostor && MB.ImpostorEmissiveTexture.IsValid() ? MB.ImpostorEmissiveTexture.SampledSlot : 0u;
+            Header.ImpostorEmissiveScale    = Impostor.EmissiveScale;
             return Header;
         }
 
@@ -745,6 +761,14 @@ namespace Lumina
         MeshletHeaderSlab::Write(Resource.MeshBuffers.MeshletHeaderSlot, MakeMeshletHeader(Resource));
     }
 
+    void MeshBuffers::RefreshHeader(FMeshResource& Resource)
+    {
+        if (Resource.MeshBuffers.MeshletHeaderSlot != MeshletHeaderSlab::kNullSlot)
+        {
+            MeshletHeaderSlab::Write(Resource.MeshBuffers.MeshletHeaderSlot, MakeMeshletHeader(Resource));
+        }
+    }
+
     void CMesh::Serialize(FArchive& Ar)
     {
         Super::Serialize(Ar);
@@ -854,6 +878,17 @@ namespace Lumina
         FMeshResolveCache::InvalidateDependency(this);
     }
 
+    void CMesh::PostPropertyChange(FProperty* ChangedProperty)
+    {
+        Super::PostPropertyChange(ChangedProperty);
+
+        if (MeshResources != nullptr && MeshResources->Impostor.TransitionMultiplier != ImpostorSettings.TransitionScale)
+        {
+            MeshResources->Impostor.TransitionMultiplier = ImpostorSettings.TransitionScale;
+            MeshBuffers::RefreshHeader(*MeshResources);
+        }
+    }
+
     void CMesh::GenerateBoundingBox()
     {
         BoundingBox = MeshResources ? ComputeMeshLocalBounds(*MeshResources) : SAABB();
@@ -869,6 +904,7 @@ namespace Lumina
 
         // The box is already computed by PostLoad, and the header publishes it for the LocalBounds node.
         MeshResources->LocalBounds = BoundingBox;
+        MeshResources->Impostor.TransitionMultiplier = ImpostorSettings.TransitionScale;
 
         // Same meshlet layout as before, and the header rides the same upload batch as the block it names.
         UploadGeometry(*MeshResources);
@@ -1044,8 +1080,7 @@ namespace Lumina
         {
             return BasePixels;
         }
-        const float Scale = Lumina::Impostor::TransitionScale(MeshResources->GetSourceTriangleCount());
-        return Lumina::Impostor::TransitionPixels(BasePixels, Scale, MeshResources->Impostor.FrameSize);
+        return Lumina::Impostor::TransitionPixels(BasePixels, ImpostorTransitionScale(*MeshResources), MeshResources->Impostor.FrameSize);
     }
 
     void CMesh::SetImpostor(FMeshImpostor&& Impostor)
@@ -1055,6 +1090,7 @@ namespace Lumina
             return;
         }
         MeshResources->Impostor = Move(Impostor);
+        MeshResources->Impostor.TransitionMultiplier = ImpostorSettings.TransitionScale;
         Lumina::Impostor::Compress(MeshResources->Impostor);
         MeshBuffers::RefreshTextures(*MeshResources);
 

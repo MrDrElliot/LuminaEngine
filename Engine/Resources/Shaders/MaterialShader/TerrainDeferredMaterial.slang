@@ -36,27 +36,28 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupThreadID)
     FGBufferData G = DefaultGBufferData();
     if (T.bValid)
     {
-        const FTerrainRenderParams Params  = GetTerrainParams();
-        const uint3                Corners = TerrainTriangleCorners(T.Tri);
+        const FTerrainRenderParams Params = GetTerrainParams();
 
         FMeshletWorldVertex W[3];
+        TerrainVisWorldVertices(T, W);
+        // The vertex graph reads weights at the node's level, as the raster did, so the rebuilt offsets land where it drew them.
+        GTerrainShadingMip = float(TerrainNodeLevel(Params, UnpackTerrainNode(T.Node.Node).Depth));
         float3 FinalWorldPos[3];
         [unroll]
         for (int k = 0; k < 3; ++k)
         {
-            const FTerrainVertex V = TerrainMeshletVertex(Params, T.Meshlet, T.Chunk, Corners[k]);
-            W[k].WorldPos  = V.WorldPos;
-            W[k].NormalWS  = V.NormalWS;
-            W[k].TangentWS = float4(TerrainTangent(V.NormalWS), 1.0);
-            // UV is world XZ like the old forward pass, and set 1 carries the heightmap UV so it gets exact gradients too.
-            W[k].UV        = V.WorldPos.xz;
-            W[k].UV1       = V.HeightUV;
-            W[k].Color     = float4(1.0, 1.0, 1.0, 1.0);
+            FTerrainVertex V;
+            V.WorldPos = W[k].WorldPos;
+            V.NormalWS = W[k].NormalWS;
+            V.HeightUV = W[k].UV1;
             FinalWorldPos[k] = DisplacedTerrainVertex(Params, V).WorldPos;
         }
 
         const float2 ScreenSize = float2(Pass().ScreenW, Pass().ScreenH);
         FVisSurface  S          = InterpolateVisSurface(W, FinalWorldPos, VisPixelNdc(Texel, ScreenSize), ScreenSize);
+
+        // One page texel per pixel footprint, UV being world XZ, so far terrain reads coarse pages instead of aliasing the finest.
+        GTerrainShadingMip = TerrainFootprintMip(TerrainArgs(), max(length(S.UVDDX), length(S.UVDDY)));
 
         // Per pixel, since a coarse LOD triangle interpolating three vertex normals lights whole facets as one.
         const float3 NormalWS = TerrainSampleNormalAt(S.UV1);

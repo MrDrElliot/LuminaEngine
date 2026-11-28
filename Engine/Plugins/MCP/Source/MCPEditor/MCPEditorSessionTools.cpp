@@ -580,6 +580,20 @@ namespace Lumina::MCP
             return Agent::FToolResult::Ok(Lumina::Format("Arranging '{}'.", In.Tab));
         }
 
+        Agent::FToolResult CopyEditorGraph(const SEditorGraphParams& In, SEditorGraphResult& Out)
+        {
+            FString Error;
+            Out.bDone = SessionOps::CopyGraphNodes(FStringView(In.Tab), In.GraphPath, In.Nodes, Out.Text, Error);
+            return Out.bDone ? Agent::FToolResult::Ok("Copied to the clipboard.") : Agent::FToolResult::Error(Error);
+        }
+
+        Agent::FToolResult PasteEditorGraph(const SEditorGraphParams& In, SEditorGraphResult& Out)
+        {
+            FString Error;
+            Out.bDone = SessionOps::PasteGraphNodes(FStringView(In.Tab), In.GraphPath, FStringView(In.Text), In.X, In.Y, Out.Pasted, Error);
+            return Out.bDone ? Agent::FToolResult::Ok(Lumina::Format("Pasted {} node(s).", Out.Pasted.Num())) : Agent::FToolResult::Error(Error);
+        }
+
         Agent::FToolResult ReloadEditorScripts(const SScriptReloadParams& Params, SScriptReloadResult& Out)
         {
             if (!std::isfinite(Params.TimeoutSeconds) || Params.TimeoutSeconds < 0.0f || Params.TimeoutSeconds > GMaxScriptReloadTimeoutSeconds)
@@ -1056,7 +1070,8 @@ namespace Lumina::MCP
             Agent::FToolRegistry::Get().Register<SEditorGraphParams, SEditorGraphResult>(
                 Owner, "editor.graph",
                 "For a material, material function, animation or audio graph tab: View reports the visible canvas rect and offscreen "
-                "nodes, Frame pans to Nodes, Arrange lays the canvas out by its links as one undo step.",
+                "nodes, Frame pans to Nodes, Arrange lays the canvas out by its links as one undo step. Copy puts Nodes (or the "
+                "selection) on the clipboard as JSON text and returns it, and Paste builds Text (or the clipboard) at X, Y as Ctrl+V does.",
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SEditorGraphParams& In, SEditorGraphResult& Out)
                 {
@@ -1064,6 +1079,8 @@ namespace Lumina::MCP
                     {
                     case EEditorGraphAction::Frame:   return FrameEditorGraph(In, Out);
                     case EEditorGraphAction::Arrange: return ArrangeEditorGraph(In, Out);
+                    case EEditorGraphAction::Copy:    return CopyEditorGraph(In, Out);
+                    case EEditorGraphAction::Paste:   return PasteEditorGraph(In, Out);
                     default:                          return ViewEditorGraph(In, Out);
                     }
                 });

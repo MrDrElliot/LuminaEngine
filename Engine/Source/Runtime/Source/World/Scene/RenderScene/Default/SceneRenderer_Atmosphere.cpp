@@ -206,6 +206,11 @@ namespace Lumina
             }
         }
 
+        // Pooled capture views render several captures each, so the one in flight is found by the capture rather than its view.
+        if (CurrentCapture != nullptr)
+        {
+            return CurrentCapture->SceneGlobalData;
+        }
         for (const FFrameData::FCaptureViewData& Capture : Frame.Views.CaptureViews)
         {
             if (Capture.SceneViewIndex > 0 && Capture.SceneViewIndex < SceneViews.Num() && &SceneViews[Capture.SceneViewIndex] == CurrentView)
@@ -220,7 +225,7 @@ namespace Lumina
     {
         const FFrameData& Frame = *RenderFrame;
         const bool bHasFog      = Frame.Volumetrics.bHasFog;
-        const bool bVolumetric  = bHasFog && Frame.Volumetrics.bVolumetricFog;
+        const bool bVolumetric  = bHasFog && UsesVolumetricFog();
         const AtmosphereInternal::FFogViewTerms Fog = AtmosphereInternal::MakeFogViewTerms(Frame, *CurrentView, Globals, bCapturingProbe);
 
         Globals.FogParams           = Frame.Volumetrics.FogParams;
@@ -550,7 +555,7 @@ namespace Lumina
         const AtmosphereInternal::FFogViewTerms Fog = AtmosphereInternal::MakeFogViewTerms(Frame, *CurrentView, GetCurrentViewGlobals(), bCapturingProbe);
         PC.NearPlane          = Fog.NearPlane;
         PC.FogRange           = Fog.FogRange;
-        PC.bVolumetric        = Frame.Volumetrics.bVolumetricFog ? 1u : 0u;
+        PC.bVolumetric        = UsesVolumetricFog() ? 1u : 0u;
         PC.FarShaftDistance   = Frame.Volumetrics.FarShaftDistance;
         PC.FogShaftIndex      = AtmosphereTerms.FogShaftIndex;
         PC.FogShaftDepthIndex = AtmosphereTerms.FogShaftDepthIndex;

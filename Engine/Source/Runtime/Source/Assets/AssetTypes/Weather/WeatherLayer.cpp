@@ -1,5 +1,6 @@
 #include "RuntimePCH.h"
 #include "WeatherLayer.h"
+#include "World/Entity/Components/EnvironmentComponent.h"
 
 namespace Lumina
 {
@@ -33,6 +34,16 @@ namespace Lumina
         R.DripIntensity   = LerpF(A.DripIntensity, B.DripIntensity, T);
         R.HazeDensity     = LerpF(A.HazeDensity, B.HazeDensity, T);
         R.Tint            = A.Tint + (B.Tint - A.Tint) * T;
+        R.SecondaryTint   = A.SecondaryTint + (B.SecondaryTint - A.SecondaryTint) * T;
+        R.ColorVariation  = LerpF(A.ColorVariation, B.ColorVariation, T);
+        R.EmissiveColor   = A.EmissiveColor + (B.EmissiveColor - A.EmissiveColor) * T;
+        R.EmissiveIntensity = LerpF(A.EmissiveIntensity, B.EmissiveIntensity, T);
+        R.Refraction      = LerpF(A.Refraction, B.Refraction, T);
+        R.Reflection      = LerpF(A.Reflection, B.Reflection, T);
+        R.Glint           = LerpF(A.Glint, B.Glint, T);
+        R.CurtainDensity  = LerpF(A.CurtainDensity, B.CurtainDensity, T);
+        R.SplashMist      = LerpF(A.SplashMist, B.SplashMist, T);
+        R.EdgeDrips       = LerpF(A.EdgeDrips, B.EdgeDrips, T);
         return R;
     }
 
@@ -70,6 +81,42 @@ namespace Lumina
         return R;
     }
 
+    FEnvironmentWeatherParams FEnvironmentWeatherParams::Lerp(const FEnvironmentWeatherParams& A, const FEnvironmentWeatherParams& B, float T)
+    {
+        FEnvironmentWeatherParams R;
+        R.Weight         = LerpF(A.Weight, B.Weight, T);
+        R.SunlightScale  = LerpF(A.SunlightScale, B.SunlightScale, T);
+        R.SunDiscScale   = LerpF(A.SunDiscScale, B.SunDiscScale, T);
+        R.SkyBrightness  = LerpF(A.SkyBrightness, B.SkyBrightness, T);
+        R.AerosolDensity = LerpF(A.AerosolDensity, B.AerosolDensity, T);
+        R.SunTint        = A.SunTint + (B.SunTint - A.SunTint) * T;
+        R.StarVisibility = LerpF(A.StarVisibility, B.StarVisibility, T);
+        return R;
+    }
+
+    void FEnvironmentWeatherParams::ApplyTo(SEnvironmentComponent& Env) const
+    {
+        const float W = Math::Saturate(Weight);
+        if (W <= 0.0f)
+        {
+            return;
+        }
+
+        const float Sky   = LerpF(1.0f, Math::Max(SkyBrightness, 0.0f), W);
+        const float Stars = LerpF(1.0f, Math::Max(StarVisibility, 0.0f), W);
+        Env.SkyExposure    *= Sky;
+        Env.HDRIIntensity  *= Sky;
+        Env.SolidSkyColor  *= Sky;
+        Env.ZenithColor    *= Sky;
+        Env.HorizonColor   *= Sky;
+        Env.SunIntensity   *= LerpF(1.0f, Math::Max(SunDiscScale, 0.0f), W);
+        Env.SunColorTint    = Env.SunColorTint + (Env.SunColorTint * SunTint - Env.SunColorTint) * W;
+        Env.AerosolDensity  = LerpF(Env.AerosolDensity, Math::Max(AerosolDensity, 0.0f), W);
+        Env.StarBrightness *= Stars;
+        Env.GalaxyIntensity *= Stars;
+        Env.MoonBrightness *= Stars;
+    }
+
     FWindParams FWindParams::Lerp(const FWindParams& A, const FWindParams& B, float T)
     {
         FWindParams R;
@@ -89,6 +136,7 @@ namespace Lumina
         R.Rain   = FRainParams::Lerp(A.Rain, B.Rain, T);
         R.Snow   = FSnowParams::Lerp(A.Snow, B.Snow, T);
         R.Clouds = FCloudWeatherParams::Lerp(A.Clouds, B.Clouds, T);
+        R.Environment = FEnvironmentWeatherParams::Lerp(A.Environment, B.Environment, T);
         R.Wind   = FWindParams::Lerp(A.Wind, B.Wind, T);
         return R;
     }
@@ -118,6 +166,16 @@ namespace Lumina
         R.DripIntensity   = DripIntensity;
         R.HazeDensity     = HazeDensity;
         R.Tint            = Tint;
+        R.SecondaryTint   = SecondaryTint;
+        R.ColorVariation  = ColorVariation;
+        R.EmissiveColor   = EmissiveColor;
+        R.EmissiveIntensity = EmissiveIntensity;
+        R.Refraction      = Refraction;
+        R.Reflection      = Reflection;
+        R.Glint           = Glint;
+        R.CurtainDensity  = CurtainDensity;
+        R.SplashMist      = SplashMist;
+        R.EdgeDrips       = EdgeDrips;
     }
 
     void CCloudWeatherLayer::ApplyTo(FWeatherParams& Params) const
@@ -130,6 +188,18 @@ namespace Lumina
         C.DetailStrength = DetailStrength;
         C.SunScale       = SunScale;
         C.AmbientScale   = AmbientScale;
+    }
+
+    void CEnvironmentWeatherLayer::ApplyTo(FWeatherParams& Params) const
+    {
+        FEnvironmentWeatherParams& E = Params.Environment;
+        E.Weight         = 1.0f;
+        E.SunlightScale  = SunlightScale;
+        E.SunDiscScale   = SunDiscScale;
+        E.SkyBrightness  = SkyBrightness;
+        E.AerosolDensity = AerosolDensity;
+        E.SunTint        = SunTint;
+        E.StarVisibility = StarVisibility;
     }
 
     void CWindWeatherLayer::ApplyTo(FWeatherParams& Params) const

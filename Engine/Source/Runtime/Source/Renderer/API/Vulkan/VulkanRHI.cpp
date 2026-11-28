@@ -1,4 +1,5 @@
-﻿#include "Containers/HandleAllocator.h"
+﻿#include "Containers/Algorithm.h"
+#include "Containers/HandleAllocator.h"
 #include "RuntimePCH.h"
 #include "Memory/Construct.h"
 #include "Renderer/RHIInternal.h"
@@ -617,7 +618,27 @@ namespace Lumina::RHI
         // A failed bind leaves the previous pipeline live, and running it with this pass's arguments loses the device.
         bool bGraphicsPipelineBound = false;
         bool bComputePipelineBound  = false;
+
+#if !defined(LE_SHIPPING)
+        // As recorded, an indirect command counting once, for RHI::Submit to sum while stats are collected.
+        uint32 NumDraws      = 0;
+        uint32 NumDispatches = 0;
+#endif
     };
+
+    static FORCEINLINE void CountDraw(FCommandList& List)
+    {
+#if !defined(LE_SHIPPING)
+        ++List.NumDraws;
+#endif
+    }
+
+    static FORCEINLINE void CountDispatch(FCommandList& List)
+    {
+#if !defined(LE_SHIPPING)
+        ++List.NumDispatches;
+#endif
+    }
 
     // Vulkan rejects a zero-width viewport and a negative scissor offset, so no real set matches these.
     static constexpr VkViewport kUnsetViewport = {};
@@ -1072,7 +1093,7 @@ namespace Lumina::RHI
 
     static const FMemoryBlock* SearchSorted(const TVector<FMemoryBlock>& Blocks, GPUPtr Ptr)
     {
-        auto It = std::ranges::upper_bound(Blocks, Ptr, {}, &FMemoryBlock::Device);
+        auto It = Algo::UpperBound(Blocks, Ptr, [](GPUPtr Value, const FMemoryBlock& Block) { return Value < Block.Device; });
         if (It == Blocks.begin())
         {
             return nullptr;
@@ -3852,7 +3873,7 @@ namespace Lumina::RHI
     static FMemoryBlock* InsertBlockLocked(FMemoryBlock&& Block)
     {
         TVector<FMemoryBlock>& Blocks = Block.Suballocator.IsValid() ? GDevice->MemoryPages : GDevice->DedicatedBlocks;
-        const int32 Pos = static_cast<int32>(std::ranges::lower_bound(Blocks, Block.Device, {}, &FMemoryBlock::Device) - Blocks.begin());
+        const int32 Pos = static_cast<int32>(Algo::LowerBound(Blocks, Block.Device, [](const FMemoryBlock& Existing, GPUPtr Value) { return Existing.Device < Value; }) - Blocks.begin());
         Blocks.Insert(Move(Block), Pos);
         FMemoryBlock* Inserted = &Blocks[Pos];
 
@@ -4199,7 +4220,7 @@ namespace Lumina::RHI
             return;
         }
 
-        auto It = std::ranges::lower_bound(GDevice->DedicatedBlocks, Allocation.Gpu, {}, &FMemoryBlock::Device);
+        auto It = Algo::LowerBound(GDevice->DedicatedBlocks, Allocation.Gpu, [](const FMemoryBlock& Block, GPUPtr Value) { return Block.Device < Value; });
         if (It != GDevice->DedicatedBlocks.end() && It->Device == Allocation.Gpu)
         {
             GDevice->HeldBytes[(uint32)It->MemType] -= It->Size;
@@ -7143,6 +7164,10 @@ namespace Lumina::RHI
         CommandList.bOpen = true;
         CommandList.bGraphicsPipelineBound = false;
         CommandList.bComputePipelineBound  = false;
+#if !defined(LE_SHIPPING)
+        CommandList.NumDraws      = 0;
+        CommandList.NumDispatches = 0;
+#endif
         GDevice->OpenCommandLists[(uint32)Type].fetch_add(1, std::memory_order_release);
 
         // A recycled list's pool was already reset by ResetCommandList.
@@ -7170,6 +7195,15 @@ namespace Lumina::RHI
         FScopeLock Lock(GDevice->CommandPoolMutex);
         GDevice->FreeCommandLists[(uint32)List.Queue].Add(CommandList);
     }
+
+#if !defined(LE_SHIPPING)
+    void Internal::AddCommandCounts(FCmdListH CommandList, uint32& InOutDraws, uint32& InOutDispatches)
+    {
+        const FCommandList& List = GDevice->CommandLists[CommandList];
+        InOutDraws      += List.NumDraws;
+        InOutDispatches += List.NumDispatches;
+    }
+#endif
 
     uint32 GetOpenCommandListCount(EQueueType Queue)
     {
@@ -8403,6 +8437,7 @@ namespace Lumina::RHI
         {
             return;
         }
+        CountDispatch(GDevice->CommandLists[CL]);
 
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
         PushDrawArgs(VkCmdBuf, DrawArgs);
@@ -8416,6 +8451,7 @@ namespace Lumina::RHI
         {
             return;
         }
+        CountDraw(GDevice->CommandLists[CL]);
 
         auto VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
         PushDrawArgs(VkCmdBuf, DrawArgs);
@@ -8429,6 +8465,7 @@ namespace Lumina::RHI
         {
             return;
         }
+        CountDraw(GDevice->CommandLists[CL]);
 
         auto& CommandList           = GDevice->CommandLists[CL];
         VkCommandBuffer VkCmdBuf    = CommandList.CommandBuffer;
@@ -8449,6 +8486,7 @@ namespace Lumina::RHI
         {
             return;
         }
+        CountDraw(GDevice->CommandLists[CL]);
 
         DEBUG_ASSERT((uint64)DrawCount * Stride <= Arguments.Size, "Indirect draw reads past its argument range.");
         const GPUPtr IndirectBuffer = Arguments.Address;
@@ -8480,6 +8518,7 @@ namespace Lumina::RHI
         {
             return;
         }
+        CountDispatch(GDevice->CommandLists[CL]);
 
         DEBUG_ASSERT(sizeof(FDispatchIndirectArguments) <= Arguments.Size, "Indirect dispatch reads past its argument range.");
         const GPUPtr IndirectBuffer = Arguments.Address;
@@ -8516,6 +8555,7 @@ namespace Lumina::RHI
         {
             return;
         }
+        CountDraw(GDevice->CommandLists[CL]);
 
         DEBUG_ASSERT((uint64)DrawCount * Stride <= Arguments.Size, "Indexed indirect draw reads past its argument range.");
         const GPUPtr IndirectBuffer = Arguments.Address;
@@ -8553,6 +8593,7 @@ namespace Lumina::RHI
         {
             return;
         }
+        CountDraw(GDevice->CommandLists[CL]);
 
         VkCommandBuffer VkCmdBuf = GDevice->CommandLists[CL].CommandBuffer;
         PushDrawArgs(VkCmdBuf, DrawArgs);
@@ -8566,6 +8607,7 @@ namespace Lumina::RHI
         {
             return;
         }
+        CountDraw(GDevice->CommandLists[CL]);
 
         DEBUG_ASSERT((uint64)DrawCount * Stride <= Arguments.Size, "Mesh task indirect draw reads past its argument range.");
         const GPUPtr IndirectBuffer = Arguments.Address;
@@ -8597,6 +8639,7 @@ namespace Lumina::RHI
         {
             return;
         }
+        CountDraw(GDevice->CommandLists[CL]);
 
         DEBUG_ASSERT((uint64)MaxDrawCount * Stride <= Arguments.Size, "Indirect count draw reads past its argument range.");
         DEBUG_ASSERT(sizeof(uint32) <= CountRange.Size, "Indirect count draw reads past its count range.");
@@ -8637,6 +8680,7 @@ namespace Lumina::RHI
         {
             return;
         }
+        CountDraw(GDevice->CommandLists[CL]);
 
         DEBUG_ASSERT((uint64)MaxDrawCount * Stride <= Arguments.Size, "Mesh task indirect count draw reads past its argument range.");
         DEBUG_ASSERT(sizeof(uint32) <= CountRange.Size, "Mesh task indirect count reads past its count range.");

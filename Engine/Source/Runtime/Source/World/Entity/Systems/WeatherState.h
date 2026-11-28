@@ -50,5 +50,9 @@ namespace Lumina
 
         PROPERTY(Hidden)
         double         RainWindZ = 0.0;
+
+        // Gusts elapsed, which materials offset by distance along the wind so each gust sweeps across the world.
+        PROPERTY(Hidden)
+        double         GustTime = 0.0;
     };
 }

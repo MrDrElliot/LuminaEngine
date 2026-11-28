@@ -21,6 +21,7 @@
 #include "World/Entity/Components/ReflectionProbeComponent.h"
 #include "World/Entity/Components/SplineComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Components/WindBlockerComponent.h"
 
 namespace Lumina
 {
@@ -1355,6 +1356,29 @@ namespace Lumina
 
         const FString SoundName = Source.Sound.IsValid() ? Source.Sound->GetName().ToString() : FString("No Sound");
         LabelAudioEmitter(Context, Center, *SoundName, Source.Bus, Source.Volume, Source.bSpatialized, Source.bPlaying);
+    }
+
+    CStruct* CComponentVisualizer_WindBlocker::GetSupportedComponentType() const
+    {
+        return SWindBlockerComponent::StaticStruct();
+    }
+
+    void CComponentVisualizer_WindBlocker::Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity)
+    {
+        constexpr FVector4 kWindBlockerColor(0.55f, 0.85f, 1.0f, 1.0f);
+
+        const SWindBlockerComponent& Blocker = Registry.Get<SWindBlockerComponent>(Entity);
+        const STransformComponent& Transform = Registry.Get<STransformComponent>(Entity);
+        const FVector3 Half  = Math::Abs(Blocker.Extent * Transform.ComputeWorldTransform().GetScale());
+        const FVector4 Color = Blocker.bEnabled ? kWindBlockerColor : kWindBlockerColor * 0.4f;
+        PDI->DrawBox(Transform.GetWorldLocation(), Half, Transform.GetWorldRotation(), Color, 1.0f, true);
+
+        // The inner box is where the shelter reaches full strength.
+        const FVector3 Inner = Half - FVector3(Blocker.Falloff);
+        if (Blocker.Falloff > 0.0f && Inner.x > 0.0f && Inner.y > 0.0f && Inner.z > 0.0f)
+        {
+            PDI->DrawBox(Transform.GetWorldLocation(), Inner, Transform.GetWorldRotation(), Color * 0.6f, 1.0f, true);
+        }
     }
 
     CStruct* CComponentVisualizer_AudioVolume::GetSupportedComponentType() const

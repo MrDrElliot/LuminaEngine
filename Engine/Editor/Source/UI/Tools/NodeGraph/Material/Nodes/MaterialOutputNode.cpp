@@ -59,6 +59,14 @@ namespace Lumina
         if (ClearcoatRoughnessPin)   ClearcoatRoughnessPin->SetDisabled(bUnshaded || bDecal);
         if (TransmissionPin)         TransmissionPin->SetDisabled(bUnshaded || bDecal);
         if (ThicknessPin)            ThicknessPin->SetDisabled(bUnshaded || bDecal);
+        // Lobes the lighting evaluates, which a sprite never receives and a projected decal has no slot for.
+        for (CEdNodeGraphPin* LobePin : { SubsurfaceColorPin, SubsurfaceRadiusPin, AnisotropyPin, AnisotropyRotationPin,
+                                          SecondRoughnessPin, SecondRoughnessWeightPin, FuzzAmountPin, FuzzColorPin,
+                                          FuzzRoughnessPin, ThinFilmThicknessPin, ThinFilmIORPin, BottomNormalPin })
+        {
+            if (LobePin) LobePin->SetDisabled(bUnshaded || bDecal);
+        }
+        if (SurfacePin)              SurfacePin->SetDisabled(bFullscreen);
         // A sprite corner is a real vertex, so a particle graph may still displace it.
         if (WorldPositionOffsetPin)  WorldPositionOffsetPin->SetDisabled(bFullscreen || bDecal);
 
@@ -70,6 +78,9 @@ namespace Lumina
 
     void CMaterialOutputNode::BuildNode()
     {
+        SurfacePin = CreatePin(CMaterialInput::StaticClass(), "Surface", ENodePinDirection::Input);
+        static_cast<CMaterialInput*>(SurfacePin)->SetInputType(EMaterialInputType::Surface);
+
         // Base Color (Albedo)
         BaseColorPin = CreatePin(CMaterialInput::StaticClass(), "Base Color (RGBA)", ENodePinDirection::Input);
         BaseColorPin->SetPinName("Base Color (RGBA)");
@@ -119,21 +130,45 @@ namespace Lumina
         ThicknessPin = CreatePin(CMaterialInput::StaticClass(), "Thickness", ENodePinDirection::Input);
         ThicknessPin->SetPinName("Thickness");
 
+        // Subsurface shading model only, the color light picks up inside and how far past the shadow edge it spreads.
+        SubsurfaceColorPin  = CreatePin(CMaterialInput::StaticClass(), "Subsurface Color", ENodePinDirection::Input);
+        SubsurfaceRadiusPin = CreatePin(CMaterialInput::StaticClass(), "Subsurface Radius", ENodePinDirection::Input);
+
+        // Stretches the highlight along the tangent at positive values and across it at negative ones, as on brushed metal.
+        AnisotropyPin         = CreatePin(CMaterialInput::StaticClass(), "Anisotropy", ENodePinDirection::Input);
+        AnisotropyRotationPin = CreatePin(CMaterialInput::StaticClass(), "Anisotropy Rotation", ENodePinDirection::Input);
+
+        // A second, rougher specular lobe blended in by its weight, the soft halo around a highlight on hazy plastic or skin.
+        SecondRoughnessPin       = CreatePin(CMaterialInput::StaticClass(), "Second Roughness", ENodePinDirection::Input);
+        SecondRoughnessWeightPin = CreatePin(CMaterialInput::StaticClass(), "Second Roughness Weight", ENodePinDirection::Input);
+
+        // A fiber layer on top of everything, the soft rim of velvet, peach skin and dust.
+        FuzzAmountPin    = CreatePin(CMaterialInput::StaticClass(), "Fuzz Amount", ENodePinDirection::Input);
+        FuzzColorPin     = CreatePin(CMaterialInput::StaticClass(), "Fuzz Color", ENodePinDirection::Input);
+        FuzzRoughnessPin = CreatePin(CMaterialInput::StaticClass(), "Fuzz Roughness", ENodePinDirection::Input);
+
+        // A film a fraction of a micrometer thick over the base, which shifts its reflections through the colors of soap and oil.
+        ThinFilmThicknessPin = CreatePin(CMaterialInput::StaticClass(), "Thin Film Thickness", ENodePinDirection::Input);
+        ThinFilmIORPin       = CreatePin(CMaterialInput::StaticClass(), "Thin Film IOR", ENodePinDirection::Input);
+
+        // Clearcoat model only, the normal map of the base beneath the coat, such as metallic flakes or a carbon weave.
+        BottomNormalPin = CreatePin(CMaterialInput::StaticClass(), "Bottom Normal", ENodePinDirection::Input);
+
         // When connected, the vertex shader adds the graph emission to WorldPos before view and projection.
         WorldPositionOffsetPin = CreatePin(CMaterialInput::StaticClass(), "World Position Offset (WPO)", ENodePinDirection::Input);
         WorldPositionOffsetPin->SetPinName("World Position Offset (XYZ)");
 
         // Declared so tooltips, pin shapes and conversion badges know what each attribute takes.
-        for (CEdNodeGraphPin* VectorPin : { BaseColorPin, EmissivePin, NormalPin, TransmissionPin, WorldPositionOffsetPin })
+        for (CEdNodeGraphPin* VectorPin : { BaseColorPin, EmissivePin, NormalPin, TransmissionPin, SubsurfaceColorPin, FuzzColorPin, BottomNormalPin, WorldPositionOffsetPin })
         {
             static_cast<CMaterialInput*>(VectorPin)->SetInputType(EMaterialInputType::Float3);
         }
     }
 
     // Handles component widening/narrowing; shared by pixel-stage assignments, vertex-stage WPO and pin previews.
-    static FString EmitAssignmentFrom(const FString& MemberName, CMaterialOutput* ConnectedPin, const FString& DefaultValue, int32 RequiredComponents)
+    static FString EmitAssignmentFrom(const FString& Target, const FString& MemberName, CMaterialOutput* ConnectedPin, const FString& DefaultValue, int32 RequiredComponents)
     {
-        FString Out = "\tMaterial." + MemberName + " = ";
+        FString Out = "\t" + Target + "." + MemberName + " = ";
         if (ConnectedPin == nullptr)
         {
             return Out + DefaultValue + ";\n";
@@ -174,23 +209,44 @@ namespace Lumina
         return Out;
     }
 
-    static FString EmitMaterialAssignment(const FString& MemberName, CEdNodeGraphPin* Pin, const FString& DefaultValue, int32 RequiredComponents)
+    FString CMaterialOutputNode::EmitFieldAssignment(const FString& Target, const FString& Member, CEdNodeGraphPin* Pin, const FString& Default, int32 Width)
     {
         // A reroute emits no variable, so binding to its node name would reference an undeclared identifier.
         CMaterialOutput* ConnectedPin = Pin != nullptr && Pin->HasConnection()
             ? FMaterialCompiler::ResolveThroughReroutes(Pin->GetConnection<CMaterialOutput>(0))
             : nullptr;
-        return EmitAssignmentFrom(MemberName, ConnectedPin, DefaultValue, RequiredComponents);
+        return EmitAssignmentFrom(Target, Member, ConnectedPin, Default, Width);
+    }
+
+    FString CMaterialOutputNode::EmitNormalDecode(const FString& Target, const FString& Member)
+    {
+        const FString Field = Target + "." + Member;
+        return "\t" + Field + ".xy = " + Field + ".xy * 2.0 - 1.0;\n"
+             + "\t" + Field + ".z  = sqrt(saturate(1.0 - dot(" + Field + ".xy, " + Field + ".xy)));\n";
+    }
+
+    // Must match what EmitFieldAssignment wrote, or a dead-end reroute default gets corrupted.
+    bool CMaterialOutputNode::IsPinDriven(CEdNodeGraphPin* Pin)
+    {
+        return Pin != nullptr && Pin->HasConnection() && FMaterialCompiler::ResolveThroughReroutes(Pin->GetConnection<CMaterialOutput>(0)) != nullptr;
     }
 
     void CMaterialOutputNode::GeneratePreviewDefinition(FMaterialCompiler& Compiler, CMaterialOutput* Pin)
     {
+        // A surface previews as itself, lit, since no single channel of it says what it looks like.
+        if (Pin != nullptr && Pin->InputType == EMaterialInputType::Surface)
+        {
+            const FString Var = Pin->ResolvedVar.IsEmpty() ? Pin->GetOwningNode()->GetNodeFullName() : Pin->ResolvedVar;
+            Compiler.AddPixelOutput("\n\n\tFMaterialPixelInputs Material = " + Var + ";\n");
+            Compiler.AddVertexOutput("\n\tMaterial.WorldPositionOffset = float3(0.0, 0.0, 0.0);\n");
+            return;
+        }
         FString PixelOut = "\n\n\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
         PixelOut += "\tMaterial.Diffuse = float3(0.0, 0.0, 0.0);\n";
         PixelOut += "\tMaterial.Metallic = 0.0;\n";
         PixelOut += "\tMaterial.Specular = 0.0;\n";
         PixelOut += "\tMaterial.Roughness = 1.0;\n";
-        PixelOut += EmitAssignmentFrom("Emissive", Pin, "float3(0.0, 0.0, 0.0)", 3);
+        PixelOut += EmitAssignmentFrom("Material", "Emissive", Pin, "float3(0.0, 0.0, 0.0)", 3);
         Compiler.AddPixelOutput(PixelOut);
         Compiler.AddVertexOutput("\n\tMaterial.WorldPositionOffset = float3(0.0, 0.0, 0.0);\n");
     }
@@ -203,6 +259,9 @@ namespace Lumina
             BaseColorPin, MetallicPin, RoughnessPin, SpecularPin,
             EmissivePin,  AOPin,       NormalPin,    OpacityPin,
             SelfShadowPin, ClearcoatPin, ClearcoatRoughnessPin, TransmissionPin, ThicknessPin,
+            SubsurfaceColorPin, SubsurfaceRadiusPin, AnisotropyPin, AnisotropyRotationPin,
+            SecondRoughnessPin, SecondRoughnessWeightPin, FuzzAmountPin, FuzzColorPin, FuzzRoughnessPin,
+            ThinFilmThicknessPin, ThinFilmIORPin, BottomNormalPin, SurfacePin,
         };
 
         OutPins.Reserve(OutPins.Num() + std::size(Pins));
@@ -214,10 +273,16 @@ namespace Lumina
 
     void CMaterialOutputNode::GenerateDefinition(FMaterialCompiler& Compiler)
     {
-        FString PixelOut;
-        PixelOut += "\n\n";
-        // A field added to FMaterialPixelInputs without a matching pin here still starts initialized.
-        PixelOut += "\tFMaterialPixelInputs Material = DefaultMaterialInputs();\n";
+        TVector<CEdNodeGraphPin*> FieldPins;
+        GetPixelStagePins(FieldPins);
+
+        // A connected surface replaces the defaults, and only the pins driven directly are layered over it.
+        const bool bSurface = IsPinDriven(SurfacePin);
+        FString PixelOut = "\n\n\tFMaterialPixelInputs Material = ";
+        PixelOut += bSurface
+            ? Compiler.GetTypedInputValue(static_cast<CMaterialInput*>(SurfacePin), "DefaultMaterialInputs()").Value
+            : FString("DefaultMaterialInputs()");
+        PixelOut += ";\n";
 
         // An unconnected Emissive passes SceneColor through, leaves a light unmasked, and is black on a surface.
         FString EmissiveDefault = "float3(0.0, 0.0, 0.0)";
@@ -230,39 +295,31 @@ namespace Lumina
             EmissiveDefault = "float3(1.0, 1.0, 1.0)";
         }
 
-        PixelOut += EmitMaterialAssignment("Diffuse",          BaseColorPin, "float3(1.0, 1.0, 1.0)", 3);
-        PixelOut += EmitMaterialAssignment("Metallic",         MetallicPin,  "0.0",                    1);
-        PixelOut += EmitMaterialAssignment("Roughness",        RoughnessPin, "1.0",                    1);
-        PixelOut += EmitMaterialAssignment("Specular",         SpecularPin,  "0.5",                    1);
-        PixelOut += EmitMaterialAssignment("Emissive",         EmissivePin,  EmissiveDefault,          3);
-        PixelOut += EmitMaterialAssignment("AmbientOcclusion", AOPin,        "1.0",                    1);
-        PixelOut += EmitMaterialAssignment("Normal",           NormalPin,    "float3(0.0, 0.0, 1.0)", 3);
-        PixelOut += EmitMaterialAssignment("Opacity",          OpacityPin,   "1.0",                    1);
-        PixelOut += EmitMaterialAssignment("SelfShadow",       SelfShadowPin, "1.0",                   1);
-        PixelOut += EmitMaterialAssignment("Clearcoat",        ClearcoatPin,  "0.0",                   1);
-        PixelOut += EmitMaterialAssignment("ClearcoatRoughness", ClearcoatRoughnessPin, "0.03",        1);
-        PixelOut += EmitMaterialAssignment("Transmission",     TransmissionPin, "float3(0.0, 0.0, 0.0)", 3);
-        PixelOut += EmitMaterialAssignment("Thickness",        ThicknessPin,  "0.0",                    1);
-
-        // Must match what EmitMaterialAssignment wrote, or a dead-end reroute default gets corrupted.
-        auto IsDriven = [](CEdNodeGraphPin* Pin)
+        bool bExtendedLobes = Compiler.IsExtendedSurfaceDriven();
+        for (int32 i = 0; i < (int32)std::size(kMaterialSurfaceFields); ++i)
         {
-            return Pin->HasConnection() && FMaterialCompiler::ResolveThroughReroutes(Pin->GetConnection<CMaterialOutput>(0)) != nullptr;
-        };
+            const FMaterialSurfaceField& Field = kMaterialSurfaceFields[i];
+            CEdNodeGraphPin* Pin = FieldPins[i];
+            if (bSurface && !IsPinDriven(Pin))
+            {
+                continue;
+            }
+            const bool bEmissive = Pin == EmissivePin;
+            PixelOut += EmitFieldAssignment("Material", Field.Member, Pin, bEmissive ? EmissiveDefault : FString(Field.Default), Field.Width);
+            if (Field.bNormalMap && IsPinDriven(Pin))
+            {
+                PixelOut += EmitNormalDecode("Material", Field.Member);
+            }
+            bExtendedLobes |= Field.bExtendedLobe && IsPinDriven(Pin);
+        }
 
         // A decal leaves every channel its graph does not drive to the surface underneath.
         if (Compiler.GetMaterialType() == EMaterialType::Decal)
         {
-            const bool bSurface = IsDriven(RoughnessPin) || IsDriven(MetallicPin) || IsDriven(AOPin);
+            const bool bSurfaceChannels = bSurface || IsPinDriven(RoughnessPin) || IsPinDriven(MetallicPin) || IsPinDriven(AOPin);
             PixelOut += Lumina::Format("\n#define DECAL_CHANNEL_MASK float4({}, {}, {}, {})\n",
-                IsDriven(BaseColorPin) ? "1.0" : "0.0", IsDriven(NormalPin) ? "1.0" : "0.0",
-                bSurface ? "1.0" : "0.0", IsDriven(EmissivePin) ? "1.0" : "0.0");
-        }
-
-        if (IsDriven(NormalPin))
-        {
-            PixelOut += "\tMaterial.Normal.xy = Material.Normal.xy * 2.0 - 1.0;\n";
-            PixelOut += "\tMaterial.Normal.z  = sqrt(saturate(1.0 - dot(Material.Normal.xy, Material.Normal.xy)));\n";
+                bSurface || IsPinDriven(BaseColorPin) ? "1.0" : "0.0", bSurface || IsPinDriven(NormalPin) ? "1.0" : "0.0",
+                bSurfaceChannels ? "1.0" : "0.0", bSurface || IsPinDriven(EmissivePin) ? "1.0" : "0.0");
         }
 
         Compiler.AddPixelOutput(PixelOut);
@@ -270,8 +327,11 @@ namespace Lumina
         // Vertex template declares FMaterialVertexInputs Material above the token; only emit assignment.
         FString VertexOut;
         VertexOut += "\n";
-        VertexOut += EmitMaterialAssignment("WorldPositionOffset", WorldPositionOffsetPin, "float3(0.0, 0.0, 0.0)", 3);
+        VertexOut += EmitFieldAssignment("Material", "WorldPositionOffset", WorldPositionOffsetPin, "float3(0.0, 0.0, 0.0)", 3);
         Compiler.AddVertexOutput(VertexOut);
-        Compiler.SetWorldPositionOffsetDriven(IsDriven(WorldPositionOffsetPin));
+        Compiler.SetWorldPositionOffsetDriven(IsPinDriven(WorldPositionOffsetPin));
+
+        // Make Surface nodes upstream have already reported the lobes they drive.
+        Compiler.SetExtendedSurfaceDriven(bExtendedLobes);
     }
 }

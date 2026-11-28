@@ -23,7 +23,7 @@ void FragmentMain(FImpostorShadowVertexOutput In)
     const float Texels     = Header.ImpostorRadius * MatrixMaxScale(Model) / TexelWorld;
     const float Mip        = max(log2(float(Header.ImpostorFrameSize) / max(Texels, 1.0e-3)), 0.0);
 
-    const FImpostorViews  Views = SelectImpostorViews(-Dir, Header.ImpostorFrames);
+    const FImpostorViews  Views = SelectImpostorViews(Header, -Dir);
     const FImpostorTaps   Taps  = GatherImpostorTaps(Header, Views, Origin, Dir, Mip);
     if (Taps.Coverage < kImpostorCoverageCutoff)
     {

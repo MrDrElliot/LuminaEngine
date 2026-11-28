@@ -160,6 +160,7 @@ namespace Lumina
                                    const FSkinnedFrameDataTarget& Target,
                                    const SWorldRenderSettings& Settings,
                                    const FCullView* CameraView,
+                                   TSpan<const FCullView* const> CaptureViews,
                                    const FVector4& Sphere,
                                    float MaxScale,
                                    float ViewDistance,
@@ -178,11 +179,16 @@ namespace Lumina
                 }
                 const FSurfaceDescGPU& Desc = SurfaceDescs[Binding.SurfaceDescIndex];
 
-                // Shadows take the camera's pick too, so every view cuts within one pre-skin slice.
+                // Shadows take the camera's pick, and a capture that sees the mesh widens the slice it then cuts from its own camera.
                 FUIntVector2 Slots(0u, 0u);
                 if (Settings.bUseLODs && CameraView != nullptr)
                 {
                     Slots = SelectClusterSlotRange(Desc, *CameraView, Sphere, MaxScale, ViewDistance);
+                    for (const FCullView* Capture : CaptureViews)
+                    {
+                        const FUIntVector2 Range = SelectClusterSlotRange(Desc, *Capture, Sphere, MaxScale, LODViewDistance(*Capture, Sphere));
+                        Slots = FUIntVector2(Math::Min(Slots.x, Range.x), Math::Max(Slots.y, Range.y));
+                    }
                 }
 
                 const uint32 LastLOD    = Desc.NumLODs > 0u ? Math::Min(Desc.NumLODs, (uint32)MAX_MESH_LODS) - 1u : 0u;
@@ -436,10 +442,6 @@ namespace Lumina
                 {
                     Accept(Skeletal[d + n]);
                 }
-                else
-                {
-                    ++Local.Stats.NumInstancesCulled;
-                }
             }
         }
 
@@ -451,7 +453,6 @@ namespace Lumina
             if (!SceneCull.ShouldKeep(FVector3(S), S.w, Culls[PrimIndex].bCastShadow != 0u,
                                       Culls[PrimIndex].MaxDrawDistance, CameraPos))
             {
-                ++Local.Stats.NumInstancesCulled;
                 continue;
             }
 
@@ -674,6 +675,8 @@ namespace Lumina
         const FSceneGlobalData&  SceneGlobalData = Frame.SceneGlobalData;
         const FVector3           CameraPos       = FVector3(SceneGlobalData.CameraData.Location);
         const FCullView*         CameraView      = &Frame.Views.CameraLODView;
+        const TVector<FCullView>& CaptureLODViews = Frame.Views.CaptureLODViews;
+        const FCullView*         SeenByCaptures[GMaxCullViews];
 
         const FScenePrimitive*    Prims           = ScenePrimitives.GetPrimitives();
         const FVector4*           Spheres         = ScenePrimitives.GetBounds();
@@ -716,9 +719,24 @@ namespace Lumina
             const float    Radius = Sphere.w;
 
             const FVector3 ToCamera = Center - CameraPos;
-            const float    DistSq   = Math::Dot(ToCamera, ToCamera);
+            float          DistSq   = Math::Dot(ToCamera, ToCamera);
 
-            if (SceneCull.IsCameraVisible(Center, Radius, Cull.MaxDrawDistance, CameraPos))
+            // The captures that draw this mesh, which animate it, refine its LOD and keep its bones moving as the camera would.
+            uint32 NumCaptureViews = 0u;
+            for (int32 k = 0; k < CaptureLODViews.Num(); ++k)
+            {
+                const FCullView& View = CaptureLODViews[k];
+                if ((View.LayerMask & Prim.RenderLayers) != 0u && PassesCaptureFilter(View, Prim.CaptureFilterMask)
+                    && Frame.Views.CaptureLODFrusta[k].IntersectsSphere(Center, Radius))
+                {
+                    SeenByCaptures[NumCaptureViews++] = &View;
+                    const FVector3 ToCapture = Center - FVector3(View.ViewOriginAndFlags);
+                    DistSq = Math::Min(DistSq, Math::Dot(ToCapture, ToCapture));
+                }
+            }
+            const TSpan<const FCullView* const> CaptureViews(SeenByCaptures, NumCaptureViews);
+
+            if (NumCaptureViews > 0u || SceneCull.IsCameraVisible(Center, Radius, Cull.MaxDrawDistance, CameraPos))
             {
                 MeshComponent->LastRenderedTime = WorldTime;
             }
@@ -742,13 +760,18 @@ namespace Lumina
 
             const float MaxScale     = Prim.WorldMaxScale;
             const float ViewDistance = LODViewDistance(*CameraView, Sphere);
-            MeshComponent->LastBoneLODTolerance = ResolveBoneLODTolerance(FrameSettings, CameraView, Sphere, MaxScale, ViewDistance);
+            float BoneTolerance = ResolveBoneLODTolerance(FrameSettings, CameraView, Sphere, MaxScale, ViewDistance);
+            for (const FCullView* Capture : CaptureViews)
+            {
+                BoneTolerance = Math::Min(BoneTolerance, ResolveBoneLODTolerance(FrameSettings, Capture, Sphere, MaxScale, LODViewDistance(*Capture, Sphere)));
+            }
+            MeshComponent->LastBoneLODTolerance = BoneTolerance;
 
             // Only a follower skinning a borrowed pose can share the vertices its leader's other followers skin.
             const bool bSharesPose = BoneSliceBorrowed[i] && BoneArenaBase != kNoBoneSlice;
             EmitPrimitiveSurfaces(Local, Prim, Bindings + Prim.BindingBase,
                                   SurfaceDescs, NumSurfaceDescs,
-                                  BoneArenaBase, Target, FrameSettings, CameraView, Sphere, MaxScale, ViewDistance,
+                                  BoneArenaBase, Target, FrameSettings, CameraView, CaptureViews, Sphere, MaxScale, ViewDistance,
                                   bSharesPose ? &PreSkinShare : nullptr);
         }
     }
@@ -764,7 +787,6 @@ namespace Lumina
         auto& OpaqueDrawList            = Frame.Geometry.OpaqueDrawList;
         auto& TranslucentDrawList       = Frame.Geometry.TranslucentDrawList;
         auto& DeferredMaterials         = Frame.Geometry.DeferredMaterials;
-        auto& FrameStats                = Frame.FrameStats;
         uint32& NumDrawsPerView         = Frame.Views.NumDrawsPerView;
 
         const uint32 NumThreads = (uint32)ThreadLocal.Num();
@@ -781,12 +803,9 @@ namespace Lumina
         GpuPoseRequests.Reset();
         GpuPoseSamples.Reset();
 
-        uint64 TotalInstancesCulled = 0;
         for (uint32 t = 0; t < NumThreads; ++t)
         {
             FThreadLocalDrawData& Local = ThreadLocal[t];
-            TotalInstancesCulled += Local.Stats.NumInstancesCulled;
-
             BoneUploadRanges.Append(Local.BoneUploadRanges);
 
             // Each worker numbered its samples from zero, so they are rebased onto the merged list.
@@ -798,7 +817,6 @@ namespace Lumina
             }
             GpuPoseSamples.Append(Local.GpuPoseSamples);
         }
-        FrameStats.NumInstancesCulled += TotalInstancesCulled;
 
         FSceneBatchRegistry& Registry = ScenePrimitives.GetBatches();
         const uint32 NumBatches = Registry.Num();
@@ -887,7 +905,6 @@ namespace Lumina
 
         // Every slot keeps a command so IndirectDrawOffset stays a slot index, but only bound batches draw.
         const uint32 NumEmittedBatches = (uint32)DrawCommands.Num();
-        uint32 NumLiveBatches = 0;
         OpaqueDrawList.Reserve(NumEmittedBatches);
         TranslucentDrawList.Reserve(NumEmittedBatches);
         for (uint32 i = 0; i < NumEmittedBatches; ++i)
@@ -896,7 +913,6 @@ namespace Lumina
             {
                 continue;
             }
-            ++NumLiveBatches;
 
             const FMeshDrawCommand& Command = DrawCommands[i];
             if (Command.bTranslucent)
@@ -920,6 +936,5 @@ namespace Lumina
                 OpaqueDrawList.Add(i);
             }
         }
-        FrameStats.NumBatches = NumLiveBatches;
     }
 }

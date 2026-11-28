@@ -36,6 +36,9 @@ namespace Lumina
         uint32                  BRDFLutUAV = RHI::kInvalidHeapSlot;
         RHI::FManagedTexture    SMAAArea;
         RHI::FManagedTexture    SMAASearch;
+        // The rect light tables, LTC inverse transforms and their magnitude and Fresnel terms.
+        RHI::FManagedTexture    LTCMatrix;
+        RHI::FManagedTexture    LTCAmplitude;
 
         #if WITH_EDITOR
         // Indices match the IconFiles and IconSlots tables in DefaultSceneRenderer.

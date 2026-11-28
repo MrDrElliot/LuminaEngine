@@ -1,4 +1,4 @@
-#include <cstring>
+﻿#include <cstring>
 #include <iterator>
 #include "MaterialCompiler.h"
 #include "Assets/AssetTypes/Material/MaterialParameterCollection.h"
@@ -264,6 +264,7 @@ namespace Lumina
 			case EMaterialInputType::Texture: return "float4";
 			// A bindless index rather than a sampled color, the one non-float type the graph can carry.
 			case EMaterialInputType::TextureHandle: return "uint";
+			case EMaterialInputType::Surface: return "FMaterialPixelInputs";
 			default: return "float";
 		}
 	}
@@ -320,6 +321,31 @@ namespace Lumina
 	FString FMaterialCompiler::GetHLSLTypeName(EMaterialInputType Type)
 	{
 		return GetVectorType(Type);
+	}
+
+	FString FMaterialCompiler::ValueAsWidth(const FInputValue& Value, int32 Width)
+	{
+		const FString Swizzle = GetSwizzleForMask(Value.Mask);
+		const FString Expr    = Value.Value + Swizzle;
+		const int32 Count     = Swizzle.IsEmpty() ? Value.ComponentCount : GetComponentCount(Value.Mask);
+		if (Count == Width)
+		{
+			return Expr;
+		}
+		if (Count > Width)
+		{
+			return "(" + Expr + ")." + FString("xyzw").Left(Width);
+		}
+		if (Count <= 1)
+		{
+			return GetVectorType(Width) + "(" + Expr + ")";
+		}
+		FString Padded = GetVectorType(Width) + "(" + Expr;
+		for (int32 i = Count; i < Width; ++i)
+		{
+			Padded += ", 0.0";
+		}
+		return Padded + ")";
 	}
 
 	const FString& FMaterialCompiler::GetCurrentInlinePrefix() const
@@ -2749,6 +2775,59 @@ namespace Lumina
 		}
 	}
 
+	void FMaterialCompiler::VirtualTextureSample(CMaterialGraphNode* Node, CTexture* Texture, CMaterialInput* Position, bool bObjectOrigin,
+	                                             CMaterialOutput* RGBAOut, CMaterialOutput* RGBOut, CMaterialOutput* AlphaOut, CMaterialOutput* ValidOut)
+	{
+		const FString Prefix   = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+		const FString ValueVar = Prefix + "_Value";
+		const FString RGBVar   = Prefix + "_RGB";
+		const FString AlphaVar = Prefix + "_A";
+		const FString ValidVar = Prefix + "_Valid";
+
+		// Downstream nodes bind by ResolvedVar, so every output is declared before anything can bail.
+		AddRaw("float4 " + ValueVar + " = float4(0.0, 0.0, 0.0, 0.0);\n");
+		AddRaw("float " + ValidVar + " = 0.0;\n");
+		if (RGBAOut)  RGBAOut->ResolvedVar  = ValueVar;
+		if (RGBOut)   RGBOut->ResolvedVar   = RGBVar;
+		if (AlphaOut) AlphaOut->ResolvedVar = AlphaVar;
+		if (ValidOut) ValidOut->ResolvedVar = ValidVar;
+
+		if (!RejectInUI(Node, "Virtual Texture Sample"))
+		{
+			const int32 Index = Texture != nullptr && Texture->GetResourceID() >= 0 ? BindTexture(Texture, Node) : Constants::kIndexNone;
+			if (Index == Constants::kIndexNone)
+			{
+				EdNodeGraph::FError Error;
+				Error.Node        = Node;
+				Error.Name        = "Missing Virtual Texture";
+				Error.Description = "Virtual Texture Sample has no runtime virtual texture assigned.";
+				AddError(Error);
+			}
+			else
+			{
+				FString Default = "WorldPosition";
+				if (bObjectOrigin && CurrentMaterialType == EMaterialType::PBR)
+				{
+					ObjectPosition(Prefix + "_Pivot", Node);
+					Default = Prefix + "_Pivot";
+				}
+				const FInputValue PositionValue = GetTypedInputValue(Position, Default);
+				const FString PositionStr = PositionValue.ComponentCount >= 3 ? PositionValue.Value + ".xyz" : "float3(" + PositionValue.Value + ")";
+				AddRaw("FVirtualTextureSample " + Prefix + "_S = SampleVirtualTexture(GetMaterialTexture(MaterialIndex, " + Format("{}", Index) + "), ("
+					+ PositionStr + ").xz);\n");
+				AddRaw(ValueVar + " = " + Prefix + "_S.Value;\n");
+				AddRaw(ValidVar + " = " + Prefix + "_S.Valid;\n");
+			}
+		}
+
+		AddRaw("float3 " + RGBVar + " = " + ValueVar + ".rgb;\n");
+		AddRaw("float " + AlphaVar + " = " + ValueVar + ".a;\n");
+		RegisterDeriv(ValueVar, EDerivState::Zero);
+		RegisterDeriv(RGBVar, EDerivState::Zero);
+		RegisterDeriv(AlphaVar, EDerivState::Zero);
+		RegisterDeriv(ValidVar, EDerivState::Zero);
+	}
+
 	void FMaterialCompiler::MeshDistanceField(CMaterialGraphNode* Node, CMaterialInput* Position,
 	                                          CMaterialOutput* DistanceOut, CMaterialOutput* GradientOut,
 	                                          CMaterialOutput* ValidOut)
@@ -2895,8 +2974,8 @@ namespace Lumina
 	}
 
 	void FMaterialCompiler::WindAnimation(CMaterialGraphNode* Node, const FWindInputs& Inputs, int32 Octaves,
-	                                      bool bLODGate, CMaterialOutput* OffsetOut, CMaterialOutput* WeightOut,
-	                                      CMaterialOutput* NoiseOut)
+	                                      bool bLODGate, float GlobalWindReference, CMaterialOutput* OffsetOut,
+	                                      CMaterialOutput* WeightOut, CMaterialOutput* NoiseOut)
 	{
 		const FString Prefix    = GetCurrentInlinePrefix() + Node->GetNodeFullName();
 		const FString OffsetVar = Prefix + "_Offset";
@@ -2946,20 +3025,147 @@ namespace Lumina
 
 		AddRaw("float3 " + Prefix + "_P = " + PositionStr + ";\n");
 
+		// The weather's gusts already ride in its speed, so the node's own gust envelope stays out of the way.
+		FString WindDirectionStr = DirectionStr;
+		FString WindStrengthStr  = "(" + StrengthValue.Value + ")";
+		FString WindGustStr      = "(" + GustinessValue.Value + ")";
+		if (GlobalWindReference > 0.0f)
+		{
+			constexpr float kMaxGlobalWindRatio = 4.0f;
+			AddRaw("FGlobalWind " + Prefix + "_G = SampleGlobalWind(" + Prefix + "_P);\n");
+			WindDirectionStr = Prefix + "_G.Direction";
+			WindStrengthStr  = "((" + StrengthValue.Value + ") * min(" + Prefix + "_G.Speed / " + Format("{:.4f}", GlobalWindReference)
+			                 + ", " + Format("{:.1f}", kMaxGlobalWindRatio) + "))";
+			WindGustStr      = "0.0";
+		}
+
 		// Off, the weight is a literal, so the distance test folds away instead of leaving a dead compare.
 		const FString LODWeightStr = bLODGate
 			? "WindLODWeight(" + Prefix + "_P, (" + FadeStartValue.Value + "), (" + FadeEndValue.Value + "))"
 			: FString("1.0");
 
-		AddRaw("FWindResult " + Prefix + "_W = ComputeWind(" + Prefix + "_P, " + DirectionStr + ", "
-			+ "(" + StrengthValue.Value + "), (" + SpeedValue.Value + "), (" + FrequencyValue.Value + "), "
+		AddRaw("FWindResult " + Prefix + "_W = ComputeWind(" + Prefix + "_P, " + WindDirectionStr + ", "
+			+ WindStrengthStr + ", (" + SpeedValue.Value + "), (" + FrequencyValue.Value + "), "
 			+ "(" + LacunarityValue.Value + "), (" + GainValue.Value + "), " + Format("{}", Octaves) + ", "
-			+ "(" + MaskValue.Value + "), (" + PhaseValue.Value + "), (" + GustinessValue.Value + "), "
+			+ "(" + MaskValue.Value + "), (" + PhaseValue.Value + "), " + WindGustStr + ", "
 			+ LODWeightStr + ");\n");
 
 		AddRaw(OffsetVar + " = " + Prefix + "_W.Offset;\n");
 		AddRaw(WeightVar + " = " + Prefix + "_W.Weight;\n");
 		AddRaw(NoiseVar + " = " + Prefix + "_W.Noise;\n");
+	}
+
+	void FMaterialCompiler::MetallicFlakes(CMaterialGraphNode* Node, CMaterialInput* Position, CMaterialInput* Size, CMaterialInput* Tilt,
+	                                       CMaterialOutput* NormalOut, CMaterialOutput* GlintOut, CMaterialOutput* VisibilityOut)
+	{
+		const FString Prefix        = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+		const FString NormalVar     = Prefix + "_Normal";
+		const FString GlintVar      = Prefix + "_Glint";
+		const FString VisibilityVar = Prefix + "_Visibility";
+
+		// A flat normal and no flakes, so downstream nodes still bind if this node errors out below.
+		AddRaw("float3 " + NormalVar + " = float3(0.5, 0.5, 1.0);\n");
+		AddRaw("float " + GlintVar + " = 0.0;\n");
+		AddRaw("float " + VisibilityVar + " = 0.0;\n");
+		if (NormalOut)     NormalOut->ResolvedVar     = NormalVar;
+		if (GlintOut)      GlintOut->ResolvedVar      = GlintVar;
+		if (VisibilityOut) VisibilityOut->ResolvedVar = VisibilityVar;
+
+		if (RejectInUI(Node, "Metallic Flakes"))
+		{
+			return;
+		}
+		if (CurrentStage == EMaterialCompileStage::Vertex)
+		{
+			EdNodeGraph::FError Error;
+			Error.Node        = Node;
+			Error.Name        = "Metallic Flakes";
+			Error.Description = "Metallic Flakes needs pixel derivatives, so it only works in the pixel stage. Connect its Normal "
+			                    "to Bottom Normal rather than to anything reaching World Position Offset.";
+			AddError(Error);
+			return;
+		}
+
+		const FString SizeStr = ValueAsWidth(GetTypedInputValue(Size, 0.001f), 1);
+		const FString TiltStr = ValueAsWidth(GetTypedInputValue(Tilt, 0.5f), 1);
+
+		FString P;
+		FString Ddx = "WorldPosition_DDX";
+		FString Ddy = "WorldPosition_DDY";
+		if (Position->HasConnection())
+		{
+			const FInputValue PositionValue = GetTypedInputValue(Position, "WorldPosition");
+			P = ValueAsWidth(PositionValue, 3);
+			// Without a derivative the footprint falls back to the world position's, right whenever Position is in meters.
+			if (PositionValue.Deriv == EDerivState::Valid)
+			{
+				FInputValue Derivative = PositionValue;
+				Derivative.Value = PositionValue.DDX;
+				Ddx = ValueAsWidth(Derivative, 3);
+				Derivative.Value = PositionValue.DDY;
+				Ddy = ValueAsWidth(Derivative, 3);
+			}
+		}
+		else if (CurrentMaterialType == EMaterialType::PBR)
+		{
+			// Object space, so the flakes ride along with a moving or animated mesh.
+			const FString W2L = Prefix + "_W2L";
+			AddRaw("float4x4 " + W2L + " = MakeInstanceWorldToLocal(" + EmitInstanceModelMatrix(Prefix) + ");\n");
+			P   = "mul(" + W2L + ", float4(WorldPosition, 1.0)).xyz";
+			Ddx = "mul(" + W2L + ", float4(WorldPosition_DDX, 0.0)).xyz";
+			Ddy = "mul(" + W2L + ", float4(WorldPosition_DDY, 0.0)).xyz";
+		}
+		else
+		{
+			P = "WorldPosition";
+		}
+
+		const FString FlakesVar = Prefix + "_F";
+		AddRaw("FMetallicFlakes " + FlakesVar + " = EvaluateMetallicFlakes(" + P + ", " + Ddx + ", " + Ddy + ", "
+			+ SizeStr + ", " + TiltStr + ");\n");
+		AddRaw(NormalVar + " = " + FlakesVar + ".Normal;\n");
+		AddRaw(GlintVar + " = " + FlakesVar + ".Glint;\n");
+		AddRaw(VisibilityVar + " = " + FlakesVar + ".Visibility;\n");
+	}
+
+	void FMaterialCompiler::GlobalWind(CMaterialGraphNode* Node, CMaterialInput* Position, CMaterialOutput* DirectionOut, CMaterialOutput* SpeedOut,
+	                                   CMaterialOutput* GustOut, CMaterialOutput* ShelterOut, CMaterialOutput* VelocityOut)
+	{
+		const FString Prefix       = GetCurrentInlinePrefix() + Node->GetNodeFullName();
+		const FString DirectionVar = Prefix + "_Direction";
+		const FString SpeedVar     = Prefix + "_Speed";
+		const FString GustVar      = Prefix + "_Gust";
+		const FString ShelterVar   = Prefix + "_Shelter";
+		const FString VelocityVar  = Prefix + "_Velocity";
+
+		if (DirectionOut) DirectionOut->ResolvedVar = DirectionVar;
+		if (SpeedOut)     SpeedOut->ResolvedVar     = SpeedVar;
+		if (GustOut)      GustOut->ResolvedVar      = GustVar;
+		if (ShelterOut)   ShelterOut->ResolvedVar   = ShelterVar;
+		if (VelocityOut)  VelocityOut->ResolvedVar  = VelocityVar;
+
+		// Still air, which is also what a UI material gets since it has no scene to read.
+		GetActiveChunk().Append("float3 " + DirectionVar + " = float3(1.0, 0.0, 0.0);\n");
+		GetActiveChunk().Append("float " + SpeedVar + " = 0.0;\n");
+		GetActiveChunk().Append("float " + GustVar + " = 0.0;\n");
+		GetActiveChunk().Append("float " + ShelterVar + " = 0.0;\n");
+		GetActiveChunk().Append("float3 " + VelocityVar + " = float3(0.0, 0.0, 0.0);\n");
+		if (RejectInUI(Node, "Global Wind"))
+		{
+			return;
+		}
+
+		const FInputValue PositionValue = GetTypedInputValue(Position, "WorldPosition");
+		const FString PositionStr = PositionValue.ComponentCount >= 3
+		                          ? PositionValue.Value + ".xyz"
+		                          : "float3(" + PositionValue.Value + ")";
+
+		GetActiveChunk().Append("FGlobalWind " + Prefix + "_W = SampleGlobalWind(" + PositionStr + ");\n");
+		GetActiveChunk().Append(DirectionVar + " = " + Prefix + "_W.Direction;\n");
+		GetActiveChunk().Append(SpeedVar + " = " + Prefix + "_W.Speed;\n");
+		GetActiveChunk().Append(GustVar + " = " + Prefix + "_W.Gust;\n");
+		GetActiveChunk().Append(ShelterVar + " = " + Prefix + "_W.Shelter;\n");
+		GetActiveChunk().Append(VelocityVar + " = " + Prefix + "_W.Velocity;\n");
 	}
 
 	void FMaterialCompiler::PolarCoordinates(CMaterialInput* UV, CMaterialInput* Center)
@@ -3701,17 +3907,8 @@ namespace Lumina
 		FInputValue AngleV = GetTypedInputValue(Angle, 0.0f);
 		FInputValue PivotV = GetTypedInputValue(Pivot, "float3(0.0, 0.0, 0.0)");
 
-		auto Width = [](const FInputValue& V)
-		{
-			return GetSwizzleForMask(V.Mask).IsEmpty() ? V.ComponentCount : GetComponentCount(V.Mask);
-		};
-		auto AsFloat3 = [&](const FInputValue& V)
-		{
-			const FString Expr = V.Value + GetSwizzleForMask(V.Mask);
-			const int32 Count = Width(V);
-			return Count >= 3 ? "(" + Expr + ").xyz" : Count == 2 ? "float3(" + Expr + ", 0.0)" : "float3(" + Expr + ")";
-		};
-		const FString AngleStr = Width(AngleV) > 1 ? "(" + AngleV.Value + GetSwizzleForMask(AngleV.Mask) + ").x" : AngleV.Value + GetSwizzleForMask(AngleV.Mask);
+		auto AsFloat3 = [](const FInputValue& V) { return ValueAsWidth(V, 3); };
+		const FString AngleStr = ValueAsWidth(AngleV, 1);
 
 		GetActiveChunk().Append("float3 " + OwningNode + "_K = normalize(" + AsFloat3(AV) + ");\n");
 		GetActiveChunk().Append("float  " + OwningNode + "_S = sin(" + AngleStr + ");\n");

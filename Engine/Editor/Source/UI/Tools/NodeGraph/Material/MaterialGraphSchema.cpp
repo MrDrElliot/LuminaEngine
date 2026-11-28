@@ -1,4 +1,4 @@
-#include "MaterialGraphSchema.h"
+﻿#include "MaterialGraphSchema.h"
 
 #include "MaterialInput.h"
 #include "MaterialOutput.h"
@@ -42,10 +42,12 @@ namespace Lumina
             return true;
         }
 
-        const bool bFromHandle = PinInputType(From) == EMaterialInputType::TextureHandle;
-        const bool bToHandle   = PinInputType(To)   == EMaterialInputType::TextureHandle;
-
-        return bFromHandle == bToHandle;
+        // Handles and surfaces only meet their own kind, while every float width converts into every other.
+        auto Kind = [](EMaterialInputType Type)
+        {
+            return Type == EMaterialInputType::TextureHandle || Type == EMaterialInputType::Surface ? Type : EMaterialInputType::Float;
+        };
+        return Kind(PinInputType(From)) == Kind(PinInputType(To));
     }
 
     const FMaterialGraphSchema& GetMaterialGraphSchema()

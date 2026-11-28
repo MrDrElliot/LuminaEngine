@@ -19,6 +19,12 @@ namespace Lumina
         FJsonValue* PendingNode = nullptr;
         bool            bLoading    = false;
 
+        // Settings keep names, while text that must round-trip asset references writes and resolves GUIDs.
+        bool            bObjectGuids = false;
+
+        // The shortest decimal that reads back as Value, so 0.001f is written as 0.001 and not its double expansion.
+        static double ShortestDouble(float Value);
+
         bool IsReading() const override { return bLoading; }
         bool IsWriting() const override { return !bLoading; }
 
@@ -29,7 +35,14 @@ namespace Lumina
             if (PendingNode == nullptr) { return; }
             if (!bLoading)
             {
-                *PendingNode = FJsonValue(Value);
+                if constexpr (std::is_same_v<T, float>)
+                {
+                    *PendingNode = FJsonValue(ShortestDouble(Value));
+                }
+                else
+                {
+                    *PendingNode = FJsonValue(Value);
+                }
                 return;
             }
             if (PendingNode->IsBool())
@@ -102,7 +115,6 @@ namespace Lumina
             return *this;
         }
 
-        // Object refs in settings are stored as their string path (null when unset).
         FArchive& operator<<(CObject*& Value) override;
         FArchive& operator<<(FObjectHandle& Value) override;
     };
@@ -119,11 +131,11 @@ namespace Lumina
     {
     public:
 
-        FJsonStructuredArchive(FJsonValue& InRoot, bool bLoading);
+        FJsonStructuredArchive(FJsonValue& InRoot, bool bLoading, bool bObjectGuids = false);
 
         // Serialize a reflected struct/object's properties to/from the given JSON node.
-        static void SaveStruct(FJsonValue& OutNode, const CStruct* Type, void* Data);
-        static void LoadStruct(FJsonValue& InNode,  const CStruct* Type, void* Data);
+        static void SaveStruct(FJsonValue& OutNode, const CStruct* Type, void* Data, bool bObjectGuids = false);
+        static void LoadStruct(FJsonValue& InNode,  const CStruct* Type, void* Data, bool bObjectGuids = false);
 
         void EnterSlot(FSlotPosition Slot, bool bEnteringAttributedValue = false) override {}
         void LeaveSlot() override {}

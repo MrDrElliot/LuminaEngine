@@ -43,7 +43,7 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
         const float2 Quad   = float2(Corner.x, Corner.y * 2.0 - 1.0);
         const float3 World  = Splash.Position + Normal * 0.006 + (Tangent * Quad.x + Bitangent * Quad.y) * Radius;
 
-        FRainVertexOutput Out;
+        FRainVertexOutput Out = CulledRainVertex();
         Out.Position  = WorldToClip(World);
         Out.Color     = Color;
         Out.Coord     = Quad * 0.5 + 0.5;
@@ -70,7 +70,7 @@ FRainVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instance
         const float Height  = 0.18 * Scale * Rise * Corner.y;
         const float3 World  = Splash.Position + Normal * Height + (Tangent * cos(Angle) + Bitangent * sin(Angle)) * Radius;
 
-        FRainVertexOutput Out;
+        FRainVertexOutput Out = CulledRainVertex();
         Out.Position  = WorldToClip(World);
         Out.Color     = Color;
         Out.Coord     = float2(Corner.x * 0.5 + 0.5, Corner.y);

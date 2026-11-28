@@ -13,6 +13,11 @@ namespace Lumina
         return CAnimStateMachineGraph::StaticClass();
     }
 
+    CClass* CAnimGraphNode_StateEntry::GetSupportedGraphClass() const
+    {
+        return CAnimStateMachineGraph::StaticClass();
+    }
+
     CClass* CAnimGraphNode_StateAny::GetSupportedGraphClass() const
     {
         return CAnimStateMachineGraph::StaticClass();
@@ -63,33 +68,14 @@ namespace Lumina
         return BlendTree.Get();
     }
 
-    void CAnimGraphNode_State::PostCloneFrom(const CEdGraphNode* Source)
-    {
-        const CAnimGraphNode_State* SourceState = Cast<CAnimGraphNode_State>(Source);
-        CAnimationGraphNodeGraph* SourceTree = SourceState != nullptr ? SourceState->BlendTree.Get() : nullptr;
-
-        BlendTree = nullptr;
-        if (SourceTree == nullptr)
-        {
-            return;
-        }
-
-        // Cloned before EnsureSetup so the copied Output node is not joined by a second one.
-        AllocateBlendTree()->CloneContentFrom(SourceTree);
-    }
-
     CEdNodeGraph* CAnimGraphNode_State::GetOwnedSubGraph() const
     {
         return BlendTree.Get();
     }
 
-    void CAnimGraphNode_State::ReplaceSubGraphWithCopy()
+    CEdNodeGraph* CAnimGraphNode_State::AllocateOwnedSubGraph()
     {
-        CAnimationGraphNodeGraph* Shared = BlendTree.Get();
-        if (Shared != nullptr)
-        {
-            AllocateBlendTree()->CloneContentFrom(Shared);
-        }
+        return AllocateBlendTree();
     }
 
     CEdNodeGraph* CAnimGraphNode_State::GetEnterableSubGraph()

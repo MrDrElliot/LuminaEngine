@@ -83,6 +83,15 @@ float OrderedContactJitter(int2 Pixel)
     return (float(kContactBayer[(Pixel.y & 3) * 4 + (Pixel.x & 3)]) + 0.5) / 16.0;
 }
 
+// Light this close to the surface's own plane finds the neighboring facets of a faceted mesh, which read as thin false shadow lines.
+static const float kContactGrazingNdotL = 0.2;
+
+// The surface's own lighting is already dark at grazing angles, so the contact term fades out there rather than etching its facets.
+float ContactGrazingFade(float Contact, float NdotL)
+{
+    return lerp(1.0, Contact, smoothstep(0.0, kContactGrazingNdotL, NdotL));
+}
+
 // Depth an occluder in contact may extend behind its front face, as a fraction of view depth so precision loss far away is covered.
 static const float kContactThicknessPerMeter = 0.02;
 

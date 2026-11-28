@@ -23,6 +23,9 @@ namespace Lumina
 
         // Stored inverted so a material saved before the flag existed still reads as receiving decals.
         NoDecals    = 1 << 6,
+
+        // The graph drives an extended lobe, so the deferred path writes and reads the GBuffer extension for it.
+        Extended    = 1 << 7,
     };
 
     ENUM_CLASS_FLAGS(EMaterialGPUFlags);

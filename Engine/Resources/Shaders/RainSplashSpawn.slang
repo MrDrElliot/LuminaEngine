@@ -93,18 +93,31 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
         return;
     }
 
-    if (WeatherRandom(Seed) >= RainExposure(W, Center))
+    const float Exposure = RainExposure(W, Center);
+    if (WeatherRandom(Seed) >= Exposure)
     {
         return;
     }
+
+    // The same standing water the surface shades, so splashes ring where the puddles are and spray where they are not.
+    float Flat       = saturate((Normal.y - 0.9) / 0.08);
+    float Depression = 0.0;
+    const FRainGroundShape Ground = RainGroundShape(W, Center);
+    if (Ground.bValid)
+    {
+        Flat       = saturate((Ground.Normal.y - 0.97) / 0.025);
+        Depression = Ground.Depression;
+    }
+    const float Puddle = PuddleAmountAt(W, Center, Flat, Depression, Exposure);
 
     FRainSplash Splash;
     Splash.Position      = Center;
     Splash.SpawnTime     = W.Surface2.z - WeatherRandom(Seed) * Pass().SpawnWindow;
     Splash.PackedNormal  = PackNormal(Normal);
-    const float3 Light   = RainLightAt(Center + Normal * 0.05);
+    const float3 ToEye   = normalize(GetCameraPosition() - Center);
+    const float3 Light   = RainLightAt(Center + Normal * 0.05, ToEye, W.RainOptics.y);
     Splash.PackedLightRG = PackHalf2(Light.rg);
-    Splash.PackedLightB  = PackHalf(Light.b);
+    Splash.PackedLightB  = (PackHalf(Light.b) & 0xFFFFu) | (PackHalf(Puddle) << 16u);
     Splash.Seed          = PCGHash(Seed) | 1u;
 
     const uint Capacity = Pass().Splashes.Count;

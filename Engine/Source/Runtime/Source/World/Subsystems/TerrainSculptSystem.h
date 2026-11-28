@@ -1,11 +1,16 @@
 #pragma once
 
+#include "Core/Templates/NumericLimits.h"
+
 #include "Core/Math/Math.h"
+#include "Memory/SmartPtr.h"
 #include "Platform/GenericPlatform.h"
 
 namespace Lumina
 {
     struct STerrainComponent;
+    struct FTerrainSculptWindow;
+    class FTerrainStore;
 
     // What a brush stroke does to the terrain, in the order the edit mode's palette and number keys list them.
     enum class ETerrainBrushMode : uint8
@@ -85,7 +90,7 @@ namespace Lumina
     // A terrain's heights as the renderer draws them, which a caller may hold a copy of and sample from any thread.
     struct RUNTIME_API FTerrainHeightView
     {
-        const float* Heights       = nullptr;
+        TSharedPtr<FTerrainStore> Store;
         int32        Resolution    = 0;
         float        TileWorldSize = 0.0f;
         float        MaxHeight     = 0.0f;
@@ -108,7 +113,8 @@ namespace Lumina
         static float FalloffWeight(float Distance, float Radius, float Falloff, ETerrainBrushFalloff Shape);
 
         // Raycast against the current heightmap, where TerrainOrigin is the entity position the terrain centers on.
-        static bool Raycast(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, const FVector3& RayOrigin, const FVector3& RayDir, FVector3& OutHit);
+        static bool Raycast(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, const FVector3& RayOrigin, const FVector3& RayDir, FVector3& OutHit,
+                            float MaxDistance = TNumericLimits<float>::Max());
 
         // Bilinear surface height at (WorldX, WorldZ), false outside the terrain footprint.
         static bool SampleHeight(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, float WorldX, float WorldZ, float& OutHeight);
@@ -116,17 +122,17 @@ namespace Lumina
         // Surface normal at (WorldX, WorldZ) by central differences, world up off the terrain.
         static FVector3 SampleNormal(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, float WorldX, float WorldZ);
 
-        // Null heights when the heightmap does not hold Resolution squared samples.
+        // A null store when the terrain has no data yet.
         static FTerrainHeightView MakeHeightView(const STerrainComponent& Terrain, const FVector3& TerrainOrigin);
 
     private:
-        static void ApplySculpt (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
-        static void ApplyFlatten(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
-        static void ApplySmooth (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
-        static void ApplyNoise  (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
-        static void ApplyRamp   (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
-        static void ApplyErode  (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
-        static void ApplyTerrace(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
-        static void ApplyPaint  (STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
+        static void ApplySculpt (const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
+        static void ApplyFlatten(const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
+        static void ApplySmooth (const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
+        static void ApplyNoise  (const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
+        static void ApplyRamp   (const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
+        static void ApplyErode  (const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
+        static void ApplyTerrace(const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
+        static void ApplyPaint  (const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect);
     };
 }

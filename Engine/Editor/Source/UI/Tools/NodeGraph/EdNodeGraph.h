@@ -8,6 +8,7 @@
 #include "Containers/Vector.h"
 #include "Containers/Function.h"
 #include "Containers/String.h"
+#include "Core/Json/Json.h"
 #include "Core/Object/ObjectHandleTyped.h"
 #include "UI/Tools/Transactions/NodeGraphSnapshotCommand.h"
 #include "GraphEditor.h"
@@ -35,6 +36,14 @@ namespace Lumina
         CenterY,
         DistributeX,   // even gaps between left/right edges, existing order preserved
         DistributeY,
+    };
+
+    enum class EGraphImport : uint8
+    {
+        // Every node class and no selection, for rebuilding a whole sub-graph.
+        Whole,
+        // Only classes this graph offers, selected, as a user paste lands.
+        Paste,
     };
 
     // Wires bundled together where they cross the tie, each wire named by its output and input pin ids.
@@ -145,17 +154,24 @@ namespace Lumina
         NODISCARD bool NeedsCompile() const { return GetTreeContentVersion() != CompiledContentVersion; }
         void MarkCompiled() { CompiledContentVersion = GetTreeContentVersion(); }
 
-        // Links with both endpoints in the set are rebuilt, the rest dropped. Returns each source node's copy.
+        // The clipboard text of a node set, positions relative to Pivot, links inside the set and owned sub-graphs nested.
+        NODISCARD FJsonValue ExportNodes(const TVector<CEdGraphNode*>& SourceNodes, ImVec2 Pivot) const;
+
+        // Every node, as a sub-graph copy carries them.
+        NODISCARD FJsonValue ExportAllNodes() const;
+
+        // Builds exported nodes at Offset and maps each exported node id to its new node.
+        THashMap<int64, CEdGraphNode*> ImportNodes(const FJsonValue& Exported, ImVec2 Offset, EGraphImport Mode);
+
+        // A round trip through the clipboard format that leaves the clipboard alone. Returns each source node's copy.
         THashMap<CEdGraphNode*, CEdGraphNode*> CloneNodes(const TVector<CEdGraphNode*>& SourceNodes, ImVec2 Delta);
 
         // Deletable selected nodes plus the canvas-space center of their boxes.
         void CollectSelectedNodesForClone(TVector<CEdGraphNode*>& OutNodes, ImVec2& OutPivot);
 
-        // Deep-copies Source's nodes, links and layout into this empty graph, with no editor context.
-        void CloneContentFrom(const CEdNodeGraph* Source);
-
-        // Hook for graph data keyed by node id, handed every source node mapped to its clone.
-        virtual void PostCloneContent(const CEdNodeGraph* Source, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones) {}
+        // Graph data keyed by node id, such as state transitions, carried beside the exported nodes.
+        virtual void ExportExtras(const THashSet<int64>& NodeIDs, FJsonValue& Out) const {}
+        virtual void ImportExtras(const FJsonValue& Extras, const THashMap<int64, CEdGraphNode*>& Created) {}
 
         // Gives any sub-graph reached twice its own copy, repairing assets saved when clones aliased.
         uint32 UnaliasSubGraphs(THashSet<CEdNodeGraph*>& Visited);
@@ -195,6 +211,12 @@ namespace Lumina
 
         // Selects and frames these nodes on the next draw, or frames every node when the list is empty.
         void QueueFrameNodes(const TVector<int64>& NodeIDs);
+
+        // Ctrl+C for these nodes, or for the selection when empty. Returns the text it put on the system clipboard.
+        FString CopyToClipboard(const TVector<int64>& NodeIDs);
+
+        // Ctrl+V of Text at a canvas point, or of the system clipboard when Text is empty. Maps exported ids to new nodes.
+        THashMap<int64, CEdGraphNode*> PasteText(FStringView Text, ImVec2 CanvasPos);
 
         // The canvas rectangle on screen at the last draw and its screen pixels per canvas unit, false before the first draw.
         bool GetVisibleCanvasRect(ImVec2& OutMin, ImVec2& OutMax, float& OutZoom) const;
@@ -386,7 +408,6 @@ namespace Lumina
         void HandleLinkDrag();
         void HandleStroke(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links);
         void DeleteSelection(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links);
-        void PasteClipboard(ImVec2 CanvasPos);
         void DrawCanvasPopups(const TVector<TPair<CEdNodeGraphPin*, CEdNodeGraphPin*>>& Links);
         void SubmitZipTies();
 

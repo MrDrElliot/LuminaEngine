@@ -313,6 +313,15 @@ namespace Lumina
     };
 
     REFLECT()
+    class EDITOR_API CComponentVisualizer_WindBlocker : public CComponentVisualizer
+    {
+        GENERATED_BODY()
+    public:
+        CStruct* GetSupportedComponentType() const override;
+        void Draw(IPrimitiveDrawInterface* PDI, ECS::FRegistry& Registry, ECS::FEntity Entity) override;
+    };
+
+    REFLECT()
     class EDITOR_API CComponentVisualizer_AudioVolume : public CComponentVisualizer
     {
         GENERATED_BODY()

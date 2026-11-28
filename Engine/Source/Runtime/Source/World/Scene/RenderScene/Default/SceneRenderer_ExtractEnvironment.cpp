@@ -48,9 +48,16 @@ namespace Lumina
         Frame.Volumetrics.bIBLDirty                = false;
         Frame.Volumetrics.bIBLConvolutionDirty     = false;
 
-        EnvironmentView.ForEach([&bHasEnvironment, &Frame, &EnvironmentParams, &ActiveEnv] (const SEnvironmentComponent& Env)
+        EnvironmentView.ForEach([&bHasEnvironment, &Frame, &EnvironmentParams, &ActiveEnv] (const SEnvironmentComponent& Source)
         {
-            ActiveEnv = &Env;
+            ActiveEnv = &Source;
+
+            // The storm look is the renderer's own copy, so the level's component never changes under the weather.
+            SEnvironmentComponent Env = Source;
+            if (Frame.Weather.bActive)
+            {
+                Frame.Weather.State.Params.Environment.ApplyTo(Env);
+            }
 
             // bRenderSky gates the sky pass; ambient/skylight still flow when off (indoor scenes).
             bHasEnvironment = Env.bRenderSky;

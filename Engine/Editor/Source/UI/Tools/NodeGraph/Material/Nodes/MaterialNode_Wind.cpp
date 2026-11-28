@@ -45,6 +45,23 @@ namespace Lumina
         Inputs.FadeEnd    = FadeEnd;
 
         Compiler.WindAnimation(this, Inputs, Math::Clamp(Octaves, 1, 6), bLODGate,
+                               bUseGlobalWind ? Math::Max(ReferenceWindSpeed, 0.1f) : 0.0f,
                                OffsetOut, WeightOut, NoiseOut);
+    }
+
+    void CMaterialExpression_GlobalWind::BuildNode()
+    {
+        Position = MakeIn(this, "Position", EMaterialInputType::Float3);
+
+        DirectionOut = MakeOut(this, "Direction", EMaterialInputType::Float3);
+        SpeedOut     = MakeOut(this, "Speed",     EMaterialInputType::Float);
+        GustOut      = MakeOut(this, "Gust",      EMaterialInputType::Float);
+        ShelterOut   = MakeOut(this, "Shelter",   EMaterialInputType::Float);
+        VelocityOut  = MakeOut(this, "Velocity",  EMaterialInputType::Float3);
+    }
+
+    void CMaterialExpression_GlobalWind::GenerateDefinition(FMaterialCompiler& Compiler)
+    {
+        Compiler.GlobalWind(this, Position, DirectionOut, SpeedOut, GustOut, ShelterOut, VelocityOut);
     }
 }

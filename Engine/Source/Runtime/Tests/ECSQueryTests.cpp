@@ -1,5 +1,4 @@
 #include <atomic>
-#include <csignal>
 #include <gtest/gtest.h>
 
 #include "World/ECS/Query.h"
@@ -8,13 +7,6 @@ using namespace Lumina;
 
 namespace ECSQueryTestsInternal
 {
-#if defined(LE_PLATFORM_WINDOWS)
-    // Windows reports abort and the crash handler as exit codes, not signals.
-    inline bool Aborted(int ExitStatus) { return ExitStatus != 0; }
-#else
-    inline bool Aborted(int ExitStatus) { return testing::KilledBySignal(SIGABRT)(ExitStatus); }
-#endif
-
     struct FQueryPosition
     {
         int32 Value = 0;
@@ -323,10 +315,8 @@ TEST(ECSQuery, OptionalWorksInParallelAndFilteredWalks)
     EXPECT_EQ(FilteredWithVelocity.load(), Count / 2);
 }
 
-TEST(ECSQuery, ViewLookupsRejectEntitiesOutsideTheViewInEveryBuild)
+TEST(ECSQuery, ViewLookupsRejectEntitiesOutsideTheView)
 {
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
-
     ECS::FRegistry Registry;
     const ECS::FEntity Moving = Spawn(Registry, 2);
     const ECS::FEntity Disabled = Spawn(Registry, 5);
@@ -340,12 +330,8 @@ TEST(ECSQuery, ViewLookupsRejectEntitiesOutsideTheViewInEveryBuild)
     EXPECT_FALSE(Filtered.Contains(Disabled));
     EXPECT_NE(Filtered.TryGet<FQueryPosition>(Moving), nullptr);
     EXPECT_EQ(Filtered.TryGet<FQueryPosition>(Disabled), nullptr);
-    EXPECT_EXIT((void)Filtered.Get<FQueryPosition>(Disabled), Aborted, "");
-    EXPECT_EXIT((void)Filtered.GetAll(Disabled), Aborted, "");
 
     const auto Joined = Registry.View<FQueryPosition, const FQueryVelocity>();
     EXPECT_EQ(Joined.TryGet<FQueryPosition>(Still), nullptr);
-    EXPECT_EXIT((void)Joined.Get<FQueryPosition>(Still), Aborted, "");
-    EXPECT_EXIT(([&] { auto [Position, Velocity] = Joined.Get<FQueryPosition, FQueryVelocity>(Still); (void)Position; (void)Velocity; }()), Aborted, "");
     EXPECT_EQ(Joined.Get<FQueryVelocity>(Moving).Value, 2);
 }

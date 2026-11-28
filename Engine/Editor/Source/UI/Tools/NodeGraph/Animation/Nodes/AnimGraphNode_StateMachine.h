@@ -41,11 +41,8 @@ namespace Lumina
         // Returns (creating if needed) the state machine canvas graph.
         CAnimStateMachineGraph* GetOrCreateStateMachineGraph();
 
-        // Without this a duplicated machine shares the original's canvas and edits track both.
-        void PostCloneFrom(const CEdGraphNode* Source) override;
-
         CEdNodeGraph* GetOwnedSubGraph() const override;
-        void ReplaceSubGraphWithCopy() override;
+        CEdNodeGraph* AllocateOwnedSubGraph() override;
 
         // Fresh and un-set-up, so a caller can clone into it before EnsureSetup adds an Entry node.
         CAnimStateMachineGraph* AllocateStateMachineGraph();

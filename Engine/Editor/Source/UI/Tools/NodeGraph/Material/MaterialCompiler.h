@@ -152,6 +152,8 @@ namespace Lumina
         // Set by the output node when its World Position Offset pin is wired, which tells the renderer whether the mesh keeps its shape.
         void SetWorldPositionOffsetDriven(bool bDriven) { bWorldPositionOffsetDriven = bDriven; }
         bool IsWorldPositionOffsetDriven() const { return bWorldPositionOffsetDriven; }
+        void SetExtendedSurfaceDriven(bool bDriven) { bExtendedSurfaceDriven = bDriven; }
+        bool IsExtendedSurfaceDriven() const { return bExtendedSurfaceDriven; }
 
         // Errors at Node and returns false on the vertex stage. Call first in GenerateDefinition.
         bool RequirePixelStage(CMaterialGraphNode* Node, const FString& NodeKindName);
@@ -272,6 +274,10 @@ namespace Lumina
         void TriplanarSample(const FString& ID, CMaterialGraphNode* Node, int32 TextureIndex,
                              const FTriplanarInputs& Inputs, FStringView SamplerName, bool bNormalMap);
 
+        // A runtime virtual texture at a world position, the pixel's own unless Position is wired or bObjectOrigin asks for the instance's pivot.
+        void VirtualTextureSample(CMaterialGraphNode* Node, CTexture* Texture, CMaterialInput* Position, bool bObjectOrigin,
+                                  CMaterialOutput* RGBAOut, CMaterialOutput* RGBOut, CMaterialOutput* AlphaOut, CMaterialOutput* ValidOut);
+
         // Mesh distance field.
         void MeshDistanceField(CMaterialGraphNode* Node, CMaterialInput* Position,
                                CMaterialOutput* DistanceOut, CMaterialOutput* GradientOut, CMaterialOutput* ValidOut);
@@ -305,8 +311,13 @@ namespace Lumina
             CMaterialInput* FadeStart  = nullptr;
             CMaterialInput* FadeEnd    = nullptr;
         };
-        void WindAnimation(CMaterialGraphNode* Node, const FWindInputs& Inputs, int32 Octaves, bool bLODGate,
+        // GlobalWindReference above zero follows the weather's wind, bending by Strength at that many meters per second.
+        void WindAnimation(CMaterialGraphNode* Node, const FWindInputs& Inputs, int32 Octaves, bool bLODGate, float GlobalWindReference,
                            CMaterialOutput* OffsetOut, CMaterialOutput* WeightOut, CMaterialOutput* NoiseOut);
+        void GlobalWind(CMaterialGraphNode* Node, CMaterialInput* Position, CMaterialOutput* DirectionOut, CMaterialOutput* SpeedOut,
+                        CMaterialOutput* GustOut, CMaterialOutput* ShelterOut, CMaterialOutput* VelocityOut);
+        void MetallicFlakes(CMaterialGraphNode* Node, CMaterialInput* Position, CMaterialInput* Size, CMaterialInput* Tilt,
+                            CMaterialOutput* NormalOut, CMaterialOutput* GlintOut, CMaterialOutput* VisibilityOut);
 
         // Every stage declares both names, so the vertex lane returns the same value for either flag.
         void WorldPos(const FString& ID, bool bCameraRelative, bool bExcludeOffsets, CMaterialGraphNode* Node = nullptr);
@@ -547,6 +558,9 @@ namespace Lumina
         // Public so the material-function call node can declare its argument and result locals.
         static FString GetHLSLTypeName(EMaterialInputType Type);
 
+        // The value's expression with its mask applied, truncated or zero-padded to Width components.
+        static FString ValueAsWidth(const FInputValue& Value, int32 Width);
+
         // Per-call prefixes compose with the current one so repeated and nested inlined calls never collide.
         void PushInlinePrefix(const FString& Prefix) { InlinePrefixStack.Add(Prefix); }
         void PopInlinePrefix() { if (!InlinePrefixStack.IsEmpty()) { InlinePrefixStack.Pop(); } }
@@ -593,6 +607,7 @@ namespace Lumina
         CMaterialOutput* PreviewOutput = nullptr;
         bool bMasked = false;
         bool bWorldPositionOffsetDriven = false;
+        bool bExtendedSurfaceDriven = false;
 
         TVector<TStrongObjectPtr<CTexture>> BoundImages;
 

@@ -3,15 +3,45 @@
 
 #include "Core/Object/Class.h"
 #include "Core/Object/Object.h"
+#include "Core/Object/ObjectCore.h"
+#include "GUID/GUID.h"
+#include <charconv>
 
 namespace Lumina
 {
+    double FJsonLeafArchive::ShortestDouble(float Value)
+    {
+        char Digits[32];
+        const std::to_chars_result Written = std::to_chars(Digits, Digits + sizeof(Digits), Value);
+        double Shortest = Value;
+        std::from_chars(Digits, Written.ptr, Shortest);
+        return Shortest;
+    }
+
     FArchive& FJsonLeafArchive::operator<<(CObject*& Value)
     {
         if (PendingNode == nullptr) { return *this; }
+        if (bObjectGuids)
+        {
+            if (!bLoading)
+            {
+                *PendingNode = Value ? FJsonValue(Value->GetGUID().ToString()) : FJsonValue("");
+                return *this;
+            }
+
+            const TOptional<FGuid> Guid = PendingNode->IsString() ? FGuid::TryParse(PendingNode->AsString()) : NullOpt;
+            Value = nullptr;
+            if (Guid.IsSet() && Guid->IsValid())
+            {
+                Value = FindObject<CObject>(*Guid);
+                Value = Value != nullptr ? Value : StaticLoadObject(*Guid);
+            }
+            return *this;
+        }
+
         if (bLoading)
         {
-            // Path-based resolve is not wired for settings; leave unset.
+            // Settings store only the name, which does not resolve.
             Value = nullptr;
         }
         else
@@ -28,27 +58,28 @@ namespace Lumina
     }
 
 
-    FJsonStructuredArchive::FJsonStructuredArchive(FJsonValue& InRoot, bool bLoading)
+    FJsonStructuredArchive::FJsonStructuredArchive(FJsonValue& InRoot, bool bLoading, bool bObjectGuids)
         : Private::FJsonLeafHolder()
         , IStructuredArchive(Leaf)
     {
         RootNode = &InRoot;
         Leaf.PendingNode = RootNode;
         Leaf.bLoading = bLoading;
+        Leaf.bObjectGuids = bObjectGuids;
         Leaf.SetFlag(bLoading ? EArchiverFlags::Reading : EArchiverFlags::Writing);
     }
 
-    void FJsonStructuredArchive::SaveStruct(FJsonValue& OutNode, const CStruct* Type, void* Data)
+    void FJsonStructuredArchive::SaveStruct(FJsonValue& OutNode, const CStruct* Type, void* Data, bool bObjectGuids)
     {
-        FJsonStructuredArchive Ar(OutNode, false);
+        FJsonStructuredArchive Ar(OutNode, false, bObjectGuids);
         FArchiveSlot Root = Ar.Open();
         FArchiveRecord Record = Root.EnterRecord();
         Type->SerializeProperties(Record, Data);
     }
 
-    void FJsonStructuredArchive::LoadStruct(FJsonValue& InNode, const CStruct* Type, void* Data)
+    void FJsonStructuredArchive::LoadStruct(FJsonValue& InNode, const CStruct* Type, void* Data, bool bObjectGuids)
     {
-        FJsonStructuredArchive Ar(InNode, true);
+        FJsonStructuredArchive Ar(InNode, true, bObjectGuids);
         FArchiveSlot Root = Ar.Open();
         FArchiveRecord Record = Root.EnterRecord();
         Type->SerializeProperties(Record, Data);

@@ -29,12 +29,13 @@ namespace Lumina
         PostProcess,
         Textures,
         AntiAliasing,
+        Reflections,
     };
 
     // A project replaces any group of the engine's table by naming it in /Config/Scalability.json.
     namespace Scalability
     {
-        inline constexpr int32 NumGroups = 6;
+        inline constexpr int32 NumGroups = 7;
 
         RUNTIME_API void ApplyGroup(EScalabilityGroup Group, EQualityLevel Level);
 

@@ -567,6 +567,8 @@ namespace Lumina::ECS
         swap(ActiveStorages, Other.ActiveStorages);
         swap(NamedStorages, Other.NamedStorages);
         Context.Swap(Other.Context);
+        // Its listener is the transform dirty state held in Context, which would otherwise stop hearing about reparents.
+        ElementOps::SwapElements(HierarchyChanged, Other.HierarchyChanged);
         ElementOps::SwapElements(Hierarchy, Other.Hierarchy);
 
         const uint32 FreeHead = FreeEntityHead;

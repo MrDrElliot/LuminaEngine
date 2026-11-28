@@ -1,5 +1,6 @@
 #pragma once
 #include "SceneGlobals.slang"
+#include "TerrainCommon.slang"
 #include "Noise.slang"
 #include "WaveAtomics.slang"
 
@@ -119,13 +120,6 @@ struct FParticleShape
     float4  Params;              // x strength, y attenuation, z directionality
 };
 
-struct FParticleTerrain
-{
-    float4  OriginSize;          // x origin X, y origin Z, z tile world size, w base height
-    float4  HeightParams;        // x max height
-    uint4   Textures;            // x heightmap, y normal map
-};
-
 // Matches FParticleSimArgs in DefaultSceneRenderer.cpp.
 struct FParticleSimArgs
 {
@@ -148,7 +142,6 @@ struct FParticleSimArgs
     GPUSpan<float4>         RibbonHistory;
     GPUSpan<FParticleShape> Attractors;
     GPUSpan<FParticleShape> Colliders;
-    GPUSpan<FParticleTerrain> Terrains;
     // The grid stages read and the one they write, which swap after every stage dispatch.
     GPUSpan<float>          GridRead;
     GPUSpan<float>          GridWrite;
@@ -400,25 +393,29 @@ bool CollideWithShapes(inout float3 Position, inout float3 Velocity, float Resti
         bHit = true;
     }
 
-    const uint TerrainCount = bTerrain ? SimArgs().Terrains.Count : 0u;
+    const GPUSpan<FTerrainRecord> Terrains = GetSceneRoot().Terrains;
+    const uint TerrainCount = bTerrain ? Terrains.Count : 0u;
     for (uint Index = 0u; Index < TerrainCount; ++Index)
     {
-        const FParticleTerrain Terrain = SimArgs().Terrains.Get(Index);
-        const float2 UV = (Position.xz - Terrain.OriginSize.xy) / Terrain.OriginSize.z + 0.5;
-        if (any(saturate(UV) != UV))
+        FTerrainRecord* Terrain = Terrains.At(Index);
+        if (Terrain.PageTable.IsEmpty() || !TerrainCovers(Terrain, Position.xz))
         {
             continue;
         }
 
-        const float Ground = Terrain.OriginSize.w + FTexture2D(Terrain.Textures.x).SampleLevel(Samplers::LinearClamp, UV, 0.0).r * Terrain.HeightParams.x;
+        const float2       SamplePos = TerrainSamplePos(Terrain, Position.xz);
+        const FTerrainPage Page      = TerrainFindPage(Terrain, int2(floor(SamplePos)), 0u);
+        if (!Page.bValid)
+        {
+            continue;
+        }
+        const float Ground = Terrain.Params.WorldOriginY.x + TerrainPageHeight(Terrain, Page, SamplePos);
         if (Position.y >= Ground + Radius)
         {
             continue;
         }
 
-        // The terrain packs only the XZ slope, so Y comes back from unit length.
-        const float2 SlopeXZ = FTexture2D(Terrain.Textures.y).SampleLevel(Samplers::LinearClamp, UV, 0.0).rg * 2.0 - 1.0;
-        const float3 Normal  = float3(SlopeXZ.x, sqrt(saturate(1.0 - dot(SlopeXZ, SlopeXZ))), SlopeXZ.y);
+        const float3 Normal = TerrainPageNormal(Terrain, Page, SamplePos);
         Position.y = Ground + Radius;
         ReflectOffSurface(Velocity, Normal, Restitution, Friction);
         HitNormal = Normal;

@@ -88,9 +88,10 @@ void MeshMain(
     out indices    uint3            Tris[MESHLET_MAX_TRIANGLES],
     out primitives FVisPrimitive    Prims[MESHLET_MAX_TRIANGLES])
 {
-    // The slot is the draw-list index, which VisID packs and DeferredMaterial resolves back through.
+    // The slot is the draw-list index, packed into VisID relative to this view's region and resolved back the same way.
     uint MeshletSlot;
     FMeshletRef Ref = ResolveMeshletForWorkgroup(DrawIndex, GroupID.x, MeshletSlot);
+    const uint VisSlot = MeshletSlot - VisDrawBase();
 
     const uint VertCount = Ref.M.VertexCount;
     const uint TriCount  = Ref.M.TriangleCount;
@@ -142,8 +143,8 @@ void MeshMain(
             const uint  t      = min(StoreT, TriCount - 1u);
             const uint3 Idx    = UnpackMeshletTriangleSafe(Ref, t);
 
-            // Only the camera's views have to fit the ID range, and a slot past it would alias the proxy bit.
-            const bool bCull = MeshletSlot > VISBUFFER_MAX_MESHLET_SLOTS
+            // Counted from the view's own region, and a slot past the range would alias the proxy bit.
+            const bool bCull = VisSlot >= VISBUFFER_MAX_MESHLET_SLOTS
                              | IsDegenerateTriangleIndices(Idx)
                              | IsMeshletTriangleCulled(ShuffleMeshletClip(Clip, Idx.x),
                                                        ShuffleMeshletClip(Clip, Idx.y),
@@ -154,7 +155,7 @@ void MeshMain(
             {
                 // The slot is the source triangle index, so the deferred pass re-fetches it from the meshlet's own array.
                 Tris[StoreT]                = Idx;
-                Prims[StoreT].VisID         = PackVisID(MeshletSlot, StoreT);
+                Prims[StoreT].VisID         = PackVisID(VisSlot, StoreT);
                 Prims[StoreT].CullPrimitive = bCull;
             }
         }
@@ -176,8 +177,9 @@ FVisVertexStageOutput VertexMain(uint VertexIndex   : SV_VulkanVertexID,
     const FMeshletCorner Corner = ResolveMeshletCorner(DrawIndex, InstanceIndex, VertexIndex);
 
     FVisVertexStageOutput Out = (FVisVertexStageOutput)0;
-    Out.VisID = PackVisID(Corner.MeshletSlot, Corner.TriIdx);
-    if (Corner.bValid && Corner.MeshletSlot <= VISBUFFER_MAX_MESHLET_SLOTS)
+    const uint VisSlot = Corner.MeshletSlot - VisDrawBase();
+    Out.VisID = PackVisID(VisSlot, Corner.TriIdx);
+    if (Corner.bValid && VisSlot < VISBUFFER_MAX_MESHLET_SLOTS)
     {
         Out.Vertex = VisBufferVertex(Corner.Ref, Corner.LocalVertex, LoadVisVertexContext(Corner.Ref));
     }

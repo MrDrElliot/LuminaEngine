@@ -182,6 +182,24 @@ struct FMaterialPixelInputs
     // Foliage shading model only, and it costs the emissive channels when that model is selected.
     float3 Transmission;
     float  Thickness;
+
+    // Subsurface shading model only, stored where foliage keeps its transmission.
+    float3 SubsurfaceColor;
+    float  SubsurfaceRadius;
+
+    // Extended lobes, each of which leaves the surface as the base model at its default.
+    float  Anisotropy;
+    float  AnisotropyRotation;
+    float  SecondRoughness;
+    float  SecondRoughnessWeight;
+    float  FuzzAmount;
+    float3 FuzzColor;
+    float  FuzzRoughness;
+    float  ThinFilmThickness;
+    float  ThinFilmIOR;
+
+    // Clearcoat model only, the tangent-space normal of the base beneath the coat, such as metallic flakes or a weave.
+    float3 BottomNormal;
 };
 
 // Every producer of FMaterialPixelInputs must start from this so a new field never reads as garbage.
@@ -201,7 +219,63 @@ FMaterialPixelInputs DefaultMaterialInputs()
     M.ClearcoatRoughness = 0.03;
     M.Transmission       = float3(0.0, 0.0, 0.0);
     M.Thickness          = 0.0;
+    M.SubsurfaceColor    = float3(1.0, 0.3, 0.2);
+    M.SubsurfaceRadius   = 0.5;
+    M.Anisotropy            = 0.0;
+    M.AnisotropyRotation    = 0.0;
+    M.SecondRoughness       = 0.5;
+    M.SecondRoughnessWeight = 0.0;
+    M.FuzzAmount            = 0.0;
+    M.FuzzColor             = float3(1.0, 1.0, 1.0);
+    M.FuzzRoughness         = 0.5;
+    M.ThinFilmThickness     = 0.0;
+    M.ThinFilmIOR           = 1.5;
+    M.BottomNormal          = float3(0.0, 0.0, 1.0);
     return M;
+}
+
+// Every field mixes linearly and the normal renormalizes, so a layered material flattens to one surface before shading.
+FMaterialPixelInputs BlendMaterialSurfaces(FMaterialPixelInputs A, FMaterialPixelInputs B, float Alpha)
+{
+    float W = saturate(Alpha);
+    FMaterialPixelInputs M;
+    M.Diffuse               = lerp(A.Diffuse, B.Diffuse, W);
+    M.Metallic              = lerp(A.Metallic, B.Metallic, W);
+    M.Roughness             = lerp(A.Roughness, B.Roughness, W);
+    M.Specular              = lerp(A.Specular, B.Specular, W);
+    M.Emissive              = lerp(A.Emissive, B.Emissive, W);
+    M.AmbientOcclusion      = lerp(A.AmbientOcclusion, B.AmbientOcclusion, W);
+    M.Normal                = normalize(lerp(A.Normal, B.Normal, W));
+    M.Opacity               = lerp(A.Opacity, B.Opacity, W);
+    M.SelfShadow            = lerp(A.SelfShadow, B.SelfShadow, W);
+    M.Clearcoat             = lerp(A.Clearcoat, B.Clearcoat, W);
+    M.ClearcoatRoughness    = lerp(A.ClearcoatRoughness, B.ClearcoatRoughness, W);
+    M.Transmission          = lerp(A.Transmission, B.Transmission, W);
+    M.Thickness             = lerp(A.Thickness, B.Thickness, W);
+    M.SubsurfaceColor       = lerp(A.SubsurfaceColor, B.SubsurfaceColor, W);
+    M.SubsurfaceRadius      = lerp(A.SubsurfaceRadius, B.SubsurfaceRadius, W);
+    M.Anisotropy            = lerp(A.Anisotropy, B.Anisotropy, W);
+    M.AnisotropyRotation    = lerp(A.AnisotropyRotation, B.AnisotropyRotation, W);
+    M.SecondRoughness       = lerp(A.SecondRoughness, B.SecondRoughness, W);
+    M.SecondRoughnessWeight = lerp(A.SecondRoughnessWeight, B.SecondRoughnessWeight, W);
+    M.FuzzAmount            = lerp(A.FuzzAmount, B.FuzzAmount, W);
+    M.FuzzColor             = lerp(A.FuzzColor, B.FuzzColor, W);
+    M.FuzzRoughness         = lerp(A.FuzzRoughness, B.FuzzRoughness, W);
+    M.ThinFilmThickness     = lerp(A.ThinFilmThickness, B.ThinFilmThickness, W);
+    M.ThinFilmIOR           = lerp(A.ThinFilmIOR, B.ThinFilmIOR, W);
+    M.BottomNormal          = normalize(lerp(A.BottomNormal, B.BottomNormal, W));
+    return M;
+}
+
+// Top claims the ground where Height + Coverage passes 1, with Contrast sharpening the edge, and zero contrast is a plain blend by Coverage.
+float SurfaceLayerWeight(float Coverage, float Height, float Contrast)
+{
+    return saturate((Height + Coverage - 1.0) * Contrast + Coverage);
+}
+
+FMaterialPixelInputs LayerMaterialSurfaces(FMaterialPixelInputs Bottom, FMaterialPixelInputs Top, float Coverage, float Height, float Contrast)
+{
+    return BlendMaterialSurfaces(Bottom, Top, SurfaceLayerWeight(saturate(Coverage), saturate(Height), Contrast));
 }
 
 struct FMaterialVertexInputs
@@ -234,6 +308,8 @@ static const uint MatFlag_Additive    = BIT(2);
 static const uint MatFlag_Unlit       = BIT(3);
 // Inverted, so a material saved before the flag existed still reads as receiving decals.
 static const uint MatFlag_NoDecals    = BIT(6);
+// The graph drives an extended lobe, so its pixels may carry GBufferE and GBufferF.
+static const uint MatFlag_Extended    = BIT(7);
 
 #define MATERIAL_SHADING_MODEL_SHIFT 3u
 #define MATERIAL_SHADING_MODEL_MASK  7u
@@ -497,6 +573,11 @@ struct FMeshletHeader
     uint            ImpostorFrameSize;
     // Multiplies the renderer's impostor threshold for this mesh.
     float           ImpostorTransitionScale;
+    // Bindless slot of the emissive atlas, 0 when the bake saw no emission, and the brightness its texels are fractions of.
+    uint            ImpostorEmissiveIndex;
+    float           ImpostorEmissiveScale;
+    uint            _ImpostorPad0;
+    uint            _ImpostorPad1;
 
     property bool bClusterLOD { get { return (Flags & MESH_HEADER_FLAG_CLUSTER_LOD) != 0u; } }
 
@@ -506,6 +587,7 @@ struct FMeshletHeader
     property float3 LocalBoundsMax    { get { return float3(LocalMaxX, LocalMaxY, LocalMaxZ); } }
     property float3 ImpostorCenter    { get { return float3(ImpostorCenterX, ImpostorCenterY, ImpostorCenterZ); } }
     property bool   bHasImpostor      { get { return ImpostorFrames >= 2u; } }
+    property bool   bImpostorFullSphere { get { return (Flags & MESH_HEADER_FLAG_IMPOSTOR_FULL_SPHERE) != 0u; } }
 };
 
 // Mirror of Lumina::FInstanceBlockBounds, the distance bounds of one workgroup's slots.
@@ -536,6 +618,7 @@ struct FInstanceCullEntry
 
     property bool bNoShadowWPO { get { return (FlagsAndThinning & INSTANCE_NO_SHADOW_WPO_BIT) != 0u; } }
     property bool bShadowCacheable { get { return (FlagsAndThinning & INSTANCE_SHADOW_CACHEABLE_BIT) != 0u; } }
+    property bool bNoProxy { get { return (FlagsAndThinning & INSTANCE_NO_PROXY_BIT) != 0u; } }
 
     bool HasFlag(EInstanceFlags Flag)
     {
@@ -567,7 +650,8 @@ struct FInstanceStatic
     float           WPODisableDistance;
     // Slots back to the one holding this instance's transform, since a mesh's surfaces share the first surface's.
     uint            TransformOffset;
-    uint            Reserved1;
+    // Only meaningful when the cull entry has bCustomLayers, the view capture filter slots the entity belongs to.
+    uint            CaptureFilterMask;
     uint            Reserved2;
 }
 
@@ -1026,18 +1110,14 @@ struct FLightData
     uint   bHasSun;
     FSunShadowParams SunShadow;
     float4 AmbientLight;
-    // Each carries its own live count, so no caller has to remember a separate bound.
+    // The sun alone, which the light cull copies into slot 0 of every view's sorted list; local lights live in the retained set.
     GPUSpan<FLight>           Lights;
     GPUSpan<FLightShadowData> Shadows;
     GPUSpan<FLightFunction>   LightFunctions;
     FTexture2D                LightFunctionAtlas;
-    uint                      _LightFunctionPad[3];
-};
-
-struct FCluster
-{
-    float4 MinPoint;
-    float4 MaxPoint;
+    // Render layers of the view this copy lights, matched against each retained light's layers in the light cull.
+    uint                      ViewLayerMask;
+    uint                      _Pad[2];
 };
 
 struct FFrustum
@@ -1055,6 +1135,12 @@ struct FCullView
     // Pixels a unit of world error covers at unit distance, over the pixel error the view tolerates; 0 pins LOD 0.
     float  LODErrorScale;
     uint   LayerMask;
+    // Capture filter slots, an instance needs one of the include bits when any are set and none of the exclude bits.
+    uint   CaptureInclude;
+    uint   CaptureExclude;
+    // Nonzero for a view capture, which cuts skinned clusters from its own camera and yields draw budget to the camera and shadows.
+    uint   bCaptureView;
+    uint   _CapturePad;
 
     property float3 ViewOrigin { get { return ViewOriginAndFlags.xyz; } }
     property uint   Flags      { get { return asuint(ViewOriginAndFlags.w); } }
@@ -1221,9 +1307,42 @@ struct FWeatherData
     float4     SnowLook;
     // x = cover, y = drift pattern size in meters, z = print depth, w = unused.
     float4     SnowSurface;
+    // rgb = secondary tint, w = how far each drop picks toward it.
+    float4     RainTint2;
+    // rgb = light the drops give off themselves, w = refraction strength.
+    float4     RainEmissive;
+    // x = rim reflection, y = glint toward lights, z = distant curtain density, w = splash mist.
+    float4     RainOptics;
     GPUSpan<uint2>  InteractorTable;
     // x = root height, y = rain soak, z = water line above the root, w = wetness under the water line.
     GPUSpan<float4> Interactors;
+};
+
+// A box the wind does not reach, matching FWindBlockerGPU in SceneRenderTypes.h.
+struct FWindBlocker
+{
+    // Rows of the world to box transform, rotation and translation only, so the box space is still in meters.
+    float4 WorldToBoxX;
+    float4 WorldToBoxY;
+    float4 WorldToBoxZ;
+    // xyz = half size in meters, w = falloff in meters.
+    float4 HalfExtent;
+    // x = share of the wind stopped, yzw unused.
+    float4 Params;
+};
+
+// A runtime virtual texture as this frame placed it, matching FVirtualTextureGPU in SceneRenderTypes.h.
+struct FVirtualTextureData
+{
+    // The bindless index the material binds, which is how a sample finds its entry.
+    uint   Texture;
+    uint   Resolution;
+    float  TexelSize;
+    float  _Pad0;
+    // The window's first texel in world texels.
+    int2   Origin;
+    uint2  _Pad1;
+    float4 Clear;
 };
 
 struct FSceneGlobalData
@@ -1279,6 +1398,22 @@ struct FSceneGlobalData
     FTexture2D              DBufferD;
 
     GPUSpan<FWeatherData>   Weather;
+
+    // Every runtime virtual texture something wrote this frame.
+    GPUSpan<FVirtualTextureData> VirtualTextures;
+
+    // xy = steady wind direction on XZ, z = steady speed in meters per second, w = gustiness.
+    float4            WindDirection;
+    // x = wrapped gust phase, y = gusts per second, zw unused.
+    float4            WindGust;
+    // The blockers nearest the camera, empty when nothing shelters the wind.
+    GPUSpan<FWindBlocker> WindBlockers;
+
+    // The GBuffer's extension targets, which only pixels with extended lobes write or read.
+    FTexture2D        GBufferE;
+    FTexture2D        GBufferF;
+    FRWTexture2D      GBufferEOut;
+    FRWTexture2D      GBufferFOut;
 };
 
 // Octahedral fold of a direction onto [-1, 1]^2, the shared core of every oct packer here.

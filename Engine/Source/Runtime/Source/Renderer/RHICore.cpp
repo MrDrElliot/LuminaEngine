@@ -82,6 +82,15 @@ namespace Lumina::RHI
         FMutex               PendingPresentMutex;
         TAtomic<bool>        bPresentRejected{false};
 
+#if !defined(LE_SHIPPING)
+        TAtomic<bool>       bCollectStats{false};
+        // Summed under SubmitMutex, and published by BeginFrame as the last frame's.
+        uint32              FrameDraws = 0;
+        uint32              FrameDispatches = 0;
+        uint32              LastFrameDraws = 0;
+        uint32              LastFrameDispatches = 0;
+#endif
+
         bool                bInitialized = false;
     };
 
@@ -99,6 +108,20 @@ namespace Lumina::RHI
     }
 
     static void DestroyRetired(const FRetireItem& Item);
+
+    // Called with SubmitMutex held.
+    static void CountSubmitted(TSpan<const FCmdListH> CommandLists)
+    {
+#if !defined(LE_SHIPPING)
+        if (GCore.bCollectStats.load(std::memory_order_relaxed))
+        {
+            for (FCmdListH CommandList : CommandLists)
+            {
+                Internal::AddCommandCounts(CommandList, GCore.FrameDraws, GCore.FrameDispatches);
+            }
+        }
+#endif
+    }
 
     static void InitializeCore()
     {
@@ -596,6 +619,13 @@ namespace Lumina::RHI
                 {
                     bTook = false;
                 }
+
+#if !defined(LE_SHIPPING)
+                GCore.LastFrameDraws      = GCore.FrameDraws;
+                GCore.LastFrameDispatches = GCore.FrameDispatches;
+                GCore.FrameDraws      = 0;
+                GCore.FrameDispatches = 0;
+#endif
             }
 
             const bool bAsyncTransfer = SupportsAsyncTransfer();
@@ -750,6 +780,7 @@ namespace Lumina::RHI
             {
                 GCore.SlotCommandLists[Slot].Add(CommandList);
             }
+            CountSubmitted(CommandLists);
 
             // Taken before the ordering lock drops, so values still reach each queue in the order they were handed out.
             Internal::LockQueue(Queue);
@@ -767,6 +798,25 @@ namespace Lumina::RHI
     {
         return GCore.QueueTimeline[(uint32)Queue];
     }
+
+#if !defined(LE_SHIPPING)
+    void SetStatsCollection(bool bEnabled)
+    {
+        GCore.bCollectStats.store(bEnabled, std::memory_order_relaxed);
+    }
+
+    bool IsCollectingStats()
+    {
+        return GCore.bCollectStats.load(std::memory_order_relaxed);
+    }
+
+    void GetLastFrameCommandCounts(uint32& OutDraws, uint32& OutDispatches)
+    {
+        FScopeLock Lock(GCore.SubmitMutex);
+        OutDraws      = GCore.LastFrameDraws;
+        OutDispatches = GCore.LastFrameDispatches;
+    }
+#endif
 
     // Slot is the frame the list was recorded in, which an async present must not read back after BeginFrame moved on.
     static bool PresentOnSlot(FSwapchainH Swapchain, FCmdListH CommandList, uint32 Slot)
@@ -792,6 +842,7 @@ namespace Lumina::RHI
 
             GCore.SlotWaitValue[Slot][GraphicsIndex] = Value;
             GCore.SlotCommandLists[Slot].Add(CommandList);
+            CountSubmitted(TSpan<const FCmdListH>{&CommandList, 1});
         }
 
         // Outside the submit lock, since the driver's present call is slow and orders nothing the timelines track.

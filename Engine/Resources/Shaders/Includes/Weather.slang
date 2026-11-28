@@ -212,18 +212,19 @@ FRainDrop EvaluateSnowFlake(FWeatherData W, uint Index, float3 Camera)
 // Keeps a drop beside a light finite once packed to half floats.
 static const float kRainMaxLight = 30000.0;
 
-// Light a falling drop scatters toward the eye, mostly the sky and sun it refracts.
-float3 RainLightAt(float3 WorldPos)
+// Light a falling drop scatters toward the eye, mostly the sky and sun it refracts, with Glint adding the forward lobe toward ToEye.
+float3 RainLightAt(float3 WorldPos, float3 ToEye = float3(0.0, 0.0, 0.0), float Glint = 0.0)
 {
     // A light's own bulb has size, so a drop brushing past it is not lit by the point singularity.
     const float kLightMinDistance = 0.5;
     // A drop lenses in sky from a wide cone around it, so it reads brighter than the ambient a surface gets.
     const float kRefractionGain = 2.0;
-    float3 Light = GetVolumetricAmbientRadiance() * kRefractionGain + ClusteredLocalIrradiance(WorldPos, kLightMinDistance) * (0.5 * INV_PI);
-    if (GetNumLights() > 0u && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional))
+    float3 Light = GetVolumetricAmbientRadiance() * kRefractionGain + ClusteredLocalIrradiance(WorldPos, kLightMinDistance, ToEye, Glint) * (0.5 * INV_PI);
+    if (HasSunLight())
     {
-        const FLight Sun = GetLightAt(0);
-        Light += UnpackColor(Sun.Color).rgb * Sun.Intensity * (0.25 * INV_PI)
+        const FLight Sun   = GetLightAt(0);
+        const float  Lobe  = Glint > 0.0 ? 1.0 + Glint * ForwardScatterRatio(dot(-normalize(GetSunDirection()), ToEye)) : 1.0;
+        Light += UnpackColor(Sun.Color).rgb * Sun.Intensity * (0.25 * INV_PI) * Lobe
                * SampleSunShadowPoint(Sun, WorldPos) * SampleDirectionalCloudShadow(WorldPos);
     }
     return min(Light, float3(kRainMaxLight, kRainMaxLight, kRainMaxLight));

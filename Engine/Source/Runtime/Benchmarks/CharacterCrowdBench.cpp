@@ -25,7 +25,9 @@
 #include "World/Entity/Components/PhysicsComponent.h"
 #include "World/Entity/Components/TerrainComponent.h"
 #include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Systems/TerrainCollisionSystem.h"
 #include "World/Subsystems/WorldSettings.h"
+#include "WorldTestAccess.h"
 
 // Run with ./LuminaBuild.bat Test Runtime -Benchmarks -Filter="CharacterCrowdBench.*", where LUMINA_CROWD_COUNTS and LUMINA_CROWD_SCENARIOS narrow the sweep.
 
@@ -139,6 +141,9 @@ namespace
             }
             World->EnsurePhysicsScene();
             Scene = static_cast<Physics::FBox3DPhysicsScene*>(World->GetPhysicsScene());
+            Collision = NewObject<CTerrainCollisionSystem>(nullptr, NAME_None, FGuid::New(), OF_Transient);
+            Collision->SetOwningWorld(World);
+            Collision->OnStartup(Context());
 
             // LUMINA_CROWD_LOD in meters turns on character LOD around the crowd's center, where a player would stand.
             if (const char* Lod = std::getenv("LUMINA_CROWD_LOD"))
@@ -156,8 +161,11 @@ namespace
 
         ~FCrowdWorld()
         {
+            Collision->OnTeardown(Context());
             WorldOwner.Reset();
         }
+
+        SExclusiveContext Context() const { return SExclusiveContext(FWorldTestAccess::SystemContext(*World)); }
 
         FCrowdWorld(const FCrowdWorld&) = delete;
         FCrowdWorld& operator=(const FCrowdWorld&) = delete;
@@ -243,6 +251,7 @@ namespace
             ECS::FRegistry& R = Registry();
             PlatformTime::FStopwatch Watch;
             ECS::Utils::ResolveAllDirtyTransforms(R);
+            Collision->OnExclusiveUpdate(Context());
             Scene->Update(Dt);
             Scene->DispatchPendingEvents();
             ECS::Utils::ResolveAllDirtyTransforms(R);
@@ -395,7 +404,7 @@ namespace
             Terrain.Resolution = Resolution;
             Terrain.TileWorldSize = TileWorldSize;
             Terrain.MaxHeight = kMaxHeight;
-            Terrain.Heightmap.SetNum(Resolution * Resolution);
+            TVector<float> Heights(Resolution * Resolution);
             const float Stride = TileWorldSize / float(Resolution - 1);
             for (int32 Z = 0; Z < Resolution; ++Z)
             {
@@ -403,12 +412,20 @@ namespace
                 {
                     // Offset so the hills sit inside the height range, which starts at the terrain origin.
                     const float H = Hills(-TileWorldSize * 0.5f + X * Stride, -TileWorldSize * 0.5f + Z * Stride);
-                    Terrain.Heightmap[Z * Resolution + X] = (H + kMaxHeight * 0.5f) / kMaxHeight;
+                    Heights[Z * Resolution + X] = (H + kMaxHeight * 0.5f) / kMaxHeight;
                 }
             }
+            Terrain.SetStore(FTerrainStore::CreateFromArrays(Resolution, Heights, {}, 0));
             R.Get<STransformComponent>(Entity).SetLocalLocation(FVector3(0.0f, -kMaxHeight * 0.5f, 0.0f));
             R.Emplace<STerrainComponent>(Entity, std::move(Terrain));
             R.Emplace<STerrainColliderComponent>(Entity);
+            // Patches cook on workers, so the hills are solid before the crowd spawns on them.
+            for (int32 Attempt = 0; Attempt < 4000 && (Attempt < 3 || Collision->HasPendingBuilds()); ++Attempt)
+            {
+                Frame(1.0 / 60.0);
+                std::this_thread::yield();
+            }
+            Frame(1.0 / 60.0);
         }
 
         void SpawnPillars()
@@ -590,6 +607,7 @@ namespace
         }
 
         TStrongObjectPtr<CWorld> WorldOwner;
+        TStrongObjectPtr<CTerrainCollisionSystem> Collision;
     };
 
     TVector<int32> ParseCounts()

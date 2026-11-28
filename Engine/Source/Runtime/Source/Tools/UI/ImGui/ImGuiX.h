@@ -253,7 +253,7 @@ namespace Lumina::ImGuiX
         constexpr uint32 GDisplayModeLinear = 2u;
         constexpr uint32 GDisplayModeScene  = 3u;
 
-        // Mirrors FImGuiArgs' display fields in Includes/ImGuiCommon.slang.
+        // Mirrors FImGuiDraw's display fields in Includes/ImGuiCommon.slang.
         struct FImGuiDisplayState
         {
             uint32 DisplayMode = 0;     // IMGUI_DISPLAY_*

@@ -16,7 +16,7 @@ FParticleLight ParticleLightAt(float3 WorldPos)
     // A puff faces local lights on half its surface on average, hence the half.
     Light.Ambient = GetVolumetricAmbientRadiance() + ClusteredLocalIrradiance(WorldPos) * (0.5 * INV_PI);
     Light.Sun     = float3(0.0, 0.0, 0.0);
-    if (GetNumLights() > 0u && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional))
+    if (HasSunLight())
     {
         const FLight Sun = GetLightAt(0);
         Light.Sun = UnpackColor(Sun.Color).rgb * Sun.Intensity * SampleSunShadowPoint(Sun, WorldPos)

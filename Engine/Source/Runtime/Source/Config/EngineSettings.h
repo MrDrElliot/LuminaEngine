@@ -282,6 +282,16 @@ namespace Lumina
         Ultra,
     };
 
+    // Each step doubles the probe resolution, High keeping every probe's own, and High and Ultra store sixteen-bit GBuffer normals for mirror coats.
+    REFLECT()
+    enum class EReflectionQuality : uint8
+    {
+        Low,
+        Medium,
+        High,
+        Ultra,
+    };
+
     // Low and Medium trace at half resolution, High and Ultra at full; each step up also walks further per ray.
     REFLECT()
     enum class ESSRQuality : uint8
@@ -458,6 +468,10 @@ namespace Lumina
         // Sharpens textures seen at a glancing angle, such as floors and roads, for a little bandwidth. 1 turns it off.
         PROPERTY(Editable, Category = "Textures", ClampMin = 1, ClampMax = 16)
         int32 MaxAnisotropy = 16;
+
+        // Scales every probe's capture and the shared array it is stored in, from a quarter of its own resolution at Low to double at Ultra.
+        PROPERTY(Editable, Category = "Reflection Probes")
+        EReflectionQuality ReflectionQuality = EReflectionQuality::High;
 
         /** Trace reflections against the depth buffer, falling back to the prefiltered cube off-screen. */
         PROPERTY(Editable, Category = "Screen Space Reflections")

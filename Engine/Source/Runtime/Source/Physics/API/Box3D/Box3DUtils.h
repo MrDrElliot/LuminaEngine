@@ -59,6 +59,9 @@ namespace Lumina::Box3DUtils
     RUNTIME_API b3BodyType ToBox3DBodyType(EBodyType Type);
     RUNTIME_API EBodyType FromBox3DBodyType(b3BodyType Type);
 
+    // Box3D splits every quad from (x, z + 1) to (x + 1, z) and the renderer from (x, z) to (x + 1, z + 1), so height fields turn a quarter about Y to match.
+    inline constexpr b3Quat kHeightFieldGridTurn = { { 0.0f, 0.70710678f, 0.0f }, 0.70710678f };
+
     // The broadphase never terminates on a non-finite bound and squares extents in float, so bodies past this are refused.
     inline constexpr float MaxSafeCoordinate = 1.0e9f;
 

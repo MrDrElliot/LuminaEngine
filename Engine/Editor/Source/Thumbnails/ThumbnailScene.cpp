@@ -78,14 +78,14 @@ namespace Lumina
         bInitialized = false;
     }
 
-    ECS::FEntity FThumbnailScene::SpawnEntity(FName Name)
+    ECS::FEntity FThumbnailScene::SpawnEntity(FName Name, const FTransform& Transform)
     {
         if (!bInitialized || !World.IsValid())
         {
             return ECS::NullEntity;
         }
 
-        const ECS::FEntity Entity = World->ConstructEntity(Name);
+        const ECS::FEntity Entity = World->ConstructEntity(Name, Transform);
         SpawnedEntities.Add(Entity);
         return Entity;
     }

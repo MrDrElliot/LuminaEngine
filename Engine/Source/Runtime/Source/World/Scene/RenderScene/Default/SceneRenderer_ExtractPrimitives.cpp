@@ -543,26 +543,20 @@ namespace Lumina
             EmplaceVisualizer(Entity, Transforms.Get(Entity).GetWorldLocation(), Icon, Color);
         };
 
-        // The light pass recorded each light's icon; its chunks run back to front to match a whole-pool walk.
-        auto EmplaceLightIcons = [&](uint32 FirstChunk, uint32 NumChunks, ENamedImage Icon)
+        auto EmplaceLightIcons = [&](ESceneLightKind Kind, ENamedImage Icon)
         {
-            for (uint32 Chunk = FirstChunk + NumChunks; Chunk-- > FirstChunk;)
+            for (const FLightIcon& LightIcon : LocalLightIcons[(uint32)Kind])
             {
-                const FLightBatch& Batch = LightBatches[Chunk];
-                for (uint32 Index = 0; Index < Batch.NumIcons; ++Index)
-                {
-                    const FLightIcon& LightIcon = Batch.Icons[Index];
-                    EmplaceVisualizer(LightIcon.Entity, LightIcon.Position, Icon, FVector4(LightIcon.Color, 1.0f));
-                }
+                EmplaceVisualizer(LightIcon.Entity, LightIcon.Position, Icon, FVector4(LightIcon.Color, 1.0f));
             }
         };
 
         CameraView.ForEach([&](ECS::FEntity Entity, const SCameraComponent&)                            { EmplaceAt(Entity, ENamedImage::CameraIcon, FColor::White); });
         CharacterView.ForEach([&](ECS::FEntity Entity, const SCharacterControllerComponent&)            { EmplaceAt(Entity, ENamedImage::CharacterIcon, FColor::White); });
 
-        EmplaceLightIcons(0u, NumPointLightChunks, ENamedImage::PointLightIcon);
-        EmplaceLightIcons(NumPointLightChunks, NumSpotLightChunks, ENamedImage::SpotLightIcon);
-        EmplaceLightIcons(NumPointLightChunks + NumSpotLightChunks, NumAreaLightChunks, ENamedImage::SpotLightIcon);
+        EmplaceLightIcons(ESceneLightKind::Point, ENamedImage::PointLightIcon);
+        EmplaceLightIcons(ESceneLightKind::Spot,  ENamedImage::SpotLightIcon);
+        EmplaceLightIcons(ESceneLightKind::Area,  ENamedImage::SpotLightIcon);
         for (const FLightIcon& LightIcon : DirectionalLightIcons)
         {
             EmplaceVisualizer(LightIcon.Entity, LightIcon.Position, ENamedImage::DirectionalLightIcon, FVector4(LightIcon.Color, 1.0f));
@@ -628,7 +622,7 @@ namespace Lumina
                 const float MinReadablePxSize       = 8.0f;
                 const float MaxLocatedPxSize        = 64.0f;
                 const float Margin                  = 12.0f;
-                float       PenY                    = Margin;
+                float       PenY                    = Margin + DebugTextTopInset;
                 const FVector2 DisplaySize((float)SceneViews[0].DisplaySize.x, (float)SceneViews[0].DisplaySize.y);
 
                 TVector<FShapedGlyph> DebugShaped;

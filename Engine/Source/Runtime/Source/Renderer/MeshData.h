@@ -341,8 +341,13 @@ namespace Lumina
         uint32 ImpostorFrameSize;
         // Multiplies the renderer's impostor threshold for this mesh, see Impostor::TransitionScale.
         float  ImpostorTransitionScale;
+        // Bindless slot of the emissive atlas, 0 when the bake saw no emission, and the brightness its texels are fractions of.
+        uint32 ImpostorEmissiveIndex;
+        float  ImpostorEmissiveScale;
+        uint32 _ImpostorPad0;
+        uint32 _ImpostorPad1;
     };
-    static_assert(sizeof(FMeshletHeaderGPU) == 224, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
+    static_assert(sizeof(FMeshletHeaderGPU) == 240, "FMeshletHeaderGPU must match FMeshletHeader in Common.slang");
 
     struct FGeometrySurface final
     {
@@ -429,6 +434,7 @@ namespace Lumina
             RHI::FManagedTexture DistanceFieldTexture;
             RHI::FManagedTexture ImpostorBaseColorTexture;
             RHI::FManagedTexture ImpostorNormalDepthTexture;
+            RHI::FManagedTexture ImpostorEmissiveTexture;
 
             FMeshBuffers()                               = default;
             FMeshBuffers(const FMeshBuffers&)            = delete;

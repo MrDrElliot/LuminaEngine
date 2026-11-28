@@ -4,7 +4,7 @@
 
 // Indirect diffuse traced at half resolution, rgb the bounced light and a the cosine-weighted fraction of the hemisphere it came from.
 
-#ifndef SSGI_BLUR
+#if !defined(SSGI_BLUR) && !defined(SSGI_TEMPORAL)
 
 struct FPushConstants
 {
@@ -25,6 +25,28 @@ struct FPushConstants
     uint         NoiseIndex;
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
+
+// Whether a hit's surface faces the receiver, from the working depth around it, so the lit side of an object never bounces onto what lies behind it.
+float HitFacing(FGTAOView V, FTexture2D WorkingDepth, float2 SampleUV, float MipLevel, float3 SamplePos, float3 CenterPos)
+{
+    const float2 Texel = V.ViewportPixelSize * exp2(MipLevel);
+    const float  ZX    = WorkingDepth.SampleLevel(Samplers::PointClamp, SampleUV + float2(Texel.x, 0.0), MipLevel).x;
+    const float  ZY    = WorkingDepth.SampleLevel(Samplers::PointClamp, SampleUV + float2(0.0, Texel.y), MipLevel).x;
+    const float3 PX    = XeGTAO_ComputeViewspacePosition(V, SampleUV + float2(Texel.x, 0.0), ZX);
+    const float3 PY    = XeGTAO_ComputeViewspacePosition(V, SampleUV + float2(0.0, Texel.y), ZY);
+
+    float3 Normal = cross(PX - SamplePos, PY - SamplePos);
+    const float Length = length(Normal);
+    if (Length < 1e-8)
+    {
+        return 1.0;
+    }
+    Normal /= Length;
+    // A visible surface faces the eye, which settles the sign the cross product leaves open.
+    Normal = dot(Normal, -SamplePos) < 0.0 ? -Normal : Normal;
+    // Diffuse radiance is the same toward every direction a surface faces, so only a face turned away goes dark, softened by the coarse normal.
+    return smoothstep(-0.08, 0.04, dot(Normal, normalize(CenterPos - SamplePos)));
+}
 
 // Last frame's color at the view space position ViewPos with a = 1, or zero where that surface was off screen or behind the eye.
 float4 HitRadiance(float4x4 ViewToHistoryClip, float3 ViewPos)
@@ -129,7 +151,10 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
                 const float4 Hit       = HitRadiance(ViewToHistoryClip, SamplePos);
                 const float  HitWeight = Hit.a * Covered / (1.0 + Luminance(Hit.rgb));
 
-                SliceBounce       += HitWeight * Hit.rgb;
+                // A hit facing away still blocks the sky, it just sends no light this way, so only its radiance drops.
+                const float Facing = HitWeight > 0.0 ? HitFacing(V, Pass().WorkingDepth, SampleUV, MipLevel, SamplePos, CenterPos) : 0.0;
+
+                SliceBounce       += HitWeight * Facing * Hit.rgb;
                 SliceBounceWeight += HitWeight;
                 SliceCoverage     += Covered;
                 HorizonCos[Side] = SampleCos;
@@ -147,6 +172,110 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     Pass().Output[PixCoord] = float4(Bounce / max(BounceWeight, 1e-6) * CoveredFraction, CoveredFraction);
 }
 
+#elif defined(SSGI_TEMPORAL)
+
+struct FPushConstants
+{
+    float4x4     HistoryViewProjection;
+    uint2        Size;
+    uint2        WorkingDepthSize;
+    FTexture2D   WorkingDepth;
+    FTexture2D   Current;
+    FTexture2D   PrevAccum;
+    FTexture2D   PrevDepth;
+    FRWTexture2D OutAccum;
+    FRWTexture2D OutDepth;
+    uint         DepthScale;
+    uint         bHistoryValid;
+};
+FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
+
+// Frames of history a pixel can hold, so the newest trace always keeps this share of the result.
+static const float kMaxHistoryFrames = 16.0;
+// Last frame's surface may sit this fraction of the depth away and still count as the same one.
+static const float kHistoryDepthTolerance = 0.04;
+
+// Blends this frame's trace into the reprojected history, restarting wherever the surface behind was hidden last frame.
+[shader("compute")]
+[numthreads(XE_GTAO_NUMTHREADS_X, XE_GTAO_NUMTHREADS_Y, 1)]
+void ComputeMain(uint3 DTid : SV_DispatchThreadID)
+{
+    const int2 Pixel = int2(DTid.xy);
+    if (any(DTid.xy >= Pass().Size))
+    {
+        return;
+    }
+
+    const FGTAOView V          = MakeGTAOView(Pass().WorkingDepthSize);
+    const uint2     DepthCoord = min(DTid.xy * Pass().DepthScale, Pass().WorkingDepthSize - 1u);
+    const float2    ScreenUV   = (float2(DepthCoord) + 0.5) * V.ViewportPixelSize;
+    const float     Depth      = Pass().WorkingDepth.Load(int3(DepthCoord, 0)).x;
+    const float4    Current    = Pass().Current.Load(int3(Pixel, 0));
+
+    // The newest trace's own neighborhood bounds the history, so lighting that changed does not linger as a ghost.
+    float4 Low  = Current;
+    float4 High = Current;
+    const int2 MaxTap = int2(Pass().Size) - 1;
+    [unroll]
+    for (int Y = -1; Y <= 1; ++Y)
+    {
+        [unroll]
+        for (int X = -1; X <= 1; ++X)
+        {
+            const float4 Tap = Pass().Current.Load(int3(clamp(Pixel + int2(X, Y), int2(0, 0), MaxTap), 0));
+            Low  = min(Low, Tap);
+            High = max(High, Tap);
+        }
+    }
+
+    float4 History = Current;
+    float  Frames  = 0.0;
+    if (Pass().bHistoryValid != 0u)
+    {
+        const float3 ViewPos  = XeGTAO_ComputeViewspacePosition(V, ScreenUV, Depth);
+        const float4 PrevClip = mul(mul(Pass().HistoryViewProjection, GetInverseCameraView()), float4(ViewPos, 1.0));
+        if (PrevClip.w > 0.0)
+        {
+            const float2 PrevUV = (PrevClip.xy / PrevClip.w) * 0.5 + 0.5;
+            if (all(PrevUV == saturate(PrevUV)))
+            {
+                // Bilinear by hand, so each corner that was a different surface drops out instead of bleeding in.
+                const float2 Texel    = PrevUV * float2(Pass().Size) - 0.5;
+                const int2   Base     = int2(floor(Texel));
+                const float2 F        = Texel - float2(Base);
+                const bool   bOrtho   = IsCameraOrthographic();
+                const float  Expected = bOrtho ? Depth : PrevClip.w;
+
+                float4 Sum    = float4(0.0, 0.0, 0.0, 0.0);
+                float  Count  = 0.0;
+                float  Weight = 0.0;
+                [unroll]
+                for (uint i = 0u; i < 4u; ++i)
+                {
+                    const int2   Offset = int2(i & 1u, i >> 1u);
+                    const int2   Tap    = clamp(Base + Offset, int2(0, 0), MaxTap);
+                    const float2 Stored = Pass().PrevDepth.Load(int3(Tap, 0)).xy;
+                    const float  Bilin  = (Offset.x == 1 ? F.x : 1.0 - F.x) * (Offset.y == 1 ? F.y : 1.0 - F.y);
+                    const float  Same   = abs(Stored.x - Expected) <= Expected * kHistoryDepthTolerance ? 1.0 : 0.0;
+                    const float  W      = Bilin * Same;
+                    Sum    += Pass().PrevAccum.Load(int3(Tap, 0)) * W;
+                    Count  += Stored.y * W;
+                    Weight += W;
+                }
+                if (Weight > 0.05)
+                {
+                    History = clamp(Sum / Weight, Low, High);
+                    Frames  = Count / Weight;
+                }
+            }
+        }
+    }
+
+    const float NewFrames = min(Frames + 1.0, kMaxHistoryFrames);
+    Pass().OutAccum[Pixel] = lerp(History, Current, 1.0 / NewFrames);
+    Pass().OutDepth[Pixel] = float4(Depth, NewFrames, 0.0, 0.0);
+}
+
 #else
 
 struct FPushConstants
@@ -161,7 +290,8 @@ struct FPushConstants
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
-static const int kBlurRadius = 4;
+// Narrower than before the trace was accumulated, since the history now carries most of the denoising.
+static const int kBlurRadius = 2;
 
 float TexelDepth(int2 Texel)
 {

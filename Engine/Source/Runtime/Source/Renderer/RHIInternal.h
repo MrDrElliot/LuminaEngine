@@ -15,6 +15,11 @@ namespace Lumina::RHI::Internal
     // The raw queue submit, called with LockQueue held. Every public path routes through the queue timelines in RHICore.cpp instead.
     void Submit(EQueueType Queue, TSpan<const FCmdListH> CommandLists, TSpan<const FSemaphoreInfo> Waits, TSpan<const FSemaphoreInfo> Signals);
 
+#if !defined(LE_SHIPPING)
+    // Adds the draws and dispatches recorded into the list since it was opened.
+    void AddCommandCounts(FCmdListH CommandList, uint32& InOutDraws, uint32& InOutDispatches);
+#endif
+
     void DestroyNow(const FGPUAllocation& Allocation);
     void DestroyNow(FTextureH Texture);
     void DestroyNow(FPipelineH Pipeline);

@@ -14,6 +14,9 @@
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
 #include "World/Subsystems/TerrainSculptSystem.h"
+#include "World/Terrain/TerrainStoreRegistry.h"
+#include "Core/Templates/NumericLimits.h"
+#include "Platform/Filesystem/PlatformFilesystem.h"
 #include "World/World.h"
 #include "Containers/StringFormat.h"
 
@@ -80,13 +83,8 @@ namespace Lumina
         ECS::FEntity Entity = World->ConstructEntity("Terrain");
         STerrainComponent& Terrain = World->EmplaceComponent<STerrainComponent>(Entity);
         Terrain.Resolution      = 513;
-        Terrain.ChunkResolution = 64;
         Terrain.TileWorldSize   = 4096.0f;
         Terrain.MaxHeight       = 256.0f;
-
-        const int32 Res = Terrain.Resolution;
-        // Start dead flat; the user sculpts from a clean slate.
-        Terrain.Heightmap.Init(0.0f, Res * Res);
 
         // Weights start at zero, painting raises them, and the shader normalizes at sample time.
         static const char* LayerNames[4] = { "Layer0", "Layer1", "Layer2", "Layer3" };
@@ -97,9 +95,7 @@ namespace Lumina
             L.UVScale = 1.0f / 16.0f;
         }
 
-        Terrain.LayerWeights.Init(uint8(0), Res * Res * Terrain.Layers.Num());
-        Terrain.CPUState.bFullHeightmapDirty = true;
-        Terrain.CPUState.bFullWeightsDirty   = true;
+        Terrain.SetStore(FTerrainStore::CreateFlat(Terrain.Resolution, 0.0f));
         return Entity;
     }
 
@@ -117,6 +113,38 @@ namespace Lumina
         return Entity;
     }
 
+    namespace
+    {
+        // Edits in place up to this size so undo keeps the old tiles, and past it streams into a new data file.
+        constexpr int32 kLargestInPlaceImport = 8193;
+
+        bool IsRawHeightmap(FStringView Path)
+        {
+            return Path.EndsWith(".r16") || Path.EndsWith(".raw");
+        }
+
+        // Square little-endian 16-bit samples, whose side becomes the terrain's resolution.
+        bool OpenRawHeightmap(const char* FilePath, int32& OutSide, Filesystem::FFileHandle& OutFile, FString& OutError)
+        {
+            const int64 Bytes = Filesystem::FileSize(FilePath);
+            const int64 Side  = (int64)std::llround(std::sqrt((double)Math::Max<int64>(Bytes, 0) / 2.0));
+            if (Side < 2 || Side * Side * 2 != Bytes || Side > TNumericLimits<int32>::Max())
+            {
+                OutError = "A raw heightmap must be a square of 16-bit samples.";
+                return false;
+            }
+            OutFile = Filesystem::Open(FilePath, Filesystem::EAccess::Read, Filesystem::ECreateMode::OpenExisting,
+                                       Filesystem::EShare::Read, Filesystem::EHint::Sequential);
+            if (!OutFile.IsValid())
+            {
+                OutError = "Could not open the raw heightmap.";
+                return false;
+            }
+            OutSide = (int32)Side;
+            return true;
+        }
+    }
+
     bool FTerrainEditMode::ImportHeightmap(STerrainComponent& Terrain, const char* FilePath, FString& OutError, int32& OutSrcW, int32& OutSrcH)
     {
         OutSrcW = 0;
@@ -128,69 +156,115 @@ namespace Lumina
             return false;
         }
 
-        // Read as-is with no flip and no sRGB curve, so the stored sample maps directly to height.
-        TOptional<Import::Textures::FTextureImportResult> Decoded = Import::Textures::ImportTexture(FStringView(FilePath), /*bFlipVertical*/ false);
-        if (!Decoded.IsSet() || Decoded->Pixels.IsEmpty())
+        FTerrainStore::FRowSource Rows;
+        TOptional<Import::Textures::FTextureImportResult> Decoded;
+        Filesystem::FFileHandle RawFile;
+        TVector<uint16> RawRow;
+        bool bReadFailed = false;
+        if (IsRawHeightmap(FilePath))
         {
-            OutError = "Could not decode image (unsupported, corrupt, or empty file).";
-            return false;
-        }
-
-        const Import::Textures::FTextureImportResult& Img = *Decoded;
-        const int32 W = (int32)Img.Dimensions.x;
-        const int32 H = (int32)Img.Dimensions.y;
-        OutSrcW = W;
-        OutSrcH = H;
-
-        if (W < 2 || H < 2)
-        {
-            OutError = "Image is too small to be a heightmap (needs at least 2x2).";
-            return false;
-        }
-
-        // Classify the decoded format into (element kind, channel count); the height is the red channel.
-        enum class EKind { U8, U16, F32 };
-        EKind Kind     = EKind::U8;
-        int32 Channels = 1;
-        switch (Img.Format)
-        {
-            case EFormat::R8_UNORM:                          Kind = EKind::U8;  Channels = 1; break;
-            case EFormat::RG8_UNORM:                         Kind = EKind::U8;  Channels = 2; break;
-            case EFormat::RGBA8_UNORM: case EFormat::SRGBA8_UNORM: Kind = EKind::U8;  Channels = 4; break;
-            case EFormat::R16_UNORM:                         Kind = EKind::U16; Channels = 1; break;
-            case EFormat::RG16_UNORM:                        Kind = EKind::U16; Channels = 2; break;
-            case EFormat::RGBA16_UNORM:                      Kind = EKind::U16; Channels = 4; break;
-            case EFormat::R32_FLOAT:                         Kind = EKind::F32; Channels = 1; break;
-            case EFormat::RG32_FLOAT:                        Kind = EKind::F32; Channels = 2; break;
-            case EFormat::RGB32_FLOAT:                       Kind = EKind::F32; Channels = 3; break;
-            case EFormat::RGBA32_FLOAT:                      Kind = EKind::F32; Channels = 4; break;
-            default:
-                OutError = "Unsupported pixel format for a heightmap.";
-                return false;
-        }
-
-        const int64 ElemSize  = (Kind == EKind::U8) ? 1 : (Kind == EKind::U16 ? 2 : 4);
-        const int64 Stride    = static_cast<int64>(W) * Channels * ElemSize;
-        if (Img.Pixels.Num() < Stride * H)
-        {
-            OutError = "Decoded pixel buffer is smaller than its reported dimensions.";
-            return false;
-        }
-
-        const uint8* Base = Img.Pixels.GetData();
-        auto ReadHeight = [&](int32 px, int32 py) -> float
-        {
-            const int64 Sample = (static_cast<int64>(py) * W + px) * Channels;
-            switch (Kind)
+            int32 Side = 0;
+            if (!OpenRawHeightmap(FilePath, Side, RawFile, OutError))
             {
-                case EKind::U8:  return (float)Base[Sample] / 255.0f;
-                case EKind::U16: return (float)reinterpret_cast<const uint16*>(Base)[Sample] / 65535.0f;
-                case EKind::F32: return Math::Clamp(reinterpret_cast<const float*>(Base)[Sample], 0.0f, 1.0f);
+                return false;
             }
-            return 0.0f;
-        };
+            OutSrcW = Side;
+            OutSrcH = Side;
+            Terrain.Resolution = Side;
+            RawRow.SetNum(Side);
+            Rows = [&](int32, float* Out)
+            {
+                const int64 RowBytes = int64(RawRow.Num()) * sizeof(uint16);
+                bReadFailed = bReadFailed || RawFile.Read(RawRow.GetData(), RowBytes) != RowBytes;
+                for (int32 X = 0; X < RawRow.Num(); ++X)
+                {
+                    Out[X] = (float)RawRow[X] / 65535.0f;
+                }
+            };
+        }
+        else
+        {
+            // Read as-is with no flip and no sRGB curve, so the stored sample maps directly to height.
+            Decoded = Import::Textures::ImportTexture(FStringView(FilePath), /*bFlipVertical*/ false);
+            if (!Decoded.IsSet() || Decoded->Pixels.IsEmpty())
+            {
+                OutError = "Could not decode image (unsupported, corrupt, or empty file).";
+                return false;
+            }
 
-        // Bilinear resampling means any image size works without disturbing the chunking invariant.
+            const Import::Textures::FTextureImportResult& Img = *Decoded;
+            const int32 W = (int32)Img.Dimensions.x;
+            const int32 H = (int32)Img.Dimensions.y;
+            OutSrcW = W;
+            OutSrcH = H;
+
+            if (W < 2 || H < 2)
+            {
+                OutError = "Image is too small to be a heightmap (needs at least 2x2).";
+                return false;
+            }
+
+            // The height is the red channel.
+            enum class EKind { U8, U16, F32 };
+            EKind Kind     = EKind::U8;
+            int32 Channels = 1;
+            switch (Img.Format)
+            {
+                case EFormat::R8_UNORM:                          Kind = EKind::U8;  Channels = 1; break;
+                case EFormat::RG8_UNORM:                         Kind = EKind::U8;  Channels = 2; break;
+                case EFormat::RGBA8_UNORM: case EFormat::SRGBA8_UNORM: Kind = EKind::U8;  Channels = 4; break;
+                case EFormat::R16_UNORM:                         Kind = EKind::U16; Channels = 1; break;
+                case EFormat::RG16_UNORM:                        Kind = EKind::U16; Channels = 2; break;
+                case EFormat::RGBA16_UNORM:                      Kind = EKind::U16; Channels = 4; break;
+                case EFormat::R32_FLOAT:                         Kind = EKind::F32; Channels = 1; break;
+                case EFormat::RG32_FLOAT:                        Kind = EKind::F32; Channels = 2; break;
+                case EFormat::RGB32_FLOAT:                       Kind = EKind::F32; Channels = 3; break;
+                case EFormat::RGBA32_FLOAT:                      Kind = EKind::F32; Channels = 4; break;
+                default:
+                    OutError = "Unsupported pixel format for a heightmap.";
+                    return false;
+            }
+
+            const int64 ElemSize = (Kind == EKind::U8) ? 1 : (Kind == EKind::U16 ? 2 : 4);
+            if (Img.Pixels.Num() < static_cast<int64>(W) * Channels * ElemSize * H)
+            {
+                OutError = "Decoded pixel buffer is smaller than its reported dimensions.";
+                return false;
+            }
+
+            const uint8* Base = Img.Pixels.GetData();
+            auto ReadHeight = [=](int32 px, int32 py) -> float
+            {
+                const int64 Sample = (static_cast<int64>(py) * W + px) * Channels;
+                switch (Kind)
+                {
+                    case EKind::U8:  return (float)Base[Sample] / 255.0f;
+                    case EKind::U16: return (float)reinterpret_cast<const uint16*>(Base)[Sample] / 65535.0f;
+                    case EKind::F32: return Math::Clamp(reinterpret_cast<const float*>(Base)[Sample], 0.0f, 1.0f);
+                }
+                return 0.0f;
+            };
+
+            // Bilinear resampling means any image size works.
+            const int32 Res = Terrain.Resolution;
+            Rows = [=](int32 ty, float* Out)
+            {
+                const float Fy = (float)ty / (float)(Res - 1) * (float)(H - 1);
+                const int32 Y0 = (int32)Fy;
+                const int32 Y1 = Math::Min(Y0 + 1, H - 1);
+                const float Dy = Fy - (float)Y0;
+                for (int32 tx = 0; tx < Res; ++tx)
+                {
+                    const float Fx = (float)tx / (float)(Res - 1) * (float)(W - 1);
+                    const int32 X0 = (int32)Fx;
+                    const int32 X1 = Math::Min(X0 + 1, W - 1);
+                    const float Dx = Fx - (float)X0;
+                    const float Height = Math::Mix(Math::Mix(ReadHeight(X0, Y0), ReadHeight(X1, Y0), Dx), Math::Mix(ReadHeight(X0, Y1), ReadHeight(X1, Y1), Dx), Dy);
+                    Out[tx] = Math::Clamp(Height, 0.0f, 1.0f);
+                }
+            };
+        }
+
         const int32 Res = Terrain.Resolution;
         if (Res < 2)
         {
@@ -198,32 +272,38 @@ namespace Lumina
             return false;
         }
 
-        Terrain.Heightmap.Init(0.0f, Res * Res);
-
-        for (int32 ty = 0; ty < Res; ++ty)
+        const FTerrainStore* Current = Terrain.GetStore();
+        if (Current != nullptr && Current->GetResolution() == Res && Res <= kLargestInPlaceImport)
         {
-            const float V  = (float)ty / (float)(Res - 1);
-            const float Fy = V * (float)(H - 1);
-            const int32 Y0 = (int32)Fy;
-            const int32 Y1 = Math::Min(Y0 + 1, H - 1);
-            const float Dy = Fy - (float)Y0;
-
-            for (int32 tx = 0; tx < Res; ++tx)
+            FTerrainStore* Store = Terrain.EnsureStore();
+            TVector<float> Strip(GTerrainTileSamples * Res);
+            for (int32 Row = 0; Row < Res; ++Row)
             {
-                const float U  = (float)tx / (float)(Res - 1);
-                const float Fx = U * (float)(W - 1);
-                const int32 X0 = (int32)Fx;
-                const int32 X1 = Math::Min(X0 + 1, W - 1);
-                const float Dx = Fx - (float)X0;
-
-                const float H00 = ReadHeight(X0, Y0);
-                const float H10 = ReadHeight(X1, Y0);
-                const float H01 = ReadHeight(X0, Y1);
-                const float H11 = ReadHeight(X1, Y1);
-                const float Height = Math::Mix(Math::Mix(H00, H10, Dx), Math::Mix(H01, H11, Dx), Dy);
-
-                Terrain.Heightmap[ty * Res + tx] = Math::Clamp(Height, 0.0f, 1.0f);
+                const int32 StripRow = Row % GTerrainTileSamples;
+                Rows(Row, &Strip[StripRow * Res]);
+                if (StripRow == GTerrainTileSamples - 1 || Row == Res - 1)
+                {
+                    Store->WriteHeights(FIntVector2(0, Row - StripRow), FIntVector2(Res, StripRow + 1), Strip.GetData());
+                }
             }
+        }
+        else
+        {
+            // A new data file, so undo hands the component its old one back.
+            const FString DataFile = FTerrainStoreRegistry::MakeDataFile();
+            const FString DiskPath = FTerrainStoreRegistry::ResolveDiskPath(DataFile);
+            TSharedPtr<FTerrainStore> Imported = DiskPath.IsEmpty() ? nullptr : FTerrainStore::Import(DiskPath, Res, Rows);
+            if (Imported == nullptr || bReadFailed)
+            {
+                OutError = "Could not write the imported terrain data.";
+                return false;
+            }
+            Terrain.SetStore(Imported, DataFile);
+        }
+        if (bReadFailed)
+        {
+            OutError = "The raw heightmap ended early.";
+            return false;
         }
 
         Terrain.MarkHeightmapReplaced();
@@ -242,14 +322,52 @@ namespace Lumina
     void FTerrainEditMode::OnExit(CWorld* World)
     {
         // Leaving mid-stroke must still commit the in-flight transaction so undo stays balanced.
-        if (bTransactionOpen && Context)
+        if (bTransactionOpen)
         {
-            Context->EndModeTransaction("Terrain Edit");
+            EndStoreEdit("Terrain Edit");
         }
         bTransactionOpen = false;
         bHasStrokeHit    = false;
         bRampStarted     = false;
         CloseLayerEditTransaction();
+    }
+
+    void FTerrainEditMode::BeginStoreEdit(STerrainComponent& Terrain)
+    {
+        Terrain.EnsureStore();
+        EditingStore = Terrain.Store;
+        EditingStore->BeginEdit();
+    }
+
+    void FTerrainEditMode::EndStoreEdit(const char* Name)
+    {
+        if (EditingStore != nullptr)
+        {
+            TSharedPtr<FTerrainStore::FEdit> Edit = MakeShared<FTerrainStore::FEdit>(EditingStore->EndEdit());
+            if (Context && !Edit->Nodes.IsEmpty())
+            {
+                TSharedPtr<FTerrainStore> Store = EditingStore;
+                Context->RecordModeCommand(MakeUnique<FCustomCommand>(FName(Name),
+                    [Store, Edit] { Store->ApplyEdit(*Edit, true); },
+                    [Store, Edit] { Store->ApplyEdit(*Edit, false); }));
+            }
+            EditingStore = nullptr;
+        }
+        if (Context)
+        {
+            Context->EndModeTransaction(Name);
+        }
+    }
+
+    void FTerrainEditMode::RunStoreTransaction(const char* Name, STerrainComponent& Terrain, const TFunction<void()>& Edit)
+    {
+        if (Context)
+        {
+            Context->BeginModeTransaction();
+        }
+        BeginStoreEdit(Terrain);
+        Edit();
+        EndStoreEdit(Name);
     }
 
     void FTerrainEditMode::TrackLayerEditTransaction(const char* Name)
@@ -299,7 +417,7 @@ namespace Lumina
 
             FFixedString File;
             const char* Filter =
-                "Heightmap (*.png;*.tga;*.hdr;*.jpg)\0*.png;*.tga;*.hdr;*.jpg\0"
+                "Heightmap (*.png;*.tga;*.hdr;*.jpg;*.r16;*.raw)\0*.png;*.tga;*.hdr;*.jpg;*.r16;*.raw\0"
                 "PNG (*.png)\0*.png\0"
                 "All Files (*.*)\0*.*\0";
             if (TerrainEntity != ECS::NullEntity && Platform::OpenFileDialogue(File, "Select Heightmap Image", Filter))
@@ -310,7 +428,7 @@ namespace Lumina
                 int32 SrcW = 0;
                 int32 SrcH = 0;
                 bool bOk = false;
-                RunModeTransaction("Import Heightmap", [&] { bOk = ImportHeightmap(Terrain, *File, Error, SrcW, SrcH); });
+                RunStoreTransaction("Import Heightmap", Terrain, [&] { bOk = ImportHeightmap(Terrain, *File, Error, SrcW, SrcH); });
 
                 if (bOk)
                 {
@@ -480,7 +598,6 @@ namespace Lumina
                     STerrainLayer& L = Terrain.Layers.EmplaceGetRef();
                     L.Name = Format("Layer{}", LayerCount);
                     L.UVScale = 1.0f / 16.0f;
-                    EnsureLayerWeightStorage(Terrain);
                     Terrain.CPUState.bFullWeightsDirty = true;
                 });
             }
@@ -493,7 +610,7 @@ namespace Lumina
 
         Brush.ActiveLayer = Math::Clamp(Brush.ActiveLayer, 0, Math::Max(LayerCount - 1, 0));
 
-        // Reorder also mutates LayerWeights, so weights follow the layer rather than swapping under it.
+        // Reorder also remaps the weight channels, so weights follow the layer rather than swapping under it.
         if (Brush.ActiveLayer >= 0 && Brush.ActiveLayer < LayerCount)
         {
             STerrainLayer& L = Terrain.Layers[Brush.ActiveLayer];
@@ -511,7 +628,7 @@ namespace Lumina
             ImGui::BeginDisabled(!bCanUp);
             if (ImGui::Button("Up"))
             {
-                RunModeTransaction("Move Terrain Layer Up", [&] { SwapLayers(Terrain, Brush.ActiveLayer, Brush.ActiveLayer - 1); });
+                RunStoreTransaction("Move Terrain Layer Up", Terrain, [&] { SwapLayers(Terrain, Brush.ActiveLayer, Brush.ActiveLayer - 1); });
                 --Brush.ActiveLayer;
             }
             ImGui::EndDisabled();
@@ -520,7 +637,7 @@ namespace Lumina
             ImGui::BeginDisabled(!bCanDown);
             if (ImGui::Button("Down"))
             {
-                RunModeTransaction("Move Terrain Layer Down", [&] { SwapLayers(Terrain, Brush.ActiveLayer, Brush.ActiveLayer + 1); });
+                RunStoreTransaction("Move Terrain Layer Down", Terrain, [&] { SwapLayers(Terrain, Brush.ActiveLayer, Brush.ActiveLayer + 1); });
                 ++Brush.ActiveLayer;
             }
             ImGui::EndDisabled();
@@ -529,59 +646,41 @@ namespace Lumina
             ImGui::BeginDisabled(LayerCount <= 1);
             if (ImGui::Button("Remove"))
             {
-                RunModeTransaction("Remove Terrain Layer", [&] { RemoveLayer(Terrain, Brush.ActiveLayer); });
+                RunStoreTransaction("Remove Terrain Layer", Terrain, [&] { RemoveLayer(Terrain, Brush.ActiveLayer); });
                 Brush.ActiveLayer = Math::Min(Brush.ActiveLayer, Terrain.Layers.Num() - 1);
             }
             ImGui::EndDisabled();
         }
     }
 
-    void FTerrainEditMode::EnsureLayerWeightStorage(STerrainComponent& Terrain)
-    {
-        const int32 LayerStride = Terrain.Resolution * Terrain.Resolution;
-        const int32 Need = LayerStride * Math::Max(Terrain.Layers.Num(), 1);
-        if (Terrain.LayerWeights.Num() != Need)
-        {
-            Terrain.LayerWeights.SetNum(Need, uint8(0));
-        }
-    }
-
     void FTerrainEditMode::SwapLayers(STerrainComponent& Terrain, int32 A, int32 B)
     {
-        if (A == B) return;
         const int32 LayerCount = Terrain.Layers.Num();
-        if (A < 0 || B < 0 || A >= LayerCount || B >= LayerCount) return;
-
-        EnsureLayerWeightStorage(Terrain);
+        if (A == B || A < 0 || B < 0 || A >= LayerCount || B >= LayerCount)
+        {
+            return;
+        }
         Terrain.Layers.Swap(A, B);
-
-        const int32 LayerStride = Terrain.Resolution * Terrain.Resolution;
-        TVector<uint8> Tmp(LayerStride);
-        uint8* PA = &Terrain.LayerWeights[A * LayerStride];
-        uint8* PB = &Terrain.LayerWeights[B * LayerStride];
-        Memory::Memcpy(Tmp.GetData(), PA, LayerStride);
-        Memory::Memcpy(PA,         PB, LayerStride);
-        Memory::Memcpy(PB, Tmp.GetData(), LayerStride);
-
+        int32 Source[GTerrainMaxLayers] = { 0, 1, 2, 3 };
+        Source[A] = B;
+        Source[B] = A;
+        Terrain.EnsureStore()->RemapLayers(Source);
         Terrain.CPUState.bFullWeightsDirty = true;
     }
 
     void FTerrainEditMode::RemoveLayer(STerrainComponent& Terrain, int32 Index)
     {
         const int32 LayerCount = Terrain.Layers.Num();
-        if (Index < 0 || Index >= LayerCount || LayerCount <= 1) return;
-
-        EnsureLayerWeightStorage(Terrain);
-        const int32 LayerStride = Terrain.Resolution * Terrain.Resolution;
-
-        // Pack remaining layers down, then resize the trailing slot away.
-        for (int32 i = Index; i + 1 < LayerCount; ++i)
+        if (Index < 0 || Index >= LayerCount || LayerCount <= 1)
         {
-            uint8* Dst = &Terrain.LayerWeights[i     * LayerStride];
-            uint8* Src = &Terrain.LayerWeights[(i + 1) * LayerStride];
-            Memory::Memcpy(Dst, Src, LayerStride);
+            return;
         }
-        Terrain.LayerWeights.SetNum((LayerCount - 1) * LayerStride);
+        int32 Source[GTerrainMaxLayers];
+        for (int32 Channel = 0; Channel < (int32)GTerrainMaxLayers; ++Channel)
+        {
+            Source[Channel] = Channel < Index ? Channel : (Channel + 1 < (int32)GTerrainMaxLayers ? Channel + 1 : -1);
+        }
+        Terrain.EnsureStore()->RemapLayers(Source);
         Terrain.Layers.RemoveAt(Index);
         Terrain.CPUState.bFullWeightsDirty = true;
     }
@@ -594,10 +693,7 @@ namespace Lumina
         // The moment the button is released anywhere, commit the stroke's undo transaction.
         if (bTransactionOpen && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
         {
-            if (Context)
-            {
-                Context->EndModeTransaction("Terrain Edit");
-            }
+            EndStoreEdit("Terrain Edit");
             bTransactionOpen = false;
         }
 
@@ -712,6 +808,7 @@ namespace Lumina
         if (!bTransactionOpen && Context)
         {
             Context->BeginModeTransaction();
+            BeginStoreEdit(Terrain);
             bTransactionOpen = true;
         }
 

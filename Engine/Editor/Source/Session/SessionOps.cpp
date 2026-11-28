@@ -528,10 +528,14 @@ namespace Lumina::SessionOps
 
     namespace
     {
-        CEdNodeGraph* FindTabGraph(FStringView Tab, FString& OutError)
+        CEdNodeGraph* FindTabGraph(FStringView Tab, FString& OutError, FEditorTool** OutTool = nullptr)
         {
             FEditorUI* UI = RequireUI(OutError);
             FEditorTool* Tool = UI != nullptr ? UI->FindTab(Tab, OutError) : nullptr;
+            if (OutTool != nullptr)
+            {
+                *OutTool = Tool;
+            }
             if (Tool == nullptr)
             {
                 return nullptr;
@@ -541,6 +545,30 @@ namespace Lumina::SessionOps
             if (Graph == nullptr)
             {
                 OutError = Lumina::Format("Tab '{}' shows no node graph.", Tab);
+            }
+            return Graph;
+        }
+
+        // Walks node ids from the canvas the tab shows into nested canvases, as the animgraph tools' GraphPath does.
+        CEdNodeGraph* FindTabCanvas(FStringView Tab, const TVector<int64>& GraphPath, FString& OutError)
+        {
+            FEditorTool* Tool = nullptr;
+            CEdNodeGraph* Graph = FindTabGraph(Tab, OutError, &Tool);
+            for (int64 NodeID : GraphPath)
+            {
+                CEdGraphNode* Node = Graph != nullptr ? Graph->FindNode(NodeID) : nullptr;
+                CEdNodeGraph* Inner = Node != nullptr ? Node->GetEnterableSubGraph() : nullptr;
+                if (Graph != nullptr && Inner == nullptr)
+                {
+                    OutError = Lumina::Format("Node {} is not a node with a canvas inside it.", NodeID);
+                }
+                Graph = Inner;
+            }
+
+            // A canvas never opened has no history of its own until the tab adopts it, so its edits would not undo.
+            if (Graph != nullptr && !GraphPath.IsEmpty())
+            {
+                Tool->AdoptNodeGraph(Graph);
             }
             return Graph;
         }
@@ -610,6 +638,53 @@ namespace Lumina::SessionOps
         }
 
         Graph->TidyGraph();
+        return true;
+    }
+
+    bool CopyGraphNodes(FStringView Tab, const TVector<int64>& GraphPath, const TVector<int64>& Nodes, FString& OutText, FString& OutError)
+    {
+        CEdNodeGraph* Graph = FindTabCanvas(Tab, GraphPath, OutError);
+        if (Graph == nullptr)
+        {
+            return false;
+        }
+
+        for (int64 NodeID : Nodes)
+        {
+            if (Graph->FindNode(NodeID) == nullptr)
+            {
+                OutError = Lumina::Format("Node {} is not on the canvas tab '{}' shows.", NodeID, Tab);
+                return false;
+            }
+        }
+
+        OutText = Graph->CopyToClipboard(Nodes);
+        if (OutText.IsEmpty())
+        {
+            OutError = "Nothing to copy, since the entry and output nodes cannot be copied.";
+            return false;
+        }
+        return true;
+    }
+
+    bool PasteGraphNodes(FStringView Tab, const TVector<int64>& GraphPath, FStringView Text, float X, float Y, TVector<int64>& OutNodes, FString& OutError)
+    {
+        CEdNodeGraph* Graph = FindTabCanvas(Tab, GraphPath, OutError);
+        if (Graph == nullptr)
+        {
+            return false;
+        }
+
+        FNodeGraphEditScope Scope(Graph, "Paste Nodes");
+        for (const auto& [ExportedID, Node] : Graph->PasteText(Text, ImVec2(X, Y)))
+        {
+            OutNodes.Add(Node->GetNodeID());
+        }
+        if (OutNodes.IsEmpty())
+        {
+            OutError = "The text held no nodes this graph accepts.";
+            return false;
+        }
         return true;
     }
 

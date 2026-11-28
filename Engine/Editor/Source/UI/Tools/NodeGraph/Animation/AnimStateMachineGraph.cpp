@@ -5,6 +5,7 @@
 #include "Nodes/AnimGraphNode_StateRouting.h"
 #include "Core/Object/Cast.h"
 #include "Core/Object/Class.h"
+#include "Core/Serialization/Structured/JsonStructuredArchive.h"
 #include "Containers/HashTable.h"
 #include "Containers/Pair.h"
 #include "Containers/StringFormat.h"
@@ -410,45 +411,53 @@ namespace Lumina
         }
     }
 
-    void CAnimStateMachineGraph::PostCloneContent(const CEdNodeGraph* Source, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones)
+    void CAnimStateMachineGraph::ExportExtras(const THashSet<int64>& NodeIDs, FJsonValue& Out) const
     {
-        const CAnimStateMachineGraph* SourceGraph = Cast<CAnimStateMachineGraph>(Source);
-        if (SourceGraph == nullptr)
+        FJsonValue Exported = FJsonValue::MakeArray();
+        for (const TStrongObjectPtr<CAnimStateTransition>& Transition : Transitions)
+        {
+            if (Transition.IsValid() && NodeIDs.Contains(Transition->FromStateNodeID) && NodeIDs.Contains(Transition->ToStateNodeID))
+            {
+                FJsonValue Properties;
+                FJsonStructuredArchive::SaveStruct(Properties, Transition->GetClass(), Transition.Get(), true);
+                Exported.Add(Move(Properties));
+            }
+        }
+
+        if (!Exported.IsEmpty())
+        {
+            Out.Set("Transitions", Move(Exported));
+        }
+    }
+
+    void CAnimStateMachineGraph::ImportExtras(const FJsonValue& Extras, const THashMap<int64, CEdGraphNode*>& Created)
+    {
+        const FJsonValue* Exported = Extras.Find("Transitions");
+        if (Exported == nullptr || !Exported->IsArray())
         {
             return;
         }
 
-        THashMap<int64, int64> RemappedIDs;
-        RemappedIDs.Reserve(Clones.Num());
-        for (const auto& [Original, Clone] : Clones)
+        for (const FJsonValue& Properties : Exported->AsArray())
         {
-            RemappedIDs.TryAdd(Original->GetNodeID(), Clone->GetNodeID());
-        }
-
-        for (const TStrongObjectPtr<CAnimStateTransition>& SourceTransition : SourceGraph->Transitions)
-        {
-            if (!SourceTransition.IsValid())
+            auto From = Created.Find(Properties.GetValue<int64>("FromStateNodeID", 0));
+            auto To   = Created.Find(Properties.GetValue<int64>("ToStateNodeID", 0));
+            if (From == nullptr || To == nullptr)
             {
                 continue;
             }
 
-            const auto FromItr = RemappedIDs.Find(SourceTransition->FromStateNodeID);
-            const auto ToItr = RemappedIDs.Find(SourceTransition->ToStateNodeID);
-            if (FromItr == nullptr || ToItr == nullptr)
-            {
-                continue;
-            }
-
-            // ValidateGraph already made a bare transition for the cloned wire; this fills its data in.
-            CAnimStateTransition* Transition = FindTransition((*FromItr), (*ToItr));
+            // ValidateGraph already made a bare transition for the pasted wire, and this fills its data in.
+            CAnimStateTransition* Transition = FindTransition((*From)->GetNodeID(), (*To)->GetNodeID());
             if (Transition == nullptr)
             {
                 continue;
             }
 
-            SourceTransition->CopyPropertiesTo(Transition);
-            Transition->FromStateNodeID = (*FromItr);
-            Transition->ToStateNodeID   = (*ToItr);
+            FJsonValue Copy = Properties;
+            FJsonStructuredArchive::LoadStruct(Copy, Transition->GetClass(), Transition, true);
+            Transition->FromStateNodeID = (*From)->GetNodeID();
+            Transition->ToStateNodeID   = (*To)->GetNodeID();
         }
     }
 

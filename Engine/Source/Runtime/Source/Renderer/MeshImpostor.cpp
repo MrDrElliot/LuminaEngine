@@ -64,6 +64,10 @@ namespace Lumina
         const uint32 MipCount  = Compressed.GetMipCount();
         Compressed.BaseColor   = MeshImpostorInternal::CompressAtlas(Impostor, Impostor.BaseColor, MipCount);
         Compressed.NormalDepth = MeshImpostorInternal::CompressAtlas(Impostor, Impostor.NormalDepth, MipCount);
+        if (Impostor.HasEmissive())
+        {
+            Compressed.Emissive = MeshImpostorInternal::CompressAtlas(Impostor, Impostor.Emissive, MipCount);
+        }
         Impostor = Move(Compressed);
     }
 }

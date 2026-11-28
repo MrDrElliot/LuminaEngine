@@ -3,6 +3,7 @@
 #include "Core/UpdateContext.h"
 #include "Core/Delegates/Delegate.h"
 #include "Core/ArtifactCache/ArtifactCache.h"
+#include "World/Terrain/TerrainStoreRegistry.h"
 #include "Core/Engine/EngineURL.h"
 #include "Memory/SmartPtr.h"
 #include "Core/Object/ObjectHandleTyped.h"
@@ -96,6 +97,7 @@ namespace Lumina
         NODISCARD RUNTIME_API FStringView GetProjectPath() const { return ProjectPath; }
         NODISCARD RUNTIME_API FStringView GetProjectFile() const { return ProjectFile; }
         NODISCARD RUNTIME_API FArtifactCache& GetArtifactCache() { return ArtifactCache; }
+        NODISCARD RUNTIME_API FTerrainStoreRegistry& GetTerrainStores() { return TerrainStores; }
         NODISCARD RUNTIME_API FFixedString GetProjectContentDirectory() const;
         NODISCARD RUNTIME_API FFixedString GetProjectScriptsDirectory() const;
         NODISCARD RUNTIME_API FFixedString GetProjectShadersDirectory() const;
@@ -235,6 +237,7 @@ namespace Lumina
         FFixedString                ProjectPath;
         FFixedString                ProjectFile;
         FArtifactCache              ArtifactCache;
+        FTerrainStoreRegistry       TerrainStores;
 
         // Read by MountProject, applied by StartProject once project settings are writable.
         TVector<FString>            LegacyCookRoots;

@@ -58,7 +58,8 @@ namespace Lumina
         constexpr uint32 kAtlasTileCapacity = 16;   // (512 / 128)^2 roots, one 128px tile each.
 
         TAtomic<uint32> ShadowDataCount = (uint32)MAX_SHADOWS - 1;
-        TArray<FLight, MAX_LIGHTS> Lights = {};
+        TVector<FLight> Lights;
+        Lights.SetNum(3);
         Lights[0].ShadowDataIndex = Constants::kIndexNone;
         Lights[1].ShadowDataIndex = Constants::kIndexNone;
         Lights[2].ShadowDataIndex = Constants::kIndexNone;

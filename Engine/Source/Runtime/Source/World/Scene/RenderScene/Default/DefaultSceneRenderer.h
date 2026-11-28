@@ -27,16 +27,20 @@
 #include "World/Scene/RenderScene/EditorGridRequest.h"
 #endif
 #include "World/Scene/RenderScene/ScenePrimitiveSet.h"
+#include "World/Scene/RenderScene/SceneLightSet.h"
 #include "World/Scene/RenderScene/Default/GpuPoseEvaluation.h"
 #include "World/Scene/RenderScene/Default/SunShadowCache.h"
 #include "World/Scene/RenderScene/Default/WorldDistanceField.h"
+#include "World/Scene/RenderScene/TerrainPages.h"
 #include "World/Scene/RenderScene/TerrainRenderTypes.h"
 #include "World/Scene/RenderScene/TexturePaintTypes.h"
+#include "World/Scene/RenderScene/VirtualTextureTypes.h"
 #include "Assets/AssetTypes/Material/MaterialInterface.h"
 #include "Assets/AssetTypes/ParticleSystem/ParticleSystem.h"
 #include "Core/Threading/Sync.h"
 #include "World/Entity/Components/PostProcessSettings.h"
 #include "World/Entity/Components/CloudComponent.h"
+#include "World/Entity/Components/ViewCaptureComponent.h"
 #include "World/Entity/Systems/WeatherState.h"
 
 namespace Lumina
@@ -163,7 +167,6 @@ namespace Lumina
             TVector<FGpuPoseRequest>            GpuPoseRequests;
             TVector<FAnimWeightedSample>        GpuPoseSamples;
 
-            FSceneRenderStats                   Stats = {};
             bool                                bTouched = false;
 
             FThreadLocalDrawData() = default;
@@ -181,7 +184,6 @@ namespace Lumina
                 BoneUploadRanges.Reset();
                 GpuPoseRequests.Reset();
                 GpuPoseSamples.Reset();
-                Stats = {};
                 bTouched = false;
             }
         };
@@ -259,6 +261,16 @@ namespace Lumina
                 float   FullDensityDistance = 0.0f;
                 float   TerrainNormalDistance = 0.0f;
                 float   RootDarkening  = 0.0f;
+                uint32  MaskTexture    = Constants::kIndexNoneU32;
+                uint32  MaskChannel    = 0;
+                float   MaskStrength   = 0.0f;
+            };
+
+            enum class EHeightChange : uint8
+            {
+                None,
+                Full,
+                Rect,
             };
 
             struct FTerrainExtract
@@ -267,13 +279,14 @@ namespace Lumina
                 FMatrix4            WorldMatrix;
 
                 int32               Resolution      = 0;
-                int32               ChunkResolution = 0;
                 float               TileWorldSize   = 0.0f;
                 float               MaxHeight       = 0.0f;
                 int32               LayerCount       = 0;
                 // The material's VisBuffer raster for this device's geometry path, and its deferred shading.
                 FShaderH            VisBufferShader;
                 FShaderH            DeferredShader;
+                // The material drawn from above into the terrain's virtual texture outputs.
+                FShaderH            VirtualTextureShader;
                 uint32              MaterialIndex   = 0;
                 bool                bCastShadow     = true;
                 bool                bReceiveShadow  = true;
@@ -284,21 +297,13 @@ namespace Lumina
                 TVector<FGrassSpeciesExtract> Grass;
                 uint32              GrassMaxInstances = 0;
 
-                // Height upload: 0 none, 1 full map, 2 packed dirty rect.
-                uint8               HeightUpload    = 0;
+                // What the heights changed by this frame, which the world distance field rebuilds under.
+                EHeightChange       HeightChange    = EHeightChange::None;
                 FIntVector2         HeightRectMin   = FIntVector2(0);
                 FIntVector2         HeightRectMax   = FIntVector2(0);
-                TVector<float>      HeightBytes;     // full map, or tightly-packed rect rows
 
-                // Weight upload: 0 none, 1 all slices, 2 selected dirty slices.
-                uint8               WeightUpload    = 0;
-                uint32              WeightSliceMask = 0u;         // bit L set => slice L present
-                TVector<uint8>      WeightBytes;     // dirty slices packed back-to-back
-
-                // Chunk/meshlet metadata rebuilt this frame; copied so next frame's rebuild can't race the upload.
-                bool                         bGeometryRebuilt = false;
-                TVector<FTerrainChunkInfo>   Chunks;
-                TVector<FTerrainMeshletInfo> Meshlets;
+                // Heights, weights and node bounds, which the renderer reads while recording since edits wait for the next frame.
+                TSharedPtr<FTerrainStore> Store;
             };
 
             struct FParticleExtract
@@ -375,12 +380,45 @@ namespace Lumina
                 float                   NeighborCellSize    = 0.0f;
             };
 
+            // The passes a capture runs, all of them for an editor preview and what its component asks for otherwise.
+            enum class ECaptureFeature : uint32
+            {
+                None         = 0,
+                AntiAliasing = 1u << 0,
+                PostProcess  = 1u << 1,
+                Volumetrics  = 1u << 2,
+                Reflections  = 1u << 3,
+                Translucency = 1u << 4,
+                Decals       = 1u << 5,
+                Sky          = 1u << 6,
+                Terrain      = 1u << 7,
+                All          = 0xFFFFFFFFu,
+            };
+
             struct FCaptureViewData
             {
                 FSceneGlobalData    SceneGlobalData = {};
                 FViewVolume         ViewVolume      = {};
                 uint32              CameraViewIndex = Constants::kIndexNoneU32;   // its cull-view index (frustum-only)
                 int32               SceneViewIndex  = -1;    // index into FDefaultSceneRenderer::SceneViews
+                ECaptureFeature     Features        = ECaptureFeature::All;
+                uint32              LayerMask       = RenderLayers::kAllMask;
+                uint32              CaptureInclude  = 0u;
+                uint32              CaptureExclude  = 0u;
+
+                // Set only for an SViewCaptureComponent capture, which resolves into its target after it renders.
+                uint32                  TargetUAV    = RHI::kInvalidHeapSlot;
+                // What the capture's state takes on once its image lands, kept here so a capture the frame skipped stays due.
+                ECS::FEntity            Entity          = ECS::NullEntity;
+                uint64                  ChangeHash      = 0;
+                uint32                  CaptureRequests = 0;
+                double                  CaptureTime     = 0.0;
+                EViewCaptureBackground  Background   = EViewCaptureBackground::Scene;
+                FVector4                BackgroundColor = FVector4(0.0f);
+                float                   AmbientScale = 1.0f;
+                SPostProcessSettings    PostProcess  = {};
+
+                bool Has(ECaptureFeature Feature) const { return ((uint32)Features & (uint32)Feature) != 0u; }
             };
 
             FViewVolume                      ViewVolume = {};
@@ -389,7 +427,6 @@ namespace Lumina
             FSceneGlobalData                 SceneGlobalData = {};
             float                            CachedWorldDeltaTime = 0.0f;
             bool                             bExtractedThisFrame = false;
-            FSceneRenderStats                FrameStats = {};
 
             struct FDeferredMaterialEntry
             {
@@ -466,6 +503,11 @@ namespace Lumina
                 TVector<uint32>                  PointShadowCullViewBases;
                 TVector<uint32>                  SpotShadowCullViewBases;
                 TVector<FCaptureViewData>        CaptureViews;
+                // One per capture, with its layers and filter, which the skinned gather widens each mesh's LOD slice for.
+                TVector<FCullView>               CaptureLODViews;
+                TVector<FFrustum>                CaptureLODFrusta;
+                // Every layer some capture draws, so the lights on them are extracted even when the camera skips them.
+                uint32                           CaptureLightLayers = 0u;
                 // The camera again, holding only custom depth instances, and kIndexNoneU32 while none exist.
                 uint32                           CustomDepthCullView = Constants::kIndexNoneU32;
             } Views;
@@ -473,8 +515,17 @@ namespace Lumina
             struct FLighting
             {
                 FSceneLightData                  LightData = {};
-                // Written densely from index 0, so the upload sends only the live prefix of each.
-                TArray<FLight, MAX_LIGHTS>            Lights = {};
+                // The sun in slot 0 when there is one, then the shadow casters and light-function lights the CPU resolves this frame.
+                TVector<FLight>                  Lights;
+                // The render layers of each, which a view's CullMask must share for the light to reach it.
+                TVector<uint32>                  LightLayers;
+                // The retained slot behind each entry, and kIndexNoneU32 for the sun.
+                TVector<uint32>                  LightSlots;
+                // Retained records changed this frame, uploaded once before the first view culls.
+                TVector<FSceneLightSet::FUpload> RetainedUploads;
+                uint32                           RetainedCapacity = 0;
+                bool                             bRetainedUploadPending = false;
+                bool                             bAnyLocalContact = false;
                 TArray<FLightShadowData, MAX_SHADOWS> Shadows = {};
                 TArray<TVector<FLightShadow>, (uint32)ELightType::Num> PackedShadows = {};
                 TAtomic<uint32>                  ShadowDataCount = 0;
@@ -613,7 +664,12 @@ namespace Lumina
                 uint32                           NumDrops                 = 0;
                 uint32                           NumSplashes              = 0;
                 uint32                           NumFlakes                = 0;
+                // Roof edges looked for this frame, which keep dripping while the rain falls or surfaces stay wet.
+                uint32                           NumDripSpawns            = 0;
             } Weather;
+
+            // Wind blocker boxes nearest the camera, cleared rather than reassigned so the array keeps its capacity.
+            TVector<FWindBlockerGPU> WindBlockers;
 
             // What Weather Interactors did to the world, cleared rather than reassigned so its arrays keep their capacity.
             struct FWeatherInteraction
@@ -686,6 +742,9 @@ namespace Lumina
                 TVector<FReflectionProbeCapture> Captures;
                 bool                             bNeedsRebake = false;
                 bool                             bLayoutChanged = false;
+                // What the shared prefiltered array must hold this frame, its face size and how many probes it has slices for.
+                uint32                           ArrayFaceSize  = 0;
+                uint32                           ArrayProbes    = 0;
 
                 int32                            BakingProbe    = -1;
                 int32                            BakeViewIndex  = -1;      // FSceneView the faces render through
@@ -705,9 +764,38 @@ namespace Lumina
             {
                 SPostProcessSettings             ActivePostProcessStorage = {};
                 bool                             bHasActivePostProcess = false;
+                // The capture being rendered grades with its own settings, null for every other view.
+                const SPostProcessSettings*      ViewOverride = nullptr;
                 TVector<FPostProcessMaterial>    ActivePostProcessMaterials;
                 float                            DisplayHeadroomStops = 0.0f;
             } PostProcess;
+
+            // One runtime virtual texture's writes this frame, all in world texels.
+            struct FVirtualTextureExtract
+            {
+                struct FCapture
+                {
+                    int32 TerrainExtract = -1;
+                    uint32 Layout        = 0;
+                };
+
+                RHI::FTextureH  Texture;
+                uint32          UAV        = RHI::kInvalidHeapSlot;
+                uint32          SRV        = Constants::kIndexNoneU32;
+                uint32          Resolution = 0;
+                float           TexelSize  = 1.0f;
+                FIntVector2     Origin     = FIntVector2(0);
+                FVector4        Clear      = FVector4(0.0f);
+                // The share of the way back to Clear this frame, zero for none.
+                float           DecayAmount = 0.0f;
+
+                // Newly uncovered texels, which clear and then take any capture.
+                TVector<FIntVector4> ClearRects;
+                TVector<FIntVector4> CaptureRects;
+                TVector<FCapture>    Captures;
+                TVector<FVirtualTextureStampGPU> Stamps;
+                uint32          StampTiles = 0;
+            };
 
             struct FExtracts
             {
@@ -718,6 +806,7 @@ namespace Lumina
                 TVector<FParticleShapeGPU>       ParticleAttractors;
                 TVector<FParticleShapeGPU>       ParticleColliders;
                 TVector<FTexturePaintOp>         PaintOps;
+                TVector<FVirtualTextureExtract>  VirtualTextures;
 
                 #if USING(WITH_EDITOR)
                 TVector<uint32>                  SelectionBits;
@@ -752,6 +841,11 @@ namespace Lumina
             ScreenSpaceGIBlur,
             ScreenSpaceGI,
             ScreenSpaceGIHistory,
+            // The trace accumulated over frames and the depth and frame count it was taken at, ping-ponged by ScreenSpaceGIFrameIndex.
+            ScreenSpaceGIAccumA,
+            ScreenSpaceGIAccumB,
+            ScreenSpaceGIDepthA,
+            ScreenSpaceGIDepthB,
             SunFarShadowMask,
             DistanceFieldAOTrace,
             DistanceFieldAO,
@@ -772,6 +866,9 @@ namespace Lumina
             GBufferB,
             GBufferC,
             GBufferD,
+            // Extended lobes, written and read only where GBufferC's extended flag is set.
+            GBufferE,
+            GBufferF,
             MaterialSlot,
             Accum,
             Revealage,
@@ -839,6 +936,9 @@ namespace Lumina
             // Resolved each extract, since a plugin can register or drop one between frames.
             IUpscaler*                                      Upscaler = nullptr;
             bool                                            bIsPrimary = false;
+            // Shared by every view capture of its size, which render one after another and resolve before the next starts.
+            bool                                            bCapturePool = false;
+            uint64                                          CapturePoolLastUsed = 0;
             FViewVolume                                     PendingViewVolume;
             bool                                            bEnabled = false;
             bool                                            bReservedForProbeBake = false;
@@ -850,18 +950,19 @@ namespace Lumina
             bool                                            bCloudNoiseBaked = false;
             // The aerosol the transmittance and multiple scattering LUTs were built for, negative while unbuilt.
             float                                           AtmosphereLUTAerosol = -1.0f;
+            // What the sky view LUT was last built from, zero while unbuilt.
+            uint64                                          SkyViewLUTKey = 0;
             // Picks which texel of each 2x2 block the clouds march this frame, the rest keeping their last march.
             uint32                                          CloudFrame = 0;
             bool                                            bCloudHistoryValid = false;
             FVector2                                        CloudHistoryWindOffset = FVector2(0.0f);
             RHI::EQueueType                                 CloudNoiseQueue  = RHI::EQueueType::Graphics;
-            RHI::FGPUAllocation                                    ClusterBuffer;
-            RHI::FGPUAllocation                                    ClusterLightMaskBuffer;
-            RHI::FGPUAllocation                                    ClusterRangeBuffer;
-            FMatrix4                                        LastClusterInvProjection = FMatrix4(0.0f);
-            FVector2                                        LastClusterNearFar       = FVector2(0.0f);
-            FUIntVector2                                    LastClusterScreenSize    = FUIntVector2(0);
-            bool                                            bClusterGridDirty        = true;
+            // This view's depth-sorted visible lights, their tile masks and the grid the light cull writes.
+            FSceneBuffer                                    ViewLightBuffer     = FSceneBuffer("View.Lights", kSceneBufferGrowth);
+            FSceneBuffer                                    LightTileMaskBuffer = FSceneBuffer("View.LightTileMasks", kSceneBufferGrowth);
+            FSceneBuffer                                    LightGridBuffer     = FSceneBuffer("View.LightGrid", kSceneBufferGrowth);
+            // A new grid buffer holds garbage counters, so it is zeroed before its first cull.
+            bool                                            bLightGridFresh     = true;
             // Drives both the jitter parity and the history ping-pong, so the two cannot disagree.
             uint32                                          TemporalFrameIndex       = 0;
             uint32                                          PendingTemporalFrameIndex = 0;
@@ -872,6 +973,9 @@ namespace Lumina
             // A debug view skips the capture, so the history reprojects through the camera it was taken with.
             bool                                            bScreenSpaceGIHistoryValid = false;
             FMatrix4                                        ScreenSpaceGIHistoryViewProjection = FMatrix4(1.0f);
+            // Counts traced frames, which both picks the accumulation pair and steps the trace noise even without a temporal upscaler.
+            uint32                                          ScreenSpaceGIFrameIndex = 0;
+            bool                                            bScreenSpaceGIAccumValid = false;
         };
 
         void Init() override;
@@ -898,6 +1002,7 @@ namespace Lumina
         const FSceneImage& GetNamedImage(ENamedImage Image) const { return CurrentView ? CurrentView->Images[(int)Image] : NamedImages[(int)Image]; }
 
         RHI::FGPUAllocation GetRenderBuckets()    const { return RenderBucketRing[CurrentFrameSlot]; }
+        RHI::FGPUAllocation GetViewDrawBases()    const { return ViewDrawBaseRing[CurrentFrameSlot]; }
         RHI::FGPUAllocation GetMeshletDrawList()  const { return MeshletDrawListRing[CurrentFrameSlot]; }
         RHI::FGPUAllocation GetMeshDrawArgs()     const { return MeshDrawArgsRing[CurrentFrameSlot]; }
         RHI::FGPUAllocation GetMeshletBlocks()    const { return MeshletBlockRing[CurrentFrameSlot]; }
@@ -1036,8 +1141,9 @@ namespace Lumina
         {
             return { FrameScratchRing[CurrentFrameSlot].Gpu + Offset, Size };
         }
-        void ClusterBuildPass(RHI::FCmdListH CL);
         void LightCullPass(RHI::FCmdListH CL);
+        // Once a frame, ahead of the first view's cull, which every view then reads.
+        void UploadRetainedLights(RHI::FCmdListH CL);
         void PointShadowPass(RHI::FCmdListH CL);
         void SpotShadowPass(RHI::FCmdListH CL);
         // Requests, allocates and invalidates the sun's virtual pages from the finished depth, then builds the masks the deferred shadow cull reads.
@@ -1349,6 +1455,10 @@ namespace Lumina
         void ExtractWeatherInteraction(ECS::FRegistry& Registry, FFrameData& Frame);
         void ExtractGroundFog(ECS::FRegistry& Registry, FFrameData& Frame);
         void ApplyWeatherToClouds(FFrameData& Frame);
+        // The shelter boxes materials test when they sample Global Wind, nearest the camera first.
+        void ExtractWindBlockers(ECS::FRegistry& Registry, FFrameData& Frame);
+        // Dims and tints the sun's light by the preset's Environment layer, once the sun has its slot.
+        void ApplyWeatherToSunlight(FFrameData& Frame);
 
         // Render-phase half: buffer resize + upload commands; reads extract-phase state.
         void CompileDrawCommands_Render(RHI::FCmdListH CL);
@@ -1428,7 +1538,7 @@ namespace Lumina
         // Leaders the layout packs itself because nothing else gathered them this frame.
         TVector<uint32>                        UngatheredLeaderScratch;
 
-        // An editor icon the light pass records while it already holds the light and its position.
+        // An editor icon for a light, gathered only in an editor world.
         struct FLightIcon
         {
             ECS::FEntity   Entity;
@@ -1436,38 +1546,37 @@ namespace Lumina
             FVector3       Color;
         };
 
-        // One fixed chunk of dense light slots, so a chunk never overflows and the commit order never depends on scheduling.
+        // One fixed chunk of the CPU-resolved lights, so a chunk never overflows and the commit order never depends on scheduling.
         struct FLightBatch
         {
             static constexpr uint32 Capacity = 32;
             FLight         Lights[Capacity];
+            uint32         LightLayers[Capacity];
+            uint32         Slots[Capacity];
             // LightIndex holds the slot within Lights until the batch is committed.
             FShadowRequest Shadows[Capacity];
             FLightFunctionRequest LightFunctions[Capacity];
             FSceneCullContext::FLightSphere ShadowLights[Capacity];
-            FLightIcon     Icons[Capacity];
             uint32         NumLights  = 0;
             uint32         NumShadows = 0;
             uint32         NumLightFunctions = 0;
             uint32         NumShadowLights = 0;
-            uint32         NumIcons = 0;
         };
 
-        // Point chunks first, then spot, then area, each in dense order.
         TVector<FLightBatch>                   LightBatches;
-        uint32                                 NumPointLightChunks = 0;
-        uint32                                 NumSpotLightChunks  = 0;
-        uint32                                 NumAreaLightChunks  = 0;
+        uint32                                 NumLightChunks = 0;
         TVector<FLightIcon>                    DirectionalLightIcons;
+        TArray<TVector<FLightIcon>, (uint32)ESceneLightKind::Num> LocalLightIcons;
         bool                                   bRecordLightIcons = false;
 
         void ScheduleLightExtract(ECS::FRegistry& Registry);
         const SDirectionalLightComponent* SelectActiveSun(const auto& DirectionalView, const auto& Transforms);
-        void ProcessLightChunk(uint32 Chunk, const auto& PointView, const auto& SpotView, const auto& AreaView, const auto& Transforms);
+        void ProcessLightChunk(uint32 Chunk, const auto& Transforms, const auto& Points, const auto& Spots, const auto& Areas);
+        void GatherLightIcons(ECS::FRegistry& Registry);
         void CommitLightBatches(uint32 FirstLocalLight);
-        void ProcessPointLight(ECS::FEntity Entity, const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
-        void ProcessSpotLight(ECS::FEntity Entity, const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
-        void ProcessAreaLight(ECS::FEntity Entity, const SAreaLightComponent& AreaLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
+        void ProcessPointLight(uint32 Slot, const SPointLightComponent& PointLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
+        void ProcessSpotLight(uint32 Slot, const SSpotLightComponent& SpotLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
+        void ProcessAreaLight(uint32 Slot, const SAreaLightComponent& AreaLight, const STransformComponent& TransformComponent, FLightBatch& Batch);
         void ProcessDirectionalLight(const SDirectionalLightComponent& DirectionalLight, const FSkyLightInputs& Sky);
         // Places the sun's virtual shadow levels around the camera and decides which of them lost their cached pages.
         void ProcessVirtualSunShadow(const SDirectionalLightComponent& DirectionalLight, const FVector3& LightDir, const FVector3& ShadowUp,
@@ -1487,8 +1596,6 @@ namespace Lumina
         void   BatchLineChunks(const Jobs::FRange& Range);
         void   FinalizeBatchedLines(FLineBatcherComponent& Batcher);
         void   ProcessBatchedTriangles(FTriangleBatcherComponent& Batcher);
-
-        void NotifyMaxLightsHit();
 
         void BuildLightRelevanceVolumes();
 
@@ -1557,6 +1664,10 @@ namespace Lumina
         // The sole authority: nothing rasterizes a meshlet this did not keep.
         void MeshletCullPass(RHI::FCmdListH CL, EMeshletSlice Slice, bool bShadowPhase = false);
         void CopyCullTotalsForReadback(RHI::FCmdListH CL);
+#if !defined(LE_SHIPPING)
+        // Counts the camera's draws from what the culls wrote, into the readback after the totals, while stats are collected.
+        void RenderStatsPass(RHI::FCmdListH CL);
+#endif
 
         void DrawMeshletBatch(RHI::FCmdListH CL, const FMeshDrawCommand& Batch, const FMeshletPassContext& Ctx);
 
@@ -1783,8 +1894,16 @@ namespace Lumina
         FIBLBakeResolution                      LastExtractedIBLResolution     = {};
 
         static constexpr uint32                 MaxReflectionProbes    = 32;
-        static constexpr uint32                 ProbePrefilterBaseSize = 128;
-        static constexpr uint32                 ProbePrefilterMips     = 5;
+        static constexpr uint32                 MinProbeFaceSize       = 32;
+        static constexpr uint32                 MaxProbeFaceSize       = 1024;
+        // Every slice shares the largest probe's face size, so many large probes shrink the array to fit rather than exhaust VRAM.
+        static constexpr uint64                 ProbeArrayBudgetBytes  = 512ull << 20;
+
+        // The array as the extract last requested it and as the render thread last allocated it.
+        uint32                                  RequestedProbeArrayFaceSize = 0;
+        uint32                                  RequestedProbeArrayProbes   = 0;
+        uint32                                  ProbeArrayFaceSize          = 0;
+        uint32                                  ProbeArrayProbes            = 0;
 
         // Address of this frame's uploaded probe array, and how many entries it holds.
         RHI::TGPUSpan<FGPUReflectionProbe>      ProbeBufferSpan;
@@ -1863,11 +1982,12 @@ namespace Lumina
         void ExtractSplines(FFrameData& Frame, const auto& SplineView, bool bDataMayHaveChanged);
         void BuildSplineCache(FSplineExtractCache& Cache, ECS::FEntity Entity, const SSplineComponent& Spline, const FMatrix4& LocalToWorld);
 
-        void InitReflectionProbeTargets();
+        void SyncReflectionProbeArray(uint32 FaceSize, uint32 NumProbes);
+        void SizeReflectionProbeArray(FFrameData& Frame);
         void SyncProbeCaptureCube(uint32 FaceSize);
         void ExtractReflectionProbes(ECS::FRegistry& Registry, FFrameData& Frame);
         bool GatherReflectionProbes(ECS::FRegistry& Registry);
-        static FProbeSortEntry MakeProbeSortEntry(const SReflectionProbeComponent& Probe, const FMatrix4& WorldMatrix);
+        static FProbeSortEntry MakeProbeSortEntry(const SReflectionProbeComponent& Probe, const FMatrix4& WorldMatrix, uint32 CaptureFaceSize);
         void DiffReflectionProbesAgainstBake(FFrameData& Frame);
         void ScheduleReflectionProbeBake(FFrameData& Frame);
         // Renders the six faces, copies each into the scratch cube, prefilters into the probe's slice.
@@ -1919,7 +2039,7 @@ namespace Lumina
         uint64                                                          CurrentSceneRootAddr = 0;
         // Builds the per-view FSceneRoot transient (shared addrs + view camera/clusters/IBL) -> address.
         uint64 BuildViewSceneRoot(FSceneView& View);
-        void   EnsureClusterLightMaskCapacity(FSceneView& View);
+        void   EnsureLightGridCapacity(FSceneView& View);
 
         // OR-accumulated by the material lanes over STREAMING_FEEDBACK_WINDOW frames, then copied to a readback slot; read kFramesInFlight later.
         void EnsureStreamingFeedbackBuffer();
@@ -1932,7 +2052,7 @@ namespace Lumina
         TArray<uint64, RHI::kFramesInFlight>                StreamingFeedbackStamp = {};
         uint32                                              StreamingFeedbackSlots = 0;
 
-        // Live prefix of Frame.Lighting.Lights / .Shadows; the GPU side reads these off the spans.
+        // Entries of Frame.Lighting.Lights, the sun and this frame's CPU-resolved lights, and of .Shadows.
         uint32                                              NumLiveLights  = 0;
         uint32                                              NumLiveShadows = 0;
         // Created on the first frame any light carries a light function, then kept.
@@ -1943,6 +2063,8 @@ namespace Lumina
         uint64                                              StreamingFeedbackPublished = 0;
         
         TArray<FSceneBuffer, RHI::kFramesInFlight> RenderBucketRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.RenderBuckets", 1.5f);
+        // Where each cull view's region of the draw list starts, which its visibility IDs are relative to.
+        TArray<FSceneBuffer, RHI::kFramesInFlight> ViewDrawBaseRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.ViewDrawBases", 1.0f);
         TArray<FSceneBuffer, RHI::kFramesInFlight> MeshletDrawListRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.MeshletDrawList", kSceneBufferGrowth);
         TArray<FSceneBuffer, RHI::kFramesInFlight> MeshDrawArgsRing = MakeSceneRing<RHI::kFramesInFlight>("Cull.MeshDrawArgs", 1.2f);
         TArray<FSceneBuffer, RHI::kFramesInFlight> FrameScratchRing = MakeSceneRing<RHI::kFramesInFlight>("Frame.Scratch", 1.5f);
@@ -2156,6 +2278,8 @@ namespace Lumina
         // The shadow cull's compute raster inputs this frame, left empty when the compute raster is off.
         void GetVirtualShadowComputeRaster(RHI::FCmdListH CL, RHI::TGPUSpan<FUIntVector2>& OutList, RHI::TGPUSpan<uint32>& OutCursors,
                                            RHI::TGPUSpan<uint32>& OutDebug);
+        // The static and dynamic layers' append cursors, which count demand past the list's capacity.
+        RHI::TGPUSpan<uint32> GetVirtualShadowComputeCursors() const;
 
         // A bit per draw whose batch keeps the bare mesh's shape, built once a frame for the camera's compute raster and the sun's.
         TVector<uint32>                                     ComputeRasterBatchBits;
@@ -2184,6 +2308,10 @@ namespace Lumina
         FSceneBuffer                                        RainArgsBuffer     { "Weather.RainArgs", 1.0f };
         FSceneBuffer                                        RainSplashBuffer   { "Weather.Splashes", 1.0f, EBufferInit::Zeroed };
         uint32                                              RainSplashCursor   = 0;
+        FSceneBuffer                                        RainDripBuffer     { "Weather.Drips", 1.0f, EBufferInit::Zeroed };
+        uint32                                              RainDripCursor     = 0;
+        // Frames since a drip site was last found, so drips finish falling after the rain map stops finding new ones.
+        uint32                                              RainDripQuietFrames = ~0u;
         uint32                                              WeatherIdleFrames  = 0;
         FSceneBuffer                                        SnowVisibleBuffer  { "Weather.SnowVisible", 1.25f };
         FSceneBuffer                                        SnowArgsBuffer     { "Weather.SnowArgs", 1.0f };
@@ -2207,12 +2335,64 @@ namespace Lumina
 
         static constexpr uint32 kWeatherRainSplashCapacity   = 8192u;
         static constexpr uint32 kWeatherImpactSplashCapacity = 512u;
+        static constexpr uint32 kWeatherRainDripCapacity     = 1024u;
+
+        // Kept by the extract, one per runtime virtual texture written since it loaded, keyed by its bindless index.
+        struct FVirtualTextureState
+        {
+            TWeakObjectPtr<CRuntimeVirtualTexture> Asset;
+            FIntVector2 Origin         = FIntVector2(0);
+            uint32      Resolution     = 0;
+            float       TexelSize      = 0.0f;
+            bool        bPlaced        = false;
+            // What is left of the last decay that has not landed, since an RGBA8 texel cannot move by less than one step.
+            float       DecayRemaining = 1.0f;
+            uint32      RefreshRow     = 0;
+            uint32      FastRefreshFrames = 0;
+            uint64      CaptureKey     = 0;
+        };
+        struct FViewCaptureState
+        {
+            double  LastCaptureTime = -1.0;
+            uint64  ChangeHash      = 0;
+            uint32  CaptureRequests = 0;
+            uint64  LastSeenSerial  = 0;
+            bool    bCaptured       = false;
+        };
+        THashMap<ECS::FEntity, FViewCaptureState>           ViewCaptureStates;
+        // The component capture being rendered, null for the primary view and editor previews.
+        const FFrameData::FCaptureViewData*                 CurrentCapture = nullptr;
+        bool                                                bWarnedCaptureViewsFull = false;
+        bool                                                bWarnedCaptureFilterSlots = false;
+
+        void  ExtractViewCaptures(ECS::FRegistry& Registry, FFrameData& Frame);
+        int32 AcquireCaptureView(const FUIntVector2& Size);
+        void  ReleaseIdleCaptureViews();
+        void  RenderViewCaptures(RHI::FCmdListH CL);
+        bool  ResolveViewCapture(RHI::FCmdListH CL, const FFrameData::FCaptureViewData& Capture);
+        bool  CaptureHas(FFrameData::ECaptureFeature Feature) const { return CurrentCapture == nullptr || CurrentCapture->Has(Feature); }
+        // A capture without volumetrics never integrates its froxels, so its fog falls back to the analytic height fog.
+        bool  UsesVolumetricFog() const { return RenderFrame->Volumetrics.bVolumetricFog && CaptureHas(FFrameData::ECaptureFeature::Volumetrics); }
+        bool  IsLightOnDrawnLayer(const SRenderLayerMask& Layers) const
+        {
+            return ExtractFrame->ViewLayers.Draws(Layers) || (Layers.Bits & ExtractFrame->Views.CaptureLightLayers) != 0u;
+        }
+
+        THashMap<uint32, FVirtualTextureState>              VirtualTextureStates;
+        // Where each writer was last frame, so its brush sweeps the whole way it moved.
+        THashMap<ECS::FEntity, FVector2>                    VirtualTextureWriterPositions;
+
+        void ExtractVirtualTextures(ECS::FRegistry& Registry, FFrameData& Frame);
+        void VirtualTexturePass(RHI::FCmdListH CL);
+        void PublishVirtualTextureGlobals(FSceneGlobalData& Globals);
 
         void PublishWeatherGlobals(FSceneGlobalData& Globals);
         void WeatherOcclusionPass(RHI::FCmdListH CL);
         void WeatherInteractionPass(RHI::FCmdListH CL);
         // Rain streaks and splashes, snow flakes and interaction splashes, all in one pass over the HDR target.
         void WeatherDrawPass(RHI::FCmdListH CL);
+        // Copies the scene the drops refract into the water refraction image, returning its bindless index or kIndexNoneU32.
+        uint32 CopySceneColorForRain(RHI::FCmdListH CL, RHI::ELoadOp HDRLoadOp);
         void ReleaseIdleWeatherResources();
 
         // The flow parting the ground fog around the camera, stepped at a fixed rate and kept between frames.
@@ -2265,8 +2445,14 @@ namespace Lumina
         // The readback carries the totals, then how many meshlets the camera's compute raster could have taken.
         static constexpr uint32                             kCameraRasterDemandSlot = kTotalsSlots;
         static constexpr uint32                             kReadbackSlots = kTotalsSlots + 1u;
-        // Twice the visibility ID range, room for the shadow views that follow the camera's slots in the draw list.
-        static constexpr uint32                             kMaxDrawListEntries = VISBUFFER_MAX_MESHLET_SLOTS * 2u;
+#if !defined(LE_SHIPPING)
+        // RenderStats.slang's words, kept past the totals on the GPU and past the readback slots on the host.
+        static constexpr uint32                             kRenderStatsWords = 8;
+#else
+        static constexpr uint32                             kRenderStatsWords = 0;
+#endif
+        // A memory budget alone, 512 MiB a frame slot at the cap, since visibility IDs count from each view's own region of the list.
+        static constexpr uint32                             kMaxDrawListEntries = 1u << 26;
 
         // Must match HISTOGRAM_BINS in LuminanceHistogram.slang and its TILE_DIM^2 thread count.
         static constexpr uint32                             kLuminanceHistogramBins = 256;
@@ -2285,9 +2471,9 @@ namespace Lumina
 
         TArray<RHI::FGPUAllocation, RHI::kFramesInFlight>   MeshletBoundReadback = {};
         uint32                                              LastDrawListRequired = 0;
-        // Where the last view that writes visibility IDs ends in the draw list, the only part the ID range bounds.
+        // The largest camera view's draws, which its own visibility ID range bounds.
         uint32                                              LastVisIDRequired = 0;
-        // Divides every view's LOD error scale while the draws a frame wants crowd the VisID range, written by the readback and read by Extract.
+        // Divides every view's LOD error scale while the camera's draws crowd its VisID range, written by the readback and read by Extract.
         TAtomic<float>                                      DrawPressureLODDivisor{1.0f};
         uint32                                              LastVisibleInstances = 0;
         uint32                                              DrawListCapacity = 0;
@@ -2352,6 +2538,13 @@ namespace Lumina
         FShadowAtlas                            ShadowAtlas;
         
         THashMap<ECS::FEntity, FTerrainGPUState> TerrainGPUStates;
+
+        // The terrain extract decides which pages are resident and builds them, then TerrainUpdatePass uploads them into the atlases.
+        FTerrainPageStreamer                    TerrainPageStreamer;
+        // 16-bit heights, RG8 normals and RGBA8 layer weights, one 72 texel slot per page, shared by every terrain.
+        FSceneImage                             TerrainHeightAtlas;
+        FSceneImage                             TerrainNormalAtlas;
+        FSceneImage                             TerrainWeightAtlas;
 
         // One scatter cursor per (terrain, species position); each records the block it last scattered into, so a reshuffle retires stale blades.
         THashMap<ECS::FEntity, TVector<FGrassGPUState>> GrassGPUStates;
@@ -2467,6 +2660,13 @@ namespace Lumina
         THashSet<ECS::FEntity>                            ParticleLiveScratch;
 
         FScenePrimitiveSet                      ScenePrimitives;
+        FSceneLightSet                          LightSet;
+        // The whole retained light set on the GPU, grown with the set's capacity.
+        FSceneBuffer                            RetainedLightBuffer      = FSceneBuffer("Lights.Retained", kSceneBufferGrowth);
+        FSceneBuffer                            RetainedLightBoundsBuffer = FSceneBuffer("Lights.RetainedBounds", kSceneBufferGrowth);
+        FSceneBuffer                            RetainedLightLayerBuffer = FSceneBuffer("Lights.RetainedLayers", kSceneBufferGrowth);
+        // A reallocated set holds garbage in slots nothing uploaded yet, so it is zeroed before the next upload.
+        bool                                    bRetainedLightsFresh = true;
         TVector<ECS::FEntity>                   MovedTransformScratch;
         uint32                                  MovedTransformConsumer = Constants::kIndexNoneU32;
         TVector<uint64>                         DirtySlotBits;
@@ -2479,6 +2679,8 @@ namespace Lumina
         TVector<uint8>               BinnedDeferredSlotKinds;
         // Bit per EMaterialShadingModel among the binned materials, which specializes the lighting dispatch.
         uint32                       BinnedShadingModelMask = 0u;
+        // Whether any binned material drives an extended lobe, which keeps the lighting's extended path compiled in.
+        bool                         bBinnedExtendedSurface = false;
         TVector<uint32>                         BinnedDeferredSlotByMaterial;
         // Shader handle -> its dense bin, so binning stays linear in the visible material count.
         THashMap<uint64, uint32>                BinnedDeferredSlotLookup;

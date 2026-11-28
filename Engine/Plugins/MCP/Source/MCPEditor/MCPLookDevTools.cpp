@@ -322,14 +322,13 @@ namespace Lumina::MCP
             Terrain.TileWorldSize = kTerrainSize;
 
             const int32 Samples = kTerrainResolution * kTerrainResolution;
-            Terrain.Heightmap.Init(0.0f, Samples);
-            Terrain.LayerWeights.Init(uint8(0), Samples * Terrain.Layers.Num());
+            const TVector<float> Heights(Samples, 0.0f);
+            TVector<uint8> Weights(Samples * Terrain.Layers.Num(), uint8(0));
             for (int32 i = 0; i < Samples; ++i)
             {
-                Terrain.LayerWeights[kGrassLayer * Samples + i] = 255;
+                Weights[kGrassLayer * Samples + i] = 255;
             }
-            Terrain.MarkHeightmapReplaced();
-            Terrain.CPUState.bFullWeightsDirty = true;
+            Terrain.SetStore(FTerrainStore::CreateFromArrays(kTerrainResolution, Heights, Weights, Terrain.Layers.Num()));
 
             if (GrassMaterial != nullptr)
             {

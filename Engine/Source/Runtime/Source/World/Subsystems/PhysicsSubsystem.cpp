@@ -6,6 +6,10 @@
 #include "World/World.h"
 #include "World/Entity/Components/CharacterComponent.h"
 #include "World/Entity/Components/PhysicsComponent.h"
+#include "World/Entity/Components/TerrainComponent.h"
+#include "World/Entity/Components/TransformComponent.h"
+#include "World/Entity/Systems/TerrainCollisionSystem.h"
+#include "World/Subsystems/TerrainSculptSystem.h"
 #include <cfloat>
 
 namespace Lumina
@@ -62,21 +66,72 @@ namespace Lumina
 
     SRayResult CPhysicsSubsystem::Raycast(FVector3 Start, FVector3 End, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask)
     {
-        const SRayResult Miss = QueryMissOf(Start, End);
+        SRayResult Result = QueryMissOf(Start, End);
         Physics::IPhysicsScene* Scene = SceneOf(GetWorld());
-        if (Scene == nullptr)
+        if (Scene != nullptr)
         {
-            return Miss;
+            SRayCastSettings Settings;
+            Settings.Start = Start;
+            Settings.End = End;
+            Settings.LayerMask = LayerMask;
+            StageIgnore(IgnoreEntity, Settings.IgnoreEntities);
+
+            if (TOptional<SRayResult> Hit = Scene->CastRay(Settings); Hit.IsSet() && Hit->bHit)
+            {
+                return Hit.GetValue();
+            }
         }
 
-        SRayCastSettings Settings;
-        Settings.Start = Start;
-        Settings.End = End;
-        Settings.LayerMask = LayerMask;
-        StageIgnore(IgnoreEntity, Settings.IgnoreEntities);
+        // Terrain collision exists only where it streamed in, so a miss still meets the ground the terrain draws.
+        TraceTerrainHeights(Start, End, IgnoreEntity, LayerMask, Scene == nullptr, Result);
+        return Result;
+    }
 
-        TOptional<SRayResult> Result = Scene->CastRay(Settings);
-        return Result.IsSet() ? Result.GetValue() : Miss;
+    bool CPhysicsSubsystem::TraceTerrainHeights(const FVector3& Start, const FVector3& End, ECS::FEntity IgnoreEntity, ECollisionProfiles LayerMask,
+                                                bool bEveryTerrain, SRayResult& OutHit) const
+    {
+        CWorld* World = GetWorld();
+        const float Length = Math::Length(End - Start);
+        if (World == nullptr || Length <= 0.0f || (LayerMask & ECollisionProfiles::Static) == (ECollisionProfiles)0)
+        {
+            return false;
+        }
+        const FVector3 Dir = (End - Start) / Length;
+
+        float Nearest = Length;
+        bool  bHit = false;
+        World->GetEntityRegistry().View<STerrainColliderComponent, STerrainComponent, STransformComponent>().ForEach(
+            [&](ECS::FEntity Entity, const STerrainColliderComponent&, const STerrainComponent& Terrain, const STransformComponent& Transform)
+        {
+            const FTerrainStore* Store = Terrain.GetStore();
+            if (Entity == IgnoreEntity || Store == nullptr || (!bEveryTerrain && !CTerrainCollisionSystem::StreamsCollision(Store->GetResolution())))
+            {
+                return;
+            }
+            const FVector3 Origin = Transform.GetWorldLocation();
+            FVector3 Point;
+            if (!FTerrainSculptSystem::Raycast(Terrain, Origin, Start, Dir, Point, Nearest))
+            {
+                return;
+            }
+            const float Distance = Math::Dot(Point - Start, Dir);
+            if (Distance < 0.0f || Distance > Nearest)
+            {
+                return;
+            }
+            Nearest            = Distance;
+            bHit               = true;
+            OutHit.Target      = {};
+            OutHit.Entity      = Entity.Value;
+            OutHit.Location    = Point;
+            OutHit.Normal      = FTerrainSculptSystem::SampleNormal(Terrain, Origin, Point.x, Point.z);
+            OutHit.Distance    = Distance;
+            OutHit.Fraction    = Distance / Length;
+            OutHit.BoneIndex   = Constants::kIndexNone;
+            OutHit.InstanceIndex = Constants::kIndexNone;
+            OutHit.bHit        = true;
+        });
+        return bHit;
     }
 
     void CPhysicsSubsystem::RaycastAll(FVector3 Start, FVector3 End, ECS::FEntity IgnoreEntity,

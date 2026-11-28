@@ -96,18 +96,17 @@ static const float2 kLocalSampleOffsets[kMaxLocalSamples] = { float2(-0.25, -0.2
                                                                float2(-0.25,  0.25), float2(0.25,  0.25) };
 
 // Every sample shares one walk of the cluster list, so a supersampled froxel fetches each light once.
-float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, float3 Center, float3 AxisX, float3 AxisY, uint NumSamples)
+float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, FLightCell Cell, float3 Center, float3 AxisX, float3 AxisY, uint NumSamples)
 {
     const float3 CamPos = GetCameraPosition();
     float  G         = Fog.VolumetricParams.y;
     float3 InScatter = float3(0.0);
 
-    const uint  MaskWords = GetClusterMaskWords();
-    const uint2 Words     = GetClusterWordRange(ClusterIndex);
+    const uint2 Words     = GetLightCellWords(Cell);
     uint NumLights  = GetNumLights();
     for (uint Word = Words.x; Word < Words.y; ++Word)
     {
-        uint Pending = GetClusterMaskWord(ClusterIndex, Word, MaskWords);
+        uint Pending = GetLightCellMaskWord(Cell, Word);
         while (Pending != 0u)
         {
             uint LightIndex = Word * 32u + firstbitlow(Pending);
@@ -176,13 +175,13 @@ float3 LocalLightsInScatter(FExponentialHeightFogParams Fog, uint ClusterIndex, 
     return InScatter / float(max(NumSamples, 1u));
 }
 
-// The cluster grid slices view Z the same exponential way, just over the camera's full range.
-uint FroxelClusterIndex(uint3 Coord)
+// The light grid's depth bins are log-spaced over the camera's whole range, which a froxel's slice depth lands in directly.
+FLightCell FroxelLightCell(uint3 Coord)
 {
     float2 UV        = (float2(Coord.xy) + 0.5) / float2(Pass().GridSize.xy);
     float2 ScreenPos = UV * float2(Scene().ScreenSize.xy);
     float  ViewZ     = Froxel_SliceDistance(float(Coord.z) + 0.5, float(Pass().GridSize.z), Pass().NearPlane, Pass().FogRange);
-    return ComputeClusterIndex(ViewZ, ScreenPos);
+    return GetLightCell(ViewZ, ScreenPos);
 }
 
 [shader("compute")]
@@ -220,7 +219,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     float3 ToCam    = ToCamVec / max(CamDist, 1e-4);
 
     // The tint applies whenever a directional light exists, matching the analytic far fog's albedo.
-    bool bHasSun = GetNumLights() > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional);
+    bool bHasSun = HasSunLight();
     // Negated so CosSun is +1 when looking straight at the sun.
     float CosSun = bHasSun ? dot(-normalize(GetLightAt(0).Direction), ToCam) : -1.0;
 
@@ -260,7 +259,7 @@ void ComputeMain(uint3 DispatchID : SV_DispatchThreadID)
     {
         const float3 AxisX = FroxelToWorld(DispatchID, float3(1.0, 0.5, 0.5)) - FroxelToWorld(DispatchID, float3(0.0, 0.5, 0.5));
         const float3 AxisY = FroxelToWorld(DispatchID, float3(0.5, 1.0, 0.5)) - FroxelToWorld(DispatchID, float3(0.5, 0.0, 0.5));
-        InScatter += LocalLightsInScatter(uFog, FroxelClusterIndex(DispatchID), WorldPos, AxisX, AxisY, NumSamples);
+        InScatter += LocalLightsInScatter(uFog, FroxelLightCell(DispatchID), WorldPos, AxisX, AxisY, NumSamples);
     }
 
     // Emissive volumes glow on their own, so it rides outside the extinction-weighted scattering term.

@@ -38,11 +38,8 @@ namespace Lumina
         // Creates the blend tree if needed, for both the editor and the compiler.
         CAnimationGraphNodeGraph* GetOrCreateBlendTree();
 
-        // Without this a duplicated state shares the original's blend tree and edits track both.
-        void PostCloneFrom(const CEdGraphNode* Source) override;
-
         CEdNodeGraph* GetOwnedSubGraph() const override;
-        void ReplaceSubGraphWithCopy() override;
+        CEdNodeGraph* AllocateOwnedSubGraph() override;
 
         // Fresh and un-set-up, so a caller can clone into it before EnsureSetup adds an Output node.
         CAnimationGraphNodeGraph* AllocateBlendTree();
@@ -74,6 +71,9 @@ namespace Lumina
         FFixedString GetNodeCategory() const override { return "State Machine"; }
         uint32 GetNodeTitleColor() const override { return IM_COL32(60, 130, 90, 255); }
         bool IsDeletable() const override { return false; }
+
+        // Never in a palette, but a state machine canvas copied whole must still accept it.
+        CClass* GetSupportedGraphClass() const override;
 
         void BuildNode() override;
         void GenerateBytecode(FAnimationGraphCompiler& Compiler) override {}

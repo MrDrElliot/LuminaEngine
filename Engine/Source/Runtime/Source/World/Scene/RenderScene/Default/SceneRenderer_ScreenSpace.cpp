@@ -350,7 +350,7 @@ namespace Lumina
 
     namespace
     {
-        // Denser than GTAO's tables, since only a temporal upscaler accumulates the bounce across frames to hide the noise.
+        // Denser than GTAO's tables, so a single traced frame is clean enough to start the accumulation from.
         constexpr uint32 kScreenSpaceGISlices        = 4u;
         constexpr uint32 kScreenSpaceGIStepsPerSlice = 8u;
     }
@@ -368,12 +368,14 @@ namespace Lumina
 
     void FDefaultSceneRenderer::ScreenSpaceGIPass(RHI::FCmdListH CL)
     {
-        static const FString  BlurDefine = "SSGI_BLUR";
+        static const FString  BlurDefine     = "SSGI_BLUR";
+        static const FString  TemporalDefine = "SSGI_TEMPORAL";
         static const FShaderH TraceCS    = FShaderLibrary::Get("ScreenSpaceGI.slang");
         static const FShaderH BlurCS     = FShaderLibrary::Get("ScreenSpaceGI.slang", TSpan<const FString>(&BlurDefine, 1));
+        static const FShaderH TemporalCS = FShaderLibrary::Get("ScreenSpaceGI.slang", TSpan<const FString>(&TemporalDefine, 1));
         static const FShaderH UpsampleCS = FShaderLibrary::Get("GTAOUpsample.slang");
         FGTAOParams P;
-        if (!TraceCS || !BlurCS || !UpsampleCS || !MakeGTAOParams(P))
+        if (!TraceCS || !BlurCS || !TemporalCS || !UpsampleCS || !MakeGTAOParams(P))
         {
             return;
         }
@@ -385,13 +387,26 @@ namespace Lumina
         const FSceneImage& Blur         = GetNamedImage(ENamedImage::ScreenSpaceGIBlur);
         const FSceneImage& History      = GetNamedImage(ENamedImage::ScreenSpaceGIHistory);
 
+        // This frame writes one pair and reads the other, which holds what the last traced frame accumulated.
+        const bool bOdd = (CurrentView->ScreenSpaceGIFrameIndex & 1u) != 0u;
+        const FSceneImage& AccumOut  = GetNamedImage(bOdd ? ENamedImage::ScreenSpaceGIAccumB : ENamedImage::ScreenSpaceGIAccumA);
+        const FSceneImage& AccumPrev = GetNamedImage(bOdd ? ENamedImage::ScreenSpaceGIAccumA : ENamedImage::ScreenSpaceGIAccumB);
+        const FSceneImage& DepthOut  = GetNamedImage(bOdd ? ENamedImage::ScreenSpaceGIDepthB : ENamedImage::ScreenSpaceGIDepthA);
+        const FSceneImage& DepthPrev = GetNamedImage(bOdd ? ENamedImage::ScreenSpaceGIDepthA : ENamedImage::ScreenSpaceGIDepthB);
+
         const int32 WorkingDepthSlot = WorkingDepth.GetResourceID();
         const int32 HistorySlot      = History.GetResourceID();
         const int32 TraceSlot        = Trace.GetResourceID();
         const int32 TraceUAV         = Trace.GetMipUAVIndex(0);
         const int32 BlurSlot         = Blur.GetResourceID();
         const int32 BlurUAV          = Blur.GetMipUAVIndex(0);
-        if (WorkingDepthSlot < 0 || HistorySlot < 0 || TraceSlot < 0 || TraceUAV < 0 || BlurSlot < 0 || BlurUAV < 0)
+        const int32 AccumOutUAV   = AccumOut.GetMipUAVIndex(0);
+        const int32 AccumOutSlot  = AccumOut.GetResourceID();
+        const int32 AccumPrevSlot = AccumPrev.GetResourceID();
+        const int32 DepthOutUAV   = DepthOut.GetMipUAVIndex(0);
+        const int32 DepthPrevSlot = DepthPrev.GetResourceID();
+        if (WorkingDepthSlot < 0 || HistorySlot < 0 || TraceSlot < 0 || TraceUAV < 0 || BlurSlot < 0 || BlurUAV < 0
+            || AccumOutUAV < 0 || AccumOutSlot < 0 || AccumPrevSlot < 0 || DepthOutUAV < 0 || DepthPrevSlot < 0)
         {
             LOG_ERROR_ONCE("Screen space GI is missing a heap slot; skipping the pass.");
             return;
@@ -435,12 +450,50 @@ namespace Lumina
         PC.SampleDistributionPower  = P.SampleDistributionPower;
         PC.ThinOccluderCompensation = P.ThinOccluderCompensation;
         PC.DepthMIPSamplingOffset   = P.DepthMipSamplingOffset;
-        PC.NoiseIndex               = GetScreenSpaceNoiseIndex(*CurrentView);
+        // The history averages successive noise patterns, so they step every traced frame whether or not a temporal upscaler runs.
+        PC.NoiseIndex               = CurrentView->ScreenSpaceGIFrameIndex % 64u;
 
         DispatchCompute(CL, TraceCS, PC,
             RenderUtils::GetGroupCount(PC.OutputSize[0], 8u),
             RenderUtils::GetGroupCount(PC.OutputSize[1], 8u), 1);
         RHI::Barriers::ComputeToCompute(CL);
+
+        struct FTemporalConstants
+        {
+            FMatrix4 HistoryViewProjection;
+            uint32   Size[2];
+            uint32   WorkingDepthSize[2];
+            uint32   WorkingDepthIndex;
+            uint32   CurrentIndex;
+            uint32   PrevAccumIndex;
+            uint32   PrevDepthIndex;
+            uint32   OutAccumUAV;
+            uint32   OutDepthUAV;
+            uint32   DepthScale;
+            uint32   bHistoryValid;
+        } TemporalPC = {};
+
+        TemporalPC.HistoryViewProjection = CurrentView->ScreenSpaceGIHistoryViewProjection;
+        TemporalPC.Size[0]               = PC.OutputSize[0];
+        TemporalPC.Size[1]               = PC.OutputSize[1];
+        TemporalPC.WorkingDepthSize[0]   = P.Width;
+        TemporalPC.WorkingDepthSize[1]   = P.Height;
+        TemporalPC.WorkingDepthIndex     = (uint32)WorkingDepthSlot;
+        TemporalPC.CurrentIndex          = (uint32)TraceSlot;
+        TemporalPC.PrevAccumIndex        = (uint32)AccumPrevSlot;
+        TemporalPC.PrevDepthIndex        = (uint32)DepthPrevSlot;
+        TemporalPC.OutAccumUAV           = (uint32)AccumOutUAV;
+        TemporalPC.OutDepthUAV           = (uint32)DepthOutUAV;
+        TemporalPC.DepthScale            = DepthScale;
+        TemporalPC.bHistoryValid         = CurrentView->bScreenSpaceGIAccumValid ? 1u : 0u;
+
+        DispatchCompute(CL, TemporalCS, TemporalPC,
+            RenderUtils::GetGroupCount(PC.OutputSize[0], 8u),
+            RenderUtils::GetGroupCount(PC.OutputSize[1], 8u), 1);
+        RHI::Barriers::ComputeToCompute(CL);
+
+        CurrentView->ScreenSpaceGIFrameIndex  += 1u;
+        CurrentView->bScreenSpaceGIAccumValid  = true;
 
         struct FBlurConstants
         {
@@ -460,12 +513,12 @@ namespace Lumina
         BlurPC.WorkingDepthIndex   = (uint32)WorkingDepthSlot;
         BlurPC.DepthScale          = DepthScale;
 
-        // Across from the trace into the blur target, then down back into the trace.
+        // Across from the accumulation into the blur target, then down into the trace, which the history never reads back.
         for (const bool bVertical : { false, true })
         {
             BlurPC.Direction[0] = bVertical ? 0 : 1;
             BlurPC.Direction[1] = bVertical ? 1 : 0;
-            BlurPC.SourceIndex  = (uint32)(bVertical ? BlurSlot : TraceSlot);
+            BlurPC.SourceIndex  = (uint32)(bVertical ? BlurSlot : AccumOutSlot);
             BlurPC.OutputUAV    = (uint32)(bVertical ? TraceUAV : BlurUAV);
 
             DispatchCompute(CL, BlurCS, BlurPC,

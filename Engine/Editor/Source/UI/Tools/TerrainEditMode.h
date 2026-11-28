@@ -80,11 +80,19 @@ namespace Lumina
         // Open from the first dab to mouse release so one Ctrl+Z reverts a whole stroke.
         bool      bTransactionOpen = false;
 
+        // The store a stroke or layer edit is recording, whose tiles undo puts back.
+        TSharedPtr<FTerrainStore> EditingStore;
+
         // Undo name of the layer Name or UV Scale edit in flight, null when no such edit is open.
         const char* OpenLayerEditName = nullptr;
 
         // Reused so we act on whatever terrain entity is currently in the world.
         ECS::FEntity FindPreferredTerrain(CWorld* World) const;
+
+        void BeginStoreEdit(STerrainComponent& Terrain);
+        // Records the store edit into the open transaction, then closes it.
+        void EndStoreEdit(const char* Name);
+        void RunStoreTransaction(const char* Name, STerrainComponent& Terrain, const TFunction<void()>& Edit);
 
         void TrackLayerEditTransaction(const char* Name);
         void CloseLayerEditTransaction();
@@ -93,7 +101,6 @@ namespace Lumina
         bool IsMomentarySmooth() const;
         void DrawToolSettings(CWorld* World);
         void DrawLayerPanel(STerrainComponent& Terrain);
-        static void EnsureLayerWeightStorage(STerrainComponent& Terrain);
         static void SwapLayers(STerrainComponent& Terrain, int32 A, int32 B);
         static void RemoveLayer(STerrainComponent& Terrain, int32 Index);
     };

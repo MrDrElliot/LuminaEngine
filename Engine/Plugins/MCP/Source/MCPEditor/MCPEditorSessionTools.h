@@ -427,6 +427,8 @@ namespace Lumina
         View,
         Frame,
         Arrange,
+        Copy,
+        Paste,
     };
 
     REFLECT()
@@ -441,9 +443,24 @@ namespace Lumina
         PROPERTY()
         FString Tab;
 
-        // Frame only. Node ids to frame and select. Empty frames every node.
+        // Frame selects and frames these, Copy copies them, and empty means every node for Frame and the selection for Copy.
         PROPERTY()
         TVector<int64> Nodes;
+
+        // Copy and Paste only. Node ids leading into a nested canvas, as the animgraph tools take them. Empty is the canvas the tab shows.
+        PROPERTY()
+        TVector<int64> GraphPath;
+
+        // Paste only. Text a Copy returned, or empty for whatever the system clipboard holds.
+        PROPERTY()
+        FString Text;
+
+        // Paste only. The canvas point the copied set centers on.
+        PROPERTY()
+        float X = 0.0f;
+
+        PROPERTY()
+        float Y = 0.0f;
     };
 
     REFLECT()
@@ -479,6 +496,14 @@ namespace Lumina
 
         PROPERTY()
         TVector<int64> Offscreen;
+
+        // Copy only. The text it put on the system clipboard, which Paste or Ctrl+V in any graph tab accepts.
+        PROPERTY()
+        FString Text;
+
+        // Paste only. The new nodes' ids.
+        PROPERTY()
+        TVector<int64> Pasted;
     };
 
     REFLECT()

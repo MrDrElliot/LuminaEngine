@@ -39,6 +39,13 @@ namespace Lumina
             return View;
         }
 
+        // The reversed infinite projection leaves no far plane to extract, so a capture gets one at its own far distance.
+        FVector4 MakeFarPlane(const FViewVolume& View)
+        {
+            const FVector3 Forward = Math::Normalize(View.GetForwardVector());
+            return FVector4(-Forward, Math::Dot(Forward, View.GetViewPosition()) + View.GetFar());
+        }
+
         void AimGlobalsAtView(FSceneGlobalData& Data, const FSceneGlobalData& Primary, const FViewVolume& View, const FUIntVector2& Size)
         {
             Data = Primary;
@@ -52,7 +59,7 @@ namespace Lumina
             Data.CameraData.InverseProjection = View.GetInverseProjectionMatrix();
             Data.ScreenSize                   = FUIntVector4(Size.x, Size.y, Size.x, Size.y);
             Data.TextureMipBias               = 0.0f;
-            Data.GridSize                     = ComputeClusterGrid(Size);
+            Data.GridSize                     = ComputeLightGrid(Size);
             Data.FarPlane                     = View.GetFar();
             Data.NearPlane                    = View.GetNear();
             Data.CullData.Frustum             = AsGPU(View.GetFrustum());
@@ -115,6 +122,22 @@ namespace Lumina
             FFrameData::FCaptureViewData& Capture = Frame.Views.CaptureViews.EmplaceGetRef();
             Capture.ViewVolume     = SceneViews[i].PendingViewVolume;
             Capture.SceneViewIndex = i;
+        }
+
+        ExtractViewCaptures(World->GetEntityRegistry(), Frame);
+
+        for (const FFrameData::FCaptureViewData& Capture : Frame.Views.CaptureViews)
+        {
+            FCullView& LODView = Frame.Views.CaptureLODViews.EmplaceGetRef();
+            LODView = MakeCameraLODView(Capture.ViewVolume, (float)SceneViews[Capture.SceneViewIndex].Size.y);
+            LODView.LODErrorScale  /= DrawPressureLODDivisor.load(std::memory_order_relaxed);
+            LODView.LayerMask       = Capture.LayerMask;
+            LODView.CaptureInclude  = Capture.CaptureInclude;
+            LODView.CaptureExclude  = Capture.CaptureExclude;
+            FFrustum& Frustum = Frame.Views.CaptureLODFrusta.EmplaceGetRef();
+            Frustum = Capture.ViewVolume.GetFrustum();
+            Frustum.Planes[FFrustum::BACK] = MakeFarPlane(Capture.ViewVolume);
+            Frustum.RebuildSoA();
         }
 
         // CPU half is the parallel ECS gather and cull setup.
@@ -252,7 +275,7 @@ namespace Lumina
         const bool bSpecularAA                          = RenderSettings != nullptr && RenderSettings->bSpecularAntiAliasing;
         SceneGlobalData.SpecularAAVariance              = bSpecularAA ? Math::Clamp(RenderSettings->SpecularAntiAliasingStrength, 0.0f, 1.0f) : 0.0f;
         SceneGlobalData.SpecularAAThreshold             = bSpecularAA ? Math::Clamp(RenderSettings->SpecularAntiAliasingLimit, 0.0f, 1.0f) : 0.0f;
-        SceneGlobalData.GridSize                        = ComputeClusterGrid(PrimarySize);
+        SceneGlobalData.GridSize                        = ComputeLightGrid(PrimarySize);
         SceneGlobalData.Time                            = (float)World->GetTimeSinceWorldCreation();
         SceneGlobalData.DeltaTime                       = Frame.CachedWorldDeltaTime;
         // Derived rather than remembered, so it cannot drift out of step with the clock the graph reads.
@@ -354,6 +377,8 @@ namespace Lumina
             ExtractLatch.Wait();
         }
 
+        // After the latch, since the terrain extract job resolves the capture shaders it reads.
+        ExtractVirtualTextures(Registry, Frame);
         FinalizeLighting(Registry, Frame);
     }
 
@@ -411,32 +436,42 @@ namespace Lumina
         // After the waits, so the streamer walks CMaterial state with no gather in flight.
         PublishStreamingFeedback();
 
-        Frame.Volumetrics.bLocalVolumetricLights = false;
-        for (uint32 Index = 0; Index < NumLiveLights; ++Index)
-        {
-            const ELightFlags Flags = Frame.Lighting.Lights[Index].Flags;
-            if (EnumHasAnyFlags(Flags, ELightFlags::Volumetric) && !EnumHasAnyFlags(Flags, ELightFlags::Directional))
-            {
-                Frame.Volumetrics.bLocalVolumetricLights = true;
-                break;
-            }
-        }
+        // Counted as the retained set changes, so neither flag walks the lights.
+        Frame.Volumetrics.bLocalVolumetricLights = LightSet.HasVolumetricLights();
+        Frame.Lighting.bAnyLocalContact          = LightSet.HasContactShadowLights();
 
         // Serial fit/allocate after parallel light pass; shrinks when sum(area) exceeds atlas budget.
         AllocateShadowTiles();
         ResolveLightFunctions();
+
+        // The casters now hold this frame's shadow slots and light function bits, which the GPU copy of each takes.
+        FFrameData::FLighting& Lighting = Frame.Lighting;
+        for (uint32 Index = 0; Index < (uint32)Lighting.Lights.Num(); ++Index)
+        {
+            if (Lighting.LightSlots[Index] != Constants::kIndexNoneU32)
+            {
+                LightSet.Patch(Lighting.LightSlots[Index], Lighting.Lights[Index]);
+            }
+        }
+        Lighting.RetainedUploads.Reset();
+        LightSet.TakeUploads(Lighting.RetainedUploads);
+        Lighting.RetainedCapacity       = LightSet.GetCapacity();
+        Lighting.bRetainedUploadPending = true;
 
         // Takes a shadow slot for the rain occlusion view, so it runs before the counter is read back.
         ExtractWeather(Registry, Frame);
         ExtractWeatherInteraction(Registry, Frame);
         ExtractGroundFog(Registry, Frame);
         ApplyWeatherToClouds(Frame);
+        ApplyWeatherToSunlight(Frame);
 
         // This is the last writer of the shadow counter, which can overshoot like the light count.
         NumLiveShadows = Math::Min(Frame.Lighting.ShadowDataCount.load(std::memory_order_acquire),
                                    (uint32)MAX_SHADOWS);
         LUMINA_PROFILE_VALUE("Shadows/LocalShadowed", NumLiveShadows);
-        LUMINA_PROFILE_VALUE("Lights/Live", NumLiveLights);
+        LUMINA_PROFILE_VALUE("Lights/Retained", LightSet.GetNumLights());
+        LUMINA_PROFILE_VALUE("Lights/CPU", NumLiveLights);
+        LUMINA_PROFILE_VALUE("Lights/Uploaded", (uint32)Lighting.RetainedUploads.Num());
 
         // The skylight reads the sun direction ProcessDirectionalLight wrote.
         const SEnvironmentComponent* ActiveEnv = ExtractEnvironment(Registry, Frame);
@@ -844,9 +879,9 @@ namespace Lumina
                      MakeLODErrorScale(ShadowData.ViewProjection[0], SpotTexels, ShadowTolerance));
         }
 
-        PushLayers = OtherViewLayers;
         for (FFrameData::FCaptureViewData& Capture : Frame.Views.CaptureViews)
         {
+            PushLayers = Capture.LayerMask & OtherViewLayers;
             const FMatrix4 CaptureVP = Capture.ViewVolume.GetProjectionMatrix() * Capture.ViewVolume.GetViewMatrix();
             const uint32 CaptureFlags = ECullViewFlags::Frustum | ConeFlag
                                       | (Capture.ViewVolume.IsOrthographic() ? (uint32)ECullViewFlags::OrthographicLOD : 0u);
@@ -854,7 +889,12 @@ namespace Lumina
             const float  CaptureHeight = (float)SceneViews[Capture.SceneViewIndex].Size.y;
             Capture.CameraViewIndex = PushView(CaptureVP, Capture.ViewVolume.GetViewPosition(), CaptureFlags,
                                                MakeLODErrorScale(CaptureVP, CaptureHeight, CameraTolerance));
+            CullViews[(int32)Capture.CameraViewIndex].CaptureInclude = Capture.CaptureInclude;
+            CullViews[(int32)Capture.CameraViewIndex].CaptureExclude = Capture.CaptureExclude;
+            CullViews[(int32)Capture.CameraViewIndex].bCaptureView   = 1u;
+            CullViews[(int32)Capture.CameraViewIndex].FrustumPlanes[FFrustum::BACK] = MakeFarPlane(Capture.ViewVolume);
         }
+        PushLayers = OtherViewLayers;
 
         if (Frame.Weather.OcclusionShadowDataIndex != Constants::kIndexNone)
         {
@@ -1230,6 +1270,8 @@ namespace Lumina
         Frame.Primitives.SolidBatches.Reset();
         Frame.Views.CullViews.Reset();
         Frame.Views.CaptureViews.Reset();
+        Frame.Views.CaptureLODViews.Reset();
+        Frame.Views.CaptureLODFrusta.Reset();
         Memory::Memzero(&Frame.Lighting.LightData, sizeof(Frame.Lighting.LightData));
         Frame.Lighting.ShadowDataCount.store(0, std::memory_order_release);
         Frame.Lighting.VirtualShadow.bActive        = false;
@@ -1248,7 +1290,6 @@ namespace Lumina
         Frame.Primitives.SpriteInstances.Reset();
         Frame.Primitives.SpriteBatches.Reset();
         Frame.Primitives.TextBatches.Reset();
-        Frame.FrameStats = {};
 
         for (int i = 0; i < (int)ELightType::Num; ++i)
         {

@@ -27,6 +27,8 @@ namespace Lumina
         Texture,
         // A bindless texture index (uint) so hand-written Slang can sample it, distinct from the float-typed rest.
         TextureHandle,
+        // A whole FMaterialPixelInputs, which only surface nodes and the output's Surface pin accept.
+        Surface,
     };
 
     enum class EComponentMask : uint8
@@ -89,7 +91,8 @@ namespace Lumina
         case EMaterialInputType::Float4:
         case EMaterialInputType::Texture: return EComponentMask::RGBA;
         // No mask at all, so nothing ever appends a swizzle to a scalar uint.
-        case EMaterialInputType::TextureHandle: return EComponentMask::None;
+        case EMaterialInputType::TextureHandle:
+        case EMaterialInputType::Surface:       return EComponentMask::None;
         default:                          return EComponentMask::R;
         }
     }
@@ -106,6 +109,7 @@ namespace Lumina
         case EMaterialInputType::Texture: return "float4(0.0, 0.0, 0.0, 0.0)";
         // Slot 0 is a real texture, so this is only the neutral uint a node emits after erroring so the shader parses.
         case EMaterialInputType::TextureHandle: return "0u";
+        case EMaterialInputType::Surface:       return "DefaultMaterialInputs()";
         default:                          return "0.0";
         }
     }

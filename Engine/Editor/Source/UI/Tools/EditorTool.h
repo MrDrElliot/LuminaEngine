@@ -406,6 +406,8 @@ namespace Lumina
         bool                                bAssetReadOnlyOnDisk = false;
         bool                                bViewGizmoOrthoHovered = false;
         bool                                bViewportFullscreen = false;
+        // Screen Y where this frame's viewport toolbar ends, which the scene's corner debug text starts below.
+        float                               ViewportToolbarBottom = 0.0f;
     };
 }
 

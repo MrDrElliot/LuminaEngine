@@ -1651,8 +1651,8 @@ namespace Lumina
                 continue;
             }
 
-            const uint32 FlagsAndThinning = PackFlagsAndThinning(0.0f, Prim.RenderLayers, Prim.CustomDepthStencil, Prim.bShadowWPO,
-                                                                 IsShadowCacheable(Binding, Prim.bShadowWPO) && !bRemapped);
+            uint32 FlagsAndThinning = PackFlagsAndThinning(0.0f, Prim.RenderLayers, Prim.CustomDepthStencil, Prim.bShadowWPO,
+                                                           IsShadowCacheable(Binding, Prim.bShadowWPO) && !bRemapped, Prim.CaptureFilterMask != 0u);
 
             EInstanceFlags Flags = ComposeInstanceFlags(Prim.BaseFlags, Binding, Prim.bCastShadow && !bRemapped, bActive, bHasGeometry);
             if (bRemapped)
@@ -1662,6 +1662,11 @@ namespace Lumina
             if (!Prim.bAffectDistanceField)
             {
                 Flags &= ~EInstanceFlags::HasDistanceField;
+            }
+            if (!Prim.bAllowImpostor)
+            {
+                Flags &= ~EInstanceFlags::Impostor;
+                FlagsAndThinning |= INSTANCE_NO_PROXY_BIT;
             }
 
             FInstanceCullEntry NewCull = {};
@@ -1682,6 +1687,7 @@ namespace Lumina
             NewStatic.RenderLayers          = Prim.RenderLayers;
             NewStatic.WPODisableDistance    = Prim.WPODisableDistance;
             NewStatic.TransformOffset       = bSharedTransform ? s : 0u;
+            NewStatic.CaptureFilterMask     = Prim.CaptureFilterMask;
 
             // A resolve bump onto identical values must not dirty the slot, or every instance re-uploads.
             const bool bCullChanged      = StoreIfChanged(RetainedCullEntries[Slot], NewCull);

@@ -621,8 +621,9 @@ namespace Lumina
         // Clipped to the bake box first, or a volume covering a slice of a huge terrain still pays for the whole thing and gets coarsened by it.
         TSharedPtr<FNavTerrainPatch> CaptureTerrainPatch(const STerrainComponent& T, const FMatrix4& W, const FVector3& BakeMin, const FVector3& BakeMax, float CellSize)
         {
-            const int32 Res = T.Resolution;
-            if (Res < 2 || T.Heightmap.Num() < static_cast<int64>(Res) * Res)
+            const FTerrainStore* Store = T.GetStore();
+            const int32 Res = Store != nullptr ? Store->GetResolution() : 0;
+            if (Res < 2)
             {
                 return nullptr;
             }
@@ -655,14 +656,10 @@ namespace Lumina
             const int32 Cols = Patch->ColEnd - Patch->ColBegin + 1;
             const int32 Rows = Patch->RowEnd - Patch->RowBegin + 1;
             Patch->Heights.SetNum(IntCastChecked<int32>(static_cast<int64>(Cols) * Rows));
-            for (int32 Row = 0; Row < Rows; ++Row)
+            Store->ReadHeights(0, FIntVector2(Patch->ColBegin, Patch->RowBegin), FIntVector2(Cols, Rows), Patch->Heights.GetData());
+            for (float& Height : Patch->Heights)
             {
-                const float* Source = &T.Heightmap[(Patch->RowBegin + Row) * Res + Patch->ColBegin];
-                float* Dest = &Patch->Heights[Row * Cols];
-                for (int32 Col = 0; Col < Cols; ++Col)
-                {
-                    Dest[Col] = Source[Col] * T.MaxHeight;
-                }
+                Height *= T.MaxHeight;
             }
             return Patch;
         }
@@ -1469,7 +1466,7 @@ namespace Lumina
             ForEachNavSource(Queries.TerrainColliders, Only, [&](ECS::FEntity E, const STerrainColliderComponent& TC, const STransformComponent& X, const STerrainComponent* Terrain)
             {
                 if (!TC.bAffectsNavigation) return;
-                if (!Terrain || Terrain->Heightmap.IsEmpty()) return;
+                if (!Terrain || Terrain->GetStore() == nullptr) return;
                 FNavSourceEntry Entry;
                 Entry.Key = PackSourceKey(E, ENavColliderType::Terrain);
                 Entry.ContentId = Terrain->CPUState.HeightmapVersion;
@@ -1907,7 +1904,7 @@ namespace Lumina
                 }
 
                 const STerrainComponent* Terrain = Queries.Terrains.TryGet<STerrainComponent>(EntityOfSourceKey(Record.Key));
-                if (Terrain == nullptr || Terrain->Heightmap.IsEmpty())
+                if (Terrain == nullptr || Terrain->GetStore() == nullptr)
                 {
                     return;
                 }

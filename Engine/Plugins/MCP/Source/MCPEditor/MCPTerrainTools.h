@@ -17,11 +17,11 @@ namespace Lumina
         PROPERTY()
         FString Name;
 
-        // OS path of a heightmap image whose red channel spans zero to MaxHeight; row r lands at Z offset r.
+        // OS path of a heightmap image whose red channel spans zero to MaxHeight, row r landing at Z offset r, or of a square raw .r16 streamed to disk.
         PROPERTY()
         FString HeightmapPath;
 
-        // Samples per side, a power of two plus one.
+        // Samples per side, a power of two plus one, ignored for a raw heightmap whose side sets it.
         PROPERTY()
         int32 Resolution = 513;
 

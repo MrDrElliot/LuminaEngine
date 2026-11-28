@@ -92,12 +92,30 @@ namespace Lumina
         }
 
         const float  LineAdvance = LineHeight * (LineSpacing <= 0.0f ? 1.0f : LineSpacing);
+        // In em, between a tab column's widest cell and the next column.
+        constexpr float kColumnGap = 1.0f;
 
-        // Two passes, so per-line runs and widths come first and each line aligns independently.
+        // A line's last tab column and the width of its cell there.
+        struct FLineEnd
+        {
+            int32 Column = 0;
+            float Width  = 0.0f;
+        };
+
+        // Two passes, so per-line runs and widths come first and each line aligns independently. A null glyph is a tab.
         TVector<TVector<const FFontGlyph*>> Lines;
-        TVector<float>                      LineWidths;
+        TVector<FLineEnd>                   LineEnds;
+        // A tab starts the next column, each as wide as its widest cell in the block, so tabbed rows read as a table.
+        TVector<float>                      ColumnWidths;
         Lines.Emplace();
-        LineWidths.Add(0.0f);
+        LineEnds.Emplace();
+        ColumnWidths.Add(0.0f);
+
+        auto EndCell = [&]()
+        {
+            const FLineEnd& End = LineEnds.Last();
+            ColumnWidths[End.Column] = Math::Max(ColumnWidths[End.Column], End.Width);
+        };
 
         const FStringView View = Text.View();
         for (int32 i = 0; i < View.Len(); )
@@ -105,20 +123,41 @@ namespace Lumina
             const uint32 CP = DecodeUTF8Codepoint(View, i);
             if (CP == '\n')
             {
+                EndCell();
                 Lines.Emplace();
-                LineWidths.Add(0.0f);
+                LineEnds.Emplace();
                 continue;
             }
             if (CP == '\r')
             {
                 continue;
             }
+            if (CP == '\t')
+            {
+                EndCell();
+                Lines.Last().Add(nullptr);
+                FLineEnd& End = LineEnds.Last();
+                End = { End.Column + 1, 0.0f };
+                if (ColumnWidths.Num() <= End.Column)
+                {
+                    ColumnWidths.Add(0.0f);
+                }
+                continue;
+            }
 
             if (const FFontGlyph* G = FindGlyph(CP))
             {
                 Lines.Last().Add(G);
-                LineWidths.Last() += G->Advance;
+                LineEnds.Last().Width += G->Advance;
             }
+        }
+        EndCell();
+
+        TVector<float> ColumnStarts;
+        ColumnStarts.Add(0.0f);
+        for (int32 Column = 1; Column < ColumnWidths.Num(); ++Column)
+        {
+            ColumnStarts.Add(ColumnStarts.Last() + ColumnWidths[Column - 1] + kColumnGap);
         }
 
         const int32 NumLines    = Lines.Num();
@@ -128,10 +167,18 @@ namespace Lumina
         for (int32 Line = 0; Line < NumLines; ++Line)
         {
             const float BaselineY = StartY - (float)Line * LineAdvance;
-            float       PenX      = -HAlign * LineWidths[Line];
+            const float LineX     = -HAlign * (ColumnStarts[LineEnds[Line].Column] + LineEnds[Line].Width);
+            float       PenX      = LineX;
+            int32       Column    = 0;
 
             for (const FFontGlyph* G : Lines[Line])
             {
+                if (G == nullptr)
+                {
+                    PenX = LineX + ColumnStarts[++Column];
+                    continue;
+                }
+
                 const FVector4& P = G->Plane;
                 // Zero-area glyphs such as space still advance the pen below.
                 if (P.z > P.x && P.w > P.y)

@@ -27,8 +27,9 @@ namespace Lumina
         // Reconciles the transition objects against the live State to State wires.
         void ValidateGraph() override;
 
-        // Transitions are keyed by node id, so a cloned canvas has to re-key them onto its own nodes.
-        void PostCloneContent(const CEdNodeGraph* Source, const THashMap<CEdGraphNode*, CEdGraphNode*>& Clones) override;
+        // Transitions are keyed by node id, so a pasted state pair re-keys its transition onto the new nodes.
+        void ExportExtras(const THashSet<int64>& NodeIDs, FJsonValue& Out) const override;
+        void ImportExtras(const FJsonValue& Extras, const THashMap<int64, CEdGraphNode*>& Created) override;
 
         // Null for links without transition data, such as the Entry wire.
         CAnimStateTransition* FindTransition(int64 FromStateNodeID, int64 ToStateNodeID) const;

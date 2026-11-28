@@ -23,6 +23,15 @@ namespace Lumina::Physics
 {
     namespace
     {
+        // Seats the character from where it stands, for ground rebuilt around it, since a height field has no inside to push a buried capsule out of.
+        void ReseatOnRebuiltGround(FPhysicsCharacterHandle& Character)
+        {
+            Character.SpawnPosition       = Character.Position;
+            Character.bAwaitingGround     = true;
+            Character.AwaitingGroundSteps = 0;
+            Character.bResting            = false;
+        }
+
         // Orient a contact record for one receiving side; POD fill, no per-event table built downstream.
         SCollisionEvent BuildCollisionEvent(ECS::FEntity SelfEntity, ECS::FEntity OtherEntity,
                                            const FContactRecord& Record, bool bFlipNormal)
@@ -339,23 +348,6 @@ namespace Lumina::Physics
                 OnRigidBodyComponentUpdated(Registry, Entity);
             }
         }
-
-        // A stroke changes the heightmap every frame, so collision waits for a frame without a change before it rebuilds.
-        for (auto [Entity, Collider, Terrain, Body] : Registry.View<STerrainColliderComponent, ECS::Read<STerrainComponent>, SRigidBodyComponent>().Each())
-        {
-            const uint32 Version = Terrain.CPUState.HeightmapVersion;
-            if (!Collider.bHeightmapTracked)
-            {
-                Collider.BuiltHeightmapVersion = Version;
-                Collider.bHeightmapTracked = true;
-            }
-            else if (Version != Collider.BuiltHeightmapVersion && Version == Collider.SeenHeightmapVersion)
-            {
-                Collider.BuiltHeightmapVersion = Version;
-                OnRigidBodyComponentUpdated(Registry, Entity);
-            }
-            Collider.SeenHeightmapVersion = Version;
-        }
     }
 
     void FBox3DPhysicsScene::DestroyBodyHandle(uint32 Handle)
@@ -378,10 +370,37 @@ namespace Lumina::Physics
     void FBox3DPhysicsScene::SynchronizeBodyGroups()
     {
         ECS::FRegistry& Registry = World->GetEntityRegistry();
+        bool bHeightFields = false;
         for (FPendingStaticGroup& Group : PendingStaticGroups)
         {
             if (Registry.IsValid(Group.Owner)) { CommitStaticBodyGroup(Group.GroupID, Group.Owner, Group.Builds); }
             else { StaticBodyGroups.Remove(Group.GroupID); }
+            bHeightFields = bHeightFields || !Group.HeightFieldAreas.IsEmpty();
+        }
+
+        // A streamed height field patch can replace one that sat lower under a character standing on its owner.
+        if (bHeightFields)
+        {
+            for (auto [Entity, Physics] : Registry.View<SCharacterPhysicsComponent>().Each())
+            {
+                if (!Physics.Character || !Physics.Character->bGrounded)
+                {
+                    continue;
+                }
+                FPhysicsCharacterHandle& Character = *Physics.Character;
+                for (const FPendingStaticGroup& Group : PendingStaticGroups)
+                {
+                    const bool bInside = Group.Owner == Character.GroundEntity && Algo::AnyOf(Group.HeightFieldAreas, [&](const FVector4& Area)
+                    {
+                        return Character.Position.x >= Area.x && Character.Position.z >= Area.y && Character.Position.x <= Area.z && Character.Position.z <= Area.w;
+                    });
+                    if (bInside)
+                    {
+                        ReseatOnRebuiltGround(Character);
+                        break;
+                    }
+                }
+            }
         }
         PendingStaticGroups.Reset();
         for (const FPendingRagdoll& Request : PendingRagdolls)
@@ -457,20 +476,14 @@ namespace Lumina::Physics
         }
         CreateRigidBodiesBatched(PendingDrainScratch);
 
-        // Rebuilt ground can rise around whoever stands on it, and a height field has no inside to push a buried capsule out of.
         if (!RebuiltBodies.IsEmpty())
         {
             for (auto [Entity, Physics] : Registry.View<SCharacterPhysicsComponent>().Each())
             {
-                if (!Physics.Character || !Physics.Character->bGrounded || !Algo::Contains(RebuiltBodies, Physics.Character->GroundEntity))
+                if (Physics.Character && Physics.Character->bGrounded && Algo::Contains(RebuiltBodies, Physics.Character->GroundEntity))
                 {
-                    continue;
+                    ReseatOnRebuiltGround(*Physics.Character);
                 }
-                FPhysicsCharacterHandle& Character = *Physics.Character;
-                Character.SpawnPosition       = Character.Position;
-                Character.bAwaitingGround     = true;
-                Character.AwaitingGroundSteps = 0;
-                Character.bResting            = false;
             }
         }
 

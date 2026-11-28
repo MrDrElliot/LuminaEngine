@@ -3,6 +3,7 @@
 #include "World/Entity/Components/TransformComponent.h"
 #include "World/Entity/Components/WaterComponent.h"
 #include "World/Entity/Components/WeatherComponent.h"
+#include "World/Entity/Components/WindBlockerComponent.h"
 #include "World/Entity/Systems/WeatherInteractionState.h"
 
 namespace Lumina
@@ -33,6 +34,16 @@ namespace Lumina
             "r.Weather.SplashesPerFrame",
             128,
             "Splashes spawned per frame at full rain intensity and splash density.");
+
+        TConsoleVar<int32> CVarWeatherDripSpawnsPerFrame(
+            "r.Weather.DripSpawnsPerFrame",
+            48,
+            "Rain map texels tested per frame for roof edges that drip, at full rain and edge drip strength.");
+
+        TConsoleVar<int32> CVarWeatherMaxWindBlockers(
+            "r.Weather.MaxWindBlockers",
+            32,
+            "Wind blocker boxes nearest the camera that materials test when they sample Global Wind.");
 
         TConsoleVar<bool> CVarWeatherInteraction(
             "r.Weather.Interaction",
@@ -90,6 +101,7 @@ namespace Lumina
         using namespace WeatherExtractInternal;
 
         Frame.Weather = {};
+        Frame.WindBlockers.Reset();
         if (!CVarWeather.GetValue())
         {
             return;
@@ -113,6 +125,8 @@ namespace Lumina
         Weather.bActive = true;
         Weather.State   = *State;
 
+        ExtractWindBlockers(Registry, Frame);
+
         const FRainParams& Rain = State->Params.Rain;
         const FSnowParams& Snow = State->Params.Snow;
         const float Tile = Rain.Radius * 2.0f;
@@ -129,6 +143,10 @@ namespace Lumina
             Weather.NumFlakes = ClampedCount(Snow.FlakeDensity * Snow.Intensity * SnowTile * SnowTile * SnowTile, MaxDrops);
         }
         Weather.bDrops = Weather.NumDrops > 0u;
+
+        // Roofs go on dripping for a while after the rain stops, for as long as they stay wet.
+        const float DripRate = Rain.EdgeDrips * Math::Max(Rain.Intensity, State->Wetness * 0.6f);
+        Weather.NumDripSpawns = ClampedCount((float)CVarWeatherDripSpawnsPerFrame.GetValue() * DripRate, 1024u);
 
         const bool bWetSurfaces = State->Wetness > 0.001f || State->PuddleLevel > 0.001f || State->SnowCover > 0.001f;
         if (!Weather.bDrops && Weather.NumFlakes == 0u && !bWetSurfaces)
@@ -184,6 +202,60 @@ namespace Lumina
         Weather.OcclusionViewProjection  = ViewProjection;
         Weather.OcclusionDepthRange      = kOcclusionHalfDepth * 2.0f;
         Weather.OcclusionTexelWorld      = TexelWorld;
+    }
+
+    void FDefaultSceneRenderer::ExtractWindBlockers(ECS::FRegistry& Registry, FFrameData& Frame)
+    {
+        using namespace WeatherExtractInternal;
+
+        const ECS::TComponentStorage<SWindBlockerComponent> Storage = Registry.FindStorage<SWindBlockerComponent>();
+        const uint32 MaxBlockers = (uint32)Math::Clamp(CVarWeatherMaxWindBlockers.GetValue(), 0, 1024);
+        if (!Storage || Storage.IsEmpty() || MaxBlockers == 0u)
+        {
+            return;
+        }
+
+        struct FCandidate
+        {
+            FWindBlockerGPU Box;
+            float           Distance;
+        };
+        TVector<FCandidate> Candidates;
+
+        const FVector3 Camera = ExtractFrame->ViewVolume.GetViewPosition();
+        Registry.View<ECS::Read<SWindBlockerComponent>, ECS::Read<STransformComponent>, ECS::Without<SDisabledTag>>().ForEach(
+            [&](const SWindBlockerComponent& Blocker, const STransformComponent& Transform)
+        {
+            if (!Blocker.bEnabled || Blocker.Strength <= 0.0f)
+            {
+                return;
+            }
+
+            const FVector3 Location = Transform.GetWorldLocation();
+            const FQuat    Rotation = Transform.GetWorldRotation();
+            const FVector3 Half     = Math::Abs(Blocker.Extent * Transform.GetWorldScale());
+            const FVector3 AxisX    = Rotation * FVector3(1.0f, 0.0f, 0.0f);
+            const FVector3 AxisY    = Rotation * FVector3(0.0f, 1.0f, 0.0f);
+            const FVector3 AxisZ    = Rotation * FVector3(0.0f, 0.0f, 1.0f);
+
+            FCandidate& Candidate = Candidates.EmplaceGetRef();
+            Candidate.Box.WorldToBoxX = FVector4(AxisX, -Math::Dot(AxisX, Location));
+            Candidate.Box.WorldToBoxY = FVector4(AxisY, -Math::Dot(AxisY, Location));
+            Candidate.Box.WorldToBoxZ = FVector4(AxisZ, -Math::Dot(AxisZ, Location));
+            Candidate.Box.HalfExtent  = FVector4(Half, Math::Max(Blocker.Falloff, 0.001f));
+            Candidate.Box.Params      = FVector4(Math::Saturate(Blocker.Strength), 0.0f, 0.0f, 0.0f);
+            Candidate.Distance        = Math::Max(Math::Length(Location - Camera) - Math::Length(Half), 0.0f);
+        });
+
+        if ((uint32)Candidates.Num() > MaxBlockers)
+        {
+            Algo::Sort(Candidates, [](const FCandidate& A, const FCandidate& B) { return A.Distance < B.Distance; });
+            Candidates.SetNum((int32)MaxBlockers);
+        }
+        for (const FCandidate& Candidate : Candidates)
+        {
+            Frame.WindBlockers.Add(Candidate.Box);
+        }
     }
 
     void FDefaultSceneRenderer::ExtractWeatherInteraction(ECS::FRegistry& Registry, FFrameData& Frame)
@@ -358,6 +430,22 @@ namespace Lumina
                                           Water.bInteractive ? Water.InteractionFoamScale : 0.0f,
                                           Water.RainRippleScale);
         });
+    }
+
+    void FDefaultSceneRenderer::ApplyWeatherToSunlight(FFrameData& Frame)
+    {
+        const FEnvironmentWeatherParams& Environment = Frame.Weather.State.Params.Environment;
+        const float W = Math::Saturate(Environment.Weight);
+        if (!Frame.Weather.bActive || W <= 0.0f || !Frame.Lighting.LightData.bHasSun)
+        {
+            return;
+        }
+
+        FLight& Sun = Frame.Lighting.Lights[0];
+        Sun.Intensity *= Math::Lerp(1.0f, Math::Max(Environment.SunlightScale, 0.0f), W);
+        const FVector4 Color = UnpackColor(Sun.Color);
+        const FVector3 Tint  = FVector3(1.0f) + (Environment.SunTint - FVector3(1.0f)) * W;
+        Sun.Color = PackColor(FVector4(FVector3(Color) * Tint, Color.w));
     }
 
     void FDefaultSceneRenderer::ApplyWeatherToClouds(FFrameData& Frame)

@@ -89,8 +89,9 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupIndex)
     // Every skip below is uniform across the group, so the barriers stay in step.
     for (uint Item = Begin + GroupID.x; Item < End; Item += VISBUFFER_COMPUTE_RASTER_GROUPS)
     {
-        const uint Slot = Pass().List.Get(Item);
-        if (Slot > VISBUFFER_MAX_MESHLET_SLOTS)
+        const uint Slot    = Pass().List.Get(Item);
+        const uint VisSlot = Slot - VisDrawBase();
+        if (VisSlot >= VISBUFFER_MAX_MESHLET_SLOTS)
         {
             continue;
         }
@@ -120,7 +121,7 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint Lane : SV_GroupIndex)
             const uint3 Idx = UnpackMeshletTriangleSafe(Ref, Triangle);
             if (!IsDegenerateTriangleIndices(Idx))
             {
-                RasterTriangle(PackVisID(Slot, Triangle), bTwoSided, gsPixels[Idx.x], gsPixels[Idx.y], gsPixels[Idx.z]);
+                RasterTriangle(PackVisID(VisSlot, Triangle), bTwoSided, gsPixels[Idx.x], gsPixels[Idx.y], gsPixels[Idx.z]);
             }
         }
         GroupMemoryBarrierWithGroupSync();

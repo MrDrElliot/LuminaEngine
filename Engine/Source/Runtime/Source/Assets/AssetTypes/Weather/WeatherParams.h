@@ -4,6 +4,8 @@
 
 namespace Lumina
 {
+    struct SEnvironmentComponent;
+
     struct FRainParams
     {
         float    Intensity       = 0.0f;
@@ -28,6 +30,16 @@ namespace Lumina
         float    DripIntensity   = 1.0f;
         float    HazeDensity     = 0.5f;
         FVector3 Tint            = FVector3(1.0f);
+        FVector3 SecondaryTint   = FVector3(1.0f);
+        float    ColorVariation  = 0.0f;
+        FVector3 EmissiveColor   = FVector3(1.0f);
+        float    EmissiveIntensity = 0.0f;
+        float    Refraction      = 1.0f;
+        float    Reflection      = 1.0f;
+        float    Glint           = 1.0f;
+        float    CurtainDensity  = 1.0f;
+        float    SplashMist      = 1.0f;
+        float    EdgeDrips       = 1.0f;
 
         static FRainParams Lerp(const FRainParams& A, const FRainParams& B, float T);
     };
@@ -67,6 +79,23 @@ namespace Lumina
         static FCloudWeatherParams Lerp(const FCloudWeatherParams& A, const FCloudWeatherParams& B, float T);
     };
 
+    struct FEnvironmentWeatherParams
+    {
+        // How much these pull the environment toward the storm look, so a preset without the layer leaves it alone.
+        float    Weight         = 0.0f;
+        float    SunlightScale  = 0.45f;
+        float    SunDiscScale   = 0.2f;
+        float    SkyBrightness  = 0.55f;
+        float    AerosolDensity = 3.0f;
+        FVector3 SunTint        = FVector3(0.85f, 0.9f, 1.0f);
+        float    StarVisibility = 0.0f;
+
+        // Pulls Env toward these values by Weight, the way the renderer sees it this frame.
+        void ApplyTo(SEnvironmentComponent& Env) const;
+
+        static FEnvironmentWeatherParams Lerp(const FEnvironmentWeatherParams& A, const FEnvironmentWeatherParams& B, float T);
+    };
+
     struct FWindParams
     {
         FVector2 Direction       = FVector2(1.0f, 0.0f);
@@ -83,6 +112,7 @@ namespace Lumina
         FRainParams         Rain;
         FSnowParams         Snow;
         FCloudWeatherParams Clouds;
+        FEnvironmentWeatherParams Environment;
         FWindParams         Wind;
 
         static FWeatherParams Lerp(const FWeatherParams& A, const FWeatherParams& B, float T);

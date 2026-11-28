@@ -7,6 +7,7 @@ namespace Lumina
     {
         using FTerrainExtract       = FDefaultSceneRenderer::FFrameData::FTerrainExtract;
         using FGrassSpeciesExtract  = FDefaultSceneRenderer::FFrameData::FGrassSpeciesExtract;
+        using EHeightChange         = FDefaultSceneRenderer::FFrameData::EHeightChange;
 
         // Reuses the live element so its heap buffers outlive the frame instead of being freed and remade.
         template <typename T>
@@ -15,80 +16,26 @@ namespace Lumina
             return Index < Container.Num() ? Container[Index] : Container.EmplaceGetRef();
         }
 
-        // Bilinear resample of a square row-major grid from OldRes^2 to NewRes^2.
-        template <typename T>
-        void ResampleGrid(const T* Src, int32 OldRes, T* Dst, int32 NewRes)
+        // A Resolution edit resamples the store, onto a new data file when the old one lives on disk or the map is large.
+        void EnsureTerrainStore(STerrainComponent& Terrain)
         {
-            for (int32 Y = 0; Y < NewRes; ++Y)
+            FTerrainStore* Store = Terrain.EnsureStore();
+            if (Terrain.Resolution < 2 || Terrain.Resolution == Store->GetResolution())
             {
-                const float Fy = (NewRes > 1) ? float(Y) / float(NewRes - 1) * float(OldRes - 1) : 0.0f;
-                const int32 Y0 = int(Fy);
-                const int32 Y1 = Math::Min(Y0 + 1, OldRes - 1);
-                const float Ty = Fy - float(Y0);
-                for (int32 X = 0; X < NewRes; ++X)
-                {
-                    const float Fx = (NewRes > 1) ? float(X) / float(NewRes - 1) * float(OldRes - 1) : 0.0f;
-                    const int32 X0 = int(Fx);
-                    const int32 X1 = Math::Min(X0 + 1, OldRes - 1);
-                    const float Tx = Fx - float(X0);
-                    const float V00 = float(Src[size_t(Y0) * OldRes + X0]);
-                    const float V10 = float(Src[size_t(Y0) * OldRes + X1]);
-                    const float V01 = float(Src[size_t(Y1) * OldRes + X0]);
-                    const float V11 = float(Src[size_t(Y1) * OldRes + X1]);
-                    const float V   = Math::Mix(Math::Mix(V00, V10, Tx), Math::Mix(V01, V11, Tx), Ty);
-                    if constexpr (std::is_integral_v<T>)
-                    {
-                        Dst[size_t(Y) * NewRes + X] = T(Math::Clamp(V + 0.5f, 0.0f, 255.0f));
-                    }
-                    else
-                    {
-                        Dst[size_t(Y) * NewRes + X] = T(V);
-                    }
-                }
+                return;
             }
-        }
-
-        void EnsureTerrainCpuBuffers(STerrainComponent& Terrain)
-        {
-            const int32 NewRes        = Terrain.Resolution;
-            const int32 NeededHeights = NewRes * NewRes;
-            if (Terrain.Heightmap.Num() != NeededHeights)
+            constexpr int32 kLargestInMemoryResample = 8193;
+            const bool bOnDisk = Store->HasFile() || Terrain.Resolution > kLargestInMemoryResample;
+            const FString DataFile = bOnDisk ? FTerrainStoreRegistry::MakeDataFile() : FString();
+            const FString DiskPath = bOnDisk ? FTerrainStoreRegistry::ResolveDiskPath(DataFile) : FString();
+            TSharedPtr<FTerrainStore> Resampled = FTerrainStore::Resample(*Store, Terrain.Resolution, DiskPath);
+            if (Resampled == nullptr)
             {
-                const int32 OldCount = Terrain.Heightmap.Num();
-                const int32  OldRes   = (int32)std::llround(std::sqrt((double)OldCount));
-                const bool   bResample = !Terrain.Heightmap.IsEmpty() && NewRes >= 2 && OldRes >= 2
-                                       && size_t(OldRes) * size_t(OldRes) == static_cast<size_t>(OldCount);
-                if (bResample)
-                {
-                    TVector<float> Resampled(NeededHeights);
-                    ResampleGrid(Terrain.Heightmap.GetData(), OldRes, Resampled.GetData(), NewRes);
-                    Terrain.Heightmap = Move(Resampled);
-
-                    const int32 LayerCount = Terrain.Layers.Num();
-                    if (LayerCount > 0 && static_cast<size_t>(Terrain.LayerWeights.Num()) == size_t(LayerCount) * OldCount)
-                    {
-                        TVector<uint8> NewWeights(size_t(LayerCount) * NeededHeights);
-                        for (int32 L = 0; L < LayerCount; ++L)
-                        {
-                            ResampleGrid(Terrain.LayerWeights.GetData() + size_t(L) * OldCount, OldRes,
-                                         NewWeights.GetData() + size_t(L) * NeededHeights, NewRes);
-                        }
-                        Terrain.LayerWeights = Move(NewWeights);
-                        Terrain.CPUState.bFullWeightsDirty = true;
-                    }
-                }
-                else
-                {
-                    Terrain.Heightmap.Init(0.0f, NeededHeights);
-                }
-                Terrain.CPUState.bFullHeightmapDirty = true;
+                LOG_ERROR("Terrain could not resample to {} samples, so it keeps {}.", Terrain.Resolution, Store->GetResolution());
+                Terrain.Resolution = Store->GetResolution();
+                return;
             }
-            const int32 NeededWeights = Terrain.Layers.Num() * NeededHeights;
-            if (Terrain.LayerWeights.Num() != NeededWeights)
-            {
-                Terrain.LayerWeights.SetNum(NeededWeights, 0u);
-                Terrain.CPUState.bFullWeightsDirty = true;
-            }
+            Terrain.SetStore(Resampled, DataFile);
         }
 
         // Reads the material rather than the component, since the GrassOutput node is where species are authored.
@@ -162,6 +109,10 @@ namespace Lumina
                 Species.TerrainNormalDistance = Type->TerrainNormalDistance;
                 Species.RootDarkening = Type->RootDarkening;
                 Species.bRandomYaw    = Type->bRandomYaw;
+                const CRuntimeVirtualTexture* Mask = Type->DensityMask.Get();
+                Species.MaskTexture   = Mask != nullptr && Mask->GetResourceID() >= 0 ? (uint32)Mask->GetResourceID() : Constants::kIndexNoneU32;
+                Species.MaskChannel   = (uint32)Math::Clamp(Type->MaskChannel, 0, 3);
+                Species.MaskStrength  = Math::Max(Type->MaskStrength, 0.0f);
             }
         }
 
@@ -180,6 +131,7 @@ namespace Lumina
                 }
                 Out.VisBufferShader = Material->GetShader(ActiveMeshletStage(EMaterialShaderStage::VisBufferMesh));
                 Out.DeferredShader  = Material->GetShader(EMaterialShaderStage::Deferred);
+                Out.VirtualTextureShader = Material->GetShader(EMaterialShaderStage::VirtualTextureCapture);
                 return Out.VisBufferShader != nullptr && Out.DeferredShader != nullptr;
             };
 
@@ -198,98 +150,42 @@ namespace Lumina
             }
         }
 
-        void PrepareTerrainUploads(STerrainComponent& Terrain, FTerrainExtract& Out, bool bStructural, bool& bOutRectHeight, FIntVector2& OutRectMin, FIntVector2& OutRectMax)
+        // Pages over whatever the heights or weights changed by upload again, and the world distance field learns the height rect.
+        void MarkTerrainChanges(STerrainComponent& Terrain, ECS::FEntity Entity, bool bStructural, FTerrainPageStreamer& Streamer, FTerrainExtract& Out)
         {
-            FTerrainCPUState& CPU = Terrain.CPUState;
+            const FTerrainCPUState& CPU = Terrain.CPUState;
+            const int32 Last = Terrain.Resolution - 1;
 
-            const int32 Res         = Terrain.Resolution;
-            const int32 LayerCount  = Math::Max(Terrain.Layers.Num(), 1);
-            const int32 SlicePixels = Res * Res;
-
-            const bool bFullHeight = CPU.bFullHeightmapDirty || bStructural;
-            const bool bRectHeight = !bFullHeight && (CPU.HeightDirtyMax.x >= CPU.HeightDirtyMin.x);
-            bOutRectHeight = bRectHeight;
-
-            OutRectMin = FIntVector2(0);
-            OutRectMax = FIntVector2(Res - 1);
-            if (bFullHeight && Terrain.Heightmap.Num() == SlicePixels)
+            Out.HeightChange = EHeightChange::None;
+            if (CPU.bFullHeightmapDirty || bStructural)
             {
-                Out.HeightUpload = 1;
-                Out.HeightRectMin = FIntVector2(0);
-                Out.HeightRectMax = FIntVector2(Res - 1);
-                Out.HeightBytes.Reset();
-                Out.HeightBytes.Append(Terrain.Heightmap.begin(), Terrain.Heightmap.end());
+                Out.HeightChange = EHeightChange::Full;
             }
-            else if (bRectHeight && Terrain.Heightmap.Num() == SlicePixels)
+            else if (CPU.HeightDirtyMax.x >= CPU.HeightDirtyMin.x)
             {
-                OutRectMin = Math::Clamp(CPU.HeightDirtyMin, FIntVector2(0), FIntVector2(Res - 1));
-                OutRectMax = Math::Clamp(CPU.HeightDirtyMax, FIntVector2(0), FIntVector2(Res - 1));
-                const int32 RegionW = OutRectMax.x - OutRectMin.x + 1;
-                const int32 RegionH = OutRectMax.y - OutRectMin.y + 1;
-                Out.HeightUpload  = 2;
-                Out.HeightRectMin = OutRectMin;
-                Out.HeightRectMax = OutRectMax;
-                Out.HeightBytes.SetNum(size_t(RegionW) * size_t(RegionH));
-                for (int32 Row = 0; Row < RegionH; ++Row)
-                {
-                    const float* Src = Terrain.Heightmap.GetData() + size_t(OutRectMin.y + Row) * Res + OutRectMin.x;
-                    Memory::Memcpy(Out.HeightBytes.GetData() + size_t(Row) * RegionW, Src, size_t(RegionW) * sizeof(float));
-                }
+                Out.HeightChange  = EHeightChange::Rect;
+                Out.HeightRectMin = Math::Clamp(CPU.HeightDirtyMin, FIntVector2(0), FIntVector2(Last));
+                Out.HeightRectMax = Math::Clamp(CPU.HeightDirtyMax, FIntVector2(0), FIntVector2(Last));
             }
 
-            // Weights upload as whole slices, matching the GPU upload granularity.
-            if (Terrain.LayerWeights.IsEmpty())
+            if (Out.HeightChange == EHeightChange::Full || CPU.bFullWeightsDirty)
             {
+                Streamer.MarkAllStale(Entity);
                 return;
             }
-
-            if (CPU.bFullWeightsDirty || bStructural)
+            if (Out.HeightChange == EHeightChange::Rect)
             {
-                uint32 Mask = 0u;
-                for (int32 L = 0; L < LayerCount && (size_t(L + 1) * SlicePixels) <= static_cast<size_t>(Terrain.LayerWeights.Num()); ++L)
-                {
-                    Mask |= (1u << L);
-                }
-                if (Mask != 0u)
-                {
-                    Out.WeightUpload    = 1;
-                    Out.WeightSliceMask = Mask;
-                    // Only the present slices, back to back in ascending slice order.
-                    for (int32 L = 0; L < LayerCount; ++L)
-                    {
-                        if ((Mask & (1u << L)) == 0u)
-                        {
-                            continue;
-                        }
-                        const uint8* Slice = Terrain.LayerWeights.GetData() + size_t(L) * SlicePixels;
-                        Out.WeightBytes.Append(Slice, SlicePixels);
-                    }
-                }
+                Streamer.MarkStale(Entity, Out.HeightRectMin, Out.HeightRectMax);
             }
-            else if (CPU.WeightDirtyLayerMask != 0u)
+            if (CPU.WeightDirtyLayerMask != 0u && CPU.WeightDirtyMax.x >= CPU.WeightDirtyMin.x)
             {
-                uint32 Mask = 0u;
-                for (int32 L = 0; L < LayerCount; ++L)
-                {
-                    if ((CPU.WeightDirtyLayerMask & (1u << L)) == 0u || (size_t(L + 1) * SlicePixels) > static_cast<size_t>(Terrain.LayerWeights.Num()))
-                    {
-                        continue;
-                    }
-                    Mask |= (1u << L);
-                    const uint8* Slice = Terrain.LayerWeights.GetData() + size_t(L) * SlicePixels;
-                    Out.WeightBytes.Append(Slice, SlicePixels);
-                }
-                if (Mask != 0u)
-                {
-                    Out.WeightUpload    = 2;
-                    Out.WeightSliceMask = Mask;
-                }
+                Streamer.MarkStale(Entity, CPU.WeightDirtyMin, CPU.WeightDirtyMax);
             }
         }
 
-        void PrepareTerrainExtract(STerrainComponent& Terrain, const FMatrix4& WorldMatrix, FTerrainExtract& Out)
+        void PrepareTerrainExtract(STerrainComponent& Terrain, const FTerrainPageView& View, FTerrainPageStreamer& Streamer, FTerrainExtract& Out)
         {
-            EnsureTerrainCpuBuffers(Terrain);
+            EnsureTerrainStore(Terrain);
 
             FTerrainCPUState& CPU = Terrain.CPUState;
 
@@ -297,7 +193,6 @@ namespace Lumina
 
             // Render passes read this snapshot, not the component.
             Out.Resolution      = Res;
-            Out.ChunkResolution = Terrain.ChunkResolution;
             Out.TileWorldSize   = Terrain.TileWorldSize;
             Out.MaxHeight       = Terrain.MaxHeight;
             Out.LayerCount      = Terrain.Layers.Num();
@@ -306,73 +201,49 @@ namespace Lumina
 
             PrepareTerrainMaterial(Terrain, Out);
 
-            Out.HeightUpload      = 0;
-            Out.WeightUpload      = 0;
-            Out.WeightSliceMask   = 0u;
-            Out.bGeometryRebuilt  = false;
+            Out.HeightChange      = EHeightChange::None;
             Out.bStructuralChange = false;
-            Out.HeightBytes.Reset();
-            Out.WeightBytes.Reset();
-            Out.Chunks.Reset();
-            Out.Meshlets.Reset();
+            Out.Store = Terrain.Store;
 
-            if (Res < 2 || Terrain.ChunkResolution < 2)
+            if (Res < 2)
             {
                 return;
             }
 
-            const bool bStructural = CPU.PreparedResolution      != Res
-                                  || CPU.PreparedChunkResolution != Terrain.ChunkResolution
-                                  || CPU.PreparedLayerCount      != Out.LayerCount;
+            const bool bStructural = CPU.PreparedResolution != Res || CPU.PreparedLayerCount != Out.LayerCount;
             Out.bStructuralChange = bStructural;
 
-            bool        bRectHeight = false;
-            FIntVector2 RectMin;
-            FIntVector2 RectMax;
-            PrepareTerrainUploads(Terrain, Out, bStructural, bRectHeight, RectMin, RectMax);
-
-            const FVector3 WorldOrigin = FVector3(WorldMatrix[3]);
-            const bool     bMoved      = !CPU.Chunks.IsEmpty() && WorldOrigin != CPU.PreparedOrigin && std::isfinite(WorldOrigin.x + WorldOrigin.y + WorldOrigin.z);
-            if (CPU.bChunksDirty || bStructural || bMoved)
+            // An undo or a script write changes the store without marking a rect, so it counts as a whole new map.
+            const uint64 EditSerial = Terrain.Store->GetEditSerial();
+            const bool bMarked = CPU.bFullHeightmapDirty || CPU.bFullWeightsDirty || CPU.HeightDirtyMax.x >= CPU.HeightDirtyMin.x || CPU.WeightDirtyLayerMask != 0u;
+            if (EditSerial != CPU.SeenEditSerial && !bMarked)
             {
-                const bool bFullRebuild = bStructural || CPU.Chunks.IsEmpty() || (CPU.bChunksDirty && !bRectHeight);
-                if (bFullRebuild)
-                {
-                    TerrainMeshletBuilder::Build(Terrain, WorldOrigin);
-                }
-                else
-                {
-                    if (bMoved)
-                    {
-                        TerrainMeshletBuilder::Translate(Terrain, WorldOrigin - CPU.PreparedOrigin);
-                    }
-                    if (CPU.bChunksDirty)
-                    {
-                        TerrainMeshletBuilder::UpdateRegion(Terrain, WorldOrigin, RectMin, RectMax);
-                    }
-                }
-
-                if (!CPU.Chunks.IsEmpty() && !CPU.Meshlets.IsEmpty())
-                {
-                    Out.bGeometryRebuilt = true;
-                    Out.Chunks.Reset();
-                    Out.Chunks.Append(CPU.Chunks.begin(), CPU.Chunks.end());
-                    Out.Meshlets.Reset();
-                    Out.Meshlets.Append(CPU.Meshlets.begin(), CPU.Meshlets.end());
-                }
+                Terrain.MarkHeightmapReplaced();
+                CPU.bFullWeightsDirty = true;
             }
+            CPU.SeenEditSerial = EditSerial;
+
+            Streamer.Prepare(Out.Entity, Res, Terrain.MaxHeight, Terrain.TileWorldSize);
+            MarkTerrainChanges(Terrain, Out.Entity, bStructural, Streamer, Out);
+
+            const FVector3 WorldOrigin = FVector3(Out.WorldMatrix[3]);
+            FTerrainPageLayout Layout;
+            Layout.OriginXZ      = FVector2(WorldOrigin.x - Terrain.TileWorldSize * 0.5f, WorldOrigin.z - Terrain.TileWorldSize * 0.5f);
+            Layout.WorldY        = WorldOrigin.y;
+            Layout.SampleSpacing = Terrain.TileWorldSize / float(Res - 1);
+            Layout.MaxHeight     = Terrain.MaxHeight;
+            Layout.Resolution    = Res;
+            Streamer.Request(Out.Entity, Terrain.Store, Layout, View);
 
             // This frame captured the dirty state, so it is consumed here.
             CPU.bFullHeightmapDirty = false;
             CPU.bFullWeightsDirty   = false;
-            CPU.bChunksDirty        = false;
             CPU.HeightDirtyMin      = FIntVector2(INT32_MAX);
             CPU.HeightDirtyMax      = FIntVector2(INT32_MIN);
             CPU.WeightDirtyMin      = FIntVector2(INT32_MAX);
             CPU.WeightDirtyMax      = FIntVector2(INT32_MIN);
             CPU.WeightDirtyLayerMask = 0u;
             CPU.PreparedResolution      = Res;
-            CPU.PreparedChunkResolution = Terrain.ChunkResolution;
             CPU.PreparedLayerCount      = Out.LayerCount;
         }
     }
@@ -401,6 +272,8 @@ namespace Lumina
 
         if (TerrainCount == 0)
         {
+            // The last terrain going still has to give back its pages.
+            TerrainPageStreamer.Prune(Frame.Extracts.LiveTerrainEntities);
             return;
         }
 
@@ -416,10 +289,20 @@ namespace Lumina
 
         LUMINA_PROFILE_SECTION("Extract Terrain");
 
+        // Pages follow the cull camera, so a frozen cull keeps streaming for the view it was frozen at.
+        const FCullData& Cull = Frame.SceneGlobalData.CullData;
+        FTerrainPageView View;
+        View.Camera        = FVector3(Cull.CullCameraPosition);
+        View.PixelsPerUnit = Math::Abs(Cull.CullCameraProjection[1][1]) * 0.5f * float(Frame.SceneGlobalData.ScreenSize.y);
+        View.bOrthographic = Cull.CullCameraProjection[3][3] != 0.0f;
+
+        TerrainPageStreamer.BeginFrame();
+        TerrainPageStreamer.Prune(Frame.Extracts.LiveTerrainEntities);
         for (FTerrainExtract& Item : Frame.Extracts.TerrainExtracts)
         {
             Item.WorldMatrix = Transforms.Get(Item.Entity).GetWorldMatrix();
-            PrepareTerrainExtract(TerrainView.template Get<STerrainComponent>(Item.Entity), Item.WorldMatrix, Item);
+            PrepareTerrainExtract(TerrainView.template Get<STerrainComponent>(Item.Entity), View, TerrainPageStreamer, Item);
         }
+        TerrainPageStreamer.Commit();
     }
 }

@@ -1,53 +1,54 @@
 #pragma once
-#include "Includes/GlobalRHI.slang"
+#include "Includes/TerrainCommon.slang"
 
-// A terrain's heightmap as a world-space height field, which far sun shadows march and the world distance field merges.
+// Terrain records as world-space height fields, which far sun shadows march, the world distance field merges and DFAO lifts receivers onto.
 
-// Covers a 4x4 open-world terrain tiling with shadow casting enabled on every tile.
-static const uint kMaxTerrainHeightfields = 16u;
-
-// Mirror of Lumina::FTerrainHeightfieldGPU.
-struct FTerrainHeightfield
+// Every casting terrain, not only those in view, since a ridge behind the camera still shades and occludes what is in front.
+bool TerrainIsHeightfield(FTerrainRecord* Record)
 {
-    float2     OriginXZ;
-    float      Stride;
-    float      OriginY;
-    float      MaxHeight;
-    float      Resolution;
-    FTexture2D Heightmap;
-    float      _Pad;
+    return (Record.Params.Flags & TERRAIN_FLAG_CAST_SHADOW) != 0u && !Record.PageTable.IsEmpty();
+}
 
-    float HeightAt(float2 XZ)
-    {
-        const float2 UV = ((XZ - OriginXZ) / Stride + 0.5) / Resolution;
-        return OriginY + Heightmap.SampleLevel(Samplers::LinearClamp, UV, 0.0).r * MaxHeight;
-    }
+// World size of a pixel this far from the cull camera, the detail the page streamer keeps resident there.
+float TerrainViewFootprint(float Distance)
+{
+    const float PixelsPerUnit = abs(GetCullCameraProjection()[1][1]) * 0.5 * float(Scene().ScreenSize.y);
+    return Distance / max(PixelsPerUnit, 1e-3);
+}
 
-    bool Covers(float2 XZ)
-    {
-        const float2 Texel = (XZ - OriginXZ) / Stride;
-        return all(Texel >= 0.0) && all(Texel <= Resolution - 1.0);
-    }
+float TerrainWorldHeight(FTerrainRecord* Record, float2 XZ, uint Mip, inout FTerrainPage Cache)
+{
+    return Record.Params.WorldOriginY.x + TerrainHeightAt(Record, TerrainSamplePos(Record, XZ), Mip, Cache);
+}
 
-    // Height above the surface scaled by its slope, which never overstates the true distance to a plane.
-    float Distance(float3 P, float Step)
-    {
-        const float  Height   = HeightAt(P.xz);
-        const float2 Gradient = float2(HeightAt(P.xz + float2(Step, 0.0)) - HeightAt(P.xz - float2(Step, 0.0)),
-                                       HeightAt(P.xz + float2(0.0, Step)) - HeightAt(P.xz - float2(0.0, Step))) / (2.0 * Step);
-        return (P.y - Height) / sqrt(1.0 + dot(Gradient, Gradient));
-    }
-};
+float TerrainWorldHeight(FTerrainRecord* Record, float2 XZ, float Footprint)
+{
+    FTerrainPage Cache = (FTerrainPage)0;
+    return TerrainWorldHeight(Record, XZ, (uint)TerrainFootprintMip(Record, Footprint), Cache);
+}
+
+// Height above the surface scaled by its slope, which never overstates the true distance to a plane.
+float TerrainSurfaceDistance(FTerrainRecord* Record, float3 P, float Step)
+{
+    const uint   Mip = (uint)TerrainFootprintMip(Record, Step);
+    FTerrainPage Cache = (FTerrainPage)0;
+    const float  Height   = TerrainWorldHeight(Record, P.xz, Mip, Cache);
+    const float2 Gradient = float2(TerrainWorldHeight(Record, P.xz + float2(Step, 0.0), Mip, Cache) - TerrainWorldHeight(Record, P.xz - float2(Step, 0.0), Mip, Cache),
+                                   TerrainWorldHeight(Record, P.xz + float2(0.0, Step), Mip, Cache) - TerrainWorldHeight(Record, P.xz - float2(0.0, Step), Mip, Cache)) / (2.0 * Step);
+    return (P.y - Height) / sqrt(1.0 + dot(Gradient, Gradient));
+}
 
 // Coarse terrain LODs cut under the height field between vertices, and a receiver left there reads as buried in it.
-// By pointer, since a by-value array copies every record into registers and costs the whole pass occupancy.
-float3 LiftOntoTerrains(float3 P, FTerrainHeightfield* Terrains, uint NumTerrains)
+float3 LiftOntoTerrains(float3 P)
 {
-    for (uint i = 0; i < min(NumTerrains, kMaxTerrainHeightfields); ++i)
+    const GPUSpan<FTerrainRecord> Terrains = GetSceneRoot().Terrains;
+    const float Footprint = TerrainViewFootprint(length(P - GetCameraPosition()));
+    for (uint i = 0; i < Terrains.Count; ++i)
     {
-        if (Terrains[i].Covers(P.xz))
+        FTerrainRecord* Terrain = Terrains.At(i);
+        if (TerrainIsHeightfield(Terrain) && TerrainCovers(Terrain, P.xz))
         {
-            P.y = max(P.y, Terrains[i].HeightAt(P.xz));
+            P.y = max(P.y, TerrainWorldHeight(Terrain, P.xz, Footprint));
         }
     }
     return P;

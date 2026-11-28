@@ -193,6 +193,12 @@ namespace Lumina::SessionOps
     // Lays the canvas out by its links on the next draw, inputs left of what they feed, as one undo step.
     EDITOR_API bool ArrangeGraph(FStringView Tab, FString& OutError);
 
+    // Ctrl+C on these nodes, or on the selection when empty, on the canvas GraphPath leads to, returning the clipboard text.
+    EDITOR_API bool CopyGraphNodes(FStringView Tab, const TVector<int64>& GraphPath, const TVector<int64>& Nodes, FString& OutText, FString& OutError);
+
+    // Ctrl+V of Text, or of the system clipboard when empty, at a point on the canvas GraphPath leads to, as one undo step.
+    EDITOR_API bool PasteGraphNodes(FStringView Tab, const TVector<int64>& GraphPath, FStringView Text, float X, float Y, TVector<int64>& OutNodes, FString& OutError);
+
     // Hands a canvas of Asset to the editor that has Asset open, so a scripted edit there joins that editor's history.
     EDITOR_API void AdoptNodeGraph(CObject* Asset, CEdNodeGraph* Graph);
     EDITOR_API bool CloseTab(FStringView Name, bool bDiscardUnsaved, FString& OutError);

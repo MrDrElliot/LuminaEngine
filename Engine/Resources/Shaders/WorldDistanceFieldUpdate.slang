@@ -27,11 +27,6 @@ struct FPushConstants
     uint                   _Pad;
     // Binned over the composite level's bricks, one cell per column of bricks.
     FDFObjectGrid          Grid;
-    uint                   NumTerrains;
-    uint                   _Pad1;
-    uint                   _Pad2;
-    uint                   _Pad3;
-    FTerrainHeightfield    Terrains[kMaxTerrainHeightfields];
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -141,16 +136,17 @@ void ComputeMain(uint3 GroupID : SV_GroupID, uint3 LocalID : SV_GroupThreadID, u
             Distance = min(Distance, CasterDistance(Grid.Objects.Get(gsCasters[Index]), P));
         }
 
+        const GPUSpan<FTerrainRecord> Terrains = GetSceneRoot().Terrains;
         [loop]
-        for (uint TerrainIndex = 0u; TerrainIndex < min(Pass().NumTerrains, kMaxTerrainHeightfields); ++TerrainIndex)
+        for (uint TerrainIndex = 0u; TerrainIndex < Terrains.Count; ++TerrainIndex)
         {
-            const FTerrainHeightfield Terrain = Pass().Terrains[TerrainIndex];
-            if (Terrain.Covers(P.xz))
+            FTerrainRecord* Terrain = Terrains.At(TerrainIndex);
+            if (TerrainIsHeightfield(Terrain) && TerrainCovers(Terrain, P.xz))
             {
                 // Taken over at least a voxel, since a finer slope would read heightmap noise the level cannot hold.
-                const float Step = max(Terrain.Stride, Voxel);
+                const float Step = max(Terrain.Params.SampleSpacing, Voxel);
                 // Sunk half a step below the triangulated ground it was sampled from, so a pixel on that ground never reads as inside it.
-                Distance = min(Distance, Terrain.Distance(P, Step) + 0.5 * Step);
+                Distance = min(Distance, TerrainSurfaceDistance(Terrain, P, Step) + 0.5 * Step);
             }
         }
     }

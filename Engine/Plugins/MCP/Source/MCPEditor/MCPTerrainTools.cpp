@@ -24,7 +24,6 @@ namespace Lumina::MCP
     {
         constexpr int32 GTerrainMinResolution = 33;
         constexpr int32 GTerrainMaxResolution = 8193;
-        static_assert(int64(GTerrainMaxResolution) * GTerrainMaxResolution * GTerrainMaxLayers <= INT32_MAX, "Layer weights must stay int32-indexable.");
 
         bool IsValidTerrainResolution(int32 Value)
         {
@@ -49,10 +48,9 @@ namespace Lumina::MCP
                 Terrain.Layers.EmplaceGetRef().Name = Lumina::Format("Layer {}", Terrain.Layers.Num());
             }
 
-            const int32 Res = Terrain.Resolution;
-            const size_t Samples = (size_t)Res * (size_t)Res;
-            Terrain.LayerWeights.Init(uint8(0), IntCastChecked<int32>(Samples * Terrain.Layers.Num()));
-
+            FTerrainStore* Store = Terrain.EnsureStore();
+            const int32 Res = Store->GetResolution();
+            TVector<uint32> Packed(GTerrainTileSamples * Res);
             for (int32 Layer = 0; Layer < Paths.Num(); ++Layer)
             {
                 TOptional<Import::Textures::FTextureImportResult> Image = Import::Textures::ImportTexture(FStringView(Paths[Layer]), false);
@@ -74,15 +72,22 @@ namespace Lumina::MCP
 
                 // Little-endian, so a 16-bit sample's high byte is the second one.
                 const int64 ByteOffset = b16Bit ? 1 : 0;
-                uint8* Out = Terrain.LayerWeights.GetData() + Layer * Samples;
-                for (int32 Z = 0; Z < Res; ++Z)
+                for (int32 Z0 = 0; Z0 < Res; Z0 += GTerrainTileSamples)
                 {
-                    const uint32 SrcY = Math::Min((uint32)((uint64)Z * Height / Res), Height - 1);
-                    for (int32 X = 0; X < Res; ++X)
+                    const FIntVector2 Min(0, Z0), Size(Res, Math::Min(GTerrainTileSamples, Res - Z0));
+                    Store->ReadWeights(0, Min, Size, Packed.GetData());
+                    for (int32 Z = 0; Z < Size.y; ++Z)
                     {
-                        const uint32 SrcX = Math::Min((uint32)((uint64)X * Width / Res), Width - 1);
-                        Out[Z * Res + X] = Image->Pixels[(static_cast<int64>(SrcY) * Width + SrcX) * TexelBytes + ByteOffset];
+                        const uint32 SrcY = Math::Min((uint32)((uint64)(Z0 + Z) * Height / Res), Height - 1);
+                        for (int32 X = 0; X < Res; ++X)
+                        {
+                            const uint32 SrcX = Math::Min((uint32)((uint64)X * Width / Res), Width - 1);
+                            const uint32 Weight = Image->Pixels[(static_cast<int64>(SrcY) * Width + SrcX) * TexelBytes + ByteOffset];
+                            uint32& Texel = Packed[Z * Res + X];
+                            Texel = (Texel & ~(0xFFu << (Layer * 8))) | (Weight << (Layer * 8));
+                        }
                     }
+                    Store->WriteWeights(Min, Size, Packed.GetData());
                 }
             }
 
@@ -140,7 +145,8 @@ namespace Lumina::MCP
                 Agent::EToolEffect::Mutating, Agent::EToolThread::GameThread,
                 [](const SCreateTerrainParams& In, SCreateTerrainResult& Out)
                 {
-                    if (!IsValidTerrainResolution(In.Resolution))
+                    const bool bRawHeightmap = In.HeightmapPath.EndsWith(".r16") || In.HeightmapPath.EndsWith(".raw");
+                    if (!bRawHeightmap && !IsValidTerrainResolution(In.Resolution))
                     {
                         return Agent::FToolResult::Error(Lumina::Format("Resolution must be a power of two plus one, from {} to {}.",
                             GTerrainMinResolution, GTerrainMaxResolution));
@@ -185,11 +191,6 @@ namespace Lumina::MCP
                         Terrain.TileWorldSize = In.TileWorldSize;
                         Terrain.MaxHeight     = In.MaxHeight;
 
-                        // Weights are sized to the grid, and the import only replaces heights.
-                        const size_t Samples = (size_t)In.Resolution * (size_t)In.Resolution;
-                        Terrain.LayerWeights.Init(uint8(0), IntCastChecked<int32>(Samples * Terrain.Layers.Num()));
-                        Terrain.CPUState.bFullWeightsDirty = true;
-
                         if (!FTerrainEditMode::ImportHeightmap(Terrain, *In.HeightmapPath, ImportError, Out.SourceWidth, Out.SourceHeight)
                             || !ImportTerrainLayerWeights(Terrain, In.LayerWeightmapPaths, ImportError))
                         {
@@ -201,9 +202,6 @@ namespace Lumina::MCP
                         if (In.bCollision)
                         {
                             World->EmplaceComponent<STerrainColliderComponent>(Created);
-
-                            // Editor worlds have no physics scene to add the body, and without one the saved terrain never collides.
-                            World->GetOrEmplaceComponent<SRigidBodyComponent>(Created).BodyType = EBodyType::Static;
                         }
                     }, SceneError);
 

@@ -189,8 +189,12 @@ namespace Lumina
         Res.bComputeRasterActive   = Res.ComputeRasterDemand >= kMinComputeRasterMeshlets;
         OutList    = { Res.ComputeRasterList, 2u * VSM_COMPUTE_RASTER_CAPACITY };
         OutList.Count = Res.bComputeRasterActive ? OutList.Count : 0u;
-        OutCursors.Address = Res.Counters.Gpu + kComputeRasterCount * sizeof(uint32);
-        OutCursors.Count   = 2u;
+        OutCursors    = GetVirtualShadowComputeCursors();
+    }
+
+    RHI::TGPUSpan<uint32> FDefaultSceneRenderer::GetVirtualShadowComputeCursors() const
+    {
+        return RHI::TGPUSpan<uint32>::FromAddress(VirtualShadowResources.Counters.Gpu + SceneRendererVirtualShadowInternal::kComputeRasterCount * sizeof(uint32), 2u);
     }
 
     void FDefaultSceneRenderer::PrepareComputeRaster(RHI::FCmdListH CL)
@@ -415,8 +419,7 @@ namespace Lumina
 
             SCENE_GPU_SCOPE(CL, bStatic ? "Compute Raster Static" : "Compute Raster Dynamic");
             PC.List            = { Res.ComputeRasterList, 2u * VSM_COMPUTE_RASTER_CAPACITY };
-            PC.Cursors.Address = Res.Counters.Gpu + kComputeRasterCount * sizeof(uint32);
-            PC.Cursors.Count   = 2u;
+            PC.Cursors         = GetVirtualShadowComputeCursors();
             PC.bStatic        = bStatic ? 1u : 0u;
             DispatchCompute(CL, ComputeRasterShader, PC, VSM_COMPUTE_RASTER_GROUPS, 1u, 1u);
             RHI::CmdBarrier(CL, RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,

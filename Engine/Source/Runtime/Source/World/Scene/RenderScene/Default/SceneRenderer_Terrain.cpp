@@ -27,6 +27,21 @@ namespace Lumina
             return Image;
         }
 
+        template<typename TFree>
+        void FreeCullBuffers(FTerrainGPUState& State, TFree&& Free)
+        {
+            State.ForEachBuffer([&](RHI::FGPUAllocation& Buffer)
+            {
+                if (Buffer)
+                {
+                    Free(Buffer);
+                    Buffer = {};
+                }
+            });
+            State.AllocatedNodeCount = 0u;
+            State.PageTableCount     = 0u;
+        }
+
         // A grass block's first size, which the scatter's readback then grows toward the terrain's budget.
         constexpr uint32 kInitialGrassCapacity = 1u << 16;
 
@@ -64,14 +79,7 @@ namespace Lumina
                 if (!IsLive(It->Key))
                 {
                     FTerrainGPUState& Dead = It->Value;
-                    RetireSceneImage(Dead.HeightmapTexture);
-                    RetireSceneImage(Dead.NormalTexture);
-                    RetireSceneImage(Dead.LayerWeightTexture);
-                    if (Dead.ChunkInfoBuffer)      { DeferFree(Dead.ChunkInfoBuffer); }
-                    if (Dead.MeshletInfoBuffer)    { DeferFree(Dead.MeshletInfoBuffer); }
-                    if (Dead.VisibleMeshletBuffer) { DeferFree(Dead.VisibleMeshletBuffer); }
-                    if (Dead.ChunkLevelBuffer)     { DeferFree(Dead.ChunkLevelBuffer); }
-                    if (Dead.IndirectDrawBuffer)   { DeferFree(Dead.IndirectDrawBuffer); }
+                    TerrainPassInternal::FreeCullBuffers(Dead, [this](const RHI::FGPUAllocation& Buffer) { DeferFree(Buffer); });
                     It = TerrainGPUStates.Remove(It);
                 }
                 else
@@ -100,8 +108,6 @@ namespace Lumina
 
     void FDefaultSceneRenderer::TerrainUpdatePass(RHI::FCmdListH CL)
     {
-        static const FShaderH NormalShader = FShaderLibrary::Get("TerrainNormalCompute.slang");
-
         const FFrameData& Frame = *RenderFrame;
 
         PruneTerrainStates();
@@ -128,170 +134,135 @@ namespace Lumina
             bAnyUpload = true;
         };
 
+        if (!TerrainHeightAtlas)
+        {
+            const uint32 AtlasSize = GTerrainPageAtlasSlotsPerSide * (uint32)GTerrainPageTexels;
+            TerrainHeightAtlas = TerrainPassInternal::CreateTerrainImage(AtlasSize, 1u, EFormat::R16_UNORM, false, false, "Terrain.HeightAtlas");
+            TerrainNormalAtlas = TerrainPassInternal::CreateTerrainImage(AtlasSize, 1u, EFormat::RG8_UNORM, false, false, "Terrain.NormalAtlas");
+            TerrainWeightAtlas = TerrainPassInternal::CreateTerrainImage(AtlasSize, 1u, EFormat::RGBA8_UNORM, false, false, "Terrain.WeightAtlas");
+        }
+
         for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
         {
-            if (TerrainItem.Resolution < 2 || TerrainItem.ChunkResolution < 2)
+            if (TerrainItem.Resolution < 2)
             {
                 continue;
             }
 
             FTerrainGPUState& State = TerrainGPUStates[TerrainItem.Entity];
-            const uint32 Res        = (uint32)TerrainItem.Resolution;
-            const uint32 LayerCount = (uint32)Math::Max(TerrainItem.LayerCount, 1);
-            const int32 SlicePixels = static_cast<int32>(Res * Res);
 
-            const bool bRealloc = State.AllocatedResolution != Res || State.AllocatedLayerCount != LayerCount;
-            if (bRealloc)
+            FTerrainStore* Store = TerrainItem.Store.Get();
+            if (Store == nullptr)
             {
-                RetireSceneImage(State.HeightmapTexture);
-                RetireSceneImage(State.NormalTexture);
-                RetireSceneImage(State.LayerWeightTexture);
+                continue;
+            }
+            const int32  TreeDepth = Store->GetTreeDepth();
+            const uint32 NodeCount = Store->GetTileCount();
+            bool bAllBounds = State.BoundsStore.Get() != Store;
+            if (State.AllocatedNodeCount != NodeCount)
+            {
+                TerrainPassInternal::FreeCullBuffers(State, [this](const RHI::FGPUAllocation& Buffer) { DeferFree(Buffer); });
 
-                State.HeightmapTexture   = TerrainPassInternal::CreateTerrainImage(Res, 1u,          EFormat::R32_FLOAT, false, false, "Terrain.Heightmap");
-                State.NormalTexture      = TerrainPassInternal::CreateTerrainImage(Res, 1u,          EFormat::RG8_UNORM, true, false, "Terrain.Normal");
-                State.LayerWeightTexture = TerrainPassInternal::CreateTerrainImage(Res, (uint16)Math::Max(LayerCount, 1u), EFormat::R8_UNORM, false, true, "Terrain.LayerWeight");
-                State.AllocatedResolution = Res;
-                State.AllocatedLayerCount = LayerCount;
+                const uint32 LeafCount = 1u << (2 * TreeDepth);
+                State.ListCapacity     = Math::Min(LeafCount, GTerrainMaxCullNodes);
+                State.VisibleCapacity  = Math::Min(GetTerrainNodeCount(TreeDepth), GTerrainMaxCullNodes);
+                State.TreeDepth        = TreeDepth;
 
-                if (TerrainItem.WeightUpload == 0)
-                {
-                    const float Zero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-                    RHI::CmdClearTexture(CL, State.LayerWeightTexture.Texture, Zero);
-                    bAnyUpload = true;
-                }
+                State.NodeBoundsBuffer   = CreateSceneBuffer(uint64(NodeCount) * sizeof(FVector2), "Terrain.NodeBounds");
+                State.NodeLists[0]       = CreateSceneBuffer(uint64(State.ListCapacity) * sizeof(uint32), "Terrain.NodeListA");
+                State.NodeLists[1]       = CreateSceneBuffer(uint64(State.ListCapacity) * sizeof(uint32), "Terrain.NodeListB");
+                State.LevelArgsBuffer    = CreateSceneBuffer(uint64(TreeDepth + 2) * kTerrainLevelArgsWords * sizeof(uint32), "Terrain.LevelArgs");
+                State.VisibleNodeBuffer  = CreateSceneBuffer(uint64(State.VisibleCapacity) * sizeof(FTerrainVisibleNode), "Terrain.VisibleNodes");
+                State.IndirectDrawBuffer = CreateSceneBuffer(sizeof(FTerrainDrawArgs), "Terrain.IndirectDraw");
+                State.AllocatedNodeCount = NodeCount;
+                bAllBounds = true;
             }
 
-            // Height upload (from the snapshot)
-            const int32 ResI = (int32)Res;
-            const bool  bHeightDirty = TerrainItem.HeightUpload != 0;
-            FIntVector2 RectMin = FIntVector2(0);
-            FIntVector2 RectMax = FIntVector2(ResI - 1);
-
-            if (TerrainItem.HeightUpload == 1 && TerrainItem.HeightBytes.Num() == SlicePixels)
+            // A sculpt stroke changes a handful of bounds a frame, which upload alone rather than all of them.
+            TVector<uint32> ChangedNodes;
+            if (!bAllBounds && State.BoundsSerial != Store->GetChangeSerial() && !Store->GetChangedNodes(State.BoundsSerial, ChangedNodes))
             {
-                const RHI::FGPURange Src = RHI::CopyTransientArray(TerrainItem.HeightBytes.GetData(), TerrainItem.HeightBytes.Num());
+                bAllBounds = true;
+            }
+            if (bAllBounds)
+            {
                 BeginUpload();
-                RHI::CmdCopyMemoryToTexture(CL, Src, Res, State.HeightmapTexture.Texture);
+                WriteBuffer(CL, State.NodeBoundsBuffer.Gpu, Store->GetBounds().GetData(), uint64(NodeCount) * sizeof(FVector2));
             }
-            else if (TerrainItem.HeightUpload == 2)
+            else if (!ChangedNodes.IsEmpty())
             {
-                RectMin = TerrainItem.HeightRectMin;
-                RectMax = TerrainItem.HeightRectMax;
-                const uint32 RegionW = uint32(RectMax.x - RectMin.x + 1);
-                const uint32 RegionH = uint32(RectMax.y - RectMin.y + 1);
-                // Snapshot rect is tightly packed, so the source row pitch is RegionW, not Res.
-                const RHI::FGPURange Src = RHI::CopyTransientArray(TerrainItem.HeightBytes.GetData(), TerrainItem.HeightBytes.Num());
-
-                RHI::FTextureSlice Slice;
-                Slice.Offset = FUIntVector3((uint32)RectMin.x, (uint32)RectMin.y, 0);
-                Slice.Extent = FUIntVector3(RegionW, RegionH, 1);
-                BeginUpload();
-                RHI::CmdCopyMemoryToTexture(CL, Src, RegionW, State.HeightmapTexture.Texture, Slice);
-            }
-
-            // Weights upload as whole slices, packed ascending in the snapshot.
-            if (TerrainItem.WeightUpload != 0 && !TerrainItem.WeightBytes.IsEmpty())
-            {
-                const uint8* Cursor = TerrainItem.WeightBytes.GetData();
-                const uint8* End    = Cursor + TerrainItem.WeightBytes.Num();
-                for (uint32 L = 0; L < LayerCount; ++L)
+                Algo::Sort(ChangedNodes);
+                TVector<FUIntVector2> Runs;
+                for (uint32 Node : ChangedNodes)
                 {
-                    if ((TerrainItem.WeightSliceMask & (1u << L)) == 0u)
+                    if (!Runs.IsEmpty() && Runs.Last().x + Runs.Last().y >= Node)
                     {
+                        Runs.Last().y = Math::Max(Runs.Last().y, Node - Runs.Last().x + 1u);
                         continue;
                     }
-                    if (Cursor + SlicePixels > End)
-                    {
-                        break;
-                    }
-                    const RHI::FGPURange Src = RHI::CopyTransientArray(Cursor, SlicePixels);
-
-                    RHI::FTextureSlice Slice;
-                    Slice.Layer = L;
-                    BeginUpload();
-                    RHI::CmdCopyMemoryToTexture(CL, Src, Res, State.LayerWeightTexture.Texture, Slice);
-                    Cursor += SlicePixels;
+                    Runs.Add(FUIntVector2(Node, 1u));
                 }
+                BeginUpload();
+                WriteBufferRuns(CL, State.NodeBoundsBuffer.Gpu, Store->GetBounds().GetData(), sizeof(FVector2), Runs);
             }
+            State.BoundsStore  = TerrainItem.Store;
+            State.BoundsSerial = Store->GetChangeSerial();
 
-            if (bHeightDirty && NormalShader)
+            FTerrainPageTable* Table = TerrainPageStreamer.FindTable(TerrainItem.Entity);
+            if (Table == nullptr || Table->Slots.IsEmpty())
             {
-                // Heightmap upload must land before the normal recompute samples it.
-                RHI::CmdBarrier(CL,
-                    RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-                    RHI::EStageFlags::Compute,
-                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite);
-
-                const int32 NMinX = Math::Max(RectMin.x - 1, 0);
-                const int32 NMinY = Math::Max(RectMin.y - 1, 0);
-                const int32 NMaxX = Math::Min(RectMax.x + 1, ResI - 1);
-                const int32 NMaxY = Math::Min(RectMax.y + 1, ResI - 1);
-                const int32 NW    = NMaxX - NMinX + 1;
-                const int32 NH    = NMaxY - NMinY + 1;
-
-                struct FTerrainNormalArgs
-                {
-                    FTerrainNormalParams Params;
-                    uint32 HeightmapIndex;
-                    uint32 NormalUAV;
-                    uint32 _Pad0;
-                    uint32 _Pad1;
-                };
-
-                FTerrainNormalArgs NormalArgs{};
-                NormalArgs.Params.Resolution    = ResI;
-                NormalArgs.Params.RegionMinX    = NMinX;
-                NormalArgs.Params.RegionMinY    = NMinY;
-                NormalArgs.Params.RegionSizeX   = NW;
-                NormalArgs.Params.RegionSizeY   = NH;
-                NormalArgs.Params.TileWorldSize = TerrainItem.TileWorldSize;
-                NormalArgs.Params.MaxHeight     = TerrainItem.MaxHeight;
-                NormalArgs.HeightmapIndex       = (uint32)State.HeightmapTexture.GetResourceID();
-                NormalArgs.NormalUAV            = (uint32)State.NormalTexture.GetMipUAVIndex(0);
-
-                DispatchCompute(CL, NormalShader, NormalArgs, RenderUtils::GetGroupCount((uint32)NW, 8u),
-                                                   RenderUtils::GetGroupCount((uint32)NH, 8u), 1u);
-
-                // Normals are read where terrain vertices are built and by the deferred shading.
-                RHI::CmdBarrier(CL,
-                    RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-                    TerrainPassInternal::kTerrainGeometryStages | RHI::EStageFlags::PixelShader | RHI::EStageFlags::Compute,
-                    RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndexRead);
+                continue;
             }
-
-            if (TerrainItem.bGeometryRebuilt)
+            const uint32 TableCount = (uint32)Table->Slots.Num();
+            const bool   bRealloc   = !State.PageTableBuffer || State.PageTableCount != TableCount;
+            if (bRealloc)
             {
-                const uint32 ChunkCount   = (uint32)TerrainItem.Chunks.Num();
-                const uint32 MeshletCount = (uint32)TerrainItem.Meshlets.Num();
-
-                if (ChunkCount > 0 && MeshletCount > 0)
+                if (State.PageTableBuffer)
                 {
-                    auto AllocSSBO = [&](RHI::FGPUAllocation& Buffer, uint64 SizeBytes, const char* DebugName)
-                    {
-                        if (!Buffer || Buffer.Size < SizeBytes)
-                        {
-                            if (Buffer)
-                            {
-                                DeferFree(Buffer);
-                            }
-                            Buffer = CreateSceneBuffer(Math::Max<uint64>(SizeBytes, 16ull), DebugName);
-                        }
-                    };
-
-                    AllocSSBO(State.ChunkInfoBuffer,      uint64(ChunkCount)   * sizeof(FTerrainChunkInfo),      "Terrain.ChunkInfo");
-                    AllocSSBO(State.MeshletInfoBuffer,    uint64(MeshletCount) * sizeof(FTerrainMeshletInfo),   "Terrain.MeshletInfo");
-                    AllocSSBO(State.VisibleMeshletBuffer, uint64(MeshletCount) * sizeof(FTerrainVisibleMeshlet), "Terrain.VisibleMeshlets");
-                    AllocSSBO(State.ChunkLevelBuffer,     uint64(ChunkCount)   * sizeof(uint32),                 "Terrain.ChunkLevels");
-                    AllocSSBO(State.IndirectDrawBuffer,   sizeof(FTerrainDrawArgs),                              "Terrain.IndirectDraw");
-
-                    BeginUpload();
-                    WriteBuffer(CL, State.ChunkInfoBuffer.Gpu,   TerrainItem.Chunks.GetData(),   ChunkCount * sizeof(FTerrainChunkInfo));
-                    WriteBuffer(CL, State.MeshletInfoBuffer.Gpu, TerrainItem.Meshlets.GetData(), MeshletCount * sizeof(FTerrainMeshletInfo));
-
-                    State.AllocatedChunkCount   = ChunkCount;
-                    State.AllocatedMeshletCount = MeshletCount;
+                    DeferFree(State.PageTableBuffer);
                 }
+                State.PageTableBuffer = CreateSceneBuffer(uint64(TableCount) * sizeof(uint32), "Terrain.PageTable");
+                State.PageTableCount  = TableCount;
             }
+            if (bRealloc || Table->bReset)
+            {
+                BeginUpload();
+                WriteBuffer(CL, State.PageTableBuffer.Gpu, Table->Slots.GetData(), uint64(TableCount) * sizeof(uint32));
+            }
+            else if (!Table->DirtyRuns.IsEmpty())
+            {
+                BeginUpload();
+                WriteBufferRuns(CL, State.PageTableBuffer.Gpu, Table->Slots.GetData(), sizeof(uint32), Table->DirtyRuns);
+            }
+            Table->DirtyRuns.Reset();
+            Table->bReset = false;
+        }
+
+        // One staging copy per atlas, and each page copies its 72 texel square out of it into its slot.
+        const uint32 PageCount = (uint32)TerrainPageStreamer.UploadSlots.Num();
+        if (PageCount > 0u)
+        {
+            BeginUpload();
+            const RHI::FGPURange Heights = RHI::CopyTransientArray(TerrainPageStreamer.UploadHeights.GetData(), TerrainPageStreamer.UploadHeights.Num());
+            const RHI::FGPURange Normals = RHI::CopyTransientArray(TerrainPageStreamer.UploadNormals.GetData(), TerrainPageStreamer.UploadNormals.Num());
+            const RHI::FGPURange Weights = RHI::CopyTransientArray(TerrainPageStreamer.UploadWeights.GetData(), TerrainPageStreamer.UploadWeights.Num());
+            const uint64 HeightBytes = uint64(GTerrainPageTexelCount) * sizeof(uint16);
+            const uint64 WeightBytes = uint64(GTerrainPageTexelCount) * sizeof(uint32);
+            for (uint32 Page = 0; Page < PageCount; ++Page)
+            {
+                const uint32 Slot = TerrainPageStreamer.UploadSlots[Page];
+                RHI::FTextureSlice Slice;
+                Slice.Offset = FUIntVector3((Slot % GTerrainPageAtlasSlotsPerSide) * (uint32)GTerrainPageTexels,
+                                            (Slot / GTerrainPageAtlasSlotsPerSide) * (uint32)GTerrainPageTexels, 0u);
+                Slice.Extent = FUIntVector3((uint32)GTerrainPageTexels, (uint32)GTerrainPageTexels, 1u);
+                RHI::CmdCopyMemoryToTexture(CL, Heights.Sub(Page * HeightBytes, HeightBytes), (uint32)GTerrainPageTexels, TerrainHeightAtlas.Texture, Slice);
+                RHI::CmdCopyMemoryToTexture(CL, Normals.Sub(Page * HeightBytes, HeightBytes), (uint32)GTerrainPageTexels, TerrainNormalAtlas.Texture, Slice);
+                RHI::CmdCopyMemoryToTexture(CL, Weights.Sub(Page * WeightBytes, WeightBytes), (uint32)GTerrainPageTexels, TerrainWeightAtlas.Texture, Slice);
+            }
+            TerrainPageStreamer.UploadSlots.Reset();
+            TerrainPageStreamer.UploadHeights.Reset();
+            TerrainPageStreamer.UploadNormals.Reset();
+            TerrainPageStreamer.UploadWeights.Reset();
         }
 
         if (bAnyUpload)
@@ -315,36 +286,33 @@ namespace Lumina
             FTerrainRecord Record{};
 
             const FTerrainGPUState* State = TerrainGPUStates.Find(Item.Entity);
-            if (State != nullptr && State->HeightmapTexture && State->NormalTexture && State->LayerWeightTexture
-                && State->ChunkInfoBuffer && State->MeshletInfoBuffer && State->VisibleMeshletBuffer && State->ChunkLevelBuffer)
+            if (State != nullptr && State->AllocatedNodeCount != 0u && State->PageTableCount != 0u && TerrainHeightAtlas)
             {
                 const FVector3 WorldOrigin = FVector3(Item.WorldMatrix[3]);
                 const float    HalfSize    = Item.TileWorldSize * 0.5f;
-                const int32    QuadsPerChunk = Math::Max(1, Item.ChunkResolution - 1);
 
                 FTerrainRenderParams& Params = Record.Params;
-                Params.OriginXZ             = FVector2(WorldOrigin.x - HalfSize, WorldOrigin.z - HalfSize);
-                Params.TileWorldSize        = Item.TileWorldSize;
-                Params.MaxHeight            = Item.MaxHeight;
-                Params.Resolution           = Item.Resolution;
-                Params.ChunkResolution      = Item.ChunkResolution;
-                Params.ChunksPerSide        = GetTerrainChunksPerSide(Item.Resolution, QuadsPerChunk);
-                Params.LayerCount           = Item.LayerCount;
-                Params.WorldOriginY         = FVector3(WorldOrigin.y, 0.0f, 0.0f);
-                Params.EntityID             = (uint32)Item.Entity;
-                Params.MaterialIndex        = Item.MaterialIndex;
-                Params.MeshletsPerChunkSide = (QuadsPerChunk + GTerrainMeshletQuads - 1) / GTerrainMeshletQuads;
-                Params.MeshletQuadSide      = GTerrainMeshletQuads;
+                Params.OriginXZ      = FVector2(WorldOrigin.x - HalfSize, WorldOrigin.z - HalfSize);
+                Params.TileWorldSize = Item.TileWorldSize;
+                Params.MaxHeight     = Item.MaxHeight;
+                Params.Resolution    = Item.Resolution;
+                Params.TreeDepth     = State->TreeDepth;
+                Params.LayerCount    = Item.LayerCount;
+                Params.SampleSpacing = Item.TileWorldSize / (float)Math::Max(Item.Resolution - 1, 1);
+                Params.WorldOriginY  = FVector3(WorldOrigin.y, 0.0f, 0.0f);
+                Params.EntityID      = (uint32)Item.Entity;
+                Params.MaterialIndex = Item.MaterialIndex;
+                Params.PageDepth     = GetTerrainPageDepth(State->TreeDepth);
+                Params.Flags         = Item.bCastShadow ? GTerrainFlagCastShadow : 0u;
 
-                Record.Chunks            = { State->ChunkInfoBuffer, State->AllocatedChunkCount };
-                Record.Meshlets          = { State->MeshletInfoBuffer, State->AllocatedMeshletCount };
-                Record.Visible           = { State->VisibleMeshletBuffer, State->AllocatedMeshletCount };
-                Record.ChunkLevels       = { State->ChunkLevelBuffer, State->AllocatedChunkCount };
-                Record.HeightmapIndex    = (uint32)State->HeightmapTexture.GetResourceID();
-                Record.NormalIndex       = (uint32)State->NormalTexture.GetResourceID();
-                Record.LayerWeightsIndex = (uint32)State->LayerWeightTexture.GetResourceID();
+                Record.NodeBounds        = { State->NodeBoundsBuffer, State->AllocatedNodeCount };
+                Record.Visible           = { State->VisibleNodeBuffer, State->VisibleCapacity };
+                Record.PageTable         = { State->PageTableBuffer, State->PageTableCount };
+                Record.HeightAtlasIndex  = (uint32)TerrainHeightAtlas.GetResourceID();
+                Record.NormalAtlasIndex  = (uint32)TerrainNormalAtlas.GetResourceID();
+                Record.WeightAtlasIndex  = (uint32)TerrainWeightAtlas.GetResourceID();
                 Record.VisibleBase       = VisibleBase;
-                VisibleBase += State->AllocatedMeshletCount;
+                VisibleBase += State->VisibleCapacity;
             }
             TerrainRecords[Index] = Record;
         }
@@ -368,29 +336,26 @@ namespace Lumina
 
         PublishTerrainRecords();
 
-        // A world split into many terrains used to pay two pipeline barriers per terrain, which serialized the GPU.
-        TInlineVector<FTerrainGPUState*, 64> Visible;
-        TInlineVector<const FFrameData::FTerrainExtract*, 64> VisibleItems;
-        for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
+        // Barriers are per depth across every terrain, since a world split into many terrains once serialized the GPU per terrain.
+        struct FCullTarget
         {
-            auto TerrainStateIt = TerrainGPUStates.Find(TerrainItem.Entity);
-            if (TerrainStateIt == nullptr)
+            FTerrainGPUState* State;
+            uint32            RecordIndex;
+        };
+        TInlineVector<FCullTarget, 64> Targets;
+        int32 MaxTreeDepth = 0;
+        for (int32 Index = 0; Index < Frame.Extracts.TerrainExtracts.Num() && (uint32)Index < TerrainRecordCount; ++Index)
+        {
+            const FFrameData::FTerrainExtract& TerrainItem = Frame.Extracts.TerrainExtracts[Index];
+            FTerrainGPUState* State = TerrainGPUStates.Find(TerrainItem.Entity);
+            if (State == nullptr || State->AllocatedNodeCount == 0u || !IsTerrainInView(TerrainItem))
             {
                 continue;
             }
-            FTerrainGPUState& State = (*TerrainStateIt);
-            if (!State.ChunkInfoBuffer || !State.MeshletInfoBuffer || !State.VisibleMeshletBuffer || !State.IndirectDrawBuffer || !State.ChunkLevelBuffer)
-            {
-                continue;
-            }
-            if (State.AllocatedChunkCount == 0u || State.AllocatedMeshletCount == 0u || !IsTerrainInView(TerrainItem))
-            {
-                continue;
-            }
-            Visible.Add(&State);
-            VisibleItems.Add(&TerrainItem);
+            Targets.Add({ State, (uint32)Index });
+            MaxTreeDepth = Math::Max(MaxTreeDepth, State->TreeDepth);
         }
-        if (Visible.IsEmpty())
+        if (Targets.IsEmpty())
         {
             return;
         }
@@ -404,39 +369,61 @@ namespace Lumina
         InitialArgs.MeshGroups[0]         = 0u;
         static_assert(kTerrainDrawInstanceWord == 1u && kTerrainDrawMeshGroupWord == 5u, "TerrainCull.slang counts into these words.");
 
+        // The root alone is the first depth's work, one group of one node.
+        uint32 InitialLevelArgs[(GTerrainMaxTreeDepth + 2) * kTerrainLevelArgsWords] = {};
+        for (uint32 Depth = 0; Depth < GTerrainMaxTreeDepth + 2; ++Depth)
+        {
+            InitialLevelArgs[Depth * kTerrainLevelArgsWords + 1] = 1u;
+            InitialLevelArgs[Depth * kTerrainLevelArgsWords + 2] = 1u;
+        }
+        InitialLevelArgs[0] = 1u;
+        InitialLevelArgs[3] = 1u;
+        const uint32 RootNode = 0u;
+
         // A capture view resets these while the primary view's terrain draws may still be fetching them.
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::IndirectArguments | TerrainPassInternal::kTerrainGeometryStages | RHI::EStageFlags::Compute, RHI::EAccessFlags::None,
             RHI::EStageFlags::Transfer, RHI::EAccessFlags::None);
-        for (FTerrainGPUState* State : Visible)
+        for (const FCullTarget& Target : Targets)
         {
-            WriteBuffer(CL, State->IndirectDrawBuffer.Gpu, &InitialArgs, sizeof(InitialArgs));
+            FTerrainGPUState& State = *Target.State;
+            WriteBuffer(CL, State.IndirectDrawBuffer.Gpu, &InitialArgs, sizeof(InitialArgs));
+            WriteBuffer(CL, State.LevelArgsBuffer.Gpu, InitialLevelArgs, uint32(State.TreeDepth + 2) * kTerrainLevelArgsWords * sizeof(uint32));
+            WriteBuffer(CL, State.NodeLists[0].Gpu, &RootNode, sizeof(RootNode));
         }
-        RHI::CmdBarrier(CL,
-            RHI::EStageFlags::Transfer, RHI::EAccessFlags::TransferWrite,
-            RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments,
-            RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
 
         RHI::CmdSetPipeline(CL, GetOrCreateComputePipeline(CullShader));
-        for (int32 i = 0; i < Visible.Num(); ++i)
+        for (int32 Depth = 0; Depth <= MaxTreeDepth; ++Depth)
         {
-            FTerrainGPUState* State = Visible[i];
-            const FFrameData::FTerrainExtract& Item = *VisibleItems[i];
-            FTerrainCullPushConstants Push{};
-            Push.Chunks          = { State->ChunkInfoBuffer, State->AllocatedChunkCount };
-            Push.Meshlets        = { State->MeshletInfoBuffer, State->AllocatedMeshletCount };
-            Push.VisibleMeshlets = { State->VisibleMeshletBuffer, State->AllocatedMeshletCount };
-            Push.TerrainIndirect = { State->IndirectDrawBuffer };
-            Push.ChunkLevels     = { State->ChunkLevelBuffer, State->AllocatedChunkCount };
-            Push.QuadsPerChunk   = Item.ChunkResolution - 1;
-            Push.Resolution      = Item.Resolution;
-            Push.SampleSpacing   = Item.TileWorldSize / (float)Math::Max(Item.Resolution - 1, 1);
-            RHI::CmdDispatch(CL, MakeArgs(Push), State->AllocatedChunkCount, 1u, 1u);
+            // The first depth waits on the resets above, every later one on the depth that appended its nodes and group count.
+            RHI::CmdBarrier(CL,
+                Depth == 0 ? RHI::EStageFlags::Transfer : RHI::EStageFlags::Compute,
+                Depth == 0 ? RHI::EAccessFlags::TransferWrite : RHI::EAccessFlags::ShaderWrite,
+                RHI::EStageFlags::Compute | RHI::EStageFlags::IndirectArguments,
+                RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead);
+
+            for (const FCullTarget& Target : Targets)
+            {
+                FTerrainGPUState& State = *Target.State;
+                if (Depth > State.TreeDepth)
+                {
+                    continue;
+                }
+
+                FTerrainCullPushConstants Push{};
+                Push.NodesIn         = { State.NodeLists[Depth & 1], State.ListCapacity };
+                Push.NodesOut        = { State.NodeLists[(Depth + 1) & 1], State.ListCapacity };
+                Push.LevelArgs       = { State.LevelArgsBuffer, uint32(State.TreeDepth + 2) * kTerrainLevelArgsWords };
+                Push.TerrainIndirect = { State.IndirectDrawBuffer };
+                Push.TerrainIndex    = Target.RecordIndex;
+                Push.Depth           = (uint32)Depth;
+                RHI::CmdDispatchIndirect(CL, MakeArgs(Push), State.LevelArgsBuffer.Sub(uint64(Depth) * kTerrainLevelArgsWords * sizeof(uint32), sizeof(uint32) * 3u));
+            }
         }
 
         RHI::CmdBarrier(CL,
             RHI::EStageFlags::Compute, RHI::EAccessFlags::ShaderWrite,
-            TerrainPassInternal::kTerrainGeometryStages | RHI::EStageFlags::IndirectArguments,
+            TerrainPassInternal::kTerrainGeometryStages | RHI::EStageFlags::IndirectArguments | RHI::EStageFlags::Compute,
             RHI::EAccessFlags::ShaderRead | RHI::EAccessFlags::ShaderWrite | RHI::EAccessFlags::IndirectRead | RHI::EAccessFlags::IndexRead);
     }
 
@@ -493,9 +480,10 @@ namespace Lumina
         RHI::TGPUSpan<FInstanceStatic>    OutStatic;
         RHI::TGPUSpan<uint32>             OutCursor;
 
-        uint32  HeightmapIndex    = 0;
-        uint32  NormalIndex       = 0;
-        uint32  LayerWeightsIndex = 0;
+        // The terrain's record in the scene root, which holds its pages.
+        uint32  TerrainIndex      = 0;
+        uint32  _Pad0             = 0;
+        uint32  _Pad1             = 0;
         uint32  LayerIndex        = 0;
 
         float   CameraX = 0.0f;
@@ -533,8 +521,12 @@ namespace Lumina
         uint32  Resolution      = 0;
         float   FullDensityDistance = 0.0f;
         float   RootDarkening = 0.0f;
+        uint32  MaskTexture   = Constants::kIndexNoneU32;
+        uint32  MaskChannel   = 0;
+        float   MaskStrength  = 0.0f;
+        uint32  _MaskPad      = 0;
     };
-    static_assert(sizeof(FGrassScatterPushConstants) == 200,
+    static_assert(sizeof(FGrassScatterPushConstants) == 216,
         "FGrassScatterPushConstants must match GrassScatter.slang.");
 
     void FDefaultSceneRenderer::GrassScatterPass(RHI::FCmdListH CL)
@@ -576,12 +568,13 @@ namespace Lumina
             }
 
             const FTerrainGPUState* TerrainState = TerrainGPUStates.Find(TerrainItem.Entity);
-            if (TerrainState == nullptr || !TerrainState->HeightmapTexture || !TerrainState->NormalTexture || !TerrainState->LayerWeightTexture)
+            if (TerrainState == nullptr || TerrainState->AllocatedNodeCount == 0u || TerrainState->PageTableCount == 0u)
             {
                 ScenePrimitives.KeepGrassSpecies(TerrainItem.Entity);
                 continue;
             }
-            const FTerrainGPUState& Terrain = *TerrainState;
+            // Records follow the extract order, which TerrainCullPass publishes them in before this list is submitted.
+            const uint32 TerrainIndex = (uint32)(&TerrainItem - Frame.Extracts.TerrainExtracts.GetData());
 
             TVector<FGrassGPUState>& States = GrassGPUStates.FindOrAdd(TerrainItem.Entity);
             for (int32 Removed = TerrainItem.Grass.Num(); Removed < States.Num(); ++Removed)
@@ -706,11 +699,9 @@ namespace Lumina
                 Push.OutStatic      = RHI::TGPUSpan<FInstanceStatic>::Slice(
                     RetainedStaticBuffer, Binding.InstanceSlotBase, Binding.Capacity);
                 Push.OutCursor      = { Cursor };
-                Push.HeightmapIndex     = (uint32)Terrain.HeightmapTexture.GetResourceID();
-                Push.NormalIndex        = (uint32)Terrain.NormalTexture.GetResourceID();
-                Push.LayerWeightsIndex  = (uint32)Terrain.LayerWeightTexture.GetResourceID();
+                Push.TerrainIndex       = TerrainIndex;
                 Push.LayerIndex         = Species.LayerIndex;
-                Push.LayerCount         = Terrain.AllocatedLayerCount;
+                Push.LayerCount         = (uint32)Math::Max(TerrainItem.LayerCount, 1);
                 Push.CameraX            = CameraPos.x;
                 Push.CameraZ            = CameraPos.z;
                 Push.Radius             = Radius;
@@ -747,6 +738,9 @@ namespace Lumina
                 Push.FullDensityDistance = Species.FullDensityDistance;
                 Push.TerrainNormalDistance = Species.TerrainNormalDistance;
                 Push.RootDarkening      = Species.RootDarkening;
+                Push.MaskTexture        = Species.MaskTexture;
+                Push.MaskChannel        = Species.MaskChannel;
+                Push.MaskStrength       = Species.MaskStrength;
 
                 const uint32 Groups = RenderUtils::GetGroupCount(GridSide, 8u);
                 RHI::CmdDispatch(CL, MakeArgs(Push), Groups, Groups, 1u);
@@ -847,7 +841,7 @@ namespace Lumina
                 continue;
             }
             const FTerrainGPUState* State = TerrainGPUStates.Find(TerrainItem.Entity);
-            if (State == nullptr || !State->IndirectDrawBuffer || State->AllocatedMeshletCount == 0u)
+            if (State == nullptr || State->AllocatedNodeCount == 0u)
             {
                 continue;
             }

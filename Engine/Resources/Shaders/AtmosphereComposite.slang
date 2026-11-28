@@ -199,7 +199,7 @@ float4 IntegrateFog(float2 UV, float2 PixelPos, float Depth, float3 SurfaceViewP
 
     // Shared lighting for the far field, so its hand-off with the froxel volume stays continuous.
     float3 ToCam   = -RayDir;
-    bool   bHasSun = GetNumLights() > 0 && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional);
+    bool   bHasSun = HasSunLight();
     FLight Sun     = GetLightAt(0);
     float  CosSun  = -1.0;
     bool   bSunVolumetric = false;

@@ -23,48 +23,47 @@
 
 namespace Lumina::Physics
 {
-    namespace
+    // Row r and column c of the turned grid land on patch sample x = r, z = CountZ - 1 - c.
+    TSharedPtr<const FCollisionShape> FBox3DPhysicsContext::CookHeightField(const FHeightFieldDesc& Desc) const
     {
-        // Box3D splits every quad from (x, z + 1) to (x + 1, z) and the renderer from (x, z) to (x + 1, z + 1), so the grid is turned a quarter about Y to match.
-        const b3Quat kTerrainGridTurn = { { 0.0f, 0.70710678f, 0.0f }, 0.70710678f };
-
-        // Row r and column c of the turned grid land on terrain sample x = r, z = Res - 1 - c.
-        b3HeightFieldData* BuildTerrainHeightField(const STerrainComponent& Terrain)
+        const int32 CountX = Desc.CountX;
+        const int32 CountZ = Desc.CountZ;
+        if (CountX < 2 || CountZ < 2 || Desc.Heights.Num() != CountX * CountZ)
         {
-            const int32 Res = Terrain.Resolution;
-            if (Res < 2 || Terrain.Heightmap.Num() < (int64)Res * (int64)Res)
-            {
-                return nullptr;
-            }
-
-            TVector<float> Heights;
-            Heights.SetNum(IntCastChecked<int32>(static_cast<int64>(Res) * Res));
-
-            float MinHeight = FLT_MAX;
-            float MaxHeight = -FLT_MAX;
-            for (int32 Row = 0; Row < Res; ++Row)
-            {
-                for (int32 Column = 0; Column < Res; ++Column)
-                {
-                    const float H = Terrain.Heightmap[(Res - 1 - Column) * Res + Row] * Terrain.MaxHeight;
-                    Heights[Row * Res + Column] = H;
-                    MinHeight = Math::Min(MinHeight, H);
-                    MaxHeight = Math::Max(MaxHeight, H);
-                }
-            }
-
-            const float Stride = Terrain.TileWorldSize / float(Res - 1);
-
-            b3HeightFieldDef Def = b3HeightFieldDef{};
-            Def.heights = Heights.GetData();
-            Def.countX = Res;
-            Def.countZ = Res;
-            Def.scale = b3Vec3{ Stride, 1.0f, Stride };
-            Def.globalMinimumHeight = MinHeight;
-            Def.globalMaximumHeight = Math::Max(MaxHeight, MinHeight + B3_LINEAR_SLOP);
-
-            return b3CreateHeightField(&Def);
+            return nullptr;
         }
+
+        TVector<float> Turned(CountX * CountZ);
+        float Lo = TNumericLimits<float>::Max();
+        float Hi = TNumericLimits<float>::Lowest();
+        for (int32 Row = 0; Row < CountX; ++Row)
+        {
+            for (int32 Column = 0; Column < CountZ; ++Column)
+            {
+                const float H = Desc.Heights[(CountZ - 1 - Column) * CountX + Row];
+                Turned[Row * CountZ + Column] = H;
+                Lo = Math::Min(Lo, H);
+                Hi = Math::Max(Hi, H);
+            }
+        }
+
+        b3HeightFieldDef Def = b3HeightFieldDef{};
+        Def.heights = Turned.GetData();
+        Def.countX  = CountZ;
+        Def.countZ  = CountX;
+        Def.scale   = b3Vec3{ Desc.Spacing, 1.0f, Desc.Spacing };
+        Def.globalMinimumHeight = Math::Min(Desc.MinHeight, Lo);
+        Def.globalMaximumHeight = Math::Max(Math::Max(Desc.MaxHeight, Hi), Def.globalMinimumHeight + B3_LINEAR_SLOP);
+
+        TSharedPtr<FBox3DCollisionShape> Shape = MakeShared<FBox3DCollisionShape>();
+        Shape->HeightField.Reset(b3CreateHeightField(&Def));
+        if (!Shape->HeightField)
+        {
+            return nullptr;
+        }
+        Shape->LocalMin = FVector3(0.0f, Lo, 0.0f);
+        Shape->LocalMax = FVector3(float(CountX - 1) * Desc.Spacing, Hi, float(CountZ - 1) * Desc.Spacing);
+        return Shape;
     }
 
     CStaticMesh* FBox3DPhysicsScene::ResolveColliderMesh(const ECS::FRegistry& Registry, ECS::FEntity Entity, const SMeshColliderComponent& Collider)
@@ -106,7 +105,6 @@ namespace Lumina::Physics
         FVector3 ColliderRotationOffset(0.0f);
         bool bMustBeStatic = false;
         // Terrain draws, sculpts, navigates and scatters axis aligned, so its collision ignores the entity's turn too.
-        bool bAxisAligned = false;
         bool bColliderIsTrigger = false;
         const CPhysicsMaterial* ResolvedMaterial = nullptr;
 
@@ -320,41 +318,6 @@ namespace Lumina::Physics
             Out.Shapes.Add(Shape);
             Out.Geometry.Shape = DMC->Shape;
         }
-        else if (const STerrainColliderComponent* TC = Registry.TryGet<STerrainColliderComponent>(Entity))
-        {
-            bColliderIsTrigger = TC->bIsTrigger;
-            ResolvedMaterial = TC->PhysicsMaterial.Get();
-
-            const STerrainComponent* Terrain = Registry.TryGet<ECS::Read<STerrainComponent>>(Entity);
-            if (Terrain == nullptr || Terrain->Heightmap.IsEmpty())
-            {
-                return EBodyBuildStatus::Defer;
-            }
-
-            const float TerrainReach = Math::Max(Math::Abs(Terrain->TileWorldSize), Math::Abs(Terrain->MaxHeight));
-            if (!(TerrainReach <= Box3DUtils::MaxSafeCoordinate))
-            {
-                LOG_ERROR("Terrain on Entity {} spans {} units, past the physics limit, so it has no collision", Entity.Value, TerrainReach);
-                return EBodyBuildStatus::Error;
-            }
-
-            Out.Geometry.HeightField.Reset(BuildTerrainHeightField(*Terrain));
-            if (!Out.Geometry.HeightField)
-            {
-                LOG_ERROR("Failed to create TerrainCollider shape for Entity: {}", (Entity).Value);
-                return EBodyBuildStatus::Error;
-            }
-
-            FPendingShape Shape;
-            Shape.Type = b3_heightShape;
-            Shape.HeightField = Out.Geometry.HeightField.Get();
-            // The turned grid's first sample is the tile's corner at minimum x and maximum z.
-            Shape.Transform.p = b3Vec3{ Terrain->TileWorldSize * -0.5f, 0.0f, Terrain->TileWorldSize * 0.5f };
-            Shape.Transform.q = kTerrainGridTurn;
-            Out.Shapes.Add(Shape);
-            bMustBeStatic = true;
-            bAxisAligned = true;
-        }
         else
         {
             return EBodyBuildStatus::NoCollider;
@@ -400,7 +363,7 @@ namespace Lumina::Physics
         Out.BodyDef = b3DefaultBodyDef();
         Out.BodyDef.type = Box3DUtils::ToBox3DBodyType(BodyType);
         Out.BodyDef.position = Box3DUtils::ToB3Vec3(Position);
-        Out.BodyDef.rotation = bAxisAligned ? b3Quat_identity : Box3DUtils::ToB3Quat(Rotation);
+        Out.BodyDef.rotation = Box3DUtils::ToB3Quat(Rotation);
         Out.BodyDef.linearDamping = RigidBody->LinearDamping;
         Out.BodyDef.angularDamping = RigidBody->AngularDamping;
         Out.BodyDef.gravityScale = RigidBody->bUseGravity ? 1.0f : 0.0f;
@@ -489,21 +452,6 @@ namespace Lumina::Physics
     {
         LUMINA_PROFILE_SCOPE();
 
-        // b3CreateHeightFieldShape takes no transform and indexes from the body origin, so the height field's local placement is folded into the body.
-        for (const FPendingShape& Shape : Build.Shapes)
-        {
-            if (Shape.Type != b3_heightShape)
-            {
-                continue;
-            }
-
-            const b3Vec3 WorldOffset = b3RotateVector(Build.BodyDef.rotation, Shape.Transform.p);
-            Build.BodyDef.position = b3Add(Build.BodyDef.position, WorldOffset);
-            Build.BodyDef.rotation = b3MulQuat(Build.BodyDef.rotation, Shape.Transform.q);
-            Build.LastBodyPosition = Box3DUtils::FromB3Vec3(Build.BodyDef.position);
-            break;
-        }
-
         if (!HasBodyCapacity(1))
         {
             return InvalidBodyHandle;
@@ -544,9 +492,6 @@ namespace Lumina::Physics
                     break;
                 case b3_meshShape:
                     b3CreateMeshShape(BodyId, &Build.ShapeDef, Shape.Mesh, Shape.Scale);
-                    break;
-                case b3_heightShape:
-                    b3CreateHeightFieldShape(BodyId, &Build.ShapeDef, Shape.HeightField);
                     break;
                 default:
                     break;
@@ -600,7 +545,7 @@ namespace Lumina::Physics
     void FBox3DPhysicsScene::AdoptBodyGeometry(uint32 Handle, FRigidBodyBuildResult& Build)
     {
         Build.OwnedHulls.Reset();
-        if (Build.Geometry.Mesh || Build.Geometry.HeightField || Build.Geometry.Shape)
+        if (Build.Geometry.Mesh || Build.Geometry.Shape)
         {
             BodyGeometry.Add(Handle, Move(Build.Geometry));
         }

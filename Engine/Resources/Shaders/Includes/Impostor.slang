@@ -23,27 +23,50 @@ static const float kImpostorCoverageCutoff = 0.5;
 // Blended coverage under which a resolved impostor pixel has no surface of its own to shade.
 static const float kImpostorMissCoverage = 0.02;
 
-float3 ImpostorDecodeDirection(float2 GridUV)
+// Y up. A hemisphere puts the horizon on the square's border, a full sphere folds the lower half into the corners.
+float3 ImpostorDecodeDirection(float2 GridUV, bool bFullSphere)
 {
     const float2 P = GridUV * 2.0 - 1.0;
-    const float  X = (P.x + P.y) * 0.5;
-    const float  Z = (P.x - P.y) * 0.5;
-    return normalize(float3(X, max(1.0 - abs(X) - abs(Z), 0.0), Z));
+    if (!bFullSphere)
+    {
+        const float X = (P.x + P.y) * 0.5;
+        const float Z = (P.x - P.y) * 0.5;
+        return normalize(float3(X, max(1.0 - abs(X) - abs(Z), 0.0), Z));
+    }
+    const float  Y     = 1.0 - abs(P.x) - abs(P.y);
+    const float2 Signs = select(P >= 0.0, float2(1.0, 1.0), float2(-1.0, -1.0));
+    const float2 XZ    = Y >= 0.0 ? P : (1.0 - abs(P.yx)) * Signs;
+    return normalize(float3(XZ.x, Y, XZ.y));
 }
 
-// The inverse of ImpostorDecodeDirection, with a direction from below folded onto the horizon.
-float2 ImpostorEncodeDirection(float3 Dir)
+// The inverse of ImpostorDecodeDirection, which on a hemisphere folds a direction from below onto the horizon.
+float2 ImpostorEncodeDirection(float3 Dir, bool bFullSphere)
 {
-    const float3 D = float3(Dir.x, max(Dir.y, 0.0), Dir.z);
-    const float3 P = D / max(abs(D.x) + D.y + abs(D.z), 1.0e-6);
-    return float2(P.x + P.z, P.x - P.z) * 0.5 + 0.5;
+    if (!bFullSphere)
+    {
+        const float3 D = float3(Dir.x, max(Dir.y, 0.0), Dir.z);
+        const float3 P = D / max(abs(D.x) + D.y + abs(D.z), 1.0e-6);
+        return float2(P.x + P.z, P.x - P.z) * 0.5 + 0.5;
+    }
+    const float2 P     = Dir.xz / max(abs(Dir.x) + abs(Dir.y) + abs(Dir.z), 1.0e-6);
+    const float2 Signs = select(P >= 0.0, float2(1.0, 1.0), float2(-1.0, -1.0));
+    const float2 Folded = Dir.y >= 0.0 ? P : (1.0 - abs(P.yx)) * Signs;
+    return Folded * 0.5 + 0.5;
 }
 
+// The twin of Impostor::FrameBasis, mirrored below the horizon so each view's axes stay a rotation.
 void ImpostorFrameBasis(float3 Dir, out float3 Right, out float3 Up)
 {
-    const float K = 1.0 / (1.0 + Dir.y);
-    Right = float3(1.0 - K * Dir.x * Dir.x, -Dir.x, -K * Dir.x * Dir.z);
-    Up    = float3(K * Dir.x * Dir.z, Dir.z, K * Dir.z * Dir.z - 1.0);
+    if (Dir.y >= 0.0)
+    {
+        const float K = 1.0 / (1.0 + Dir.y);
+        Right = float3(1.0 - K * Dir.x * Dir.x, -Dir.x, -K * Dir.x * Dir.z);
+        Up    = float3(K * Dir.x * Dir.z, Dir.z, K * Dir.z * Dir.z - 1.0);
+        return;
+    }
+    const float K = 1.0 / (1.0 - Dir.y);
+    Right = float3(K * Dir.x * Dir.x - 1.0, -Dir.x, K * Dir.x * Dir.z);
+    Up    = float3(K * Dir.x * Dir.z, -Dir.z, K * Dir.z * Dir.z - 1.0);
 }
 
 // The three views around a direction and their weights, the grid cell split along its diagonal.
@@ -53,10 +76,10 @@ struct FImpostorViews
     float3 Weights;
 };
 
-FImpostorViews SelectImpostorViews(float3 LocalToEye, uint Frames)
+FImpostorViews SelectImpostorViews(FMeshletHeader* Header, float3 LocalToEye)
 {
-    const float  Last = float(Frames - 1u);
-    const float2 Grid = ImpostorEncodeDirection(LocalToEye) * Last;
+    const float  Last = float(Header.ImpostorFrames - 1u);
+    const float2 Grid = ImpostorEncodeDirection(LocalToEye, Header.bImpostorFullSphere) * Last;
     const float2 Cell = clamp(floor(Grid), 0.0, Last - 1.0);
     const float2 F    = Grid - Cell;
     const uint2  C    = uint2(Cell);
@@ -84,7 +107,7 @@ FImpostorViews SelectImpostorViews(float3 LocalToEye, uint Frames)
 float2 ImpostorAtlasUV(FMeshletHeader* Header, uint2 Frame, float3 RayOrigin, float3 RayDir, out float OutT, out float OutDenom)
 {
     const uint   Frames  = Header.ImpostorFrames;
-    const float3 ViewDir = ImpostorDecodeDirection(float2(Frame) / float(Frames - 1u));
+    const float3 ViewDir = ImpostorDecodeDirection(float2(Frame) / float(Frames - 1u), Header.bImpostorFullSphere);
     float3 Right, Up;
     ImpostorFrameBasis(ViewDir, Right, Up);
 
@@ -181,6 +204,30 @@ FImpostorSample ResolveImpostorTaps(FMeshletHeader* Header, FImpostorViews Views
     S.AmbientOcclusion = AO * Inv;
     S.RayT             = S.Coverage > 1.0e-4 ? RayT * Inv : PlaneT;
     return S;
+}
+
+// The views' emission at the taps, weighted like their base color, or none for a mesh baked without it.
+float3 ResolveImpostorEmissive(FMeshletHeader* Header, FImpostorViews Views, FImpostorTaps Taps, float Mip)
+{
+    if (Header.ImpostorEmissiveIndex == 0u || Taps.Coverage <= 1.0e-4)
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+
+    const FTexture2D EmissiveAtlas = FTexture2D(Header.ImpostorEmissiveIndex);
+    float3 Emissive = float3(0.0, 0.0, 0.0);
+    [unroll]
+    for (uint i = 0u; i < 3u; ++i)
+    {
+        const float W = Views.Weights[i] * Taps.Base[i].a;
+        if (W > 0.0)
+        {
+            // Stored as a square root, so dim emission keeps its steps in eight bits.
+            const float3 Encoded = EmissiveAtlas.SampleLevel(Samplers::LinearClamp, Taps.UV[i], Mip).rgb;
+            Emissive += Encoded * Encoded * W;
+        }
+    }
+    return Emissive * (Header.ImpostorEmissiveScale / Taps.Coverage);
 }
 
 FImpostorSample SampleImpostor(FMeshletHeader* Header, FImpostorViews Views, float3 RayOrigin, float3 RayDir, float Mip)

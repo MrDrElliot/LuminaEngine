@@ -48,7 +48,6 @@ namespace Lumina
         RHI::TGPUSpan<FVector4>          RibbonHistory;
         RHI::TGPUSpan<FParticleShapeGPU> Attractors;
         RHI::TGPUSpan<FParticleShapeGPU> Colliders;
-        RHI::TGPUSpan<FParticleTerrainGPU> Terrains;
         RHI::TGPUSpan<float>             GridRead;
         RHI::TGPUSpan<float>             GridWrite;
         RHI::TGPUSpan<int32>             GridDeposit;
@@ -57,7 +56,7 @@ namespace Lumina
         RHI::TGPUSpan<uint32>            NeighborCounts;
         RHI::TGPUSpan<uint32>            NeighborIndices;
     };
-    static_assert(sizeof(FParticleSimArgs) == 328, "FParticleSimArgs must match ParticleSimCommon.slang.");
+    static_assert(sizeof(FParticleSimArgs) == 312, "FParticleSimArgs must match ParticleSimCommon.slang.");
 
     // Mirrors FParticleSimBatch in ParticleSimCommon.slang.
     struct FParticleSimBatch
@@ -421,7 +420,6 @@ namespace Lumina
     {
         RHI::TGPUSpan<FParticleShapeGPU>   AttractorSpan;
         RHI::TGPUSpan<FParticleShapeGPU>   ColliderSpan;
-        RHI::TGPUSpan<FParticleTerrainGPU> TerrainSpan;
         FShaderH                           DefaultSimShader;
         float                              DeltaTime = 0.0f;
 
@@ -752,7 +750,6 @@ namespace Lumina
             SimArgs.RibbonHistory = { State->RibbonHistoryBuffer };
             SimArgs.Attractors    = Sim.AttractorSpan;
             SimArgs.Colliders     = Sim.ColliderSpan;
-            SimArgs.Terrains      = Sim.TerrainSpan;
             SimArgs.ArrayData     = ArrayDataSpan;
             SimArgs.ArrayRanges   = ArrayRangeSpan;
             SimArgs.NeighborCounts  = { State->NeighborCounts };
@@ -884,26 +881,6 @@ namespace Lumina
         if (!Frame.Extracts.ParticleColliders.IsEmpty())
         {
             Sim.ColliderSpan = RHI::TGPUSpan<FParticleShapeGPU>(RHI::CopyTransientArray(Frame.Extracts.ParticleColliders.GetData(), Frame.Extracts.ParticleColliders.Num()));
-        }
-
-        TInlineVector<FParticleTerrainGPU, 4> Terrains;
-        for (const FFrameData::FTerrainExtract& TerrainItem : Frame.Extracts.TerrainExtracts)
-        {
-            auto TerrainIt = TerrainGPUStates.Find(TerrainItem.Entity);
-            if (TerrainIt == nullptr || !TerrainIt->HeightmapTexture || !TerrainIt->NormalTexture)
-            {
-                continue;
-            }
-
-            const FVector3 Origin = FVector3(TerrainItem.WorldMatrix[3]);
-            FParticleTerrainGPU& Terrain = Terrains.EmplaceGetRef();
-            Terrain.OriginSize   = FVector4(Origin.x, Origin.z, TerrainItem.TileWorldSize, Origin.y);
-            Terrain.HeightParams = FVector4(TerrainItem.MaxHeight, 0.0f, 0.0f, 0.0f);
-            Terrain.Textures     = FUIntVector4((uint32)TerrainIt->HeightmapTexture.GetResourceID(), (uint32)TerrainIt->NormalTexture.GetResourceID(), 0u, 0u);
-        }
-        if (!Terrains.IsEmpty())
-        {
-            Sim.TerrainSpan = RHI::TGPUSpan<FParticleTerrainGPU>(RHI::CopyTransientArray(Terrains.GetData(), Terrains.Num()));
         }
 
         static const FShaderH DefaultSimShader = FShaderLibrary::Get("ParticleSimulate.slang");

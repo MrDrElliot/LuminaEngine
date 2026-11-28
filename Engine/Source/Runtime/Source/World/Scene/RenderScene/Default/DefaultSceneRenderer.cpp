@@ -3,6 +3,7 @@
 #include "FileSystem/FileSystem.h"
 #include "Renderer/SMAA/AreaTex.h"
 #include "Renderer/SMAA/SearchTex.h"
+#include "Renderer/LTC/LTCTables.h"
 #include <bit>
 
 namespace Lumina
@@ -59,6 +60,7 @@ namespace Lumina
             ScenePrimitives.SetMovedTransformConsumer(Registry, MovedTransformConsumer);
 
             ScenePrimitives.Reset(&Registry);
+            LightSet.Attach(Registry);
         }
     }
 
@@ -72,11 +74,6 @@ namespace Lumina
         View.Upscaler    = bPrimary ? SelectUpscaler() : nullptr;
         View.Size        = bPrimary ? ComputeRenderSize(View.DisplaySize, View.Upscaler) : View.DisplaySize;
 
-        // Per-view clustered-lighting grid (built from this view's projection).
-        View.ClusterBuffer      = CreateSceneBuffer(sizeof(FCluster) * MaxClusters, "View.ClusterGrid");
-        View.ClusterRangeBuffer = CreateSceneBuffer(sizeof(uint32) * MaxClusters, "View.ClusterWordRanges");
-        View.bClusterGridDirty = true;   // fresh buffer has undefined contents.
-
         InitViewImages(View);
 
         return View;
@@ -87,7 +84,7 @@ namespace Lumina
         const FUIntVector2 ClampedSize = Math::Max(Size, FUIntVector2(1));
         for (int32 i = 1; i < SceneViews.Num(); ++i)
         {
-            if (!SceneViews[i].bEnabled && !SceneViews[i].bReservedForProbeBake && SceneViews[i].Size == ClampedSize)
+            if (!SceneViews[i].bEnabled && !SceneViews[i].bReservedForProbeBake && !SceneViews[i].bCapturePool && SceneViews[i].Size == ClampedSize)
             {
                 return i;
             }
@@ -138,6 +135,14 @@ namespace Lumina
             Shared.SMAASearch = RHI::Textures::Create(RHI::FTexture2DDesc{ .Width = SEARCHTEX_WIDTH, .Height = SEARCHTEX_HEIGHT, .Format = EFormat::R8_UNORM,
                                                                           .DebugName = "Shared.SMAASearch" });
             RHI::Textures::Upload(Shared.SMAASearch, 0, searchTexBytes, SEARCHTEX_SIZE, SEARCHTEX_WIDTH);
+
+            Shared.LTCMatrix = RHI::Textures::Create(RHI::FTexture2DDesc{ .Width = LTC::kTableSize, .Height = LTC::kTableSize, .Format = EFormat::RGBA32_FLOAT,
+                                                                         .DebugName = "Shared.LTCMatrix" });
+            RHI::Textures::Upload(Shared.LTCMatrix, 0, LTC::kMatrixTable, sizeof(LTC::kMatrixTable), LTC::kTableSize);
+
+            Shared.LTCAmplitude = RHI::Textures::Create(RHI::FTexture2DDesc{ .Width = LTC::kTableSize, .Height = LTC::kTableSize, .Format = EFormat::RG32_FLOAT,
+                                                                            .DebugName = "Shared.LTCAmplitude" });
+            RHI::Textures::Upload(Shared.LTCAmplitude, 0, LTC::kAmplitudeTable, sizeof(LTC::kAmplitudeTable), LTC::kTableSize);
 
             #if USING(WITH_EDITOR)
             const FString Dir = Paths::GetEngineResourceDirectory();
@@ -221,6 +226,7 @@ namespace Lumina
             ECS::FRegistry& Registry = World->GetEntityRegistry();
             // Before the consumer goes, so the interest the set raised is cleared on a consumer that still exists.
             ScenePrimitives.Shutdown(Registry);
+            LightSet.Detach();
             ECS::Utils::RemoveMovedTransformConsumer(Registry, MovedTransformConsumer);
             MovedTransformConsumer = Constants::kIndexNoneU32;
         }
@@ -228,26 +234,17 @@ namespace Lumina
         RetireSceneImage(LightFunctionAtlas);
         RetireSceneImage(WidgetDepth);
 
-        // Per-view images + cluster buffers.
+        // Per-view images and light grids.
         for (FSceneView& View : SceneViews)
         {
             ReleaseViewImages(View);
-            if (View.ClusterBuffer)
-            {
-                RHI::Retire(View.ClusterBuffer);
-                View.ClusterBuffer = {};
-            }
-            if (View.ClusterRangeBuffer)
-            {
-                RHI::Retire(View.ClusterRangeBuffer);
-                View.ClusterRangeBuffer = {};
-            }
-            if (View.ClusterLightMaskBuffer)
-            {
-                RHI::Retire(View.ClusterLightMaskBuffer);
-                View.ClusterLightMaskBuffer = {};
-            }
+            View.ViewLightBuffer.Release();
+            View.LightTileMaskBuffer.Release();
+            View.LightGridBuffer.Release();
         }
+        RetainedLightBuffer.Release();
+        RetainedLightBoundsBuffer.Release();
+        RetainedLightLayerBuffer.Release();
         SceneViews.Reset();
         CurrentView = nullptr;
 
@@ -346,6 +343,7 @@ namespace Lumina
         for (uint32 Slot = 0; Slot < RHI::kFramesInFlight; ++Slot)
         {
             RenderBucketRing[Slot].Release();
+            ViewDrawBaseRing[Slot].Release();
             MeshletDrawListRing[Slot].Release();
             MeshDrawArgsRing[Slot].Release();
             FrameScratchRing[Slot].Release();
@@ -373,16 +371,12 @@ namespace Lumina
         // Render-phase-owned terrain / particle GPU state.
         for (auto& [Entity, State] : TerrainGPUStates)
         {
-            RetireSceneImage(State.HeightmapTexture);
-            RetireSceneImage(State.NormalTexture);
-            RetireSceneImage(State.LayerWeightTexture);
-            FreeBuffer(State.ChunkInfoBuffer);
-            FreeBuffer(State.MeshletInfoBuffer);
-            FreeBuffer(State.VisibleMeshletBuffer);
-            FreeBuffer(State.ChunkLevelBuffer);
-            FreeBuffer(State.IndirectDrawBuffer);
+            State.ForEachBuffer([&](RHI::FGPUAllocation& Buffer) { FreeBuffer(Buffer); });
         }
         TerrainGPUStates.Reset();
+        RetireSceneImage(TerrainHeightAtlas);
+        RetireSceneImage(TerrainNormalAtlas);
+        RetireSceneImage(TerrainWeightAtlas);
 
         // Through the same release as a dying emitter, so a buffer added to the state cannot be missed here.
         for (auto& [Entity, States] : ParticleGPUStates)
@@ -467,6 +461,13 @@ namespace Lumina
 
     namespace
     {
+        // High and Ultra reflections keep sixteen bits per normal axis, since ten band every reflection on a mirror coat.
+        EFormat GBufferNormalFormat()
+        {
+            const CRendererSettings* Settings = GetDefault<CRendererSettings>();
+            return Settings != nullptr && Settings->ReflectionQuality >= EReflectionQuality::High ? EFormat::RGBA16_UNORM : EFormat::R10G10B10A2_UNORM;
+        }
+
         TConsoleVar<bool> CVarAsyncCompute(
             "r.AsyncCompute",
             true,
@@ -544,8 +545,12 @@ namespace Lumina
 
         DropStaleFrozenOcclusion(Frame);
 
-        // Publish this frame's stats for the editor-side GetRenderStats() reader.
-        RenderStats = Frame.FrameStats;
+#if !defined(LE_SHIPPING)
+        if (RHI::IsCollectingStats())
+        {
+            RHI::GetLastFrameCommandCounts(RenderStats.NumDraws, RenderStats.NumDispatches);
+        }
+#endif
 
         RHI::FCmdListH CL = OpenSceneCommandList(RHI::EQueueType::Graphics);
 
@@ -605,6 +610,7 @@ namespace Lumina
             SkyCubeCapturePass(CL);
             TexturePaintPass(CL);
             TerrainUpdatePass(CL);
+            VirtualTexturePass(CL);
             TerrainCullPass(CL);
 
             {
@@ -646,6 +652,9 @@ namespace Lumina
                     SCENE_GPU_SCOPE(CL, "Shadow Meshlet Cull");
                     MeshletCullPass(CL, EMeshletSlice::Late, /*bShadowPhase*/ true);
                 }
+                #if !defined(LE_SHIPPING)
+                RenderStatsPass(CL);
+                #endif
                 CopyCullTotalsForReadback(CL);
 
                 // GTAO's prefilter is the last reader of depth before shading, so compute only ever needs GTAO's own working depth.
@@ -656,6 +665,11 @@ namespace Lumina
                 {
                     SCENE_GPU_SCOPE(CL, "Screen Space GI");
                     ScreenSpaceGIPass(CL);
+                }
+                else
+                {
+                    // A skipped frame, such as a camera cut, leaves the accumulation describing a view that is gone.
+                    CurrentView->bScreenSpaceGIAccumValid = false;
                 }
                 const FSceneImage& GTAOWorkingDepth = GetNamedImage(ENamedImage::GTAOWorkingDepth);
 
@@ -705,12 +719,7 @@ namespace Lumina
                     RHI::CmdBeginMarker(CL, "RenderView Overlap");
                 }
 
-                // Nothing up to the lighting reads AO, and the clusters are built here because the fog below needs them before the wait.
-                {
-                    SCENE_GPU_SCOPE(CL, "Cluster Build");
-                    ClusterBuildPass(CL);
-                }
-
+                // Nothing up to the lighting reads AO, and the light grid is built here because the fog below needs it before the wait.
                 {
                     SCENE_GPU_SCOPE(CL, "Light Cull");
                     LightCullPass(CL);
@@ -951,25 +960,7 @@ namespace Lumina
                 DebugTextPass(CL);
                 #endif
 
-                for (const FFrameData::FCaptureViewData& Capture : Frame.Views.CaptureViews)
-                {
-                    if (Capture.SceneViewIndex <= 0 || Capture.SceneViewIndex >= SceneViews.Num())
-                    {
-                        continue;
-                    }
-
-                    SCENE_GPU_SCOPE(CL, "Capture View");
-
-                    FSceneView& View = SceneViews[Capture.SceneViewIndex];
-                    PointAtView(View);
-
-                    CurrentCameraEarlyView = Capture.CameraViewIndex;
-
-                    SetSceneRoot(CL, View,
-                        RHI::CopyTransient(MakeSecondaryViewGlobals(Capture.SceneGlobalData)));
-
-                    RenderCaptureView(CL);
-                }
+                RenderViewCaptures(CL);
 
                 ReflectionProbeBakePass(CL);
             }
@@ -1034,44 +1025,87 @@ namespace Lumina
 
         PublishFogGlobals(Globals);
         PublishWeatherGlobals(Globals);
+        PublishVirtualTextureGlobals(Globals);
 
         return Globals;
     }
 
     void FDefaultSceneRenderer::RenderCaptureView(RHI::FCmdListH CL)
     {
-        AtmosphereLUTPass(CL);
-        TerrainCullPass(CL);
+        using ECaptureFeature = FFrameData::ECaptureFeature;
+        const bool bSky          = CaptureHas(ECaptureFeature::Sky);
+        const bool bVolumetrics  = CaptureHas(ECaptureFeature::Volumetrics);
+        const bool bTranslucency = CaptureHas(ECaptureFeature::Translucency);
+        const bool bPostProcess  = CaptureHas(ECaptureFeature::PostProcess);
+
+        // The passes below fill these for this view, and one a capture skips must not hand the composite the last view's textures.
+        AtmosphereTerms = {};
+
+        // Clouds read the transmittance and sky view tables too, so a capture with clouds over a plain background still builds them.
+        if (bSky || bVolumetrics)
+        {
+            AtmosphereLUTPass(CL);
+        }
+        if (CaptureHas(ECaptureFeature::Terrain))
+        {
+            TerrainCullPass(CL);
+        }
         VisBufferPass(CL, CurrentCameraEarlyView, /*bClear*/ true);
-        ClusterBuildPass(CL);
         LightCullPass(CL);
         LightFunctionPass(CL);
         EnvironmentPass(CL);
-        DecalPass(CL);
-        CloudShadowMapPass(CL);
+        if (CaptureHas(ECaptureFeature::Decals))
+        {
+            DecalPass(CL);
+        }
+        if (bVolumetrics)
+        {
+            CloudShadowMapPass(CL);
+        }
         VisBufferClassifyPass(CL);
         MaterialGBufferPass(CL);
         DeferredLightingPass(CL);
-        ScreenSpaceReflectionsPass(CL);
-        AerialPerspectivePass(CL);
-        VolumetricCloudPass(CL);
-        FroxelInjectPass(CL);
-        FroxelIntegratePass(CL);
-        FogShaftPass(CL);
-        GroundFogMarchPass(CL);
-        AtmosphereCompositePass(CL);
-        WaterPass(CL);
-        TransparentPass(CL);
-        OITResolvePass(CL);
-        UnorderedTranslucentPass(CL);
-        DepthOfFieldPass(CL);
-        BloomPass(CL);
-        AutoExposurePass(CL);
+        if (CaptureHas(ECaptureFeature::Reflections))
+        {
+            ScreenSpaceReflectionsPass(CL);
+        }
+        if (bSky)
+        {
+            AerialPerspectivePass(CL);
+        }
+        if (bVolumetrics)
+        {
+            VolumetricCloudPass(CL);
+            FroxelInjectPass(CL);
+            FroxelIntegratePass(CL);
+            FogShaftPass(CL);
+            GroundFogMarchPass(CL);
+        }
+        if (bSky)
+        {
+            AtmosphereCompositePass(CL);
+        }
+        if (bTranslucency)
+        {
+            WaterPass(CL);
+            TransparentPass(CL);
+            OITResolvePass(CL);
+            UnorderedTranslucentPass(CL);
+        }
+        if (bPostProcess)
+        {
+            DepthOfFieldPass(CL);
+            BloomPass(CL);
+            AutoExposurePass(CL);
+        }
         ToneMappingPass(CL);
-        PostProcessMaterialPass(CL);
+        if (bPostProcess)
+        {
+            PostProcessMaterialPass(CL);
+        }
 
         // No T2x on a capture; it has no jitter sequence of its own and would resolve against another view.
-        if (IsSMAAEnabledFor(*CurrentView))
+        if (CaptureHas(ECaptureFeature::AntiAliasing) && IsSMAAEnabledFor(*CurrentView))
         {
             SMAAEdgeDetectionPass(CL);
             SMAABlendWeightPass(CL);
@@ -1358,18 +1392,18 @@ namespace Lumina
             // Three dispatch words, then the blocks each meshlet cull group takes.
             MeshletCullDispatchArgsRing[Slot].Allocate(sizeof(RHI::FDispatchIndirectArguments) + sizeof(uint32));
 
-            TotalsRing[Slot].Allocate(sizeof(uint32) * kTotalsSlots);
+            TotalsRing[Slot].Allocate(sizeof(uint32) * (kTotalsSlots + kRenderStatsWords));
             TotalsZeroed[Slot] = false;
 
             if (MeshletBoundReadback[Slot].Gpu == 0)
             {
-                MeshletBoundReadback[Slot] = RHI::Malloc(sizeof(uint32) * kReadbackSlots,
+                MeshletBoundReadback[Slot] = RHI::Malloc(sizeof(uint32) * (kReadbackSlots + kRenderStatsWords),
                                                          RHI::kDefaultAlign, RHI::EMemoryType::CPURead);
                 RHI::SetDebugName(MeshletBoundReadback[Slot].Gpu, "Readback.MeshletBounds");
 
                 if (void* Host = MeshletBoundReadback[Slot].Cpu)
                 {
-                    Memory::Memzero(Host, sizeof(uint32) * kReadbackSlots);
+                    Memory::Memzero(Host, sizeof(uint32) * (kReadbackSlots + kRenderStatsWords));
                 }
             }
         }
@@ -1405,6 +1439,8 @@ namespace Lumina
         // Shared aliases, so just drop the copies and let the owners release them.
         View.Images.Fill(FSceneImage{});
         View.ImageLastUsedTick.Fill(0);
+        View.SkyViewLUTKey = 0;
+        View.AtmosphereLUTAerosol = -1.0f;
     }
 
     static const char* ENamedImageToString(FDefaultSceneRenderer::ENamedImage Image)
@@ -1429,6 +1465,10 @@ namespace Lumina
         case ENamedImage::ScreenSpaceGIBlur:  return "Scene.ScreenSpaceGIBlur";
         case ENamedImage::ScreenSpaceGI:      return "Scene.ScreenSpaceGI";
         case ENamedImage::ScreenSpaceGIHistory: return "Scene.ScreenSpaceGIHistory";
+        case ENamedImage::ScreenSpaceGIAccumA: return "Scene.ScreenSpaceGIAccumA";
+        case ENamedImage::ScreenSpaceGIAccumB: return "Scene.ScreenSpaceGIAccumB";
+        case ENamedImage::ScreenSpaceGIDepthA: return "Scene.ScreenSpaceGIDepthA";
+        case ENamedImage::ScreenSpaceGIDepthB: return "Scene.ScreenSpaceGIDepthB";
         case ENamedImage::SunFarShadowMask:   return "Scene.SunFarShadowMask";
         case ENamedImage::DistanceFieldAOTrace: return "Scene.DistanceFieldAOTrace";
         case ENamedImage::DistanceFieldAO:    return "Scene.DistanceFieldAO";
@@ -1449,6 +1489,8 @@ namespace Lumina
         case ENamedImage::GBufferB:           return "Scene.GBufferB";
         case ENamedImage::GBufferC:           return "Scene.GBufferC";
         case ENamedImage::GBufferD:           return "Scene.GBufferD";
+        case ENamedImage::GBufferE:           return "Scene.GBufferE";
+        case ENamedImage::GBufferF:           return "Scene.GBufferF";
         case ENamedImage::MaterialSlot:       return "Scene.MaterialSlot";
         case ENamedImage::Accum:              return "Scene.Accum";
         case ENamedImage::Revealage:          return "Scene.Revealage";
@@ -1545,6 +1587,10 @@ namespace Lumina
         case ENamedImage::ScreenSpaceGIBlur:
         case ENamedImage::ScreenSpaceGI:
         case ENamedImage::ScreenSpaceGIHistory:
+        case ENamedImage::ScreenSpaceGIAccumA:
+        case ENamedImage::ScreenSpaceGIAccumB:
+        case ENamedImage::ScreenSpaceGIDepthA:
+        case ENamedImage::ScreenSpaceGIDepthB:
         case ENamedImage::SunFarShadowMask:
         case ENamedImage::DistanceFieldAOTrace:
         case ENamedImage::DistanceFieldAO:
@@ -1663,6 +1709,18 @@ namespace Lumina
                                     ? RHI::EImageUsageFlags::TransferDst : RHI::EImageUsageFlags::Storage);
             return true;
 
+        case ENamedImage::ScreenSpaceGIAccumA:
+        case ENamedImage::ScreenSpaceGIAccumB:
+        case ENamedImage::ScreenSpaceGIDepthA:
+        case ENamedImage::ScreenSpaceGIDepthB:
+        {
+            const bool bDepth = Image == ENamedImage::ScreenSpaceGIDepthA || Image == ENamedImage::ScreenSpaceGIDepthB;
+            OutDesc.Dimension = FUIntVector3((Extent.x + 1u) / 2u, (Extent.y + 1u) / 2u, 1);
+            OutDesc.Format    = bDepth ? EFormat::RG16_FLOAT : EFormat::RGBA16_FLOAT;
+            OutDesc.Usage     = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage;
+            return true;
+        }
+
         // Red is the mask the lighting reads, green the contact trace the resolve boxes.
         case ENamedImage::SunFarShadowMask:
             OutDesc.Format = EFormat::RG8_UNORM;
@@ -1753,12 +1811,24 @@ namespace Lumina
 
         const FFrameData& Frame = *RenderFrame;
 
+        FSceneImage& Normals = View.Images[(int)ENamedImage::GBufferB];
+        const EFormat NormalFormat = GBufferNormalFormat();
+        if (Normals.IsValid() && Normals.Desc.Format != NormalFormat)
+        {
+            RHI::FTextureDesc Desc = Normals.Desc;
+            Desc.Format = NormalFormat;
+            RetireSceneImage(Normals);
+            Normals = CreateSceneImage(Desc, /*bSampled*/ true, /*bMipUAVs*/ true);
+            RHI::SetDebugName(Normals.Texture, ENamedImageToString(ENamedImage::GBufferB));
+        }
+
         // Exactly the conditions the consuming passes early-out on, so a target exists when needed.
         const bool bTranslucency = !Frame.Geometry.TranslucentDrawList.IsEmpty();
         const bool bDecals       = !Frame.Primitives.DecalExtracts.IsEmpty();
         const bool bWater        = !Frame.Water.Surfaces.IsEmpty();
         const SPostProcessSettings* PostSettings = Frame.PostProcess.bHasActivePostProcess ? &Frame.PostProcess.ActivePostProcessStorage : nullptr;
         const bool bDepthOfField = PostSettings != nullptr && PostSettings->bEnabled && PostSettings->DepthOfFieldFStop > 0.0f;
+        const bool bRainLens     = Frame.Weather.bActive && Frame.Weather.bDrops && Frame.Weather.State.Params.Rain.Refraction > 0.0f;
 
         auto Want = [this, &View](ENamedImage Image, bool bNeeded, bool bMipUAVs = false)
         {
@@ -1799,8 +1869,8 @@ namespace Lumina
         Want(ENamedImage::Revealage,       bTranslucency);
         const CRendererSettings* RendererSettings = GetDefault<CRendererSettings>();
         const bool bSSR = RendererSettings != nullptr && RendererSettings->bScreenSpaceReflections;
-        // Depth of field borrows the refraction copy as its gather source, so it needs the image without water too.
-        Want(ENamedImage::WaterRefraction, bWater || bDepthOfField);
+        // Depth of field and refracting rain borrow the copy as well, so they need the image without water too.
+        Want(ENamedImage::WaterRefraction, bWater || bDepthOfField || bRainLens);
         Want(ENamedImage::SceneDepthCopy,  bWater);
         Want(ENamedImage::DBufferA,        bDecals);
         Want(ENamedImage::DBufferB,        bDecals);
@@ -1843,6 +1913,17 @@ namespace Lumina
         if (!bScreenSpaceGI || View.Images[(int)ENamedImage::ScreenSpaceGIHistory].Texture != OldGIHistory)
         {
             View.bScreenSpaceGIHistoryValid = false;
+        }
+
+        const RHI::FTextureH OldGIAccum = View.Images[(int)ENamedImage::ScreenSpaceGIAccumA].Texture;
+        for (ENamedImage Image : { ENamedImage::ScreenSpaceGIAccumA, ENamedImage::ScreenSpaceGIAccumB,
+                                   ENamedImage::ScreenSpaceGIDepthA, ENamedImage::ScreenSpaceGIDepthB })
+        {
+            Want(Image, bScreenSpaceGI, /*bMipUAVs*/ true);
+        }
+        if (!bScreenSpaceGI || View.Images[(int)ENamedImage::ScreenSpaceGIAccumA].Texture != OldGIAccum)
+        {
+            View.bScreenSpaceGIAccumValid = false;
         }
 
         Want(ENamedImage::SunFarShadowMask, View.bIsPrimary && WantsSunFarShadowMask(), /*bMipUAVs*/ true);
@@ -2009,10 +2090,13 @@ namespace Lumina
         Desc.Format = EFormat::RGBA8_UNORM;
         View.Images[(int)ENamedImage::GBufferA] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
         View.Images[(int)ENamedImage::GBufferC] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
-        Desc.Format = EFormat::R10G10B10A2_UNORM;
+        Desc.Format = GBufferNormalFormat();
         View.Images[(int)ENamedImage::GBufferB] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
         Desc.Format = EFormat::R11G11B10_FLOAT;
         View.Images[(int)ENamedImage::GBufferD] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
+        Desc.Format = EFormat::RGBA8_UNORM;
+        View.Images[(int)ENamedImage::GBufferE] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
+        View.Images[(int)ENamedImage::GBufferF] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
         // Each pixel's deferred slot plus one, which 16 bits hold up to MATERIAL_MAX_SLOTS.
         Desc.Format = EFormat::R16_UINT;
         View.Images[(int)ENamedImage::MaterialSlot] = CreateSceneImage(Desc, true, /*bMipUAVs*/ true);
@@ -2234,19 +2318,32 @@ namespace Lumina
         NameOwnedImages(NamedImages);
     }
 
-    void FDefaultSceneRenderer::InitReflectionProbeTargets()
+    void FDefaultSceneRenderer::SyncReflectionProbeArray(uint32 FaceSize, uint32 NumProbes)
     {
-        if (NamedImages[(int)ENamedImage::ProbePrefiltered].IsValid())
+        const bool bMatches = NamedImages[(int)ENamedImage::ProbePrefiltered].IsValid()
+                           && FaceSize == ProbeArrayFaceSize && NumProbes == ProbeArrayProbes;
+        if (FaceSize == 0 || NumProbes == 0 || bMatches)
         {
             return;
+        }
+
+        RetireSceneImage(NamedImages[(int)ENamedImage::ProbePrefiltered]);
+        ProbeArrayFaceSize = FaceSize;
+        ProbeArrayProbes   = NumProbes;
+
+        // Down to an eight texel face whatever the top size, so the roughest mip stays as blurry as it always was.
+        uint32 MipCount = 1;
+        for (uint32 Size = FaceSize; Size > 8u; Size >>= 1)
+        {
+            ++MipCount;
         }
 
         {
             RHI::FTextureDesc Desc;
             Desc.Type       = RHI::ETextureType::TexCubeArray;
-            Desc.Dimension  = FUIntVector3(ProbePrefilterBaseSize, ProbePrefilterBaseSize, 1);
-            Desc.LayerCount = MaxReflectionProbes * 6;
-            Desc.MipCount   = ProbePrefilterMips;
+            Desc.Dimension  = FUIntVector3(FaceSize, FaceSize, 1);
+            Desc.LayerCount = NumProbes * 6;
+            Desc.MipCount   = MipCount;
             Desc.Format     = EFormat::R11G11B10_FLOAT;
             Desc.Usage      = RHI::EImageUsageFlags::Sampled | RHI::EImageUsageFlags::Storage | RHI::EImageUsageFlags::TransferDst;
 
@@ -2414,21 +2511,30 @@ namespace Lumina
         Streaming->SubmitMaterialFeedback(Masks, StreamingFeedbackSlots);
     }
 
-    // Each cluster holds one bit per live light, so the pool follows the light count instead of reserving for the worst case.
-    void FDefaultSceneRenderer::EnsureClusterLightMaskCapacity(FSceneView& View)
+    // Sized for every retained light being visible at once, so the cull never needs the CPU to know how many are.
+    void FDefaultSceneRenderer::EnsureLightGridCapacity(FSceneView& View)
     {
-        const uint64 WordsPerCluster = std::bit_ceil(Math::Max<uint64>(((uint64)NumLiveLights + 31u) / 32u, 1u));
-        const uint64 NeededBytes     = sizeof(uint32) * WordsPerCluster * (uint64)MaxClusters;
-        if (View.ClusterLightMaskBuffer && View.ClusterLightMaskBuffer.Size >= NeededBytes)
-        {
-            return;
-        }
+        const uint64 Capacity  = RenderFrame != nullptr ? RenderFrame->Lighting.RetainedCapacity : 0u;
+        const uint64 Entries   = Capacity + 1u;
+        const uint64 MaskWords = (Entries + 31u) / 32u;
 
-        if (View.ClusterLightMaskBuffer)
+        auto Ensure = [](FSceneBuffer& Buffer, uint64 Bytes) -> bool
         {
-            RHI::Retire(View.ClusterLightMaskBuffer);
-        }
-        View.ClusterLightMaskBuffer = CreateSceneBuffer(NeededBytes, "View.ClusterLightMasks");
+            if (Buffer.Gpu != 0 && Buffer.Size >= Bytes)
+            {
+                return false;
+            }
+            Buffer.Release();
+            Buffer.Allocate(Buffer.SlackedBytes(Bytes));
+            return true;
+        };
+
+        bRetainedLightsFresh |= Ensure(RetainedLightBuffer, sizeof(FLight) * Math::Max<uint64>(Capacity, 1u));
+        bRetainedLightsFresh |= Ensure(RetainedLightBoundsBuffer, sizeof(FVector4) * Math::Max<uint64>(Capacity, 1u));
+        bRetainedLightsFresh |= Ensure(RetainedLightLayerBuffer, sizeof(uint32) * Math::Max<uint64>(Capacity, 1u));
+        Ensure(View.ViewLightBuffer, sizeof(FLight) * Entries);
+        Ensure(View.LightTileMaskBuffer, sizeof(uint32) * MaskWords * LIGHT_MAX_TILES);
+        View.bLightGridFresh |= Ensure(View.LightGridBuffer, sizeof(uint32) * (LIGHT_GRID_VISIBLE + 2u * Capacity));
     }
 
     uint64 FDefaultSceneRenderer::BuildViewSceneRoot(FSceneView& View)
@@ -2436,13 +2542,21 @@ namespace Lumina
         RHI::FTransientAlloc Alloc = RHI::AllocTransient(sizeof(FSceneRoot));
         FSceneRoot* Root = static_cast<FSceneRoot*>(Alloc.Cpu);
 
-        EnsureClusterLightMaskCapacity(View);
+        EnsureLightGridCapacity(View);
 
         *Root = SceneRootShared;
-        Root->Clusters           = { View.ClusterBuffer };
-        Root->ClusterLightMasks  = { View.ClusterLightMaskBuffer };
-        Root->ClusterWordRanges  = { View.ClusterRangeBuffer };
+        // Exact counts, since the slack past the capacity was never written and a cull thread there would read it as a light.
+        const uint32 RetainedCapacity = RenderFrame != nullptr ? RenderFrame->Lighting.RetainedCapacity : 0u;
+        Root->RetainedLights      = RHI::TGPUSpan<FLight>(RetainedLightBuffer, RetainedCapacity);
+        Root->RetainedLightBounds = RHI::TGPUSpan<FVector4>(RetainedLightBoundsBuffer, RetainedCapacity);
+        Root->RetainedLightLayers = RHI::TGPUSpan<uint32>(RetainedLightLayerBuffer, RetainedCapacity);
+        Root->ViewLights          = RHI::TGPUSpan<FLight>(View.ViewLightBuffer, RetainedCapacity + 1u);
+        Root->LightTileMasks      = { View.LightTileMaskBuffer };
+        Root->LightGrid           = { View.LightGridBuffer };
         Root->BRDFLutIndex       = (uint32)View.Images[(int)ENamedImage::BRDFLut].GetResourceID();
+        const FSharedRenderResources& SharedTables = Render().GetSharedRenderResources();
+        Root->LTCMatrixIndex     = SharedTables.LTCMatrix.SampledSlot;
+        Root->LTCAmplitudeIndex  = SharedTables.LTCAmplitude.SampledSlot;
         Root->SkyIrradianceIndex = (uint32)View.Images[(int)ENamedImage::SkyIrradiance].GetResourceID();
         {
             const FSceneImage& Prefilter = View.Images[(int)ENamedImage::SkyPrefilter];
@@ -2451,6 +2565,8 @@ namespace Lumina
         }
         Root->SkyCubeIndex       = (uint32)View.Images[(int)ENamedImage::SkyCube].GetResourceID();
         Root->ShadowAtlasIndex   = (uint32)ShadowAtlas.GetImage().GetResourceID();
+        // The view whose visibility buffer passes under this root write and decode, so its IDs resolve against its own draw list region.
+        Root->VisCullView        = CurrentCameraEarlyView;
 
         Root->Splines       = SplineBufferSpan;
         Root->SplinePoints  = SplinePointBufferSpan;
@@ -2835,7 +2951,13 @@ namespace Lumina
                 TSpan<const RHI::FSpecializationConstant>(OwnedConstants.GetData(), OwnedConstants.Num()));
 
             #if USING(WITH_EDITOR)
-            PublishEditorPipelineInfo(Pipeline, CS, Stage.Path);
+            // Each specialization compiles to its own binary, so its dump is named by its constants rather than overwriting the others.
+            FString DumpName = Stage.Path.ToString();
+            for (const RHI::FSpecializationConstant& Constant : OwnedConstants)
+            {
+                DumpName += Lumina::Format("_{}-{}", Constant.ConstantID, Constant.AsInt);
+            }
+            PublishEditorPipelineInfo(Pipeline, CS, FName(DumpName));
             #endif
             return Pipeline;
         };

@@ -323,6 +323,7 @@ namespace Lumina
         RHI::Textures::Release(DistanceFieldTexture);
         RHI::Textures::Release(ImpostorBaseColorTexture);
         RHI::Textures::Release(ImpostorNormalDepthTexture);
+        RHI::Textures::Release(ImpostorEmissiveTexture);
     }
 
     void FMeshResource::FMeshBuffers::ReleaseGeometryBuffers()
@@ -383,6 +384,7 @@ namespace Lumina
         DistanceFieldTexture       = std::exchange(Other.DistanceFieldTexture, {});
         ImpostorBaseColorTexture   = std::exchange(Other.ImpostorBaseColorTexture, {});
         ImpostorNormalDepthTexture = std::exchange(Other.ImpostorNormalDepthTexture, {});
+        ImpostorEmissiveTexture    = std::exchange(Other.ImpostorEmissiveTexture, {});
     }
 
     FArchive& operator<<(FArchive& Ar, FMeshResource& Data)

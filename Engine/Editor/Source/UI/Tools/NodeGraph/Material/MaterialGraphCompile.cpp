@@ -481,6 +481,12 @@ namespace Lumina
                 FShaderCompileOptions DeferredOptions; DeferredOptions.DebugName = MatName + " [TDM]";
                 DispatchStage(DeferredSource, Move(DeferredOptions), EMaterialShaderStage::Deferred);
             }
+            if (IsStageRequired(Material, EMaterialShaderStage::VirtualTextureCapture))
+            {
+                const FString CaptureSource = Compiler.BuildDeferredShaderFromTemplate(TerrainShaderDir + "TerrainVirtualTextureCapture.slang", EMaterialType::Terrain);
+                FShaderCompileOptions CaptureOptions; CaptureOptions.DebugName = MatName + " [TVT]";
+                DispatchStage(CaptureSource, Move(CaptureOptions), EMaterialShaderStage::VirtualTextureCapture);
+            }
             if (IsStageRequired(Material, EMaterialShaderStage::VisBufferMesh))
             {
                 FShaderCompileOptions VisOptions; VisOptions.DebugName = MatName + " [TVB]";
@@ -702,6 +708,7 @@ namespace Lumina
             Material->SourceHash = Result.SourceHash;
             Material->bWorldPositionOffsetKnown = true;
             Material->bWorldPositionOffset      = Compiler.IsWorldPositionOffsetDriven();
+            Material->bExtendedSurface          = Compiler.IsExtendedSurfaceDriven();
         }
 
         Material->PostLoad();

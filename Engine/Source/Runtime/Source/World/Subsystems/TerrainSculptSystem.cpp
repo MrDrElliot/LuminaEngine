@@ -3,9 +3,26 @@
 #include "Memory/Memcpy.h"
 #include "TaskSystem/TaskSystem.h"
 #include "World/Entity/Components/TerrainComponent.h"
+#include "World/Terrain/TerrainStore.h"
+#include "Core/Templates/NumericLimits.h"
 
 namespace Lumina
 {
+    // The samples a dab touches plus an apron for brushes that read neighbors, copied out of the store and written back after.
+    struct FTerrainSculptWindow
+    {
+        int32           MinX   = 0;
+        int32           MinY   = 0;
+        int32           Width  = 0;
+        int32           Height = 0;
+        TVector<float>  Heights;
+        TVector<uint32> Weights;
+
+        float& H(int32 X, int32 Y) { return Heights[(Y - MinY) * Width + (X - MinX)]; }
+        // Layer N is byte N of a packed sample, as the store and the GPU pages hold it.
+        uint8& W(int32 Layer, int32 X, int32 Y) { return reinterpret_cast<uint8*>(&Weights[(Y - MinY) * Width + (X - MinX)])[Layer]; }
+    };
+
     namespace
     {
         // At full strength a held sculpt moves the center by the smaller of the brush radius and the terrain's height range per second.
@@ -104,17 +121,16 @@ namespace Lumina
             int32          Height = 0;
             TVector<float> Values;
 
-            FHeightBlock(const STerrainComponent& Terrain, const FIntVector4& Rect, int32 Apron)
+            FHeightBlock(FTerrainSculptWindow& Win, const FIntVector4& Rect, int32 Apron)
             {
-                const int32 Res = Terrain.Resolution;
-                MinX   = Math::Max(Rect.x - Apron, 0);
-                MinY   = Math::Max(Rect.y - Apron, 0);
-                Width  = Math::Min(Rect.z + Apron, Res - 1) - MinX + 1;
-                Height = Math::Min(Rect.w + Apron, Res - 1) - MinY + 1;
+                MinX   = Math::Max(Rect.x - Apron, Win.MinX);
+                MinY   = Math::Max(Rect.y - Apron, Win.MinY);
+                Width  = Math::Min(Rect.z + Apron, Win.MinX + Win.Width - 1) - MinX + 1;
+                Height = Math::Min(Rect.w + Apron, Win.MinY + Win.Height - 1) - MinY + 1;
                 Values.SetNum(size_t(Width) * size_t(Height));
                 for (int32 Y = 0; Y < Height; ++Y)
                 {
-                    Memory::Memcpy(&Values[size_t(Y) * Width], &Terrain.Heightmap[(MinY + Y) * Res + MinX], size_t(Width) * sizeof(float));
+                    Memory::Memcpy(&Values[size_t(Y) * Width], &Win.H(MinX, MinY + Y), size_t(Width) * sizeof(float));
                 }
             }
 
@@ -181,12 +197,8 @@ namespace Lumina
     FTerrainHeightView FTerrainSculptSystem::MakeHeightView(const STerrainComponent& Terrain, const FVector3& TerrainOrigin)
     {
         FTerrainHeightView View;
-        const int32 Res = Terrain.Resolution;
-        if (Res >= 2 && static_cast<size_t>(Terrain.Heightmap.Num()) >= size_t(Res) * size_t(Res))
-        {
-            View.Heights = Terrain.Heightmap.GetData();
-        }
-        View.Resolution    = Res;
+        View.Store         = Terrain.Store;
+        View.Resolution    = Terrain.Store != nullptr ? Terrain.Store->GetResolution() : Terrain.Resolution;
         View.TileWorldSize = Terrain.TileWorldSize;
         View.MaxHeight     = Terrain.MaxHeight;
         View.Origin        = TerrainOrigin;
@@ -196,7 +208,7 @@ namespace Lumina
     bool FTerrainHeightView::SampleHeight(float WorldX, float WorldZ, float& OutHeight) const
     {
         const int32 Res = Resolution;
-        if (Heights == nullptr || Res < 2)
+        if (Store == nullptr || Res < 2)
         {
             return false;
         }
@@ -212,17 +224,7 @@ namespace Lumina
         {
             return false;
         }
-
-        const int X0 = int(Lx), Z0 = int(Lz);
-        const int X1 = Math::Min(X0 + 1, Res - 1), Z1 = Math::Min(Z0 + 1, Res - 1);
-        const float Tx = Lx - float(X0), Tz = Lz - float(Z0);
-        const float H00 = Heights[Z0 * Res + X0];
-        const float H10 = Heights[Z0 * Res + X1];
-        const float H01 = Heights[Z1 * Res + X0];
-        const float H11 = Heights[Z1 * Res + X1];
-        const float H   = Math::Mix(Math::Mix(H00, H10, Tx), Math::Mix(H01, H11, Tx), Tz);
-
-        OutHeight = Origin.y + H * MaxHeight;
+        OutHeight = Origin.y + Store->SampleHeight(Lx, Lz) * MaxHeight;
         return true;
     }
 
@@ -252,74 +254,138 @@ namespace Lumina
         return MakeHeightView(Terrain, TerrainOrigin).SampleNormal(WorldX, WorldZ);
     }
 
-    bool FTerrainSculptSystem::Raycast(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, const FVector3& RayOrigin, const FVector3& RayDir, FVector3& OutHit)
+    // Marches half a sample at a time only inside page tiles the ray dips below the top of, and skips across the rest.
+    bool FTerrainSculptSystem::Raycast(const STerrainComponent& Terrain, const FVector3& TerrainOrigin, const FVector3& RayOrigin, const FVector3& RayDir, FVector3& OutHit,
+                                       float MaxDistance)
     {
-        const int32 Res     = Terrain.Resolution;
-        const float MaxDist = Terrain.TileWorldSize * 4.0f;
-        const float Step    = Math::Max(0.5f, Terrain.TileWorldSize / float(Res) * 0.5f);
-
+        const FTerrainStore* Store = Terrain.Store.Get();
+        if (Store == nullptr || Store->GetResolution() < 2)
+        {
+            return false;
+        }
+        const int32 Res    = Store->GetResolution();
+        const int32 Last   = Res - 1;
+        const float Stride = Terrain.TileWorldSize / float(Last);
+        const float Step   = Math::Max(0.05f, Stride * 0.5f);
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, TerrainOrigin);
         const float BaseY  = TerrainOrigin.y;
-        const float Stride = Terrain.TileWorldSize / float(Res - 1);
 
-        auto InBounds = [&](const FVector3& P)
+        auto ToSample = [&](const FVector3& P) { return FVector2((P.x - OriginXZ.x) / Stride, (P.z - OriginXZ.y) / Stride); };
+        auto InBounds = [&](const FVector2& S) { return S.x >= 0.0f && S.y >= 0.0f && S.x <= float(Last) && S.y <= float(Last); };
+        auto SurfaceY = [&](const FVector3& P)
         {
-            const float Lx = (P.x - OriginXZ.x) / Stride;
-            const float Lz = (P.z - OriginXZ.y) / Stride;
-            return Lx >= 0.0f && Lz >= 0.0f && Lx <= float(Res - 1) && Lz <= float(Res - 1);
+            const FVector2 S = ToSample(P);
+            return BaseY + Store->SampleHeight(S.x, S.y) * Terrain.MaxHeight;
         };
 
-        // Bilinear so the hit tracks the rendered surface instead of snapping to texels.
-        auto SurfaceY = [&](float Wx, float Wz)
+        // Clip the ray to the terrain's box, so a camera far outside it starts at the near face.
+        const float TopY    = BaseY + Math::Max(Terrain.MaxHeight, 0.0f);
+        const FVector3 BoxMin(OriginXZ.x, BaseY + Math::Min(Terrain.MaxHeight, 0.0f), OriginXZ.y);
+        const FVector3 BoxMax(OriginXZ.x + Terrain.TileWorldSize, TopY, OriginXZ.y + Terrain.TileWorldSize);
+        float TEnter = 0.0f, TExit = MaxDistance;
+        for (int32 Axis = 0; Axis < 3; ++Axis)
         {
-            const float Fx = Math::Clamp((Wx - OriginXZ.x) / Stride, 0.0f, float(Res - 1));
-            const float Fz = Math::Clamp((Wz - OriginXZ.y) / Stride, 0.0f, float(Res - 1));
-            const int X0 = int(Fx), Z0 = int(Fz);
-            const int X1 = Math::Min(X0 + 1, Res - 1), Z1 = Math::Min(Z0 + 1, Res - 1);
-            const float Tx = Fx - float(X0), Tz = Fz - float(Z0);
-            const float H00 = Terrain.Heightmap[Z0 * Res + X0];
-            const float H10 = Terrain.Heightmap[Z0 * Res + X1];
-            const float H01 = Terrain.Heightmap[Z1 * Res + X0];
-            const float H11 = Terrain.Heightmap[Z1 * Res + X1];
-            const float H   = Math::Mix(Math::Mix(H00, H10, Tx), Math::Mix(H01, H11, Tx), Tz);
-            return BaseY + H * Terrain.MaxHeight;
-        };
-
-        FVector3 Prev      = RayOrigin;
-        bool      bPrevIn   = InBounds(Prev);
-        float     PrevDiff  = bPrevIn ? (Prev.y - SurfaceY(Prev.x, Prev.z)) : 0.0f;
-
-        for (float T = Step; T < MaxDist; T += Step)
-        {
-            const FVector3 Pos = RayOrigin + RayDir * T;
-            const bool bIn = InBounds(Pos);
-            if (bIn)
+            if (Math::Abs(RayDir[Axis]) < 1e-8f)
             {
-                const float Diff = Pos.y - SurfaceY(Pos.x, Pos.z);
+                if (RayOrigin[Axis] < BoxMin[Axis] || RayOrigin[Axis] > BoxMax[Axis])
+                {
+                    return false;
+                }
+                continue;
+            }
+            const float T0 = (BoxMin[Axis] - RayOrigin[Axis]) / RayDir[Axis];
+            const float T1 = (BoxMax[Axis] - RayOrigin[Axis]) / RayDir[Axis];
+            TEnter = Math::Max(TEnter, Math::Min(T0, T1));
+            TExit  = Math::Min(TExit, Math::Max(T0, T1));
+        }
+        if (TEnter > TExit)
+        {
+            return false;
+        }
+
+        // A ray that drifts a tiny fraction of a sample across the box, such as a ground query, meets the height under its start.
+        const float Drift = Math::Length(FVector2(RayDir.x, RayDir.z)) * (TExit - TEnter);
+        if (Drift < Stride * 0.01f && Math::Abs(RayDir.y) > 1e-4f)
+        {
+            const FVector3 Entry = RayOrigin + RayDir * TEnter;
+            if (!InBounds(ToSample(Entry)))
+            {
+                return false;
+            }
+            const float Ground = SurfaceY(Entry);
+            const float THit   = (Ground - RayOrigin.y) / RayDir.y;
+            // Starting under the surface counts as a hit there, as the march below treats it.
+            if (Entry.y > Ground && (THit < TEnter || THit > TExit))
+            {
+                return false;
+            }
+            OutHit = FVector3(Entry.x, Ground, Entry.z);
+            return true;
+        }
+
+        const TVector<FVector2>& Bounds = Store->GetBounds();
+        const int32  PageDepth  = Store->GetPageDepth();
+        const uint32 TileOffset = GetTerrainNodeDepthOffset(PageDepth);
+        const int32  TileSide   = 1 << PageDepth;
+        const float  TileWorld  = Stride * float(GTerrainTileSamples);
+
+        float T = TEnter;
+        FVector3 Prev = RayOrigin + RayDir * T;
+        float PrevDiff = Prev.y - SurfaceY(Prev);
+        if (PrevDiff <= 0.0f && InBounds(ToSample(Prev)))
+        {
+            OutHit = FVector3(Prev.x, SurfaceY(Prev), Prev.z);
+            return true;
+        }
+        while (T < TExit)
+        {
+            const FVector2 S  = ToSample(Prev);
+            const int32 TX    = Math::Clamp((int32)S.x >> GTerrainTileShift, 0, TileSide - 1);
+            const int32 TY    = Math::Clamp((int32)S.y >> GTerrainTileShift, 0, TileSide - 1);
+            const float TileTop = BaseY + Bounds[(int32)(TileOffset + uint32(TY * TileSide + TX))].y * Terrain.MaxHeight;
+            float Advance = Step;
+            if (Prev.y > TileTop + Step)
+            {
+                // Above everything in this tile, so jump to where the ray leaves its footprint or comes down to its top.
+                const float TileMinX = OriginXZ.x + float(TX) * TileWorld;
+                const float TileMinZ = OriginXZ.y + float(TY) * TileWorld;
+                float Leave = TNumericLimits<float>::Max();
+                if (RayDir.x > 1e-8f)  { Leave = Math::Min(Leave, (TileMinX + TileWorld - Prev.x) / RayDir.x); }
+                if (RayDir.x < -1e-8f) { Leave = Math::Min(Leave, (TileMinX - Prev.x) / RayDir.x); }
+                if (RayDir.z > 1e-8f)  { Leave = Math::Min(Leave, (TileMinZ + TileWorld - Prev.z) / RayDir.z); }
+                if (RayDir.z < -1e-8f) { Leave = Math::Min(Leave, (TileMinZ - Prev.z) / RayDir.z); }
+                if (RayDir.y < -1e-8f) { Leave = Math::Min(Leave, (TileTop - Prev.y) / RayDir.y); }
+                Advance = Math::Max(Step, Leave + Step * 0.25f);
+            }
+            T += Advance;
+            const FVector3 Pos = RayOrigin + RayDir * Math::Min(T, TExit);
+            if (InBounds(ToSample(Pos)))
+            {
+                const float Diff = Pos.y - SurfaceY(Pos);
                 // Downward crossing between Prev and Pos, so bisect for a tight hit.
-                if (bPrevIn && PrevDiff > 0.0f && Diff <= 0.0f)
+                if (PrevDiff > 0.0f && Diff <= 0.0f)
                 {
                     FVector3 A = Prev, B = Pos;
-                    for (int i = 0; i < 8; ++i)
+                    for (int i = 0; i < 12; ++i)
                     {
                         const FVector3 M = (A + B) * 0.5f;
-                        if (M.y - SurfaceY(M.x, M.z) > 0.0f) A = M; else B = M;
+                        if (M.y - SurfaceY(M) > 0.0f) A = M; else B = M;
                     }
                     const FVector3 H = (A + B) * 0.5f;
-                    OutHit = FVector3(H.x, SurfaceY(H.x, H.z), H.z);
+                    OutHit = FVector3(H.x, SurfaceY(H), H.z);
                     return true;
                 }
                 PrevDiff = Diff;
             }
-            Prev    = Pos;
-            bPrevIn = bIn;
+            Prev = Pos;
         }
         return false;
     }
 
     void FTerrainSculptSystem::ApplyDab(STerrainComponent& Terrain, const FTerrainSculptDab& Dab)
     {
-        if (Terrain.Resolution <= 0 || Terrain.Heightmap.IsEmpty())
+        FTerrainStore* Store = Terrain.EnsureStore();
+        if (Store == nullptr || Terrain.Resolution < 2)
         {
             return;
         }
@@ -353,17 +419,56 @@ namespace Lumina
             return;
         }
 
+        // Wide enough for the two box passes of the widest smooth kernel, the most any brush reads past its footprint.
+        constexpr int32 kApron = 2 * kMaxSmoothKernel + 2;
+        const int32 Last = Store->GetResolution() - 1;
+        const bool bPaint = Dab.Mode == ETerrainBrushMode::Paint;
+        FTerrainSculptWindow Win;
+        Win.MinX   = Math::Max(Rect.x - kApron, 0);
+        Win.MinY   = Math::Max(Rect.y - kApron, 0);
+        Win.Width  = Math::Min(Rect.z + kApron, Last) - Win.MinX + 1;
+        Win.Height = Math::Min(Rect.w + kApron, Last) - Win.MinY + 1;
+        Win.Heights.SetNum(Win.Width * Win.Height);
+        Store->ReadHeights(0, FIntVector2(Win.MinX, Win.MinY), FIntVector2(Win.Width, Win.Height), Win.Heights.GetData());
+        if (bPaint)
+        {
+            Win.Weights.SetNum(Win.Width * Win.Height);
+            Store->ReadWeights(0, FIntVector2(Win.MinX, Win.MinY), FIntVector2(Win.Width, Win.Height), Win.Weights.GetData());
+        }
+
         switch (Dab.Mode)
         {
-        case ETerrainBrushMode::Sculpt:  ApplySculpt (Terrain, Dab, Rect); break;
-        case ETerrainBrushMode::Flatten: ApplyFlatten(Terrain, Dab, Rect); break;
-        case ETerrainBrushMode::Smooth:  ApplySmooth (Terrain, Dab, Rect); break;
-        case ETerrainBrushMode::Noise:   ApplyNoise  (Terrain, Dab, Rect); break;
-        case ETerrainBrushMode::Ramp:    ApplyRamp   (Terrain, Dab, Rect); break;
-        case ETerrainBrushMode::Erode:   ApplyErode  (Terrain, Dab, Rect); break;
-        case ETerrainBrushMode::Terrace: ApplyTerrace(Terrain, Dab, Rect); break;
-        case ETerrainBrushMode::Paint:   ApplyPaint  (Terrain, Dab, Rect); break;
+        case ETerrainBrushMode::Sculpt:  ApplySculpt (Terrain, Win, Dab, Rect); break;
+        case ETerrainBrushMode::Flatten: ApplyFlatten(Terrain, Win, Dab, Rect); break;
+        case ETerrainBrushMode::Smooth:  ApplySmooth (Terrain, Win, Dab, Rect); break;
+        case ETerrainBrushMode::Noise:   ApplyNoise  (Terrain, Win, Dab, Rect); break;
+        case ETerrainBrushMode::Ramp:    ApplyRamp   (Terrain, Win, Dab, Rect); break;
+        case ETerrainBrushMode::Erode:   ApplyErode  (Terrain, Win, Dab, Rect); break;
+        case ETerrainBrushMode::Terrace: ApplyTerrace(Terrain, Win, Dab, Rect); break;
+        case ETerrainBrushMode::Paint:   ApplyPaint  (Terrain, Win, Dab, Rect); break;
         case ETerrainBrushMode::Num:     break;
+        }
+
+        // Only the footprint goes back, since the apron was read and never changed.
+        const FIntVector2 Min(Rect.x, Rect.y);
+        const FIntVector2 Size(Rect.z - Rect.x + 1, Rect.w - Rect.y + 1);
+        if (bPaint)
+        {
+            TVector<uint32> Out(Size.x * Size.y);
+            for (int32 Y = 0; Y < Size.y; ++Y)
+            {
+                Memory::Memcpy(&Out[Y * Size.x], &Win.Weights[(Min.y + Y - Win.MinY) * Win.Width + (Min.x - Win.MinX)], size_t(Size.x) * sizeof(uint32));
+            }
+            Store->WriteWeights(Min, Size, Out.GetData());
+        }
+        else
+        {
+            TVector<float> Out(Size.x * Size.y);
+            for (int32 Y = 0; Y < Size.y; ++Y)
+            {
+                Memory::Memcpy(&Out[Y * Size.x], &Win.H(Min.x, Min.y + Y), size_t(Size.x) * sizeof(float));
+            }
+            Store->WriteHeights(Min, Size, Out.GetData());
         }
 
         if (Dab.Mode == ETerrainBrushMode::Paint)
@@ -382,25 +487,23 @@ namespace Lumina
         }
     }
     
-    void FTerrainSculptSystem::ApplySculpt(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
+    void FTerrainSculptSystem::ApplySculpt(const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
         const float Delta = SculptDelta(Terrain, Dab);
-        const int32 Res   = Terrain.Resolution;
         ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
-            float& H = Terrain.Heightmap[Y * Res + X];
+            float& H = Win.H(X, Y);
             H = Math::Clamp(H + Delta * W, 0.0f, 1.0f);
         });
     }
 
-    void FTerrainSculptSystem::ApplyFlatten(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
+    void FTerrainSculptSystem::ApplyFlatten(const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
         const float Target = Terrain.MaxHeight > 0.0f ? Math::Clamp(Dab.FlattenHeight / Terrain.MaxHeight, 0.0f, 1.0f) : 0.0f;
         const float Alpha  = BlendAlpha(Dab);
-        const int32 Res    = Terrain.Resolution;
         ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
-            float& H = Terrain.Heightmap[Y * Res + X];
+            float& H = Win.H(X, Y);
             const float Flat = Math::Mix(H, Target, Alpha * W);
             switch (Dab.FlattenSide)
             {
@@ -411,12 +514,12 @@ namespace Lumina
         });
     }
 
-    void FTerrainSculptSystem::ApplySmooth(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
+    void FTerrainSculptSystem::ApplySmooth(const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
         const int32 Kernel = Math::Clamp(int32(Dab.Radius * kSmoothKernelShare / SampleStride(Terrain) + 0.5f), 1, kMaxSmoothKernel);
 
         // Two box passes approach a Gaussian, and each reads a kernel of real neighbors past the footprint.
-        FHeightBlock Block(Terrain, Rect, 2 * Kernel);
+        FHeightBlock Block(Win, Rect, 2 * Kernel);
         TVector<float> Scratch;
         Scratch.SetNum(Block.Values.Num());
         for (int32 Pass = 0; Pass < 2; ++Pass)
@@ -426,10 +529,9 @@ namespace Lumina
         }
 
         const float Alpha = BlendAlpha(Dab);
-        const int32 Res   = Terrain.Resolution;
         ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
-            float& H = Terrain.Heightmap[Y * Res + X];
+            float& H = Win.H(X, Y);
             H = Math::Mix(H, Block.At(X, Y), Alpha * W);
         });
     }
@@ -478,9 +580,8 @@ namespace Lumina
         }
     }
 
-    void FTerrainSculptSystem::ApplyNoise(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
+    void FTerrainSculptSystem::ApplyNoise(const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
-        const int32    Res      = Terrain.Resolution;
         const float    Stride   = SampleStride(Terrain);
         const float    Delta    = SculptDelta(Terrain, Dab);
         const float    Freq     = Math::Max(Dab.NoiseFrequency, 1e-6f);
@@ -489,14 +590,13 @@ namespace Lumina
         ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
             const float N = Fbm2D((OriginXZ.x + float(X) * Stride) * Freq, (OriginXZ.y + float(Y) * Stride) * Freq, Octaves);
-            float& H = Terrain.Heightmap[Y * Res + X];
+            float& H = Win.H(X, Y);
             H = Math::Clamp(H + Delta * W * N, 0.0f, 1.0f);
         });
     }
 
-    void FTerrainSculptSystem::ApplyRamp(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
+    void FTerrainSculptSystem::ApplyRamp(const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
-        const int32 Res    = Terrain.Resolution;
         const float Stride = SampleStride(Terrain);
         const float Speed  = BlendAlpha(Dab);
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
@@ -567,14 +667,14 @@ namespace Lumina
                     Long = Long * Long * (3.0f - 2.0f * Long);
 
                     const float Target = Math::Mix(StartN, EndN, T);
-                    float& H = Terrain.Heightmap[Y * Res + X];
+                    float& H = Win.H(X, Y);
                     H = Math::Mix(H, Target, Speed * Lat * Long);
                 }
             }
         }, 64u);
     }
 
-    void FTerrainSculptSystem::ApplyErode(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
+    void FTerrainSculptSystem::ApplyErode(const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
         const float Stride = SampleStride(Terrain);
         // Normalized height a straight neighbor may stand below a sample before material slides onto it.
@@ -587,7 +687,7 @@ namespace Lumina
         }
 
         // Each pair trades by the smaller of its two weights, so whatever one sample sheds its neighbor gains.
-        FHeightBlock Weights(Terrain, Rect, 1);
+        FHeightBlock Weights(Win, Rect, 1);
         const FVector2 OriginXZ = TerrainOriginXZ(Terrain, Dab.TerrainOrigin);
         for (int32 Y = Weights.MinY; Y < Weights.MinY + Weights.Height; ++Y)
         {
@@ -599,10 +699,9 @@ namespace Lumina
             }
         }
 
-        const int32 Res = Terrain.Resolution;
         for (int32 Pass = 0; Pass < kErodePasses; ++Pass)
         {
-            FHeightBlock Before(Terrain, Rect, 1);
+            FHeightBlock Before(Win, Rect, 1);
             ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float)
             {
                 const float Here       = Before.At(X, Y);
@@ -629,20 +728,19 @@ namespace Lumina
                         }
                     }
                 }
-                Terrain.Heightmap[Y * Res + X] = Math::Clamp(Here + Rate * Change, 0.0f, 1.0f);
+                Win.H(X, Y) = Math::Clamp(Here + Rate * Change, 0.0f, 1.0f);
             });
         }
     }
 
-    void FTerrainSculptSystem::ApplyTerrace(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
+    void FTerrainSculptSystem::ApplyTerrace(const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
         const float Step  = Math::Max(Dab.TerraceStep, 0.01f) / Math::Max(Terrain.MaxHeight, 1e-3f);
         const float Alpha = BlendAlpha(Dab);
-        const int32 Res   = Terrain.Resolution;
         ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
             // Each step eases from tread to tread, so holding the brush keeps sharpening the risers.
-            float& H = Terrain.Heightmap[Y * Res + X];
+            float& H = Win.H(X, Y);
             const float Level  = H / Step;
             const float Tread  = std::floor(Level);
             const float Rise   = Level - Tread;
@@ -651,7 +749,7 @@ namespace Lumina
         });
     }
 
-    void FTerrainSculptSystem::ApplyPaint(STerrainComponent& Terrain, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
+    void FTerrainSculptSystem::ApplyPaint(const STerrainComponent& Terrain, FTerrainSculptWindow& Win, const FTerrainSculptDab& Dab, const FIntVector4& Rect)
     {
         const int32 Layer = Dab.ActiveLayer;
         if (Layer < 0 || Layer >= Terrain.Layers.Num())
@@ -659,19 +757,16 @@ namespace Lumina
             return;
         }
 
-        const int32 Res         = Terrain.Resolution;
-        const int32 LayerStride = Res * Res;
-        const int32 Needed      = Terrain.Layers.Num() * LayerStride;
-        if (Terrain.LayerWeights.Num() < Needed)
+        if (Layer >= (int32)GTerrainMaxLayers)
         {
-            Terrain.LayerWeights.SetNum(Needed, 0u);
+            return;
         }
 
         const float Alpha = BlendAlpha(Dab);
         const float Goal  = Dab.SculptSign >= 0 ? 1.0f : 0.0f;
         ForEachBrushSample(Terrain, Dab, Rect, [&](int32 X, int32 Y, float W)
         {
-            uint8& Target = Terrain.LayerWeights[Layer * LayerStride + Y * Res + X];
+            uint8& Target = Win.W(Layer, X, Y);
             const float New = Math::Mix(float(Target) / 255.0f, Goal, Alpha * W);
             Target = uint8(Math::Clamp(New * 255.0f + 0.5f, 0.0f, 255.0f));
         });

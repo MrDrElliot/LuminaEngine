@@ -244,6 +244,10 @@ namespace Lumina
         PROPERTY(Hidden)
         bool bWorldPositionOffset = false;
 
+        // Whether the graph drives anisotropy, haze, fuzz or thin film, which a compile decides and the lighting specializes on.
+        PROPERTY(Hidden)
+        bool bExtendedSurface = false;
+
         // An unknown graph counts as moving its vertices, so nothing caches or rasterizes it as the bare mesh by mistake.
         bool HasWorldPositionOffset() const { return !bWorldPositionOffsetKnown || bWorldPositionOffset; }
 

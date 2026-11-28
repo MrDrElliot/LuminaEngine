@@ -29,6 +29,7 @@ namespace
         using FSceneEditorTool::BeginTransaction;
         using FSceneEditorTool::BeginCreationTransaction;
         using FSceneEditorTool::EndTransaction;
+        using FSceneEditorTool::GetTransactionManager;
     };
 
     // Mirrors FWorldEditorTool's own forwarding, so the test drives the mode's real transaction calls.
@@ -46,6 +47,13 @@ namespace
             if (Edit)
             {
                 Edit();
+            }
+        }
+        void RecordModeCommand(TUniquePtr<IUndoableCommand> Command) override
+        {
+            if (Tool->GetTransactionManager().IsRecording())
+            {
+                Tool->GetTransactionManager().Record(Move(Command));
             }
         }
         ECS::FEntity GetModeSelectionFocus() const override { return ECS::NullEntity; }

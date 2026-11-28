@@ -63,7 +63,7 @@ float3 LightLayer(FGroundFogLayer Layer, FGroundFogColumn Column, float3 P, floa
     float3 Light = GetVolumetricAmbientRadiance() * lerp(kFloorSkyFraction, 1.0, Depth01);
     Light += ClusteredLocalIrradiance(P, kLightMinDistance) * (0.5 * INV_PI);
 
-    if (GetNumLights() > 0u && HasFlag(GetLightAt(0).Flags, ELightFlags::Directional))
+    if (HasSunLight())
     {
         const FLight Sun   = GetLightAt(0);
         const float3 ToSun = normalize(Sun.Direction);

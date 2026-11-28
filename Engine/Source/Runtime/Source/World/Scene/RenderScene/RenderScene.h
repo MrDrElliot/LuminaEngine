@@ -99,7 +99,12 @@ namespace Lumina
 
         //~ Stats and settings
 
+#if !defined(LE_SHIPPING)
         const FSceneRenderStats&  GetRenderStats() const        { return RenderStats; }
+
+        // In display pixels from the top, so the corner debug text starts below whatever the host draws over the view.
+        void SetDebugTextTopInset(float Pixels)                 { DebugTextTopInset = Pixels; }
+#endif
 
         // The scene's shadow atlas, or null if the scene has none.
         virtual const FShadowAtlas* GetShadowAtlas() const { return nullptr; }
@@ -112,7 +117,10 @@ namespace Lumina
         RUNTIME_API void RefreshFrameSettings();
 
         CWorld*                 World = nullptr;
+#if !defined(LE_SHIPPING)
         FSceneRenderStats       RenderStats;
+        float                   DebugTextTopInset = 0.0f;
+#endif
         SWorldRenderSettings    FrameSettings;
         FSceneFrameFlags        FrameFlags;
     };

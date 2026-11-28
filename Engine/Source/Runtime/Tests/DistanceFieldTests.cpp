@@ -329,7 +329,7 @@ TEST(DistanceField, SerializationRoundTrips)
 // Transcribed from FMeshletHeader in Common.slang, which is hand-written; if one moves, check it.
 TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
 {
-    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 224u);
+    EXPECT_EQ(sizeof(FMeshletHeaderGPU), 240u);
 
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, MeshletsAddress), 0u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, SpheresAddress), 8u);
@@ -380,8 +380,12 @@ TEST(DistanceField, MeshletHeaderMatchesGPUMirrorSize)
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorRadius), 212u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorFrameSize), 216u);
     EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorTransitionScale), 220u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorEmissiveIndex), 224u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorEmissiveScale), 228u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _ImpostorPad0), 232u);
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _ImpostorPad1), 236u);
 
     // Every member is accounted for above, so a new one shows up here as a size mismatch.
-    EXPECT_EQ(offsetof(FMeshletHeaderGPU, ImpostorTransitionScale) + sizeof(FMeshletHeaderGPU::ImpostorTransitionScale),
+    EXPECT_EQ(offsetof(FMeshletHeaderGPU, _ImpostorPad1) + sizeof(FMeshletHeaderGPU::_ImpostorPad1),
               sizeof(FMeshletHeaderGPU));
 }

@@ -211,7 +211,7 @@ namespace Lumina
         }
 
         // Terrain culls by frustum alone, so it draws in full with the early phase and is the first occluder the pyramid sees.
-        const bool bDrawTerrain = Phase == ECullPhase::Early && !Frame.Extracts.TerrainExtracts.IsEmpty();
+        const bool bDrawTerrain = Phase == ECullPhase::Early && !Frame.Extracts.TerrainExtracts.IsEmpty() && CaptureHas(FFrameData::ECaptureFeature::Terrain);
 
         // With nothing to draw the pass still opens when it clears, since the targets are read regardless.
         bool bHasDraws = !DrawCommands.IsEmpty();
@@ -521,6 +521,11 @@ namespace Lumina
 
         SCENE_GPU_SCOPE(CL, "Custom Depth");
 
+        // Its visibility IDs count from its own region of the draw list, so the raster and the resolve run under a root naming it.
+        const uint32 CameraView = CurrentCameraEarlyView;
+        CurrentCameraEarlyView  = ViewIndex;
+        SetSceneRoot(CL, *CurrentView, SceneBindings.SceneData);
+
         const bool bHasDraws = !Frame.Geometry.DrawCommands.IsEmpty() && FindMissingMeshletDrawBuffer() == nullptr
                             && GetVisBufferPixelShader() != nullptr;
 
@@ -594,6 +599,9 @@ namespace Lumina
         RHI::CmdDraw(CL, MakeArgs(PC), 3, 1, 0, 0);
         RHI::CmdEndRenderPass(CL);
         Barriers::RasterToRead(CL);
+
+        CurrentCameraEarlyView = CameraView;
+        SetSceneRoot(CL, *CurrentView, SceneBindings.SceneData);
     }
 
     bool FDefaultSceneRenderer::BindShadowBatchPipeline(RHI::FCmdListH CL, const FMeshDrawCommand& Batch,

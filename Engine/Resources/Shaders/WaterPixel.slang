@@ -158,7 +158,8 @@ float4 FragmentMain(PSInput Input) : SV_Target0
 
 
     // The water and foam colors are what the surface scatters back, so they take the light a flat diffuse surface would.
-    float3 BodyLight = (HasIBL() ? SampleIrradiance(float3(0.0, 1.0, 0.0)) : GetAmbientLightColor()) * GetAmbientLightIntensity();
+    float3 BodyLight = HasIBL() ? SampleDiffuseIrradiance(Input.WorldPos, float3(0.0, 1.0, 0.0))
+                                : GetAmbientLightColor() * GetAmbientLightIntensity();
     float  SunShadow = 1.0;
     if (LightData().bHasSun != 0)
     {
@@ -179,8 +180,14 @@ float4 FragmentMain(PSInput Input) : SV_Target0
     float  WaterPlaneY = mul(W.WaterToWorld, float4(0.0, 0.0, 0.0, 1.0)).y;
     float3 R         = reflect(-V, N);
     R = normalize(float3(R.x, max(R.y, 0.03), R.z));
-    float3 SkyRefl   = SamplePrefilter(R, EffRough);
-    float3 Reflection = SkyRefl;
+    // Probes cover what they captured and the raw sky fills the rest, so open water reflects exactly as before.
+    float3 EnvRefl = SamplePrefilter(R, EffRough);
+    if (SPEC_REFLECTION_PROBES != 0)
+    {
+        FProbeSample Probes = SampleReflectionProbes(Input.WorldPos, R, EffRough);
+        EnvRefl = Probes.Radiance + (1.0 - Probes.Weight) * EnvRefl;
+    }
+    float3 Reflection = EnvRefl;
     {
         float  StepCount = max(W.SSRSpecOpacity.y, 8.0);
         float  MaxDist   = W.SSRSpecOpacity.x;
@@ -232,7 +239,7 @@ float4 FragmentMain(PSInput Input) : SV_Target0
             {
                 float2 E        = abs(HitUV - 0.5) * 2.0;
                 float  EdgeFade = smoothstep(0.0, 0.3, saturate(1.0 - max(E.x, E.y)));
-                Reflection = lerp(SkyRefl, SampleSceneColor(HitUV), EdgeFade);
+                Reflection = lerp(EnvRefl, SampleSceneColor(HitUV), EdgeFade);
             }
         }
     }

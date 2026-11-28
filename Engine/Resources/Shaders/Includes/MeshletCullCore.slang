@@ -239,7 +239,7 @@ bool TestMeshletAgainstView(FMeshletCullContext Ctx, FCullView View,
         // Before the sphere loads, since most of a cluster range sits outside the cut and never needs them.
         if (bKeep && !bSkipClusterCut && (Ctx.bSelectsLOD || Ctx.bCameraCut) && Header.bClusterLOD)
         {
-            bKeep = PassesClusterCut(Header, Ctx, Ctx.bCameraCut ? CameraLODCutView() : View, MeshletIdx);
+            bKeep = PassesClusterCut(Header, Ctx, Ctx.bCameraCut && View.bCaptureView == 0u ? CameraLODCutView() : View, MeshletIdx);
         }
 
         if (bKeep)

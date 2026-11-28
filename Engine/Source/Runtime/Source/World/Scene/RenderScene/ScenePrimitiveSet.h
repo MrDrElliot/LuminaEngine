@@ -156,10 +156,13 @@ namespace Lumina
 
         // PackCustomDepthStencil, zero when it draws no custom depth.
         uint32                              CustomDepthStencil = 0;
+        // The view capture filter slots this entity belongs to, zero for most.
+        uint32                              CaptureFilterMask = 0;
         EInstanceFlags                      BaseFlags = EInstanceFlags::None;
         EPrimitiveSource                    Source = EPrimitiveSource::StaticMesh;
         bool                                bCastShadow = true;
         bool                                bAffectDistanceField = true;
+        bool                                bAllowImpostor = true;
                 bool                                bShadowWPO = true;
         float                               WPODisableDistance = 0.0f;
         // Whether ForegroundKeys holds this primitive, so tracking it is one test rather than a search.
@@ -230,6 +233,9 @@ namespace Lumina
 
         // Remaps Foreground-layer instances for this camera, or draws them in place when it has no foreground. Call before Sync.
         void SetForegroundView(const FViewVolume& View, const FViewLayerSettings& Layers);
+
+        // The view capture filter slots of every entity a capture shows or hides, re-marking each one that changed so its instances re-upload. Call before Sync.
+        void SetCaptureFilterMasks(THashMap<ECS::FEntity, uint32>&& Masks, ECS::FRegistry& Registry);
 
         // Moved instances that fit the stream write their transform there instead of into the CPU copies. Call before Sync, or pass an empty target.
         void SetTransformStream(const FTransformStreamTarget& Target) { StreamTarget = Target; }
@@ -404,6 +410,8 @@ namespace Lumina
         struct FFoliageTypeResolve;
         struct FFoliageEntityState;
         struct FPrimitiveSyncWork;
+
+        THashMap<ECS::FEntity, uint32>      CaptureFilterMasks;
 
         static constexpr uint32 kKeySourceShift = 32;
         static constexpr uint32 kLinkedSources  = (uint32)EPrimitiveSource::Foliage;

@@ -106,7 +106,7 @@ FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instanc
         {
             // An impostor's coarsest mip holds a few texels per view, which the view's center averages.
             const FImpostorRay   Ray   = MakeImpostorRay(Header, Model, Center);
-            const FImpostorViews Views = SelectImpostorViews(Ray.ToEye, Header.ImpostorFrames);
+            const FImpostorViews Views = SelectImpostorViews(Header, Ray.ToEye);
             Coverage *= GatherImpostorTaps(Header, Views, Ray.Origin, Ray.Dir, log2(float(Header.ImpostorFrameSize))).Coverage;
         }
         if (float(PCGHash(Entry) >> 8u) / 16777216.0 < Coverage)
@@ -143,7 +143,7 @@ FProxyVertexOutput VertexMain(uint VertexIndex : SV_VulkanVertexID, uint Instanc
         Out.LocalDir    = mul((float3x3)WorldToLocal, bOrtho ? GetCameraForward() : Out.WorldPos - GetCameraPosition());
 
         const float3 ToEye = bOrtho ? -normalize(Out.LocalDir) : normalize(mul(WorldToLocal, float4(GetCameraPosition(), 1.0)).xyz - Header.ImpostorCenter);
-        PackImpostorViews(SelectImpostorViews(ToEye, Header.ImpostorFrames), Out.ViewFrames, Out.ViewWeights);
+        PackImpostorViews(SelectImpostorViews(Header, ToEye), Out.ViewFrames, Out.ViewWeights);
     }
     return Out;
 }

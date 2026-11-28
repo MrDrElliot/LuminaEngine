@@ -19,8 +19,6 @@ struct FPushConstants
     float         MaxDistance;
     float         ViewDistance;
     FWorldDistanceField Field;
-    uint                NumTerrains;
-    FTerrainHeightfield Terrains[kMaxTerrainHeightfields];
 };
 FPushConstants* Pass() { return GetPassArgs<FPushConstants>(); }
 
@@ -126,7 +124,7 @@ void ComputeMain(uint3 DTid : SV_DispatchThreadID)
     const float2 DepthSize = float2(Pass().DepthSize);
     const float2 UV        = (float2(Texel) + 0.5) / DepthSize;
     const float3 ViewPos   = ReconstructViewPos(UV, Raw, GetInverseCameraProjection());
-    const float3 P         = LiftOntoTerrains(mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz, &Pass().Terrains[0], Pass().NumTerrains);
+    const float3 P         = LiftOntoTerrains(mul(GetInverseCameraView(), float4(ViewPos, 1.0)).xyz);
     const float  Distance  = length(P - GetCameraPosition());
 
     FWorldDistanceField* Field = &Pass().Field;

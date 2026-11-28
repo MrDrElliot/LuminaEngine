@@ -77,4 +77,32 @@ namespace Lumina
         CMaterialInput* A = nullptr;
         CMaterialInput* B = nullptr;
     };
+
+    REFLECT()
+    class CMaterialExpression_MetallicFlakes : public CMaterialExpression
+    {
+        GENERATED_BODY()
+    public:
+        void BuildNode() override;
+        FFixedString GetNodeCategory() const override { return "Shading"; }
+        FStringView GetNodeDisplayName() const override { return "Metallic Flakes"; }
+        FStringView GetNodeTooltip() const override
+        {
+            return "Metal flakes suspended in paint, each a cell of Size tilted at random by up to Tilt. Feed Normal into "
+                   "Bottom Normal on a Clearcoat material, so the flakes glint beneath a coat that stays smooth.\n\n"
+                   "Position defaults to the mesh's object space, so the flakes stay put on a moving car, and Size is in "
+                   "its units, 0.001 being a millimeter. Wire UVs or world position to anchor them elsewhere.\n\n"
+                   "Flakes fade out once they shrink below a couple of pixels, which Visibility reports. Glint is a "
+                   "random value per flake for varying their color or roughness.";
+        }
+        void GenerateDefinition(FMaterialCompiler& Compiler) override;
+
+        CMaterialInput* Position = nullptr;
+        CMaterialInput* Size     = nullptr;
+        CMaterialInput* Tilt     = nullptr;
+
+        CMaterialOutput* NormalOut     = nullptr;
+        CMaterialOutput* GlintOut      = nullptr;
+        CMaterialOutput* VisibilityOut = nullptr;
+    };
 }

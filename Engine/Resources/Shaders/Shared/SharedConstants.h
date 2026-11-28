@@ -46,6 +46,8 @@
 
 // FMeshletHeader::Flags.
 #define MESH_HEADER_FLAG_CLUSTER_LOD    1u
+// The impostor's views cover the whole octahedron rather than the upper hemisphere.
+#define MESH_HEADER_FLAG_IMPOSTOR_FULL_SPHERE 2u
 
 // FCullData::VirtualGeometryFlags, the project's runtime toggles.
 #define VG_FLAG_PROXIES                 1u
@@ -61,11 +63,24 @@
 // A mesh VisID has the other 31 bits, so its draw-list slot stays below the one whose packed ID would reach the proxy bit.
 #define VISBUFFER_MAX_MESHLET_SLOTS     0x00FFFFFFu
 
-// One terrain meshlet is a 7 by 7 quad grid, so 64 vertices and 98 triangles.
-#define TERRAIN_MESHLET_QUADS           7u
-#define TERRAIN_MESHLET_VERTS_PER_SIDE  8u
-#define TERRAIN_MESHLET_MAX_VERTICES    64u
-#define TERRAIN_MESHLET_MAX_TRIANGLES   98u
+// One terrain quadtree node draws as an 8 by 8 quad grid, so 81 vertices and 128 triangles, and its children halve it exactly.
+#define TERRAIN_MESHLET_QUADS           8u
+#define TERRAIN_MESHLET_QUADS_LOG2      3u
+#define TERRAIN_MESHLET_VERTS_PER_SIDE  9u
+#define TERRAIN_MESHLET_MAX_VERTICES    81u
+#define TERRAIN_MESHLET_MAX_TRIANGLES   128u
+// A node splits while its quads look wider than this many pixels, since the normal map carries the detail between vertices.
+#define TERRAIN_QUAD_PIXELS             6.0f
+
+// A height page is 64 quads of one mip with a 4 texel border, so bilinear taps and normal differences stay inside its slot.
+#define TERRAIN_PAGE_QUADS              64u
+#define TERRAIN_PAGE_QUADS_LOG2         6u
+#define TERRAIN_PAGE_GUTTER             4u
+#define TERRAIN_PAGE_TEXELS             72u
+#define TERRAIN_PAGE_NONE               0xFFFFFFFFu
+// Fixed, so shaders turn slot math into shifts. 64 by 64 slots of 72 texels is a 4608 texel atlas.
+#define TERRAIN_PAGE_ATLAS_SLOTS_LOG2   6u
+#define TERRAIN_PAGE_ATLAS_SLOTS_SIDE   (1u << TERRAIN_PAGE_ATLAS_SLOTS_LOG2)
 
 // Which optional per-vertex streams a static mesh carries; an absent UV1 reads as UV0 and an absent color as white.
 #define MESH_VERTEX_STREAM_UV1          1u
@@ -124,8 +139,32 @@
 #define MATERIAL_COLLECTION_BITS        8u
 #define MATERIAL_COLLECTION_MASK        255u
 
-#define MAX_LIGHTS                      8192
 #define MAX_SHADOWS                     256
+
+// Log-spaced depth slices of the light grid, each holding the range of depth-sorted light indices that reach it.
+#define LIGHT_ZBIN_COUNT                4096u
+// The first bin's far edge in meters, so a light at the camera spans the bins where lights differ rather than a centimeter-thin run near the lens.
+#define LIGHT_ZBIN_START                1.0f
+// Screen tiles of the light grid at most, 64 pixel tiles over 3840x2160; larger views widen their tiles.
+#define LIGHT_MAX_TILES                 2048u
+#define LIGHT_CULL_GROUP_SIZE           64u
+#define LIGHT_MASK_CLEAR_GROUP_SIZE     256u
+#define LIGHT_BIN_SCAN_GROUP_SIZE       1024u
+
+// Word offsets in a view's light grid buffer, which holds a header, two counters per depth bin, the bins and the visible list.
+#define LIGHT_GRID_NUM_LIGHTS           0u
+#define LIGHT_GRID_NUM_VISIBLE          1u
+#define LIGHT_GRID_MASK_WORDS           2u
+#define LIGHT_GRID_COUNTER              3u
+#define LIGHT_GRID_CLEAR_ARGS           4u
+#define LIGHT_GRID_SCATTER_ARGS         8u
+#define LIGHT_GRID_HEADER_WORDS         16u
+#define LIGHT_GRID_BIN_COUNTS           LIGHT_GRID_HEADER_WORDS
+#define LIGHT_GRID_BIN_STARTS           (LIGHT_GRID_BIN_COUNTS + LIGHT_ZBIN_COUNT)
+#define LIGHT_GRID_ZBINS                (LIGHT_GRID_BIN_STARTS + LIGHT_ZBIN_COUNT)
+#define LIGHT_GRID_VISIBLE              (LIGHT_GRID_ZBINS + 2u * LIGHT_ZBIN_COUNT)
+// A visible entry packs its depth bin above a rank within that bin of this many bits.
+#define LIGHT_GRID_RANK_BITS            20u
 
 // Light-function masks share one atlas of square tiles, so this many lights may carry one per frame.
 #define LIGHT_FUNCTION_ATLAS_TILES      4u
@@ -186,11 +225,6 @@
 #define VSM_PAGE_GROUP_SIZE             64u
 #define VSM_FILL_GROUP_SIZE             256u
 
-// LightCull gives each workgroup this block of clusters, so one bounding box pre-culls the lights for all of them.
-#define CLUSTER_CULL_BLOCK_X            8
-#define CLUSTER_CULL_BLOCK_Y            4
-#define CLUSTER_CULL_BLOCK_Z            4
-
 #define COL_R_SHIFT                     0
 #define COL_G_SHIFT                     8
 #define COL_B_SHIFT                     16
@@ -226,6 +260,8 @@
 #define ALPHA_TEST_SHARPEN_BIT          0x2u
 
 #define INSTANCE_CUSTOM_LAYERS_BIT      0x10u
+// Set in an instance's FlagsAndThinning when bAllowImpostor is off, so the cull never swaps it to a far proxy of any kind.
+#define INSTANCE_NO_PROXY_BIT           0x8u
 // Set in an instance's FlagsAndThinning when its shadow falls from the undisplaced mesh, so shadow passes skip the vertex graph.
 #define INSTANCE_NO_SHADOW_WPO_BIT      0x20u
 // Set in an instance's FlagsAndThinning when nothing about its shadow changes on its own, so the sun's shadow cache may hold it.

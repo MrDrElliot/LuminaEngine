@@ -22,14 +22,15 @@ namespace
         Terrain.Resolution    = kRes;
         Terrain.TileWorldSize = kTileSize;
         Terrain.MaxHeight     = kMaxHeight;
-        Terrain.Heightmap.SetNum(kRes * kRes);
+        TVector<float> Heights(kRes * kRes);
         for (int32 Y = 0; Y < kRes; ++Y)
         {
             for (int32 X = 0; X < kRes; ++X)
             {
-                Terrain.Heightmap[Y * kRes + X] = Height(X, Y);
+                Heights[Y * kRes + X] = Height(X, Y);
             }
         }
+        Terrain.SetStore(FTerrainStore::CreateFromArrays(kRes, Heights, {}, 0));
         return Terrain;
     }
 
@@ -61,7 +62,14 @@ namespace
 
     float At(const STerrainComponent& Terrain, int32 X, int32 Y)
     {
-        return Terrain.Heightmap[Y * kRes + X];
+        return Terrain.GetStore()->GetHeight(X, Y);
+    }
+
+    TVector<float> ReadAll(const STerrainComponent& Terrain)
+    {
+        TVector<float> Heights(kRes * kRes);
+        Terrain.GetStore()->ReadHeights(0, FIntVector2(0), FIntVector2(kRes), Heights.GetData());
+        return Heights;
     }
 
     // Spread of the heights in a square around the center, which smoothing should shrink.
@@ -87,7 +95,7 @@ namespace
     double TotalHeight(const STerrainComponent& Terrain)
     {
         double Sum = 0.0;
-        for (float H : Terrain.Heightmap)
+        for (float H : ReadAll(Terrain))
         {
             Sum += H;
         }
@@ -148,16 +156,17 @@ TEST(TerrainSculpt, BlendModesReachTheSameHeightAtAnyFrameRate)
 TEST(TerrainSculpt, RaiseOnlyFlattenNeverLowersTheGround)
 {
     STerrainComponent Terrain = MakeTerrain([](int32 X, int32 Y) { return 0.3f + 0.2f * std::sin(float(X) * 0.7f) * std::cos(float(Y) * 0.5f); });
-    const TVector<float> Before = Terrain.Heightmap;
+    const TVector<float> Before = ReadAll(Terrain);
 
     FTerrainSculptDab Dab = MakeDab(ETerrainBrushMode::Flatten, 60.0f, 1.0f);
     Dab.FlattenHeight = 0.3f * kMaxHeight;
     Dab.FlattenSide   = ETerrainFlattenSide::RaiseOnly;
     Hold(Terrain, Dab, 2.0f);
 
+    const TVector<float> After = ReadAll(Terrain);
     for (int32 I = 0; I < kRes * kRes; ++I)
     {
-        EXPECT_GE(Terrain.Heightmap[I], Before[I] - 1e-6f);
+        EXPECT_GE(After[I], Before[I] - 1e-6f);
     }
     EXPECT_NEAR(At(Terrain, kRes / 2, kRes / 2), Math::Max(Before[(kRes / 2) * kRes + kRes / 2], 0.3f), 1e-3f);
 }
